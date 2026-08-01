@@ -1,0 +1,35 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: workflow-coordinator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: workflow-coordinator
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: workflow-coordinator
+    spec:
+      containers:
+        - name: workflow-coordinator
+          image: agentx/workflow-coordinator:dev
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: agentx-config
+            - secretRef:
+                name: agentx-secrets
+          ports:
+            - name: health
+              containerPort: 8080
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: health
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: health
+

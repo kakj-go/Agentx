@@ -1,0 +1,35 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sandbox-manager
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: sandbox-manager
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: sandbox-manager
+    spec:
+      containers:
+        - name: sandbox-manager
+          image: agentx/sandbox-manager:dev
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: agentx-config
+            - secretRef:
+                name: agentx-secrets
+          ports:
+            - name: health
+              containerPort: 8080
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: health
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: health
+

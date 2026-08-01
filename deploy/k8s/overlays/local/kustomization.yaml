@@ -1,0 +1,40 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: agentx
+resources:
+  - ../../base
+generatorOptions:
+  disableNameSuffixHash: true
+configMapGenerator:
+  - name: agentx-config
+    literals:
+      - AGENTX_ENV=local
+      - AGENTX_MYSQL_HOST=mysql
+      - AGENTX_REDIS_HOST=redis
+      - AGENTX_CLICKHOUSE_HOST=clickhouse
+      - AGENTX_S3_ENDPOINT=http://minio:9000
+      - AGENTX_CUBESANDBOX_ENDPOINT=
+secretGenerator:
+  - name: agentx-secrets
+    literals:
+      - AGENTX_MYSQL_PASSWORD=agentx-local
+      - AGENTX_MYSQL_ROOT_PASSWORD=agentx-root-local
+      - AGENTX_CLICKHOUSE_PASSWORD=agentx-local
+      - AGENTX_MINIO_USER=agentx
+      - AGENTX_MINIO_PASSWORD=agentx-local-secret
+images:
+  - name: agentx/web
+    newTag: dev
+  - name: agentx/platform-api
+    newTag: dev
+  - name: agentx/trigger-gateway
+    newTag: dev
+  - name: agentx/workflow-coordinator
+    newTag: dev
+  - name: agentx/workflow-worker
+    newTag: dev
+  - name: agentx/sandbox-manager
+    newTag: dev
+  - name: agentx/trace-writer
+    newTag: dev
+

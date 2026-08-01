@@ -1,0 +1,12 @@
+[package]
+name = "agentx-runtime"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+agentx-domain.workspace = true
+agentx-node-sdk.workspace = true
+serde.workspace = true
+

@@ -1,0 +1,10 @@
+[package]
+name = "agentx-infrastructure"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+agentx-application.workspace = true
+

@@ -1,0 +1,12 @@
+[package]
+name = "agentx-application"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+agentx-domain.workspace = true
+anyhow.workspace = true
+async-trait.workspace = true
+

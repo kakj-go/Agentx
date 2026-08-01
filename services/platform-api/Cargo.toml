@@ -1,0 +1,12 @@
+[package]
+name = "platform-api"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+agentx-service-kit.workspace = true
+anyhow.workspace = true
+tokio.workspace = true
+

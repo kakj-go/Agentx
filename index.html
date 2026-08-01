@@ -1,0 +1,311 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Agentx 企业级 Agent Workflow 平台菜单原型">
+  <title>Agentx · Navigation Concepts</title>
+  <link rel="stylesheet" href="assets/index.css">
+</head>
+<body>
+  <svg class="svg-defs" aria-hidden="true">
+    <symbol id="i-agent" viewBox="0 0 24 24"><path d="M12 3v3M7 6h10a3 3 0 0 1 3 3v7a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3V9a3 3 0 0 1 3-3Z"/><path d="M8 11h.01M16 11h.01M9 15h6M2 12h2M20 12h2"/></symbol>
+    <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></symbol>
+    <symbol id="i-flow" viewBox="0 0 24 24"><rect x="3" y="3" width="6" height="6" rx="1.5"/><rect x="15" y="15" width="6" height="6" rx="1.5"/><path d="M9 6h3a3 3 0 0 1 3 3v6M6 9v5a4 4 0 0 0 4 4h5"/></symbol>
+    <symbol id="i-app" viewBox="0 0 24 24"><path d="m12 3 9 5-9 5-9-5 9-5Z"/><path d="m3 12 9 5 9-5M3 16l9 5 9-5"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="m8 5 11 7-11 7V5Z"/></symbol>
+    <symbol id="i-trace" viewBox="0 0 24 24"><path d="M4 18V6M8 15l3-4 3 2 5-7"/><path d="M17 6h2v2"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/></symbol>
+    <symbol id="i-dataset" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v7c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 12v7c0 1.7 3.6 3 8 3s8-1.3 8-3v-7"/></symbol>
+    <symbol id="i-chart" viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></symbol>
+    <symbol id="i-model" viewBox="0 0 24 24"><path d="M12 3a4 4 0 0 0-4 4v1a4 4 0 0 0-2 7.5A4 4 0 0 0 12 19V3Z"/><path d="M12 3a4 4 0 0 1 4 4v1a4 4 0 0 1 2 7.5A4 4 0 0 1 12 19M8 8h4M6 14h6M16 8h-4M18 14h-6"/></symbol>
+    <symbol id="i-tool" viewBox="0 0 24 24"><path d="M14 6a4 4 0 0 0-5.5 5.5L3 17l4 4 5.5-5.5A4 4 0 0 0 18 10l-3 3-4-4 3-3Z"/></symbol>
+    <symbol id="i-book" viewBox="0 0 24 24"><path d="M4 5a3 3 0 0 1 3-2h5v17H7a3 3 0 0 0-3 2V5ZM20 5a3 3 0 0 0-3-2h-5v17h5a3 3 0 0 1 3 2V5Z"/></symbol>
+    <symbol id="i-memory" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 1v5M15 1v5M9 18v5M15 18v5M1 9h5M18 9h5M1 15h5M18 15h5M10 10h4v4h-4z"/></symbol>
+    <symbol id="i-users" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><path d="M3 20v-2a5 5 0 0 1 5-5h2a5 5 0 0 1 5 5v2M16 4a3 3 0 0 1 0 6M17 13a5 5 0 0 1 4 5v2"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3 4 6v6c0 5 3.4 8 8 9 4.6-1 8-4 8-9V6l-8-3Z"/><path d="m9 12 2 2 4-4"/></symbol>
+    <symbol id="i-bell" viewBox="0 0 24 24"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9ZM10 21h4"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
+    <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></symbol>
+    <symbol id="i-code" viewBox="0 0 24 24"><path d="m8 9-4 3 4 3M16 9l4 3-4 3M14 5l-4 14"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1a1.7 1.7 0 0 0 1.9.3 1.7 1.7 0 0 0 1-1.6v-.2h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z"/></symbol>
+    <symbol id="i-zoom-in" viewBox="0 0 24 24"><circle cx="10" cy="10" r="6"/><path d="m15 15 5 5M10 7v6M7 10h6"/></symbol>
+    <symbol id="i-zoom-out" viewBox="0 0 24 24"><circle cx="10" cy="10" r="6"/><path d="m15 15 5 5M7 10h6"/></symbol>
+  </svg>
+
+  <header class="concept-bar">
+    <div class="concept-brand">
+      <div class="concept-brand-mark"><svg><use href="#i-agent"></use></svg></div>
+      <div>
+        <strong>Agentx UI Concepts</strong>
+        <span>菜单与空间结构提案</span>
+      </div>
+    </div>
+    <nav class="concept-switcher" aria-label="切换界面方案">
+      <button class="active" data-concept="a">01 企业工作台</button>
+      <button data-concept="b">02 项目空间</button>
+      <button data-concept="c">03 画布优先</button>
+    </nav>
+    <div class="concept-meta">
+      <span>点击菜单体验交互</span>
+      <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd>
+    </div>
+  </header>
+
+  <main class="viewport">
+    <section class="concept active" id="concept-a" aria-label="企业工作台方案">
+      <div class="a-shell" id="a-shell">
+        <aside class="a-sidebar">
+          <div class="a-logo">
+            <div class="brand-mark"><svg><use href="#i-agent"></use></svg></div>
+            <div class="a-logo-copy"><strong>Agentx</strong><span>Workflow Cloud</span></div>
+          </div>
+          <button class="a-workspace js-menu">
+            <span class="a-workspace-badge">AC</span>
+            <span class="a-workspace-copy"><strong>星海科技</strong><span>Enterprise Workspace</span></span>
+            <svg><use href="#i-chevron"></use></svg>
+          </button>
+          <nav class="a-nav">
+            <div class="a-nav-group">
+              <div class="a-nav-label">工作空间</div>
+              <button class="a-nav-item active js-menu"><svg><use href="#i-grid"></use></svg><span class="nav-copy">总览</span></button>
+              <button class="a-nav-item js-menu"><svg><use href="#i-flow"></use></svg><span class="nav-copy">工作流</span><span class="nav-count">24</span></button>
+              <button class="a-nav-item js-menu"><svg><use href="#i-app"></use></svg><span class="nav-copy">应用</span></button>
+              <button class="a-nav-item js-menu"><svg><use href="#i-play"></use></svg><span class="nav-copy">Playground</span></button>
+            </div>
+            <div class="a-nav-group">
+              <div class="a-nav-label">运行与质量</div>
+              <button class="a-nav-item js-menu"><svg><use href="#i-trace"></use></svg><span class="nav-copy">执行记录</span></button>
+              <button class="a-nav-item js-menu"><svg><use href="#i-check"></use></svg><span class="nav-copy">待审批</span><span class="nav-count">3</span></button>
+              <button class="a-nav-item js-menu"><svg><use href="#i-dataset"></use></svg><span class="nav-copy">测试集</span></button>
+              <button class="a-nav-item js-menu"><svg><use href="#i-chart"></use></svg><span class="nav-copy">评测报告</span></button>
+            </div>
+            <div class="a-nav-group">
+              <div class="a-nav-label">资源与组织</div>
+              <button class="a-nav-item js-menu"><svg><use href="#i-model"></use></svg><span class="nav-copy">模型服务</span></button>
+              <button class="a-nav-item js-menu"><svg><use href="#i-tool"></use></svg><span class="nav-copy">工具与连接</span></button>
+              <button class="a-nav-item js-menu"><svg><use href="#i-book"></use></svg><span class="nav-copy">知识库</span></button>
+              <button class="a-nav-item js-menu"><svg><use href="#i-memory"></use></svg><span class="nav-copy">Memory</span></button>
+              <button class="a-nav-item js-menu"><svg><use href="#i-users"></use></svg><span class="nav-copy">部门与用户</span></button>
+              <button class="a-nav-item js-menu"><svg><use href="#i-shield"></use></svg><span class="nav-copy">角色权限</span></button>
+            </div>
+          </nav>
+          <div class="a-profile">
+            <div class="avatar">LX</div>
+            <div class="a-profile-copy"><strong>林晓</strong><span>平台管理员</span></div>
+            <svg><use href="#i-more"></use></svg>
+          </div>
+        </aside>
+        <div class="a-main">
+          <header class="a-topbar">
+            <button class="icon-button a-collapse" id="a-collapse" aria-label="折叠菜单"><svg><use href="#i-menu"></use></svg></button>
+            <div class="a-breadcrumb"><span>星海科技</span><span>/</span><strong id="a-page-title">总览</strong></div>
+            <div class="a-top-spacer"></div>
+            <div class="a-search"><svg><use href="#i-search"></use></svg><span>搜索工作流、应用或运行记录</span><kbd>⌘ K</kbd></div>
+            <button class="icon-button a-notice js-menu" aria-label="通知"><svg><use href="#i-bell"></use></svg></button>
+            <div class="avatar">LX</div>
+          </header>
+          <div class="a-content">
+            <div class="a-heading">
+              <div>
+                <p class="eyebrow">Workspace overview</p>
+                <h1>早上好，林晓</h1>
+                <p>这里是星海科技今天的 Workflow 运行概况。</p>
+              </div>
+              <button class="primary-button js-menu"><svg><use href="#i-plus"></use></svg>新建工作流</button>
+            </div>
+            <div class="a-stats">
+              <article class="a-stat"><div class="a-stat-label"><span>运行中</span><span class="status-dot"></span></div><strong>18 <small>个执行</small></strong></article>
+              <article class="a-stat"><div class="a-stat-label"><span>今日执行</span><span class="trend">↑ 12.4%</span></div><strong>1,284</strong></article>
+              <article class="a-stat"><div class="a-stat-label"><span>成功率</span><span class="trend">↑ 1.8%</span></div><strong>98.7%</strong></article>
+              <article class="a-stat"><div class="a-stat-label"><span>今日成本</span><span>预算 62%</span></div><strong>¥ 428.60</strong></article>
+            </div>
+            <section class="a-panel">
+              <div class="a-panel-head">
+                <h2>最近工作流</h2>
+                <div class="a-filters">
+                  <button class="a-filter active">全部</button>
+                  <button class="a-filter">我创建的</button>
+                  <button class="a-filter">已发布</button>
+                </div>
+              </div>
+              <table class="workflow-table">
+                <thead><tr><th>工作流</th><th>状态</th><th>最近运行</th><th>成功率</th></tr></thead>
+                <tbody>
+                  <tr><td><div class="flow-name"><span class="flow-icon"><svg><use href="#i-agent"></use></svg></span><span><strong>客户服务智能路由</strong><span>Agent · 8 个节点 · v17</span></span></div></td><td><span class="state">已发布</span></td><td>2 分钟前</td><td>99.2%</td></tr>
+                  <tr><td><div class="flow-name"><span class="flow-icon green"><svg><use href="#i-flow"></use></svg></span><span><strong>合同审查与人工审批</strong><span>Workflow · 12 个节点 · v8</span></span></div></td><td><span class="state">已发布</span></td><td>18 分钟前</td><td>97.8%</td></tr>
+                  <tr><td><div class="flow-name"><span class="flow-icon orange"><svg><use href="#i-tool"></use></svg></span><span><strong>销售线索自动评分</strong><span>Agent · 6 个节点 · Draft</span></span></div></td><td><span class="state draft">草稿</span></td><td>昨天 16:42</td><td>—</td></tr>
+                </tbody>
+              </table>
+            </section>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="concept" id="concept-b" aria-label="项目空间方案">
+      <div class="b-shell">
+        <header class="b-header">
+          <div class="b-brand"><div class="brand-mark"><svg><use href="#i-agent"></use></svg></div><strong>Agentx</strong><span>by Xinghai</span></div>
+          <nav class="b-nav">
+            <button class="b-nav-item active js-menu">工作空间</button>
+            <button class="b-nav-item js-menu">运行中心</button>
+            <button class="b-nav-item js-menu">资源</button>
+            <button class="b-nav-item js-menu">组织</button>
+          </nav>
+          <div class="b-header-actions">
+            <div class="b-search"><svg><use href="#i-search"></use></svg>搜索或输入命令</div>
+            <button class="icon-button js-menu"><svg><use href="#i-bell"></use></svg></button>
+            <div class="avatar">LX</div>
+          </div>
+        </header>
+        <div class="b-body">
+          <aside class="b-side">
+            <p class="b-side-label">Build</p>
+            <button class="b-side-item active js-menu"><svg><use href="#i-grid"></use></svg><span>项目首页</span></button>
+            <button class="b-side-item js-menu"><svg><use href="#i-flow"></use></svg><span>工作流</span></button>
+            <button class="b-side-item js-menu"><svg><use href="#i-app"></use></svg><span>已发布应用</span></button>
+            <button class="b-side-item js-menu"><svg><use href="#i-play"></use></svg><span>Playground</span></button>
+            <div class="b-side-divider"></div>
+            <p class="b-side-label">Improve</p>
+            <button class="b-side-item js-menu"><svg><use href="#i-dataset"></use></svg><span>测试集</span></button>
+            <button class="b-side-item js-menu"><svg><use href="#i-chart"></use></svg><span>评测</span></button>
+            <button class="b-side-item js-menu"><svg><use href="#i-trace"></use></svg><span>执行记录</span></button>
+          </aside>
+          <div class="b-main">
+            <div class="b-kicker">Your workflow space</div>
+            <div class="b-title-row">
+              <div>
+                <h1>把想法变成可以运行的智能工作流。</h1>
+                <p>围绕业务目标组织 Workflow、测试集与已发布应用。每个项目都是从设计、验证到上线的一条完整路径。</p>
+              </div>
+              <button class="b-create js-menu" aria-label="新建项目"><svg><use href="#i-plus"></use></svg></button>
+            </div>
+            <div class="b-projects">
+              <article class="b-project accent js-menu">
+                <span class="b-project-number">01 / Customer Care</span>
+                <h3>客户体验自动化</h3>
+                <p>6 Workflows · 2 Applications · 1 Dataset</p>
+                <div class="b-project-foot"><div class="b-mini-avatars"><span class="b-mini-avatar">LX</span><span class="b-mini-avatar">ZW</span><span class="b-mini-avatar">CY</span></div><span>刚刚更新 →</span></div>
+              </article>
+              <article class="b-project js-menu">
+                <span class="b-project-number">02 / Sales Intelligence</span>
+                <h3>销售智能助手</h3>
+                <p>4 Workflows · 1 Application · 3 Datasets</p>
+                <div class="b-project-foot"><div class="b-mini-avatars"><span class="b-mini-avatar">SM</span><span class="b-mini-avatar">LX</span></div><span>18 分钟前 →</span></div>
+              </article>
+              <article class="b-project js-menu">
+                <span class="b-project-number">03 / Contract Review</span>
+                <h3>合同审查与审批</h3>
+                <p>3 Workflows · 2 Applications · 2 Datasets</p>
+                <div class="b-project-foot"><div class="b-mini-avatars"><span class="b-mini-avatar">HY</span><span class="b-mini-avatar">CY</span></div><span>昨天更新 →</span></div>
+              </article>
+              <article class="b-project js-menu">
+                <span class="b-project-number">04 / Knowledge Ops</span>
+                <h3>知识运营中心</h3>
+                <p>8 Workflows · 3 Applications · 4 Datasets</p>
+                <div class="b-project-foot"><div class="b-mini-avatars"><span class="b-mini-avatar">ZW</span><span class="b-mini-avatar">SM</span></div><span>3 天前 →</span></div>
+              </article>
+            </div>
+          </div>
+          <aside class="b-activity">
+            <div class="b-activity-head"><h2>今天发生了什么</h2><button class="js-menu">查看全部</button></div>
+            <div class="b-queue">
+              <div class="b-queue-top"><span>RUN CAPACITY</span><span>68%</span></div>
+              <strong>18 个运行中</strong>
+              <div class="b-queue-bar"><span></span></div>
+            </div>
+            <ol class="b-timeline">
+              <li class="b-event warning"><time>14:32</time><p><strong>退款审批 Agent</strong> 正在等待你的审批。</p></li>
+              <li class="b-event"><time>14:18</time><p><strong>客户服务智能路由 v17</strong> 评测完成，通过率 96.8%。</p></li>
+              <li class="b-event"><time>13:44</time><p><strong>合同审查助手</strong> 已成功发布到生产环境。</p></li>
+              <li class="b-event"><time>11:20</time><p><strong>销售线索评分</strong> 更新了模型授权。</p></li>
+            </ol>
+          </aside>
+        </div>
+      </div>
+    </section>
+
+    <section class="concept" id="concept-c" aria-label="画布优先方案">
+      <div class="c-shell">
+        <header class="c-topbar">
+          <div class="c-logo"><svg><use href="#i-agent"></use></svg></div>
+          <div class="c-title"><strong>客户服务智能路由</strong><span>Workflows / Customer Care</span></div>
+          <div class="c-version"><span class="status-dot"></span>Draft · v18</div>
+          <div class="c-saved"><svg><use href="#i-check"></use></svg>已保存</div>
+          <div class="c-top-spacer"></div>
+          <button class="c-top-action js-menu"><svg><use href="#i-trace"></use></svg>执行记录</button>
+          <button class="c-top-action js-menu">测试</button>
+          <button class="c-top-action primary js-menu"><svg><use href="#i-play"></use></svg>运行工作流</button>
+          <div class="avatar">LX</div>
+        </header>
+        <nav class="c-rail">
+          <button class="c-rail-button active js-menu" aria-label="工作流画布"><svg><use href="#i-flow"></use></svg></button>
+          <button class="c-rail-button js-menu" aria-label="节点库"><svg><use href="#i-plus"></use></svg></button>
+          <button class="c-rail-button js-menu" aria-label="执行记录"><svg><use href="#i-trace"></use></svg></button>
+          <button class="c-rail-button js-menu" aria-label="测试集"><svg><use href="#i-dataset"></use></svg></button>
+          <button class="c-rail-button js-menu" aria-label="应用"><svg><use href="#i-app"></use></svg></button>
+          <div class="c-rail-spacer"></div>
+          <button class="c-rail-button js-menu" aria-label="模型与工具"><svg><use href="#i-model"></use></svg></button>
+          <button class="c-rail-button js-menu" aria-label="设置"><svg><use href="#i-settings"></use></svg></button>
+        </nav>
+        <div class="c-canvas">
+          <div class="c-canvas-tools">
+            <button aria-label="放大"><svg><use href="#i-zoom-in"></use></svg></button>
+            <button aria-label="缩小"><svg><use href="#i-zoom-out"></use></svg></button>
+            <button aria-label="适应画布"><svg><use href="#i-grid"></use></svg></button>
+          </div>
+          <div class="c-run-status"><span class="status-dot"></span>最近运行成功 · 2 分钟前</div>
+          <div class="c-wire one"></div>
+          <div class="c-wire two"></div>
+          <article class="c-node trigger js-node">
+            <span class="c-port out"></span>
+            <div class="c-node-head"><div class="c-node-icon green"><svg><use href="#i-play"></use></svg></div><div><strong>收到用户消息</strong><span>Chat Trigger</span></div></div>
+            <div class="c-node-body"><div class="c-node-row"><span>输入格式</span><strong>Message</strong></div><div class="c-node-row"><span>会话版本</span><strong>固定 v17</strong></div></div>
+          </article>
+          <article class="c-node agent selected js-node">
+            <span class="c-port in"></span><span class="c-port out"></span>
+            <div class="c-node-head"><div class="c-node-icon"><svg><use href="#i-agent"></use></svg></div><div><strong>客服路由 Agent</strong><span>AI Agent · Tools</span></div></div>
+            <div class="c-node-body"><div class="c-node-row"><span>最大迭代</span><strong>8</strong></div><div class="c-node-row"><span>工具数量</span><strong>3</strong></div></div>
+          </article>
+          <article class="c-node approval js-node">
+            <span class="c-port in"></span><span class="c-port out"></span>
+            <div class="c-node-head"><div class="c-node-icon orange"><svg><use href="#i-check"></use></svg></div><div><strong>退款人工审批</strong><span>Approval</span></div></div>
+            <div class="c-node-body"><div class="c-node-row"><span>审批角色</span><strong>客服主管</strong></div><div class="c-node-row"><span>超时策略</span><strong>24 小时</strong></div></div>
+          </article>
+          <div class="c-resource model"><svg><use href="#i-model"></use></svg>GPT-5 · Production</div>
+          <div class="c-resource tool"><svg><use href="#i-tool"></use></svg>订单查询 · 退款工具</div>
+        </div>
+        <aside class="c-inspector">
+          <div class="c-inspector-head"><strong id="c-inspector-title">客服路由 Agent</strong><span>Agent v2.1</span></div>
+          <div class="c-tabs">
+            <button class="c-tab active">参数</button>
+            <button class="c-tab">输入</button>
+            <button class="c-tab">输出</button>
+          </div>
+          <div class="c-inspector-body">
+            <div class="c-field"><label>模型</label><div class="c-input">GPT-5 · Production</div></div>
+            <div class="c-field"><label>系统指令</label><div class="c-input code">你是企业客服路由 Agent。先识别用户意图，再选择已授权工具完成任务。</div></div>
+            <div class="c-field"><label>Memory</label><div class="c-input">Mem0 · Customer Session</div></div>
+            <div class="c-field"><div class="c-switch-row"><span>保存完整 Trace</span><button class="c-switch" aria-label="保存完整 Trace"></button></div></div>
+            <div class="c-field"><div class="c-switch-row"><span>工具循环检测</span><button class="c-switch" aria-label="工具循环检测"></button></div></div>
+            <div class="c-execution">
+              <div class="c-execution-title"><span>最近执行</span><span>查看全部 →</span></div>
+              <div class="c-execution-card"><strong>Execution #EX-8342 · 成功</strong><span>6 次模型调用 · 2 个工具 · ¥0.84</span></div>
+              <div class="c-execution-card"><strong>Checkpoint · Agent 前</strong><span>可从此处创建 Fork Execution</span></div>
+            </div>
+          </div>
+        </aside>
+      </div>
+    </section>
+  </main>
+
+  <div class="toast" id="toast" role="status">已切换菜单</div>
+
+  <script src="assets/index.js"></script>
+</body>
+</html>

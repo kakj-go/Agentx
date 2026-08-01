@@ -1,0 +1,95 @@
+@import "tailwindcss";
+
+@theme inline {
+  --color-background: var(--ui-background);
+  --color-surface: var(--ui-surface);
+  --color-sidebar: var(--ui-sidebar);
+  --color-foreground: var(--ui-foreground);
+  --color-muted: var(--ui-muted);
+  --color-muted-foreground: var(--ui-muted-foreground);
+  --color-border: var(--ui-border);
+  --color-primary: var(--ui-primary);
+  --color-primary-foreground: var(--ui-primary-foreground);
+  --color-success: var(--ui-success);
+  --color-warning: var(--ui-warning);
+  --color-danger: var(--ui-danger);
+  --color-canvas: var(--ui-canvas);
+  --font-sans: Inter, "SF Pro Display", "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+:root {
+  color-scheme: light;
+  --ui-background: #f5f7fa;
+  --ui-surface: #ffffff;
+  --ui-sidebar: #ffffff;
+  --ui-foreground: #172033;
+  --ui-muted: #f0f2f6;
+  --ui-muted-foreground: #788396;
+  --ui-border: #e4e8ef;
+  --ui-primary: #635bff;
+  --ui-primary-foreground: #ffffff;
+  --ui-success: #0f9f6e;
+  --ui-warning: #d97706;
+  --ui-danger: #dc4c64;
+  --ui-canvas: #f7f8fb;
+  --ui-canvas-dot: #cfd5df;
+}
+
+.dark {
+  color-scheme: dark;
+  --ui-background: #0e1218;
+  --ui-surface: #141922;
+  --ui-sidebar: #11161e;
+  --ui-foreground: #e6eaf1;
+  --ui-muted: #1b222d;
+  --ui-muted-foreground: #8c96a6;
+  --ui-border: #29313d;
+  --ui-primary: #8b84ff;
+  --ui-primary-foreground: #10121a;
+  --ui-success: #55d3a6;
+  --ui-warning: #f0ad62;
+  --ui-danger: #f27489;
+  --ui-canvas: #0f141b;
+  --ui-canvas-dot: #343d49;
+}
+
+* {
+  border-color: var(--ui-border);
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--ui-background);
+  color: var(--ui-foreground);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+}
+
+button,
+a {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button {
+  cursor: pointer;
+}
+
+.react-flow__edge-path {
+  stroke: color-mix(in srgb, var(--ui-primary) 55%, var(--ui-muted-foreground));
+  stroke-width: 1.5;
+}
+
+.react-flow__controls-button {
+  border-bottom-color: var(--ui-border) !important;
+  background: var(--ui-surface) !important;
+  color: var(--ui-foreground) !important;
+  fill: currentColor !important;
+}
+
