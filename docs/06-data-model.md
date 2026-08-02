@@ -113,13 +113,19 @@ node_attempts 主要字段：
 - model_price_versions
 - tools
 - tool_versions
+- skills
+- skill_versions
+- skill_dependencies
 - rag_connections
 - rag_resources
 - memory_connections
 - memory_namespaces
+- workflow_skill_grants
 - workflow_resource_grants
 
 Credential 表只保存加密数据或外部 Secret Reference，不向前端返回明文。
+
+skills 保存租户内 Skill Definition 和生命周期状态。skill_versions 保存不可变 Manifest、Content Hash、兼容 Runtime 和 Artifact Reference；skill_dependencies 记录版本所需的 Tool、Model、Credential 及其他资源。workflow_skill_grants 显式记录 Workflow 对 Skill Definition 或固定版本的使用权限，不能替代依赖资源自身的授权。
 
 ## 6. 应用和会话表
 
@@ -234,4 +240,3 @@ Artifact 元数据在 MySQL，内容在对象存储。引用包含：
 - 测试报告保留时间
 
 清理时先检查 Checkpoint、报告和会话是否仍引用 Artifact。
-

@@ -14,7 +14,7 @@
   --color-warning: var(--ui-warning);
   --color-danger: var(--ui-danger);
   --color-canvas: var(--ui-canvas);
-  --font-sans: Inter, "SF Pro Display", "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-sans: "Segoe UI", "PingFang SC", "Microsoft YaHei", "Noto Sans SC", ui-sans-serif, system-ui, sans-serif;
 }
 
 :root {
@@ -64,6 +64,10 @@ body,
   margin: 0;
 }
 
+html {
+  min-width: 1180px;
+}
+
 body {
   background: var(--ui-background);
   color: var(--ui-foreground);
@@ -81,6 +85,14 @@ button {
   cursor: pointer;
 }
 
+button:disabled {
+  cursor: not-allowed;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--ui-primary) 22%, transparent);
+}
+
 .react-flow__edge-path {
   stroke: color-mix(in srgb, var(--ui-primary) 55%, var(--ui-muted-foreground));
   stroke-width: 1.5;
@@ -92,4 +104,3 @@ button {
   color: var(--ui-foreground) !important;
   fill: currentColor !important;
 }
-

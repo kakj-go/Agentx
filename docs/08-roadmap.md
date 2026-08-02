@@ -80,6 +80,8 @@
 交付：
 
 - Model、Agent、Tool 节点
+- Skill Definition、不可变 Skill Version 和依赖清单
+- Skill Workflow Grant 和 Agent Runtime 加载
 - ai_model、ai_tool、ai_memory 和 ai_retriever 连接
 - Agent Iteration
 - Tool 授权检查
@@ -93,6 +95,7 @@
 验收：
 
 - Agent 能在授权范围内调用多个 Tool。
+- Agent 只能加载已授权 Skill，且 Skill 依赖仍需通过各资源权限检查。
 - 可以查看每次模型请求和 Tool 调用。
 - 达到循环、成本或时间限制时能够终止或进入错误分支。
 - Code 节点只在 CubeSandbox 中运行。
@@ -172,7 +175,7 @@ MVP 完成时，用户应能完成：
 
 1. 初始化企业和 Admin。
 2. 创建部门、用户和角色。
-3. 接入模型、Tool、LightRAG 和 Mem0。
+3. 接入模型、Tool、Skill、LightRAG 和 Mem0。
 4. 将资源授权给 Workflow。
 5. 拖拽创建包含 Agent、Tool、Code 和审批的 Workflow。
 6. 手动运行并查看节点输入输出。

@@ -24,7 +24,7 @@
 - Tenant、Department、User、Role
 - Workflow、Draft、Version、Deployment
 - Node Definition 和 Node Version
-- Model、Tool、RAG、Memory、Credential
+- Model、Tool、Skill、RAG、Memory、Credential
 - Application、Session、Message
 - Approval Task 和 Notification
 - Dataset、Evaluator、Evaluation Run
