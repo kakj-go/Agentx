@@ -49,8 +49,8 @@ export const navigationGroups: NavigationGroup[] = [
   {
     labelKey: 'nav.groups.organization',
     items: [
-      { labelKey: 'nav.organization', path: '/organization', icon: UsersRound, keywords: ['department', 'user'] },
-      { labelKey: 'nav.roles', path: '/roles', icon: KeyRound, keywords: ['rbac', 'permission'] },
+      { labelKey: 'nav.organization', path: '/organization', icon: UsersRound, keywords: ['department', 'user'], requiredPermission: 'user:view' },
+      { labelKey: 'nav.roles', path: '/roles', icon: KeyRound, keywords: ['rbac', 'permission'], requiredPermission: 'role:view' },
     ],
   },
 ]

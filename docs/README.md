@@ -1,6 +1,6 @@
 # Agentx 产品与架构文档
 
-Agentx 是一个以 n8n 式 Workflow 编辑和运行模型为核心，面向企业 Agent 场景增强的多租户平台。
+Agentx 是一个以 n8n 式 Workflow 编辑和运行模型为核心，面向企业 Agent 场景增强的平台。首期采用单公司部署和公司内多部门模型，数据实体继续保留 tenant_id 作为隔离边界。
 
 平台的主链路是：
 
@@ -22,6 +22,17 @@ Agentx 是一个以 n8n 式 Workflow 编辑和运行模型为核心，面向企�
 | [08-roadmap.md](08-roadmap.md) | 开发阶段、交付物、验收标准和 MVP 范围 |
 | [09-codebase-architecture.md](09-codebase-architecture.md) | Monorepo、Rust 服务、公共 Crate 和依赖边界 |
 | [10-frontend-architecture.md](10-frontend-architecture.md) | Tailwind UI 体系、企业工作台和 React Flow 画布 |
+| [plan/README.md](plan/README.md) | 全量实施顺序、阶段任务、依赖、验收门禁和功能追踪 |
+| [plan/m2-task-list.md](plan/m2-task-list.md) | M2 Workflow 控制面与资源中心的详细实施批次和任务清单 |
+
+## 阅读和实施顺序
+
+1. 先阅读本页和 `01` 至 `10` 的产品、架构与工程边界。
+2. 通过 [实施总计划](plan/README.md) 确认当前阶段、进入条件和全局完成定义。
+3. 阅读对应阶段实施手册，按任务依赖推进并保存验收证据。
+4. 完成任务时同步更新 [功能追踪矩阵](plan/99-feature-traceability.md)。
+
+现有 `01` 至 `10` 文档回答“系统是什么以及为什么这样设计”，`plan/` 回答“按什么顺序实现、交付什么以及如何证明完成”。
 
 ## 核心设计结论
 
@@ -39,7 +50,7 @@ Agentx 是一个以 n8n 式 Workflow 编辑和运行模型为核心，面向企�
 12. Workflow 画布使用 React Flow，画布状态通过转换层生成独立的 Workflow Definition。
 13. 本地 Kustomize 同时启动应用、MySQL、Redis、ClickHouse 和 MinIO。
 
-## 后续详细设计
+## 实施前详细设计
 
 进入编码前还需要继续固化以下规范：
 
@@ -52,3 +63,5 @@ Agentx 是一个以 n8n 式 Workflow 编辑和运行模型为核心，面向企�
 - 外部 API 和内部 gRPC 协议
 - CubeSandbox Adapter 接口
 - Trace Event Schema
+
+这些规范分别在 [阶段 01](plan/01-contracts-and-foundation.md)、[阶段 08](plan/08-workflow-runtime-core.md)、[阶段 09](plan/09-checkpoint-wait-recovery.md) 和 [阶段 10](plan/10-agent-cubesandbox.md) 中完成并通过阶段门禁，不再作为无归属的开放事项保留。

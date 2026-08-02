@@ -7,6 +7,7 @@ import { RouterProvider } from 'react-router-dom'
 import './app/i18n'
 import { router } from './app/router'
 import { ThemeProvider } from './app/providers/theme-provider'
+import { AuthProvider } from './app/providers/auth-provider'
 import { ToastProvider } from './shared/ui/toast'
 import './styles/globals.css'
 
@@ -16,11 +17,13 @@ createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
-        <Tooltip.Provider delayDuration={300}>
-          <ToastProvider>
-            <RouterProvider router={router} />
-          </ToastProvider>
-        </Tooltip.Provider>
+        <AuthProvider>
+          <Tooltip.Provider delayDuration={300}>
+            <ToastProvider>
+              <RouterProvider router={router} />
+            </ToastProvider>
+          </Tooltip.Provider>
+        </AuthProvider>
       </ThemeProvider>
     </QueryClientProvider>
   </StrictMode>,

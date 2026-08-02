@@ -7,4 +7,15 @@ version.workspace = true
 
 [dependencies]
 agentx-application.workspace = true
-
+agentx-domain.workspace = true
+anyhow.workspace = true
+async-trait.workspace = true
+clickhouse.workspace = true
+config.workspace = true
+object_store.workspace = true
+redis.workspace = true
+secrecy.workspace = true
+sha2.workspace = true
+sqlx.workspace = true
+time.workspace = true
+uuid.workspace = true

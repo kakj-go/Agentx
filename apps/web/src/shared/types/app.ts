@@ -10,6 +10,7 @@ export type NavigationItem = {
   icon: ComponentType<{ className?: string }>
   badge?: string
   keywords?: string[]
+  requiredPermission?: string
 }
 
 export type NavigationGroup = {

@@ -1,227 +1,85 @@
 # 实施路线与验收标准
 
-## 0. 阶段零：工程骨架
+本文只保留产品级里程碑、实施顺序和 MVP 验收闭环。详细任务、依赖、接口、测试和完成定义见 [全量实施总计划](plan/README.md)。
 
-交付：
+## 1. 当前基线
 
-- Rust Cargo Workspace
-- 独立 services 目录
-- 公共 crates 目录
-- React、TypeScript、Tailwind CSS 前端
-- 企业工作台 App Shell
-- React Flow 示例画布
-- Docker 镜像定义
-- 本地 Kubernetes 应用和中间件
-- 精简 README 和 Apache-2.0 LICENSE
+M1 基础管理闭环已经完成：
 
-验收：
+- Rust Cargo Workspace、独立服务和公共 Crate
+- React、TypeScript、Tailwind CSS 企业工作台
+- 单公司 Bootstrap、JWT、Refresh Token 和首次修改密码流程
+- 部门树、用户、角色、数据范围、审计和跨租户 Repository 防护
+- SQLx Migration、OpenAPI、生成 TypeScript Client 和同源 `/api/v1`
+- Docker 镜像、本地 Kubernetes、Migration Job、MySQL、Redis、ClickHouse 和 MinIO
+- `/organization`、`/roles` 和 Header 用户状态使用真实 API
 
-- Cargo Workspace 可以编译。
-- 前端可以完成生产构建。
-- 每个后端服务拥有独立进程和健康检查。
-- Kustomize 可以生成合法清单。
-- 本地镜像构建后可以启动全部工作负载。
+Workflow 和资源中心等后续业务页面仍使用 Mock，运行引擎尚未实现。下一里程碑是 M2，按 [M2 实施任务清单](plan/m2-task-list.md)建设 Workflow 控制面、资源版本和授权；与运行相关的功能仍不得伪造成功结果。
 
-## 1. 阶段一：Workflow 内核
+## 2. 总体实施顺序
 
-预计 4 至 6 周。
+平台采用外围控制面优先、完整运行引擎和 Studio 后置的混合路径：
 
-交付：
+1. 冻结最小 Workflow、Version、Execution 和资源引用契约。
+2. 完成数据库、API、Bootstrap、JWT、租户和 RBAC。
+3. 完成 Workflow 控制面和资源中心。
+4. 完成 Application、Session、Dataset、Evaluation、Approval、Notification 和 Trace 外围能力。
+5. 使用 JSON Fixture 实现确定性 Workflow 运行内核。
+6. 完成 Checkpoint、Fork、Wait 和审批恢复。
+7. 完成 Agent、Tool Loop、资源运行和 CubeSandbox。
+8. 最后完善 n8n 式 Workflow Studio。
+9. 打通应用、评测、审批、通知、配额和全链路发布验收。
 
-- Workflow Definition
-- Node Definition
-- Item 数据模型
-- 受限表达式
-- Workflow 编译 IR
-- DAG 调度
-- IF、Switch、Merge、Loop
-- Execution、Node Execution、Node Attempt
-- Redis Queue
-- Lease、Heartbeat 和 Reaper
-- 基础 Checkpoint
+外围接口在运行引擎可用前必须返回明确的 `RUNTIME_UNAVAILABLE`，不能通过伪 Execution、伪审批恢复或伪报告宣告完成。
 
-验收：
+## 3. 里程碑
 
-- 多分支和循环 Workflow 能正确执行。
-- Worker 在节点运行中退出后，任务能够恢复或重试。
-- 重复队列消息不会无条件重复运行节点。
-- 每个节点输入输出可查询。
+| 里程碑 | 交付结果 | 详细计划 |
+|---|---|---|
+| M1 基础管理（done） | Bootstrap、JWT、单公司、部门、用户、角色和数据范围可用 | [阶段 01](plan/01-contracts-and-foundation.md)、[阶段 02](plan/02-bootstrap-auth-iam.md)；[验收证据](plan/m1-acceptance-evidence.md) |
+| M2 控制面 | Workflow Draft/Version/Deployment 和 Model、Tool、Skill、RAG、Memory、Credential 可用 | [阶段 03](plan/03-workflow-control-plane.md)、[阶段 04](plan/04-resource-center.md)；[详细任务清单](plan/m2-task-list.md) |
+| M3 外围闭环 | Application、Session、Dataset、Evaluation、Approval、Notification、Execution/Trace 查询可用 | [阶段 05](plan/05-applications-sessions-gateway.md) 至 [阶段 07](plan/07-approvals-notifications-trace.md) |
+| M4 可靠运行 | 非 AI JSON Workflow、Checkpoint、Fork、Wait 和审批恢复可用 | [阶段 08](plan/08-workflow-runtime-core.md)、[阶段 09](plan/09-checkpoint-wait-recovery.md) |
+| M5 Agent 运行 | Agent、Tool、Skill、RAG、Memory、成本、循环限制和 CubeSandbox 可用 | [阶段 10](plan/10-agent-cubesandbox.md) |
+| M6 Studio | 拖拽、配置、表达式、部分执行、Pin Data、Trace、版本和发布可用 | [阶段 11](plan/11-workflow-studio.md) |
+| M7 首期发布 | 应用、会话、审批、评测、Checkpoint、Trace、配额和通知全部贯通 | [阶段 12](plan/12-integration-hardening-release.md) |
 
-## 2. 阶段二：Workflow Studio
+## 4. MVP 验收闭环
 
-预计 5 至 7 周。
+MVP 完成时，用户必须能在全新部署中连续完成：
 
-交付：
-
-- React Flow 画布
-- 节点面板
-- 参数表单
-- 表达式编辑
-- 自动保存
-- Draft Revision
-- 手动运行
-- Execute Node
-- Execute To Node
-- Pin Data
-- 画布运行高亮
-- Workflow Version
-
-验收：
-
-- 用户能够通过拖拽完成基础 Workflow。
-- 调试体验接近 n8n。
-- 发布版本不可修改。
-- 草稿和历史版本可以比较。
-
-## 3. 阶段三：Agent 和 CubeSandbox
-
-预计 5 至 7 周。
-
-交付：
-
-- Model、Agent、Tool 节点
-- Skill Definition、不可变 Skill Version 和依赖清单
-- Skill Workflow Grant 和 Agent Runtime 加载
-- ai_model、ai_tool、ai_memory 和 ai_retriever 连接
-- Agent Iteration
-- Tool 授权检查
-- CubeSandbox Manager
-- Python、JavaScript、Shell 节点
-- Token 和成本
-- 工具错误
-- Agent 循环限制
-- ClickHouse Trace
-
-验收：
-
-- Agent 能在授权范围内调用多个 Tool。
-- Agent 只能加载已授权 Skill，且 Skill 依赖仍需通过各资源权限检查。
-- 可以查看每次模型请求和 Tool 调用。
-- 达到循环、成本或时间限制时能够终止或进入错误分支。
-- Code 节点只在 CubeSandbox 中运行。
-
-## 4. 阶段四：发布、应用和会话
-
-预计 4 至 6 周。
-
-交付：
-
-- Workflow Deployment
-- Application
-- Session
-- Message
-- API Key
-- SSE
-- Webhook
-- Schedule
-- Playground
-- 版本切换和回滚
-
-验收：
-
-- Workflow 可以发布为外部应用。
-- 每轮消息生成独立 Execution。
-- Playground 与正式 API 使用相同运行链路。
-- 历史 Session 能定位到运行时 Workflow Version。
-
-## 5. 阶段五：Checkpoint 和审批
-
-预计 4 至 5 周。
-
-交付：
-
-- 完整 Checkpoint
-- Fork Execution
-- 从任意可恢复节点重新执行
-- 副作用节点保护
-- Wait Node
-- Approval Node
-- Approval Task
-- 待办和站内通知
-- 超时和恢复
-
-验收：
-
-- Execution 可以等待较长时间且不占用 Worker。
-- 审批完成后可以由任意 Coordinator 恢复。
-- 用户可以从历史节点创建新的派生执行。
-- 原 Execution 不被修改。
-
-## 6. 阶段六：测试和评测
-
-预计 4 至 6 周。
-
-交付：
-
-- Dataset 和 Dataset Version
-- Test Case
-- Evaluation Run
-- 批量执行
-- 内置 Evaluator
-- LLM Judge
-- 版本对比
-- 评测报告
-
-验收：
-
-- 一个 Workflow Version 可以批量运行测试集。
-- 报告可以展示成功率、成本、耗时和工具错误。
-- 失败 Case 可以跳转到完整 Trace。
-- 可以对比两个 Workflow Version。
-
-## 7. MVP 验收闭环
-
-MVP 完成时，用户应能完成：
-
-1. 初始化企业和 Admin。
-2. 创建部门、用户和角色。
-3. 接入模型、Tool、Skill、LightRAG 和 Mem0。
-4. 将资源授权给 Workflow。
+1. 初始化企业和 Admin，并使用 JWT 登录。
+2. 创建部门、用户、角色和数据范围。
+3. 接入 Credential、模型、Tool、Skill、LightRAG 和 Mem0。
+4. 将所有直接和间接资源依赖授权给 Workflow。
 5. 拖拽创建包含 Agent、Tool、Code 和审批的 Workflow。
-6. 手动运行并查看节点输入输出。
-7. 在 ClickHouse Trace 页面查看模型、Tool 和成本。
-8. 从历史 Checkpoint 重新执行。
-9. 用 Dataset 批量评测版本。
-10. 发布为 Application。
-11. 通过 Playground 和 API 建立 Session 并发送消息。
-12. 在待办页面审批并恢复 Workflow。
+6. 手动运行并查看节点输入输出、Attempt 和 Trace。
+7. 查看模型、Tool、Agent 循环、Token、成本和错误。
+8. 从历史 Checkpoint 创建 Fork Execution。
+9. 使用 Dataset Version 批量评测 Workflow Version。
+10. 将 Workflow Version 发布为 Application Deployment。
+11. 通过 Playground 和 API 创建 Session、Message 并接收 SSE。
+12. 在待办页面审批并恢复原 Workflow Execution。
 
-## 8. 开发优先级
+每一步的唯一任务归属和验收证据见 [功能追踪矩阵](plan/99-feature-traceability.md)。
 
-最高优先级：
+## 5. 首期边界
 
-1. Item、Node 和表达式语义。
-2. 可恢复的 Scheduler。
-3. Version、Execution 和 Node Execution 数据模型。
-4. Agent Tool Loop。
-5. Trace 和 Checkpoint 数据贯通。
+首期暂缓：
 
-第二优先级：
-
-1. 画布交互完善。
-2. 应用和会话。
-3. 审批。
-4. 测试评测。
-5. 更多节点。
-
-暂缓：
-
-- 大量第三方连接器
-- n8n 全量节点兼容
-- 通用 BPMN
-- 插件交易市场
-- 通用监控平台
+- 大量第三方连接器和插件市场
+- n8n JSON 导入与全量节点兼容
+- 通用 BPMN、通用 OA 和通用页面搭建
+- Prometheus、Grafana 和通用监控平台
+- 完整商业计费平台
 - 跨区域多活
+- 首期 OIDC 登录实现；只预留 Identity Provider Adapter
 
-## 9. 编码前必须确定的决策
+## 6. 阶段完成规则
 
-- n8n JSON 是否要求导入，兼容到什么程度。
-- Workflow IR 的最终 Schema。
-- 表达式语法是否兼容 n8n 常用表达式。
-- Redis Streams 是否作为首期唯一任务队列。
-- 节点输出多大后转为 Artifact。
-- Checkpoint 默认粒度。
-- Sub-workflow 固定版本还是跟随 Deployment。
-- Session 默认固定版本还是跟随当前 Deployment。
-- Code 节点允许的语言和 CubeSandbox 模板。
-- Trace 中 Prompt 和 Response 的默认保存策略。
+- 不使用百分比判断完成。
+- 阶段进入前必须满足上一阶段稳定接口和进入条件。
+- 领域、Migration、API、前端和测试交付物必须同时完成。
+- 阶段验收门禁全部通过后才能标记为 `done`。
+- 任何架构边界变更必须先更新设计文档、决策记录和追踪矩阵。
+- 首期发布前 [功能追踪矩阵](plan/99-feature-traceability.md) 不得存在 `planned`、`in_progress` 或 `blocked`。

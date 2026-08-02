@@ -5,6 +5,11 @@ import { createBrowserRouter } from 'react-router-dom'
 import { DashboardPage } from '../features/dashboard/dashboard-page'
 import { NotFoundPage } from '../features/not-found/not-found-page'
 import { EnterpriseLayout } from '../layouts/enterprise-workbench/enterprise-layout'
+import { Protected, PublicRoute, RequirePermission } from './auth-guards'
+import { SetupPage } from '../features/auth/setup-page'
+import { LoginPage } from '../features/auth/login-page'
+import { ChangePasswordPage } from '../features/auth/change-password-page'
+import { ForbiddenPage } from '../features/auth/forbidden-page'
 
 const ApplicationsPage = lazy(() => import('../features/applications/applications-page').then((module) => ({ default: module.ApplicationsPage })))
 const ApprovalsPage = lazy(() => import('../features/approvals/approvals-page').then((module) => ({ default: module.ApprovalsPage })))
@@ -27,8 +32,12 @@ function deferred(element: ReactNode) {
 }
 
 export const router = createBrowserRouter([
+  { path: 'setup', element: <PublicRoute kind="setup"><SetupPage /></PublicRoute> },
+  { path: 'login', element: <PublicRoute kind="login"><LoginPage /></PublicRoute> },
+  { path: 'change-password', element: <PublicRoute kind="change-password"><ChangePasswordPage /></PublicRoute> },
+  { path: '403', element: <Protected><ForbiddenPage /></Protected> },
   {
-    element: <EnterpriseLayout />,
+    element: <Protected><EnterpriseLayout /></Protected>,
     children: [
       { index: true, element: <DashboardPage /> },
       { path: 'workflows', element: deferred(<WorkflowsPage />) },
@@ -44,8 +53,8 @@ export const router = createBrowserRouter([
       { path: 'skills', element: deferred(<SkillsPage />) },
       { path: 'knowledge', element: deferred(<KnowledgePage />) },
       { path: 'memory', element: deferred(<MemoryPage />) },
-      { path: 'organization', element: deferred(<OrganizationPage />) },
-      { path: 'roles', element: deferred(<RolesPage />) },
+      { path: 'organization', element: deferred(<RequirePermission permission="user:view"><OrganizationPage /></RequirePermission>) },
+      { path: 'roles', element: deferred(<RequirePermission permission="role:view"><RolesPage /></RequirePermission>) },
       { path: '*', element: <NotFoundPage /> },
     ],
   },

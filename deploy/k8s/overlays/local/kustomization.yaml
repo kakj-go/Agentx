@@ -10,9 +10,21 @@ configMapGenerator:
     literals:
       - AGENTX_ENV=local
       - AGENTX_MYSQL_HOST=mysql
-      - AGENTX_REDIS_HOST=redis
-      - AGENTX_CLICKHOUSE_HOST=clickhouse
+      - AGENTX_MYSQL_PORT=3306
+      - AGENTX_MYSQL_DATABASE=agentx
+      - AGENTX_MYSQL_USER=agentx
+      - AGENTX_REDIS_URL=redis://redis:6379/
+      - AGENTX_CLICKHOUSE_URL=http://clickhouse:8123
+      - AGENTX_CLICKHOUSE_DATABASE=agentx
+      - AGENTX_CLICKHOUSE_USER=agentx
       - AGENTX_S3_ENDPOINT=http://minio:9000
+      - AGENTX_S3_BUCKET=agentx-artifacts
+      - AGENTX_S3_REGION=us-east-1
+      - AGENTX_S3_ALLOW_HTTP=true
+      - AGENTX_COOKIE_SECURE=false
+      - AGENTX_LOGIN_MAX_FAILURES=5
+      - AGENTX_LOGIN_FAILURE_WINDOW_SECONDS=900
+      - AGENTX_LOGIN_LOCK_SECONDS=900
       - AGENTX_CUBESANDBOX_ENDPOINT=
 secretGenerator:
   - name: agentx-secrets
@@ -22,6 +34,7 @@ secretGenerator:
       - AGENTX_CLICKHOUSE_PASSWORD=agentx-local
       - AGENTX_MINIO_USER=agentx
       - AGENTX_MINIO_PASSWORD=agentx-local-secret
+      - AGENTX_JWT_SIGNING_SECRET=agentx-local-jwt-signing-secret-change-me
 images:
   - name: agentx/web
     newTag: dev
@@ -37,4 +50,14 @@ images:
     newTag: dev
   - name: agentx/trace-writer
     newTag: dev
-
+patches:
+  - target:
+      kind: Service
+      name: web
+    patch: |-
+      - op: add
+        path: /spec/type
+        value: LoadBalancer
+      - op: replace
+        path: /spec/ports/0/port
+        value: 8080

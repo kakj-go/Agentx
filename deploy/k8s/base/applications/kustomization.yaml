@@ -3,9 +3,9 @@ kind: Kustomization
 resources:
   - web.yaml
   - platform-api.yaml
+  - platform-api-migration.yaml
   - trigger-gateway.yaml
   - workflow-coordinator.yaml
   - workflow-worker.yaml
   - sandbox-manager.yaml
   - trace-writer.yaml
-

@@ -2,7 +2,6 @@ import {
   Bell,
   Bot,
   Check,
-  ChevronDown,
   ChevronLeft,
   Globe2,
   LogOut,
@@ -20,7 +19,9 @@ import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 
 import { navigationGroups, navigationItems, notifications } from '../../app/navigation'
 import { useTheme } from '../../app/providers/theme-provider'
+import { useAuth } from '../../app/providers/auth-provider'
 import { cn } from '../../shared/lib/cn'
+import { roleLabel } from '../../shared/lib/iam-labels'
 import type { SupportedLocale, ThemePreference } from '../../shared/types/app'
 import { Avatar } from '../../shared/ui/avatar'
 import { Button } from '../../shared/ui/button'
@@ -39,13 +40,7 @@ import { Input } from '../../shared/ui/input'
 import { Tooltip } from '../../shared/ui/tooltip'
 import { useToast } from '../../shared/ui/toast'
 
-const tenants = [
-  { id: 'xinghai', nameKey: 'tenants.xinghai', subKey: 'tenants.xinghaiSub', initials: 'AC' },
-  { id: 'beidou', nameKey: 'tenants.beidou', subKey: 'tenants.beidouSub', initials: 'BD' },
-]
-
 const sidebarStorageKey = 'agentx.sidebar.collapsed'
-const tenantStorageKey = 'agentx.tenantId'
 
 function pathTitleKey(pathname: string) {
   if (pathname.startsWith('/workflows/')) return 'nav.workflows'
@@ -56,14 +51,14 @@ export function EnterpriseLayout() {
   const { t, i18n } = useTranslation()
   const { preference, resolvedTheme, setPreference } = useTheme()
   const { showToast } = useToast()
+  const { user, logout, hasPermission } = useAuth()
   const location = useLocation()
   const navigate = useNavigate()
   const [collapsed, setCollapsed] = useState(() => window.localStorage.getItem(sidebarStorageKey) === 'true')
-  const [tenantId, setTenantId] = useState(() => window.localStorage.getItem(tenantStorageKey) ?? 'xinghai')
   const [searchOpen, setSearchOpen] = useState(false)
   const [query, setQuery] = useState('')
-  const tenant = tenants.find((item) => item.id === tenantId) ?? tenants[0]
-  const tenantName = t(tenant.nameKey)
+  const tenantName = user?.companyName ?? t('app.name')
+  const initials = (user?.displayName ?? user?.username ?? 'AX').slice(0, 2).toUpperCase()
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -76,21 +71,22 @@ export function EnterpriseLayout() {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [])
 
+  const visibleNavigationGroups = useMemo(() => navigationGroups.map((group) => ({
+    ...group,
+    items: group.items.filter((item) => !item.requiredPermission || hasPermission(item.requiredPermission)),
+  })).filter((group) => group.items.length > 0), [hasPermission])
+  const visibleNavigationItems = useMemo(() => visibleNavigationGroups.flatMap((group) => group.items), [visibleNavigationGroups])
+
   const searchResults = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase()
-    if (!normalized) return navigationItems
-    return navigationItems.filter((item) => `${t(item.labelKey)} ${item.keywords?.join(' ') ?? ''}`.toLocaleLowerCase().includes(normalized))
-  }, [query, t])
+    if (!normalized) return visibleNavigationItems
+    return visibleNavigationItems.filter((item) => `${t(item.labelKey)} ${item.keywords?.join(' ') ?? ''}`.toLocaleLowerCase().includes(normalized))
+  }, [query, t, visibleNavigationItems])
 
   const toggleSidebar = () => {
     const next = !collapsed
     setCollapsed(next)
     window.localStorage.setItem(sidebarStorageKey, String(next))
-  }
-
-  const changeTenant = (next: string) => {
-    setTenantId(next)
-    window.localStorage.setItem(tenantStorageKey, next)
   }
 
   const navigateFromMenu = (path: string) => {
@@ -107,23 +103,8 @@ export function EnterpriseLayout() {
           {!collapsed && <div><strong className="block text-[15px] tracking-tight">{t('app.name')}</strong><span className="text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">{t('app.subtitle')}</span></div>}
         </div>
 
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <button className={cn('mx-3 flex h-13 items-center gap-3 rounded-xl border border-border bg-muted/45 px-3 text-left outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-primary/25', collapsed && 'justify-center px-0')}>
-              <Avatar className="size-7 rounded-lg" initials={tenant.initials} />
-              {!collapsed && <><span className="min-w-0 flex-1"><strong className="block truncate text-xs">{tenantName}</strong><span className="block truncate text-[10px] text-muted-foreground">{t(tenant.subKey)}</span></span><ChevronDown className="size-3.5 text-muted-foreground" /></>}
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" className="w-64">
-            <DropdownMenuLabel>{t('header.tenant')}</DropdownMenuLabel>
-            <DropdownMenuRadioGroup onValueChange={changeTenant} value={tenantId}>
-              {tenants.map((item) => <DropdownMenuRadioItem key={item.id} value={item.id}><Avatar className="size-7 rounded-lg" initials={item.initials} /><span><strong className="block text-xs">{t(item.nameKey)}</strong><span className="text-[10px] text-muted-foreground">{t(item.subKey)}</span></span></DropdownMenuRadioItem>)}
-            </DropdownMenuRadioGroup>
-          </DropdownMenuContent>
-        </DropdownMenu>
-
-        <nav className="mt-4 flex-1 overflow-y-auto px-2.5 pb-4">
-          {navigationGroups.map((group) => (
+        <nav className="mt-2 flex-1 overflow-y-auto px-2.5 pb-4">
+          {visibleNavigationGroups.map((group) => (
             <div className="mb-4" key={group.labelKey}>
               {!collapsed && <p className="mb-1 px-2.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">{t(group.labelKey)}</p>}
               {group.items.map((item) => {
@@ -139,7 +120,6 @@ export function EnterpriseLayout() {
           ))}
         </nav>
 
-        <div className={cn('m-3 flex items-center gap-3 border-t border-border px-2 pt-3', collapsed && 'justify-center px-0')}><Avatar initials="LX" tone="dark" />{!collapsed && <div className="min-w-0 flex-1"><strong className="block truncate text-xs">{t('mocks.user.lin')}</strong><span className="text-[10px] text-muted-foreground">{t('header.admin')}</span></div>}</div>
       </aside>
 
       <div className="flex min-w-0 flex-col">
@@ -151,7 +131,7 @@ export function EnterpriseLayout() {
 
           <DropdownMenu>
             <DropdownMenuTrigger asChild><Button aria-label={t('common.language')} size="icon" variant="ghost"><Globe2 className="size-4" /></Button></DropdownMenuTrigger>
-            <DropdownMenuContent align="end"><DropdownMenuLabel>{t('common.language')}</DropdownMenuLabel><DropdownMenuRadioGroup onValueChange={(value) => void i18n.changeLanguage(value as SupportedLocale)} value={i18n.language}><DropdownMenuRadioItem value="zh-CN">{t('header.chinese')}</DropdownMenuRadioItem><DropdownMenuRadioItem value="en-US">{t('header.english')}</DropdownMenuRadioItem></DropdownMenuRadioGroup></DropdownMenuContent>
+            <DropdownMenuContent align="end"><DropdownMenuLabel>{t('common.language')}</DropdownMenuLabel><DropdownMenuRadioGroup onValueChange={(value) => void i18n.changeLanguage(value as SupportedLocale)} value={i18n.resolvedLanguage === 'en-US' ? 'en-US' : 'zh-CN'}><DropdownMenuRadioItem value="zh-CN">{t('header.chinese')}</DropdownMenuRadioItem><DropdownMenuRadioItem value="en-US">{t('header.english')}</DropdownMenuRadioItem></DropdownMenuRadioGroup></DropdownMenuContent>
           </DropdownMenu>
 
           <DropdownMenu>
@@ -165,8 +145,8 @@ export function EnterpriseLayout() {
           </DropdownMenu>
 
           <DropdownMenu>
-            <DropdownMenuTrigger asChild><button aria-label={t('header.profile')} className="rounded-full outline-none focus-visible:ring-2 focus-visible:ring-primary/30"><Avatar initials="LX" tone="dark" /></button></DropdownMenuTrigger>
-            <DropdownMenuContent align="end"><div className="flex items-center gap-3 px-2.5 py-2"><Avatar initials="LX" tone="dark" /><span><strong className="block text-xs">{t('mocks.user.lin')}</strong><span className="text-[10px] text-muted-foreground">{t('header.admin')}</span></span></div><DropdownMenuSeparator /><DropdownMenuItem onSelect={() => showToast(t('common.comingSoon'))}><UserRound className="size-4" />{t('header.profile')}</DropdownMenuItem><DropdownMenuItem onSelect={() => showToast(t('common.comingSoon'))}><Settings className="size-4" />{t('header.preferences')}</DropdownMenuItem><DropdownMenuSeparator /><DropdownMenuItem className="text-danger" onSelect={() => showToast(t('common.comingSoon'))}><LogOut className="size-4" />{t('header.logout')}</DropdownMenuItem></DropdownMenuContent>
+            <DropdownMenuTrigger asChild><button aria-label={t('header.profile')} className="rounded-full outline-none focus-visible:ring-2 focus-visible:ring-primary/30"><Avatar initials={initials} tone="dark" /></button></DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-72"><div className="flex items-center gap-3 px-2.5 py-3"><Avatar initials={initials} tone="dark" /><span><strong className="block text-sm">{user?.displayName}</strong><span className="text-[10px] text-muted-foreground">@{user?.username}</span></span></div><DropdownMenuSeparator /><dl className="grid grid-cols-[72px_1fr] gap-x-3 gap-y-2 px-3 py-2.5 text-[11px]"><dt className="text-muted-foreground">{t('header.company')}</dt><dd className="truncate font-medium">{user?.companyName}</dd><dt className="text-muted-foreground">{t('header.department')}</dt><dd className="truncate font-medium">{user?.departmentName}</dd><dt className="text-muted-foreground">{t('header.roles')}</dt><dd className="flex flex-wrap gap-1">{user?.roles.map((role) => <span className="rounded-md bg-primary/10 px-1.5 py-0.5 font-medium text-primary" key={role}>{roleLabel(t, role)}</span>)}</dd></dl><DropdownMenuSeparator /><DropdownMenuItem onSelect={() => showToast(t('common.comingSoon'))}><UserRound className="size-4" />{t('header.profile')}</DropdownMenuItem><DropdownMenuItem onSelect={() => showToast(t('common.comingSoon'))}><Settings className="size-4" />{t('header.preferences')}</DropdownMenuItem><DropdownMenuSeparator /><DropdownMenuItem className="text-danger" onSelect={() => void logout()}><LogOut className="size-4" />{t('header.logout')}</DropdownMenuItem></DropdownMenuContent>
           </DropdownMenu>
         </header>
 

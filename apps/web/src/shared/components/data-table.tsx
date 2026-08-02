@@ -54,10 +54,12 @@ export function DataTable<T>({ columns, data, getSearchText, searchPlaceholder, 
       <div className="flex min-h-16 items-center gap-3 border-b border-border px-5">
         <SearchField onChange={(event) => setSearch(event.target.value)} placeholder={searchPlaceholder} value={search} />
         {statusOptions.length > 0 && (
-          <Select aria-label={t('common.status')} onChange={(event) => setStatus(event.target.value)} value={status}>
-            <option value="all">{t('common.all')}</option>
-            {statusOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-          </Select>
+          <Select
+            aria-label={t('common.status')}
+            onValueChange={setStatus}
+            options={[{ value: 'all', label: t('common.all') }, ...statusOptions]}
+            value={status}
+          />
         )}
       </div>
       {table.getRowModel().rows.length === 0 ? <EmptyState /> : (

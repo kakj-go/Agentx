@@ -2,13 +2,21 @@ export const resources = {
   'zh-CN': {
     translation: {
       app: { name: 'Agentx', subtitle: 'Workflow Cloud' },
+      auth: {
+        brand: '企业级 Agent Workflow', companyName: '公司名称', username: '用户名', displayName: '管理员姓名', password: '密码', newPassword: '新密码', confirmPassword: '确认新密码',
+        passwordHint: '密码长度为 12–128 个字符，系统不会自动去除首尾空格。', passwordMismatch: '两次输入的密码不一致',
+        setup: { eyebrow: '首次初始化', title: '创建企业工作台', description: '设置当前部署唯一的公司和 Company Admin。初始化完成后不可再次执行。', submit: '初始化并进入工作台' },
+        login: { eyebrow: '企业登录', title: '登录 Agentx', description: '使用公司管理员为你创建的账号登录。', submit: '登录' },
+        change: { eyebrow: '账号安全', title: '设置正式密码', description: '该账号正在使用临时密码，继续前必须设置正式密码。', submit: '更新密码并登录' },
+        forbidden: { title: '无权访问', description: '你的角色和部门数据范围不允许访问此内容。' },
+      },
       common: {
         search: '搜索', all: '全部', status: '状态', actions: '操作', viewAll: '查看全部', create: '新建',
         previous: '上一页', next: '下一页', page: '第 {{current}} / {{total}} 页', noResults: '没有找到匹配结果',
         noResultsHint: '请调整搜索内容或筛选条件。', comingSoon: '功能将在业务 API 接入后开放',
-        active: '启用', inactive: '停用', published: '已发布', draft: '草稿', running: '运行中', success: '成功',
+        active: '启用', inactive: '停用', invited: '待首次登录', published: '已发布', draft: '草稿', running: '运行中', success: '成功',
         failed: '失败', pending: '待处理', waiting: '等待中', completed: '已完成', synced: '已同步', syncing: '同步中',
-        save: '保存', cancel: '取消', open: '打开', language: '语言', theme: '主题', notifications: '通知',
+        save: '保存', edit: '编辑', cancel: '取消', open: '打开', language: '语言', theme: '主题', notifications: '通知',
         updatedAt: '更新时间', owner: '所有者', name: '名称', version: '版本', members: '成员', description: '描述',
       },
       nav: {
@@ -19,11 +27,10 @@ export const resources = {
       },
       header: {
         collapse: '折叠菜单', expand: '展开菜单', searchPlaceholder: '搜索菜单、工作流或运行记录', searchHint: '搜索并跳转到功能页面',
-        tenant: '切换企业', systemTheme: '跟随系统', lightTheme: '浅色', darkTheme: '深色',
+        systemTheme: '跟随系统', lightTheme: '浅色', darkTheme: '深色',
         chinese: '简体中文', english: 'English', profile: '个人信息', preferences: '偏好设置', logout: '退出登录',
-        admin: '平台管理员', unread: '{{count}} 条未读', noNotifications: '暂无通知',
+        admin: '平台管理员', unread: '{{count}} 条未读', noNotifications: '暂无通知', company: '公司', department: '部门', user: '用户', account: '账号', roles: '所属角色',
       },
-      tenants: { xinghai: '星海科技', xinghaiSub: 'Enterprise Workspace', beidou: '北斗智能', beidouSub: 'AI Lab Workspace' },
       dashboard: {
         eyebrow: '工作空间总览', greeting: '早上好，林晓', intro: '这里是 {{tenant}} 今天的 Workflow 运行概况。', newWorkflow: '新建工作流',
         recent: '最近工作流', metrics: { running: '运行中', today: '今日执行', successRate: '成功率', cost: '今日成本', realtime: '实时', budget: '预算 62%', executions: '个执行' },
@@ -41,11 +48,20 @@ export const resources = {
         skills: { title: 'Skills', description: '管理 Agent 可加载的可版本化能力、运行方式和 Workflow 授权。', create: '新建 Skill', search: '搜索 Skill、来源或运行方式', source: '来源', version: '版本', runtime: '运行方式', workflows: '授权工作流' },
         knowledge: { title: '知识库', description: '管理 LightRAG 连接和知识库数据权限。', create: '接入知识库', search: '搜索知识库', provider: 'Provider', scope: '数据范围', workflows: '授权工作流', sync: '同步状态' },
         memory: { title: 'Memory', description: '管理 Mem0 连接、Namespace 和读写权限。', create: '接入 Memory', search: '搜索 Memory', provider: 'Provider', namespace: 'Namespace', permission: '读写权限', workflows: '授权工作流' },
-        organization: { title: '部门与用户', description: '管理租户内部门树、用户归属和账号状态。', invite: '邀请用户', departments: '部门', users: '用户', account: '账号', department: '部门', roles: '角色', allDepartments: '全部部门' },
-        roles: { title: '角色权限', description: '管理操作权限、数据范围和资源授权。', create: '新建角色', search: '搜索角色', dataScope: '数据范围', permissions: '权限摘要' },
+        organization: { title: '部门与用户', description: '管理公司内部门树、用户归属和账号状态。', invite: '邀请用户', departments: '部门', users: '用户', userName: '用户名称', account: '账号', department: '部门', roles: '角色', allDepartments: '全部部门', addDepartment: '新建部门', addChildDepartment: '在“{{name}}”下新建部门', editDepartment: '编辑或移动部门', parentDepartment: '上级部门', createUser: '创建用户', editUser: '编辑用户', initialPassword: '初始密码', initialPasswordHint: '新用户的初始密码固定为 123456，首次登录后必须设置正式密码。', expand: '展开部门', collapse: '收起部门', disable: '停用' },
+        roles: { title: '角色权限', description: '管理操作权限、数据范围和资源授权。', create: '新建角色', search: '搜索角色', dataScope: '数据范围', permissions: '权限摘要', code: '角色标识' },
         notFound: { title: '页面不存在', description: '你访问的页面不存在或已经移动。', back: '返回工作台' },
       },
       table: { workflow: '工作流', application: '应用', report: '报告', tool: '工具', skill: 'Skill', knowledge: '知识库', memory: 'Memory', role: '角色' },
+      dataScopes: { company: '全公司', department_tree: '本部门及下级部门', own: '仅本人' },
+      roleNames: { company_admin: '公司管理员', department_admin: '部门管理员', member: '普通成员' },
+      permissionLabels: {
+        company: { view: '查看公司', manage: '管理公司' },
+        department: { view: '查看部门', manage: '管理部门' },
+        user: { view: '查看用户', create: '创建用户', update: '编辑用户', disable: '停用用户' },
+        role: { view: '查看角色', manage: '管理角色', assign: '分配角色' },
+        audit: { view: '查看审计日志' },
+      },
       mocks: {
         workflow: { customer: '客户服务智能路由', contract: '合同审查与人工审批', lead: '销售线索自动评分', faq: '产品 FAQ Agent', invoice: '发票识别与归档', typeAgent: 'Agent Workflow', typeFlow: 'Workflow' },
         app: { customer: '客户服务助手', contract: '合同审查门户', sales: '销售线索助手', faq: '产品知识问答' },
@@ -80,13 +96,21 @@ export const resources = {
   'en-US': {
     translation: {
       app: { name: 'Agentx', subtitle: 'Workflow Cloud' },
+      auth: {
+        brand: 'Enterprise Agent Workflow', companyName: 'Company name', username: 'Username', displayName: 'Administrator name', password: 'Password', newPassword: 'New password', confirmPassword: 'Confirm password',
+        passwordHint: 'Use 12–128 characters. Leading and trailing spaces are preserved.', passwordMismatch: 'The passwords do not match.',
+        setup: { eyebrow: 'First-time setup', title: 'Create your company workspace', description: 'Configure the only company and Company Admin for this deployment. Setup cannot be run twice.', submit: 'Initialize workspace' },
+        login: { eyebrow: 'Company sign in', title: 'Sign in to Agentx', description: 'Use the account created for you by a company administrator.', submit: 'Sign in' },
+        change: { eyebrow: 'Account security', title: 'Set a permanent password', description: 'This account uses a temporary password. Set a permanent password to continue.', submit: 'Update password and sign in' },
+        forbidden: { title: 'Access denied', description: 'Your role and department data scope do not allow access to this content.' },
+      },
       common: {
         search: 'Search', all: 'All', status: 'Status', actions: 'Actions', viewAll: 'View all', create: 'Create',
         previous: 'Previous', next: 'Next', page: 'Page {{current}} of {{total}}', noResults: 'No matching results',
         noResultsHint: 'Try another search or filter.', comingSoon: 'This action will be available after the business API is connected.',
-        active: 'Active', inactive: 'Inactive', published: 'Published', draft: 'Draft', running: 'Running', success: 'Succeeded',
+        active: 'Active', inactive: 'Inactive', invited: 'Invited', published: 'Published', draft: 'Draft', running: 'Running', success: 'Succeeded',
         failed: 'Failed', pending: 'Pending', waiting: 'Waiting', completed: 'Completed', synced: 'Synced', syncing: 'Syncing',
-        save: 'Save', cancel: 'Cancel', open: 'Open', language: 'Language', theme: 'Theme', notifications: 'Notifications',
+        save: 'Save', edit: 'Edit', cancel: 'Cancel', open: 'Open', language: 'Language', theme: 'Theme', notifications: 'Notifications',
         updatedAt: 'Updated', owner: 'Owner', name: 'Name', version: 'Version', members: 'Members', description: 'Description',
       },
       nav: {
@@ -97,11 +121,10 @@ export const resources = {
       },
       header: {
         collapse: 'Collapse navigation', expand: 'Expand navigation', searchPlaceholder: 'Search menus, workflows, or executions', searchHint: 'Search and jump to a feature',
-        tenant: 'Switch company', systemTheme: 'Use system theme', lightTheme: 'Light', darkTheme: 'Dark',
+        systemTheme: 'Use system theme', lightTheme: 'Light', darkTheme: 'Dark',
         chinese: '简体中文', english: 'English', profile: 'Profile', preferences: 'Preferences', logout: 'Sign out',
-        admin: 'Platform Administrator', unread: '{{count}} unread', noNotifications: 'No notifications',
+        admin: 'Platform Administrator', unread: '{{count}} unread', noNotifications: 'No notifications', company: 'Company', department: 'Department', user: 'User', account: 'Account', roles: 'Roles',
       },
-      tenants: { xinghai: 'Xinghai Technology', xinghaiSub: 'Enterprise Workspace', beidou: 'Beidou Intelligence', beidouSub: 'AI Lab Workspace' },
       dashboard: {
         eyebrow: 'Workspace overview', greeting: 'Good morning, Lin Xiao', intro: "Here is today's Workflow activity for {{tenant}}.", newWorkflow: 'New workflow',
         recent: 'Recent workflows', metrics: { running: 'Running', today: 'Runs today', successRate: 'Success rate', cost: 'Cost today', realtime: 'Live', budget: '62% of budget', executions: 'executions' },
@@ -119,11 +142,20 @@ export const resources = {
         skills: { title: 'Skills', description: 'Manage versioned Agent capabilities, runtimes, and Workflow access.', create: 'New Skill', search: 'Search Skills, sources, or runtimes', source: 'Source', version: 'Version', runtime: 'Runtime', workflows: 'Workflows' },
         knowledge: { title: 'Knowledge', description: 'Manage LightRAG connections and knowledge permissions.', create: 'Connect knowledge', search: 'Search knowledge', provider: 'Provider', scope: 'Data scope', workflows: 'Workflows', sync: 'Sync status' },
         memory: { title: 'Memory', description: 'Manage Mem0 connections, namespaces, and access.', create: 'Connect Memory', search: 'Search Memory', provider: 'Provider', namespace: 'Namespace', permission: 'Access', workflows: 'Workflows' },
-        organization: { title: 'Departments & Users', description: 'Manage the tenant department tree, user ownership, and account status.', invite: 'Invite user', departments: 'Departments', users: 'Users', account: 'Account', department: 'Department', roles: 'Roles', allDepartments: 'All departments' },
-        roles: { title: 'Roles & Permissions', description: 'Manage operation permissions, data scopes, and resource access.', create: 'New role', search: 'Search roles', dataScope: 'Data scope', permissions: 'Permission summary' },
+        organization: { title: 'Departments & Users', description: 'Manage the company department tree, user ownership, and account status.', invite: 'Invite user', departments: 'Departments', users: 'Users', userName: 'User name', account: 'Account', department: 'Department', roles: 'Roles', allDepartments: 'All departments', addDepartment: 'New department', addChildDepartment: 'Create a department under “{{name}}”', editDepartment: 'Edit or move department', parentDepartment: 'Parent department', createUser: 'Create user', editUser: 'Edit user', initialPassword: 'Initial password', initialPasswordHint: 'Every new user starts with 123456 and must set a permanent password at first sign-in.', expand: 'Expand department', collapse: 'Collapse department', disable: 'Disable' },
+        roles: { title: 'Roles & Permissions', description: 'Manage operation permissions, data scopes, and resource access.', create: 'New role', search: 'Search roles', dataScope: 'Data scope', permissions: 'Permission summary', code: 'Role code' },
         notFound: { title: 'Page not found', description: 'The page does not exist or has moved.', back: 'Back to workspace' },
       },
       table: { workflow: 'Workflow', application: 'Application', report: 'Report', tool: 'Tool', skill: 'Skill', knowledge: 'Knowledge', memory: 'Memory', role: 'Role' },
+      dataScopes: { company: 'Company-wide', department_tree: 'Department and descendants', own: 'Own data only' },
+      roleNames: { company_admin: 'Company Admin', department_admin: 'Department Admin', member: 'Member' },
+      permissionLabels: {
+        company: { view: 'View company', manage: 'Manage company' },
+        department: { view: 'View departments', manage: 'Manage departments' },
+        user: { view: 'View users', create: 'Create users', update: 'Edit users', disable: 'Disable users' },
+        role: { view: 'View roles', manage: 'Manage roles', assign: 'Assign roles' },
+        audit: { view: 'View audit logs' },
+      },
       mocks: {
         workflow: { customer: 'Customer Service Routing', contract: 'Contract Review & Approval', lead: 'Sales Lead Scoring', faq: 'Product FAQ Agent', invoice: 'Invoice Recognition & Archive', typeAgent: 'Agent Workflow', typeFlow: 'Workflow' },
         app: { customer: 'Customer Service Assistant', contract: 'Contract Review Portal', sales: 'Sales Lead Assistant', faq: 'Product Knowledge Q&A' },

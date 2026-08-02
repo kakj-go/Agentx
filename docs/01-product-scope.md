@@ -100,6 +100,8 @@ Agentx 是企业级 Workflow 开发、运行、发布和评测平台。
 - Application、Session、Message、SSE 和 Playground
 - Dataset、Evaluator 和报告
 
+首期一个部署只初始化一个企业，不提供企业创建和切换入口。tenant_id 继续贯穿数据模型，为数据隔离和后续扩展保留稳定边界；企业内通过部门树、角色和数据范围管理权限。
+
 首期不做：
 
 - 通用 OA 和完整 BPMN

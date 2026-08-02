@@ -1,8 +1,8 @@
 # Workflow 上下游业务模块
 
-## 1. 多租户、部门和权限
+## 1. 单公司、部门和权限
 
-所有业务实体都包含 tenant_id。
+首期一个部署只支持一个公司，不提供 Tenant CRUD 或切换入口。所有业务实体仍包含 tenant_id，作为隔离、索引和后续扩展边界。
 
 组织模型：
 
@@ -43,6 +43,8 @@
 - 指定资源
 
 设计者的权限只决定他能否配置 Workflow。生产运行时使用 Workflow Service Identity，避免 Workflow 继承创建者个人权限。
+
+Bootstrap Admin 是 Company Admin，可以管理全部部门、用户和角色。Department Admin 只能管理其授权部门及子部门，不能访问父级或兄弟部门；新用户由服务端设置固定的一次性初始密码 `123456`，首次登录必须修改，正式密码仍执行 12–128 位规则。
 
 ## 2. Workflow 资源授权
 

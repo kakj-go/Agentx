@@ -176,6 +176,8 @@ Deployment 指向特定环境和 Workflow Version。环境之间不共享 Creden
 
 Base 保存可复用的应用和中间件清单，local Overlay 生成本地 ConfigMap、Secret 和镜像标签。
 
+Base 中的 Web Service 保持 `ClusterIP`，不把本地暴露策略带入生产环境。Docker Desktop 的 local Overlay 将 Web 单独改为 `LoadBalancer` 并暴露端口 `8080`，由内置的 Cloud Provider 映射到 `http://127.0.0.1:8080`；Platform API 继续仅在集群内部暴露，由 Web Nginx 统一代理 `/api/`。首期本地部署不引入 Ingress Controller。需要正式域名、TLS、多个 Host 或统一入口策略时，再在环境 Overlay 中安装 nginx-ingress 并增加 Ingress 资源。没有 LoadBalancer 实现的本地集群可使用 `kubectl port-forward service/web 18080:8080`。
+
 应用工作负载：
 
 - web

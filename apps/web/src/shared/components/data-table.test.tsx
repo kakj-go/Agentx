@@ -16,7 +16,8 @@ describe('DataTable', () => {
     fireEvent.change(screen.getByPlaceholderText('Find'), { target: { value: 'Alpha' } })
     expect(screen.getByText('Alpha')).toBeInTheDocument()
     expect(screen.queryByText('Beta')).not.toBeInTheDocument()
-    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'inactive' } })
+    fireEvent.keyDown(screen.getByRole('combobox'), { key: 'ArrowDown' })
+    fireEvent.click(screen.getByRole('option', { name: 'Inactive' }))
     expect(screen.getByText(i18n.t('common.noResults'))).toBeInTheDocument()
   })
 

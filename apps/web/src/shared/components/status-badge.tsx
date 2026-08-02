@@ -2,12 +2,12 @@ import { useTranslation } from 'react-i18next'
 
 import { Badge } from '../ui/badge'
 
-export type StatusValue = 'active' | 'inactive' | 'published' | 'draft' | 'running' | 'success' | 'failed' | 'pending' | 'waiting' | 'completed' | 'synced' | 'syncing'
+export type StatusValue = 'active' | 'inactive' | 'invited' | 'published' | 'draft' | 'running' | 'success' | 'failed' | 'pending' | 'waiting' | 'completed' | 'synced' | 'syncing'
 
 const tones = {
   active: 'success', published: 'success', success: 'success', completed: 'success', synced: 'success',
   running: 'primary', syncing: 'primary',
-  pending: 'warning', waiting: 'warning', draft: 'neutral', inactive: 'neutral', failed: 'danger',
+  pending: 'warning', waiting: 'warning', invited: 'warning', draft: 'neutral', inactive: 'neutral', failed: 'danger',
 } as const
 
 export function StatusBadge({ status }: { status: StatusValue }) {
