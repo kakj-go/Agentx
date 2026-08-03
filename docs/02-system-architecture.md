@@ -141,7 +141,7 @@
 - 沙箱：TencentCloud CubeSandbox
 - 部署：Kubernetes、Kustomize；成熟后再评估 Helm
 
-Node SDK 可以支持 Rust、Python 和 JavaScript。Python 与 JavaScript 自定义代码优先放在 CubeSandbox 内执行，不要求所有节点都由 Rust 编写。
+首期不发布 Rust、Python 或 JavaScript Node SDK。节点扩展通过版本化 Node Manifest、Node Action/Lifecycle API、OpenAPI/JSON Schema、接入文档和协议一致性 Fixture 完成；平台内部 Rust `NodeRunner` 只是 builtin Adapter。常规 REST 集成优先使用 declarative_http，复杂外部实现使用 remote_action，Python 与 JavaScript 自定义代码优先放在 CubeSandbox 内执行。
 
 ## 5. 一致性边界
 

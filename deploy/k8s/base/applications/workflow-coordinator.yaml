@@ -24,6 +24,8 @@ spec:
           ports:
             - name: health
               containerPort: 8080
+            - name: grpc
+              containerPort: 9090
           livenessProbe:
             httpGet:
               path: /health/live
@@ -32,4 +34,15 @@ spec:
             httpGet:
               path: /health/ready
               port: health
-
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: workflow-coordinator
+spec:
+  selector:
+    app.kubernetes.io/name: workflow-coordinator
+  ports:
+    - name: grpc
+      port: 9090
+      targetPort: grpc

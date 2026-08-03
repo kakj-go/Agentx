@@ -2,42 +2,80 @@ $ErrorActionPreference = "Stop"
 $PSNativeCommandUseErrorActionPreference = $true
 $root = Split-Path -Parent $PSScriptRoot
 
+function Invoke-Native {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Name,
+        [Parameter(Mandatory = $true)]
+        [scriptblock]$Command
+    )
+
+    & $Command
+    if ($LASTEXITCODE -ne 0) {
+        throw "$Name failed with exit code $LASTEXITCODE."
+    }
+}
+
 Push-Location $root
 try {
-    cargo fmt --all -- --check
-    cargo clippy --workspace --all-targets -- -D warnings
-    cargo test --workspace
+    Invoke-Native "cargo fmt" { cargo fmt --all -- --check }
+    Invoke-Native "cargo clippy" { cargo clippy --workspace --all-targets -- -D warnings }
+    Invoke-Native "cargo test" { cargo test --workspace }
     $openApiTemp = Join-Path ([System.IO.Path]::GetTempPath()) "agentx-platform-api-$PID.json"
-    cargo run --quiet -p platform-api -- openapi $openApiTemp
+    Invoke-Native "platform OpenAPI generation" { cargo run --quiet -p platform-api -- openapi $openApiTemp }
     if ((Get-Content -Raw -LiteralPath $openApiTemp) -cne (Get-Content -Raw -LiteralPath "$root/openapi/platform-api.json")) {
         throw "OpenAPI schema drift detected. Run: cargo run -p platform-api -- openapi openapi/platform-api.json"
     }
     Remove-Item -LiteralPath $openApiTemp -Force
     $typeScriptTemp = Join-Path ([System.IO.Path]::GetTempPath()) "agentx-platform-api-$PID.ts"
-    pnpm --filter @agentx/web exec node scripts/generate-api-types.mjs $typeScriptTemp
+    Invoke-Native "platform TypeScript generation" { pnpm --filter @agentx/web exec node scripts/generate-api-types.mjs $typeScriptTemp }
     if ((Get-Content -Raw -LiteralPath $typeScriptTemp) -cne (Get-Content -Raw -LiteralPath "$root/apps/web/src/shared/api/generated.ts")) {
         throw "Generated TypeScript API contract drift detected. Run: pnpm --filter @agentx/web generate:api"
     }
     Remove-Item -LiteralPath $typeScriptTemp -Force
     $gatewayOpenApiTemp = Join-Path ([System.IO.Path]::GetTempPath()) "agentx-trigger-gateway-$PID.json"
-    cargo run --quiet -p trigger-gateway -- openapi $gatewayOpenApiTemp
+    Invoke-Native "gateway OpenAPI generation" { cargo run --quiet -p trigger-gateway -- openapi $gatewayOpenApiTemp }
     if ((Get-Content -Raw -LiteralPath $gatewayOpenApiTemp) -cne (Get-Content -Raw -LiteralPath "$root/openapi/trigger-gateway.json")) {
         throw "Gateway OpenAPI schema drift detected. Run: cargo run -p trigger-gateway -- openapi openapi/trigger-gateway.json"
     }
     Remove-Item -LiteralPath $gatewayOpenApiTemp -Force
     $gatewayTypeScriptTemp = Join-Path ([System.IO.Path]::GetTempPath()) "agentx-trigger-gateway-$PID.ts"
-    pnpm --filter @agentx/web exec node scripts/generate-gateway-types.mjs $gatewayTypeScriptTemp
+    Invoke-Native "gateway TypeScript generation" { pnpm --filter @agentx/web exec node scripts/generate-gateway-types.mjs $gatewayTypeScriptTemp }
     if ((Get-Content -Raw -LiteralPath $gatewayTypeScriptTemp) -cne (Get-Content -Raw -LiteralPath "$root/apps/web/src/shared/api/generated-gateway.ts")) {
         throw "Generated Gateway TypeScript contract drift detected. Run: pnpm --filter @agentx/web generate:gateway"
     }
     Remove-Item -LiteralPath $gatewayTypeScriptTemp -Force
-    pnpm lint:web
-    pnpm --filter @agentx/web test
-    pnpm build:web
-    kubectl kustomize deploy/k8s/overlays/local | Out-Null
-    kubectl kustomize deploy/k8s/overlays/e2e | Out-Null
-    kubectl kustomize deploy/k8s/addons/lightrag | Out-Null
-    kubectl kustomize deploy/k8s/addons/mem0 | Out-Null
+    $nodeOpenApiTemp = Join-Path ([System.IO.Path]::GetTempPath()) "agentx-node-api-$PID.json"
+    Invoke-Native "node OpenAPI generation" { cargo run --quiet -p echo-node -- openapi $nodeOpenApiTemp }
+    if ((Get-Content -Raw -LiteralPath $nodeOpenApiTemp) -cne (Get-Content -Raw -LiteralPath "$root/openapi/node-api.json")) {
+        throw "Node API OpenAPI drift detected. Run: cargo run -p echo-node -- openapi openapi/node-api.json"
+    }
+    Remove-Item -LiteralPath $nodeOpenApiTemp -Force
+    $nodeSchemaTemp = Join-Path ([System.IO.Path]::GetTempPath()) "agentx-node-schemas-$PID"
+    New-Item -ItemType Directory -Path $nodeSchemaTemp | Out-Null
+    Invoke-Native "node JSON Schema generation" { cargo run --quiet -p echo-node -- schemas $nodeSchemaTemp }
+    $nodeSchemas = @(
+        "workflow-definition.schema.json",
+        "node-manifest.schema.json",
+        "node-action-request.schema.json",
+        "node-action-result.schema.json"
+    )
+    foreach ($schema in $nodeSchemas) {
+        $generated = Join-Path $nodeSchemaTemp $schema
+        $committed = Join-Path "$root/schemas" $schema
+        if ((Get-Content -Raw -LiteralPath $generated) -cne (Get-Content -Raw -LiteralPath $committed)) {
+            throw "Node protocol JSON Schema drift detected for $schema. Run: cargo run -p echo-node -- schemas schemas"
+        }
+        Remove-Item -LiteralPath $generated -Force
+    }
+    Remove-Item -LiteralPath $nodeSchemaTemp -Force
+    Invoke-Native "web lint" { pnpm lint:web }
+    Invoke-Native "web tests" { pnpm --filter @agentx/web test }
+    Invoke-Native "web build" { pnpm build:web }
+    Invoke-Native "local Kustomize render" { kubectl kustomize deploy/k8s/overlays/local | Out-Null }
+    Invoke-Native "E2E Kustomize render" { kubectl kustomize deploy/k8s/overlays/e2e | Out-Null }
+    Invoke-Native "LightRAG Kustomize render" { kubectl kustomize deploy/k8s/addons/lightrag | Out-Null }
+    Invoke-Native "Mem0 Kustomize render" { kubectl kustomize deploy/k8s/addons/mem0 | Out-Null }
 }
 finally {
     Pop-Location

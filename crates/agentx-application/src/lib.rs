@@ -4,7 +4,8 @@ use agentx_domain::{
     ApprovalTaskId, ArtifactId, DatasetVersionId, EvaluationProfileVersionId, EvaluationRunId,
     ExecutionId, ExecutionStatus, InvocationId, MissingGrant, NotificationId, ResourceOperation,
     ResourceReference, ResourceType, ResourceVersionSnapshot, SessionId, TenantId, TraceEvent,
-    WorkflowDefinition, WorkflowId, WorkflowServiceIdentity, WorkflowSummary, WorkflowVersionId,
+    UserId, WorkflowDefinition, WorkflowId, WorkflowServiceIdentity, WorkflowSummary,
+    WorkflowVersionId,
 };
 use anyhow::Result;
 use async_trait::async_trait;
@@ -225,16 +226,55 @@ pub trait IdentityProvider: Send + Sync {
 #[derive(Clone, Debug)]
 pub struct RequestExecution {
     pub tenant_id: TenantId,
-    pub invocation_id: InvocationId,
+    pub invocation_id: Option<InvocationId>,
     pub session_id: Option<SessionId>,
     pub workflow_version_id: WorkflowVersionId,
+    pub requested_by: Option<UserId>,
+    pub trigger_type: String,
     pub input: Value,
+    pub idempotency_key: Option<String>,
 }
 
 #[derive(Clone, Debug)]
 pub struct AcceptedExecution {
     pub execution_id: ExecutionId,
     pub status: ExecutionStatus,
+}
+
+#[derive(Clone, Debug)]
+pub struct ForkExecutionCommand {
+    pub tenant_id: TenantId,
+    pub source_execution_id: ExecutionId,
+    pub checkpoint_id: agentx_domain::CheckpointId,
+    pub mode: String,
+    pub node_id: Option<String>,
+    pub input_overrides: Value,
+    pub side_effect_decisions: Value,
+    pub actor_user_id: UserId,
+    pub idempotency_key: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ResumeExecutionCommand {
+    pub tenant_id: TenantId,
+    pub execution_id: ExecutionId,
+    pub node_execution_id: agentx_domain::NodeExecutionId,
+    pub resume_token: String,
+    pub output_port: String,
+    pub payload: Value,
+    pub idempotency_key: String,
+    pub actor_user_id: Option<UserId>,
+}
+
+#[derive(Clone, Debug)]
+pub struct SideEffectConfirmationCommand {
+    pub tenant_id: TenantId,
+    pub execution_id: ExecutionId,
+    pub node_execution_id: agentx_domain::NodeExecutionId,
+    pub checkpoint_id: Option<agentx_domain::CheckpointId>,
+    pub decision: String,
+    pub actor_user_id: UserId,
+    pub idempotency_key: String,
 }
 
 #[async_trait]
@@ -246,6 +286,15 @@ pub trait ExecutionRuntime: Send + Sync {
         id: ExecutionId,
     ) -> Result<Option<ExecutionStatus>>;
     async fn cancel_execution(&self, tenant_id: TenantId, id: ExecutionId) -> Result<()>;
+    async fn fork_execution(&self, _command: ForkExecutionCommand) -> Result<AcceptedExecution> {
+        anyhow::bail!("runtime fork is unavailable")
+    }
+    async fn resume_execution(&self, _command: ResumeExecutionCommand) -> Result<bool> {
+        anyhow::bail!("runtime resume is unavailable")
+    }
+    async fn confirm_side_effect(&self, _command: SideEffectConfirmationCommand) -> Result<bool> {
+        anyhow::bail!("runtime side-effect confirmation is unavailable")
+    }
 }
 
 #[derive(Clone, Debug)]

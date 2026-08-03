@@ -17,10 +17,10 @@
 ## 4. 前端状态和不变量
 
 - React Flow State 只包含编辑和布局信息，通过 Serializer 转换为 Workflow Draft DTO。
-- Node Type、Version、端口和参数来自 Node Registry，页面不得硬编码重复协议。
+- Node Type、Version、端口、Readiness、参数和动态 Provider 来自 Node Manifest，页面不得硬编码重复协议。
 - Draft Server Revision 是保存并发权威；本地 Undo/Redo 不替代 Revision。
 - Pin Data、Mock 和参数覆盖只属于 Draft 手动调试，发布校验必须拒绝泄漏到生产 Version。
-- 运行结果按 execution_id、node_id、run_index、branch_index、iteration_index 展示。
+- 运行结果按 execution_id、node_execution_id 和 run_index 展示；来源输出分支与 Item Lineage 单独展示，显式 Loop 可附加 loop_iteration_index。
 - 资源选择器同时检查当前用户可见性和目标 Workflow Service Identity 的 Grant。
 
 ## 5. 数据和 API
@@ -35,7 +35,7 @@
 
 - React Flow 负责拖动、缩放、框选、Handle、Edge、MiniMap 和 Viewport。
 - Zustand 保存当前编辑状态；独立 History Store 管理 Undo/Redo。
-- React Hook Form 和 Zod 驱动参数编辑；JSON Schema/UI Schema 生成节点表单。
+- React Hook Form 和 Zod 驱动参数编辑；JSON Schema、富 UI Schema 和受控动态 Provider 生成节点表单。
 - Monaco Editor 用于 Expression、Prompt 和 JSON。
 - ELK.js 提供自动布局。
 - TanStack Query 负责 Draft、Registry、资源、Execution 和 Trace 服务状态。
@@ -51,9 +51,9 @@
 | 编号 | 状态 | 依赖 | 交付物 | 验收条件 |
 |---|---|---|---|---|
 | STU-001 | planned | RUN-001–005 | 前端 Workflow Draft Model、Serializer 和反序列化 | React Flow 往返不丢业务字段，纯 UI 字段不进入 IR |
-| STU-002 | planned | RUN-002、AGT-013 | Node Registry Client、节点搜索和分类面板 | 版本、端口、图标和参数都来自 Registry |
+| STU-002 | planned | RUN-002、AGT-013 | Node Manifest Client、节点搜索和分类面板 | 版本、端口、图标、Readiness 和参数都来自 Manifest |
 | STU-003 | planned | STU-001–002 | 统一 Node、Handle、Edge 和连接类型 | main/error/AI 连接视觉明确且非法连接被拒绝 |
-| STU-004 | planned | STU-002 | JSON Schema 参数表单和 UI Schema 组件映射 | 必填、条件字段、数组、Credential 和资源字段一致校验 |
+| STU-004 | planned | STU-002 | JSON Schema、富 UI Schema、动态选项/搜索/字段映射组件 | 必填、条件字段、Collection、Credential、Resource Locator/Mapper 和动态结果一致校验 |
 | STU-005 | planned | RUN-004、STU-004 | Monaco Expression Editor、上下文和自动完成 | 表达式前后端校验结果一致，Secret 不可预览 |
 | STU-006 | planned | RES-007、STU-004 | Model/MCP Tool/Skill/RAG/Memory/Credential 资源选择器 | 只展示用户可见且 Workflow 已授权资源 |
 | STU-007 | planned | WCP-002、STU-001 | 自动保存、Revision 冲突、离开保护和恢复 | 并发编辑不静默覆盖，离线内容可恢复或明确丢弃 |
@@ -61,7 +61,7 @@
 | STU-009 | planned | RUN-014、STU-001 | Run Workflow、Stop 和运行状态订阅 | 画布高亮来自真实 Execution Event |
 | STU-010 | planned | REC-003、STU-009 | Execute Node、To Node、From Node | 缺失上游数据时提供 Pin、Checkpoint 或明确错误 |
 | STU-011 | planned | REC-001–003、STU-010 | Pin Data、Mock 和节点输入输出面板 | Pin/Mock 只作用手动执行，发布时被检测 |
-| STU-012 | planned | OBS-006、REC-009、STU-009 | Trace、Checkpoint、Fork 和错误定位入口 | 可从画布定位 runIndex/iterationIndex 和失败 Attempt |
+| STU-012 | planned | OBS-006、REC-009、STU-009 | Trace、Lineage、Checkpoint、Fork 和错误定位入口 | 可从画布定位 runIndex、来源分支、可选 loopIterationIndex 和失败 Attempt |
 | STU-013 | planned | WCP-004–007、STU-007 | Draft Diff、Version、发布、回滚和资源校验 | 发布生成不可变 Version，失败原因定位到节点和字段 |
 | STU-014 | planned | STU-001–013 | n8n 行为对照、性能和桌面端验收 | 关键体验对齐且有意差异有文档和测试 |
 
@@ -94,6 +94,6 @@
 ## 12. 对后续阶段的稳定输出
 
 - 完整 Workflow Studio 和 Draft Serializer。
-- Node Registry 驱动的参数与资源配置。
+- Node Manifest 驱动的参数、动态 Provider 与资源配置。
 - 真实运行、调试、Trace、Checkpoint、版本和发布 UI。
 - n8n 体验对照与差异清单。

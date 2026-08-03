@@ -13,7 +13,7 @@ import {
   Sun,
   UserRound,
 } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
@@ -59,7 +59,9 @@ export function EnterpriseLayout() {
   const location = useLocation()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
+  const mainRef = useRef<HTMLElement>(null)
   const [collapsed, setCollapsed] = useState(() => window.localStorage.getItem(sidebarStorageKey) === 'true')
+  const [mobileOpen, setMobileOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
   const [query, setQuery] = useState('')
   const tenantName = user?.companyName ?? t('app.name')
@@ -79,11 +81,16 @@ export function EnterpriseLayout() {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [])
 
+  useEffect(() => {
+    mainRef.current?.scrollTo({ left: 0, top: 0 })
+  }, [location.pathname])
+
   const visibleNavigationGroups = useMemo(() => navigationGroups.map((group) => ({
     ...group,
     items: group.items.filter((item) => !item.requiredPermission || hasPermission(item.requiredPermission)),
   })).filter((group) => group.items.length > 0), [hasPermission])
   const visibleNavigationItems = useMemo(() => visibleNavigationGroups.flatMap((group) => group.items), [visibleNavigationGroups])
+  const showSidebarLabels = !collapsed || mobileOpen
 
   const searchResults = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase()
@@ -104,38 +111,40 @@ export function EnterpriseLayout() {
   }
 
   return (
-    <div className={cn('grid h-screen min-w-[1180px] overflow-hidden bg-background', collapsed ? 'grid-cols-[72px_1fr]' : 'grid-cols-[248px_1fr]')}>
-      <aside className="flex min-w-0 flex-col border-r border-border bg-sidebar">
-        <div className={cn('flex h-18 items-center gap-3 px-5', collapsed && 'justify-center px-0')}>
+    <div className={cn('relative grid h-dvh min-w-0 grid-cols-1 overflow-hidden bg-background', collapsed ? 'md:grid-cols-[72px_1fr]' : 'md:grid-cols-[248px_1fr]')}>
+      <aside className={cn('fixed inset-y-0 left-0 z-50 flex min-h-0 w-[248px] min-w-0 flex-col border-r border-border bg-sidebar transition-transform md:static md:z-auto md:w-auto md:translate-x-0', mobileOpen ? 'translate-x-0' : '-translate-x-full')}>
+        <div className={cn('flex h-18 items-center gap-3 px-5', collapsed && !mobileOpen && 'justify-center px-0')}>
           <div className="grid size-9 shrink-0 place-items-center rounded-xl bg-primary text-primary-foreground shadow-sm"><Bot className="size-5" /></div>
-          {!collapsed && <div><strong className="block text-[15px] tracking-tight">{t('app.name')}</strong><span className="text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">{t('app.subtitle')}</span></div>}
+          {showSidebarLabels && <div><strong className="block text-[15px] tracking-tight">{t('app.name')}</strong><span className="text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">{t('app.subtitle')}</span></div>}
         </div>
 
         <nav className="mt-2 flex-1 overflow-y-auto px-2.5 pb-4">
           {visibleNavigationGroups.map((group) => (
             <div className="mb-4" key={group.labelKey}>
-              {!collapsed && <p className="mb-1 px-2.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">{t(group.labelKey)}</p>}
+              {showSidebarLabels && <p className="mb-1 px-2.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">{t(group.labelKey)}</p>}
               {group.items.map((item) => {
                 const Icon = item.icon
                 const link = (
-                  <NavLink className={({ isActive }) => cn('my-0.5 flex h-10 items-center gap-3 rounded-lg px-2.5 text-[13px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground', isActive && 'bg-primary/10 font-semibold text-primary hover:bg-primary/10 hover:text-primary', collapsed && 'justify-center px-0')} end={item.path === '/'} to={item.path}>
-                    <Icon className="size-4.5 shrink-0" />{!collapsed && <span className="truncate">{t(item.labelKey)}</span>}{!collapsed && item.badge && <span className="ml-auto rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">{item.badge}</span>}
+                  <NavLink className={({ isActive }) => cn('my-0.5 flex h-10 items-center gap-3 rounded-lg px-2.5 text-[13px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground', isActive && 'bg-primary/10 font-semibold text-primary hover:bg-primary/10 hover:text-primary', collapsed && !mobileOpen && 'justify-center px-0')} end={item.path === '/'} onClick={() => setMobileOpen(false)} to={item.path}>
+                    <Icon className="size-4.5 shrink-0" />{showSidebarLabels && <span className="truncate">{t(item.labelKey)}</span>}{showSidebarLabels && item.badge && <span className="ml-auto rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">{item.badge}</span>}
                   </NavLink>
                 )
-                return collapsed ? <Tooltip content={t(item.labelKey)} key={item.path}>{link}</Tooltip> : <span className="contents" key={item.path}>{link}</span>
+                return collapsed && !mobileOpen ? <Tooltip content={t(item.labelKey)} key={item.path}>{link}</Tooltip> : <span className="contents" key={item.path}>{link}</span>
               })}
             </div>
           ))}
         </nav>
 
       </aside>
+      {mobileOpen && <button aria-label="关闭导航" className="fixed inset-0 z-40 bg-background/70 md:hidden" onClick={() => setMobileOpen(false)} />}
 
-      <div className="flex min-w-0 flex-col">
-        <header className="flex h-16 shrink-0 items-center gap-3 border-b border-border bg-surface/95 px-6">
-          <Button aria-label={t(collapsed ? 'header.expand' : 'header.collapse')} onClick={toggleSidebar} size="icon" variant="ghost">{collapsed ? <Menu className="size-4" /> : <ChevronLeft className="size-4" />}</Button>
-          <div className="text-xs text-muted-foreground">{tenantName}<span className="mx-2">/</span><strong className="text-foreground">{t(pathTitleKey(location.pathname))}</strong></div>
+      <div className="flex min-h-0 min-w-0 flex-col">
+        <header className="flex h-16 shrink-0 items-center gap-2 border-b border-border bg-surface/95 px-3 sm:gap-3 sm:px-6">
+          <Button aria-label="打开导航" className="md:hidden" onClick={() => setMobileOpen(true)} size="icon" variant="ghost"><Menu className="size-4" /></Button>
+          <Button aria-label={t(collapsed ? 'header.expand' : 'header.collapse')} className="hidden md:inline-flex" onClick={toggleSidebar} size="icon" variant="ghost">{collapsed ? <Menu className="size-4" /> : <ChevronLeft className="size-4" />}</Button>
+          <div className="min-w-0 truncate text-xs text-muted-foreground"><span className="hidden sm:inline">{tenantName}<span className="mx-2">/</span></span><strong className="text-foreground">{t(pathTitleKey(location.pathname))}</strong></div>
           <div className="flex-1" />
-          <button className="flex h-9 w-80 items-center gap-2 rounded-lg border border-border bg-muted/50 px-3 text-xs text-muted-foreground outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-primary/25" onClick={() => setSearchOpen(true)}><Search className="size-4" /><span className="truncate">{t('header.searchPlaceholder')}</span><kbd className="ml-auto text-[10px]">⌘ K</kbd></button>
+          <button className="hidden h-9 w-80 items-center gap-2 rounded-lg border border-border bg-muted/50 px-3 text-xs text-muted-foreground outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-primary/25 xl:flex" onClick={() => setSearchOpen(true)}><Search className="size-4" /><span className="truncate">{t('header.searchPlaceholder')}</span><kbd className="ml-auto text-[10px]">⌘ K</kbd></button>
 
           <DropdownMenu>
             <DropdownMenuTrigger asChild><Button aria-label={t('common.language')} size="icon" variant="ghost"><Globe2 className="size-4" /></Button></DropdownMenuTrigger>
@@ -158,7 +167,7 @@ export function EnterpriseLayout() {
           </DropdownMenu>
         </header>
 
-        <main className="min-h-0 flex-1 overflow-auto"><Outlet context={{ tenantName }} /></main>
+        <main className="min-h-0 flex-1 overflow-auto" ref={mainRef}><Outlet context={{ tenantName }} /></main>
       </div>
 
       <Dialog onOpenChange={setSearchOpen} open={searchOpen}>

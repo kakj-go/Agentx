@@ -1,0 +1,22 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: m4-fixture
+  namespace: agentx-e2e
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: m4-fixture
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: fixture
+          image: agentx/m4-fixture:dev
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: agentx-config
+            - secretRef:
+                name: agentx-secrets

@@ -149,6 +149,27 @@ export interface components {
             password: string;
             token: string;
         };
+        CheckpointListResponse: {
+            items: components["schemas"]["CheckpointResponse"][];
+        };
+        CheckpointResponse: {
+            /** Format: int64 */
+            activationCount: number;
+            checkpointType: string;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: int64 */
+            deliveryCount: number;
+            /** Format: uuid */
+            executionId: string;
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            nodeExecutionId?: string | null;
+            /** Format: int64 */
+            sequenceNumber: number;
+            stateHash: string;
+        };
         ConnectionResponse: {
             configuration: unknown;
             /** Format: uuid */
@@ -579,7 +600,15 @@ export interface components {
             /** Format: uuid */
             workflowVersionId: string;
         };
+        ExecutionCommandResponse: {
+            /** Format: uuid */
+            executionId: string;
+            replayed: boolean;
+            status: string;
+        };
         ExecutionResponse: {
+            /** Format: uuid */
+            callerExecutionId?: string | null;
             /** Format: int64 */
             costMicros: number;
             /** Format: int64 */
@@ -588,10 +617,15 @@ export interface components {
             endedAt?: string | null;
             errorCode?: string | null;
             errorMessage?: string | null;
+            executionType: string;
+            /** Format: uuid */
+            forkCheckpointId?: string | null;
             /** Format: uuid */
             id: string;
             /** Format: uuid */
             invocationId?: string | null;
+            /** Format: uuid */
+            parentExecutionId?: string | null;
             /** Format: uuid */
             sessionId?: string | null;
             /** Format: date-time */
@@ -612,6 +646,15 @@ export interface components {
             code: string;
             field: string;
             message: string;
+        };
+        ForkRequest: {
+            /** Format: uuid */
+            checkpointId: string;
+            idempotencyKey?: string | null;
+            inputOverrides?: unknown;
+            mode: string;
+            nodeId?: string | null;
+            sideEffectDecisions?: unknown;
         };
         GrantResponse: {
             /** Format: date-time */
@@ -657,6 +700,10 @@ export interface components {
             status: string;
             version: string;
         };
+        IdempotentCommandResponse: {
+            accepted: boolean;
+            replayed: boolean;
+        };
         ImportCasesRequest: {
             content: string;
             /** Format: int64 */
@@ -681,6 +728,20 @@ export interface components {
             updatedAt: string;
             /** Format: int64 */
             version: number;
+        };
+        LineageResponse: {
+            /** Format: uuid */
+            deliveryId: string;
+            /** Format: int32 */
+            sourceItemIndex: number;
+            /** Format: uuid */
+            sourceNodeExecutionId: string;
+            /** Format: int32 */
+            sourceOutputIndex: number;
+            /** Format: int32 */
+            sourceRunIndex: number;
+            /** Format: int32 */
+            targetItemIndex: number;
         };
         LoginRequest: {
             password: string;
@@ -877,6 +938,57 @@ export interface components {
             /** Format: uuid */
             parentId?: string | null;
         };
+        NodeAttemptResponse: {
+            /** Format: int32 */
+            attemptNumber: number;
+            /** Format: date-time */
+            deadlineAt?: string | null;
+            /** Format: date-time */
+            endedAt?: string | null;
+            errorCode?: string | null;
+            errorMessage?: string | null;
+            /** Format: uuid */
+            id: string;
+            /** Format: date-time */
+            startedAt?: string | null;
+            status: string;
+            workerInstanceId?: string | null;
+        };
+        NodeExecutionListResponse: {
+            items: components["schemas"]["NodeExecutionResponse"][];
+        };
+        NodeExecutionResponse: {
+            /** Format: int32 */
+            activationSlot: number;
+            attempts: components["schemas"]["NodeAttemptResponse"][];
+            capability: string;
+            /** Format: date-time */
+            endedAt?: string | null;
+            errorCode?: string | null;
+            errorMessage?: string | null;
+            /** Format: uuid */
+            executionId: string;
+            /** Format: int32 */
+            generation: number;
+            /** Format: uuid */
+            id: string;
+            input?: unknown;
+            /** Format: int32 */
+            iterationIndex: number;
+            lineage: components["schemas"]["LineageResponse"][];
+            nodeId: string;
+            nodeName: string;
+            nodeType: string;
+            /** Format: int32 */
+            nodeVersion: number;
+            output?: unknown;
+            /** Format: int32 */
+            runIndex: number;
+            sideEffectLevel: string;
+            /** Format: date-time */
+            startedAt?: string | null;
+            status: string;
+        };
         NotificationInboxResponse: {
             items: components["schemas"]["NotificationResponse"][];
             /** Format: int64 */
@@ -1012,6 +1124,14 @@ export interface components {
             /** Format: uuid */
             workflowVersionId?: string | null;
         };
+        SideEffectConfirmationRequest: {
+            /** Format: uuid */
+            checkpointId?: string | null;
+            decision: string;
+            idempotencyKey: string;
+            /** Format: uuid */
+            nodeExecutionId: string;
+        };
         SkillDependencyInput: {
             operation: string;
             /** Format: uuid */
@@ -1078,6 +1198,10 @@ export interface components {
             entries: components["schemas"]["SkillWorkspaceEntry"][];
             /** Format: int64 */
             revision: number;
+        };
+        StartExecutionRequest: {
+            idempotencyKey?: string | null;
+            input?: unknown;
         };
         TestCaseResponse: {
             caseKey: string;
@@ -1296,6 +1420,25 @@ export interface components {
         VersionActionRequest: {
             /** Format: int64 */
             version: number;
+        };
+        WaitListResponse: {
+            items: components["schemas"]["WaitResponse"][];
+        };
+        WaitResponse: {
+            authenticationMode: string;
+            /** Format: uuid */
+            executionId: string;
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            nodeExecutionId: string;
+            resumeUrl?: string | null;
+            status: string;
+            /** Format: date-time */
+            timeoutAt?: string | null;
+            waitKind: string;
+            /** Format: date-time */
+            wakeAt?: string | null;
         };
         WebhookResponse: {
             /** Format: uuid */

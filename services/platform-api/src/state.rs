@@ -1,7 +1,9 @@
 use std::{collections::HashMap, sync::Arc};
 
+use agentx_application::ExecutionRuntime;
 use agentx_infrastructure::config::RedisSettings;
 use agentx_infrastructure::credential::CredentialKeyring;
+use agentx_infrastructure::runtime_client::GrpcExecutionRuntime;
 use object_store::ObjectStore;
 use sqlx::MySqlPool;
 use tokio::sync::{Mutex, Semaphore};
@@ -19,6 +21,7 @@ pub struct AppState {
     pub connections: Arc<ConnectionSettings>,
     pub clickhouse: Option<clickhouse::Client>,
     pub redis: Option<Arc<RedisSettings>>,
+    pub runtime: Option<Arc<dyn ExecutionRuntime>>,
     connection_limits: Arc<Mutex<HashMap<Uuid, Arc<Semaphore>>>>,
 }
 
@@ -42,8 +45,15 @@ impl AppState {
             }),
             clickhouse: None,
             redis: None,
+            runtime: None,
             connection_limits: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    #[must_use]
+    pub fn with_runtime(mut self, runtime: GrpcExecutionRuntime) -> Self {
+        self.runtime = Some(Arc::new(runtime));
+        self
     }
 
     #[must_use]

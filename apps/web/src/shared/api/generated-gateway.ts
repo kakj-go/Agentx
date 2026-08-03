@@ -66,6 +66,14 @@ export interface components {
             /** Format: uuid */
             workflowVersionId?: string | null;
         };
+        WaitResumeRequest: {
+            outputPort?: string | null;
+            payload?: unknown;
+        };
+        WaitResumeResponse: {
+            accepted: boolean;
+            replayed: boolean;
+        };
     };
     responses: never;
     parameters: never;

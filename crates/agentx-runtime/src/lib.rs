@@ -1,30 +1,15 @@
-use serde::{Deserialize, Serialize};
+mod compiler;
+mod expression;
+mod registry;
+mod state;
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ConnectionKind {
-    Main,
-    Error,
-    AiModel,
-    AiTool,
-    AiMemory,
-    AiRetriever,
-    AiOutputParser,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GraphConnection {
-    pub source_node_id: String,
-    pub source_port: String,
-    pub target_node_id: String,
-    pub target_port: String,
-    pub kind: ConnectionKind,
-}
-
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CompiledWorkflow {
-    pub node_ids: Vec<String>,
-    pub connections: Vec<GraphConnection>,
-}
+pub use compiler::{
+    COMPILER_VERSION, CompileContext, CompileError, CompiledConnection, CompiledNode,
+    CompiledWorkflow, WorkflowCompiler,
+};
+pub use expression::{ExpressionContext, ExpressionEngine, ExpressionError};
+pub use registry::{NodeRegistry, RegistryError};
+pub use state::{
+    ActivationStatus, AttemptStatus, DeliveryKind, EdgeDelivery, ExecutionMachine, MachineError,
+    NodeActivation, PartialExecutionMode, RuntimeAttempt, RuntimeExecutionStatus,
+};

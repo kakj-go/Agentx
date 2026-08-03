@@ -1,0 +1,298 @@
+{
+  "$defs": {
+    "BinaryReference": {
+      "additionalProperties": false,
+      "properties": {
+        "artifactHandle": {
+          "type": "string"
+        },
+        "contentType": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "fileName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sizeBytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "artifactHandle",
+        "sizeBytes"
+      ],
+      "type": "object"
+    },
+    "ExecutionMode": {
+      "enum": [
+        "manual",
+        "production",
+        "evaluation",
+        "partial"
+      ],
+      "type": "string"
+    },
+    "GroupedInput": {
+      "additionalProperties": false,
+      "properties": {
+        "branchIndex": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/Item"
+          },
+          "type": "array"
+        },
+        "port": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "port",
+        "branchIndex",
+        "items"
+      ],
+      "type": "object"
+    },
+    "InvocationHandle": {
+      "additionalProperties": false,
+      "properties": {
+        "brokerUrl": {
+          "type": "string"
+        },
+        "expiresAt": {
+          "type": "string"
+        },
+        "handle": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "handle",
+        "brokerUrl",
+        "expiresAt"
+      ],
+      "type": "object"
+    },
+    "Item": {
+      "additionalProperties": false,
+      "properties": {
+        "binary": {
+          "additionalProperties": {
+            "$ref": "#/$defs/BinaryReference"
+          },
+          "type": "object"
+        },
+        "json": true,
+        "lineage": {
+          "items": {
+            "$ref": "#/$defs/ItemSource"
+          },
+          "type": "array"
+        },
+        "metadata": {
+          "additionalProperties": true,
+          "type": "object"
+        }
+      },
+      "required": [
+        "json"
+      ],
+      "type": "object"
+    },
+    "ItemSource": {
+      "additionalProperties": false,
+      "properties": {
+        "itemIndex": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "nodeExecutionId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "nodeId": {
+          "type": "string"
+        },
+        "outputIndex": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "runIndex": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "nodeExecutionId",
+        "nodeId",
+        "runIndex",
+        "outputIndex",
+        "itemIndex"
+      ],
+      "type": "object"
+    },
+    "NodeProtocolVersion": {
+      "enum": [
+        "1.0"
+      ],
+      "type": "string"
+    },
+    "ResolvedParameters": {
+      "additionalProperties": false,
+      "properties": {
+        "common": true,
+        "perItem": {
+          "default": [],
+          "items": true,
+          "type": "array"
+        }
+      },
+      "required": [
+        "common"
+      ],
+      "type": "object"
+    },
+    "TraceContext": {
+      "additionalProperties": false,
+      "properties": {
+        "spanId": {
+          "type": "string"
+        },
+        "traceFlags": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "traceId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "traceId",
+        "spanId"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "artifactHandles": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/InvocationHandle"
+      },
+      "type": "array"
+    },
+    "attemptId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "cancellationUrl": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "credentialHandles": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/InvocationHandle"
+      },
+      "type": "array"
+    },
+    "deadline": {
+      "type": "string"
+    },
+    "executionId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "idempotencyKey": {
+      "type": "string"
+    },
+    "inputs": {
+      "items": {
+        "$ref": "#/$defs/GroupedInput"
+      },
+      "type": "array"
+    },
+    "iterationIndex": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "mode": {
+      "$ref": "#/$defs/ExecutionMode"
+    },
+    "nodeExecutionId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "nodeType": {
+      "type": "string"
+    },
+    "nodeVersion": {
+      "format": "uint32",
+      "minimum": 1,
+      "type": "integer"
+    },
+    "parameters": {
+      "$ref": "#/$defs/ResolvedParameters"
+    },
+    "protocolVersion": {
+      "$ref": "#/$defs/NodeProtocolVersion"
+    },
+    "runIndex": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "tenantId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "traceContext": {
+      "$ref": "#/$defs/TraceContext"
+    },
+    "workflowVersionId": {
+      "format": "uuid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "protocolVersion",
+    "nodeType",
+    "nodeVersion",
+    "tenantId",
+    "workflowVersionId",
+    "executionId",
+    "nodeExecutionId",
+    "attemptId",
+    "runIndex",
+    "iterationIndex",
+    "mode",
+    "inputs",
+    "parameters",
+    "idempotencyKey",
+    "deadline",
+    "traceContext"
+  ],
+  "title": "NodeActionRequest",
+  "type": "object"
+}

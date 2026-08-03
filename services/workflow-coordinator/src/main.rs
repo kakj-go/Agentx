@@ -1,4 +1,374 @@
+use std::{env, net::SocketAddr, sync::Arc, time::Duration};
+
+use agentx_infrastructure::{
+    artifact::MySqlObjectArtifactStore,
+    clients,
+    config::InfrastructureSettings,
+    mysql,
+    runtime_queue::RuntimeQueue,
+    runtime_repository::{CreateExecution, ResumeExecution, RuntimeRepository, TaskResult},
+};
+use agentx_runtime_rpc::v1::{
+    CommandAccepted, ConfirmSideEffectRequest, ExecutionAccepted, ForkExecutionRequest,
+    HeartbeatLeaseRequest, HeartbeatLeaseResponse, ReportNodeResultRequest,
+    RequestExecutionRequest, ResumeExecutionRequest,
+    runtime_coordinator_server::{RuntimeCoordinator, RuntimeCoordinatorServer},
+};
+use anyhow::{Context, Result};
+use serde_json::Value;
+use tonic::{Request, Response, Status, transport::Server};
+use tracing::{error, info, warn};
+use uuid::Uuid;
+
+#[derive(Clone)]
+struct CoordinatorService {
+    repository: RuntimeRepository,
+}
+
+#[tonic::async_trait]
+impl RuntimeCoordinator for CoordinatorService {
+    async fn request_execution(
+        &self,
+        request: Request<RequestExecutionRequest>,
+    ) -> Result<Response<ExecutionAccepted>, Status> {
+        let request = request.into_inner();
+        let execution_type = if request.trigger_type == "sub_workflow" {
+            "sub_workflow"
+        } else {
+            "whole"
+        };
+        let created = self
+            .repository
+            .create_execution(CreateExecution {
+                tenant_id: uuid(&request.tenant_id, "tenant_id")?,
+                workflow_version_id: uuid(&request.workflow_version_id, "workflow_version_id")?,
+                invocation_id: optional_uuid(request.invocation_id, "invocation_id")?,
+                session_id: optional_uuid(request.session_id, "session_id")?,
+                requested_by: optional_uuid(request.requested_by, "requested_by")?,
+                trigger_type: request.trigger_type,
+                input: parse_json(&request.input_json, "input_json")?,
+                idempotency_key: request.idempotency_key,
+                caller_execution_id: optional_uuid(
+                    request.caller_execution_id,
+                    "caller_execution_id",
+                )?,
+                execution_type: execution_type.into(),
+                parent_execution_id: None,
+                fork_checkpoint_id: None,
+                fork_mode: None,
+                runtime_settings: serde_json::json!({"mode":"whole"}),
+                initial_machine: None,
+            })
+            .await
+            .map_err(internal_status)?;
+        Ok(Response::new(ExecutionAccepted {
+            execution_id: created.execution_id.to_string(),
+            status: created.status,
+            replayed: created.replayed,
+        }))
+    }
+
+    async fn cancel_execution(
+        &self,
+        request: Request<agentx_runtime_rpc::v1::CancelExecutionRequest>,
+    ) -> Result<Response<CommandAccepted>, Status> {
+        let request = request.into_inner();
+        let accepted = self
+            .repository
+            .cancel_execution(
+                uuid(&request.tenant_id, "tenant_id")?,
+                uuid(&request.execution_id, "execution_id")?,
+            )
+            .await
+            .map_err(internal_status)?;
+        Ok(Response::new(CommandAccepted {
+            accepted,
+            replayed: !accepted,
+        }))
+    }
+
+    async fn fork_execution(
+        &self,
+        request: Request<ForkExecutionRequest>,
+    ) -> Result<Response<ExecutionAccepted>, Status> {
+        let request = request.into_inner();
+        let created = self
+            .repository
+            .fork_execution(agentx_infrastructure::runtime_repository::ForkExecution {
+                tenant_id: uuid(&request.tenant_id, "tenant_id")?,
+                source_execution_id: uuid(&request.source_execution_id, "source_execution_id")?,
+                checkpoint_id: uuid(&request.checkpoint_id, "checkpoint_id")?,
+                mode: request.mode,
+                node_id: request.node_id,
+                input_overrides: parse_json(&request.input_overrides_json, "input_overrides_json")?,
+                side_effect_decisions: parse_json(
+                    &request.side_effect_decisions_json,
+                    "side_effect_decisions_json",
+                )?,
+                actor_user_id: uuid(&request.actor_user_id, "actor_user_id")?,
+                idempotency_key: request.idempotency_key,
+            })
+            .await
+            .map_err(internal_status)?;
+        Ok(Response::new(ExecutionAccepted {
+            execution_id: created.execution_id.to_string(),
+            status: created.status,
+            replayed: created.replayed,
+        }))
+    }
+
+    async fn resume_execution(
+        &self,
+        request: Request<ResumeExecutionRequest>,
+    ) -> Result<Response<CommandAccepted>, Status> {
+        let request = request.into_inner();
+        let replayed = self
+            .repository
+            .resume_execution(ResumeExecution {
+                tenant_id: uuid(&request.tenant_id, "tenant_id")?,
+                execution_id: uuid(&request.execution_id, "execution_id")?,
+                node_execution_id: uuid(&request.node_execution_id, "node_execution_id")?,
+                resume_token: request.resume_token,
+                output_port: request.output_port,
+                payload: parse_json(&request.payload_json, "payload_json")?,
+                idempotency_key: request.idempotency_key,
+            })
+            .await
+            .map_err(internal_status)?;
+        Ok(Response::new(CommandAccepted {
+            accepted: true,
+            replayed,
+        }))
+    }
+
+    async fn confirm_side_effect(
+        &self,
+        request: Request<ConfirmSideEffectRequest>,
+    ) -> Result<Response<CommandAccepted>, Status> {
+        let request = request.into_inner();
+        let replayed = self
+            .repository
+            .confirm_side_effect(
+                uuid(&request.tenant_id, "tenant_id")?,
+                uuid(&request.execution_id, "execution_id")?,
+                uuid(&request.node_execution_id, "node_execution_id")?,
+                optional_uuid(request.checkpoint_id, "checkpoint_id")?,
+                &request.decision,
+                uuid(&request.actor_user_id, "actor_user_id")?,
+                &request.idempotency_key,
+            )
+            .await
+            .map_err(internal_status)?;
+        Ok(Response::new(CommandAccepted {
+            accepted: true,
+            replayed,
+        }))
+    }
+
+    async fn report_node_result(
+        &self,
+        request: Request<ReportNodeResultRequest>,
+    ) -> Result<Response<CommandAccepted>, Status> {
+        let request = request.into_inner();
+        let result = match request.status.as_str() {
+            "completed" => TaskResult::Completed(
+                serde_json::from_str(&request.outputs_json)
+                    .map_err(|error| Status::invalid_argument(error.to_string()))?,
+            ),
+            "failed" => TaskResult::Failed {
+                code: request.error_code.unwrap_or_else(|| "NODE_FAILED".into()),
+                message: request
+                    .error_message
+                    .unwrap_or_else(|| "Node failed".into()),
+                retryable: request.retryable,
+            },
+            "suspended" => {
+                TaskResult::Suspended(parse_json(&request.suspend_json, "suspend_json")?)
+            }
+            other => {
+                return Err(Status::invalid_argument(format!(
+                    "unknown result status {other}"
+                )));
+            }
+        };
+        let accepted = self
+            .repository
+            .report_task(
+                uuid(&request.tenant_id, "tenant_id")?,
+                uuid(&request.execution_id, "execution_id")?,
+                uuid(&request.node_execution_id, "node_execution_id")?,
+                uuid(&request.attempt_id, "attempt_id")?,
+                uuid(&request.lease_token, "lease_token")?,
+                result,
+            )
+            .await
+            .map_err(internal_status)?;
+        Ok(Response::new(CommandAccepted {
+            accepted,
+            replayed: !accepted,
+        }))
+    }
+
+    async fn heartbeat_lease(
+        &self,
+        request: Request<HeartbeatLeaseRequest>,
+    ) -> Result<Response<HeartbeatLeaseResponse>, Status> {
+        let request = request.into_inner();
+        let (valid, cancellation_requested) = self
+            .repository
+            .heartbeat(
+                uuid(&request.tenant_id, "tenant_id")?,
+                uuid(&request.attempt_id, "attempt_id")?,
+                uuid(&request.lease_token, "lease_token")?,
+                &request.worker_instance_id,
+                30,
+            )
+            .await
+            .map_err(internal_status)?;
+        Ok(Response::new(HeartbeatLeaseResponse {
+            valid,
+            cancellation_requested,
+        }))
+    }
+}
+
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    agentx_service_kit::run_service("workflow-coordinator").await
+async fn main() -> Result<()> {
+    let settings = InfrastructureSettings::from_env()?;
+    let pool = mysql::connect(&settings.mysql).await?;
+    let object_store = clients::object_store(&settings.object_storage)?;
+    let checkpoint_store: Arc<dyn agentx_application::ArtifactStore> =
+        Arc::new(MySqlObjectArtifactStore::new(pool.clone(), object_store));
+    let repository = RuntimeRepository::new(pool.clone()).with_checkpoint_artifacts(
+        checkpoint_store,
+        env::var("AGENTX_CHECKPOINT_ARTIFACT_THRESHOLD_BYTES")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(64 * 1024),
+    );
+    let queue = RuntimeQueue::new(settings.redis.clone());
+    queue.ensure_groups().await?;
+    let service = CoordinatorService {
+        repository: repository.clone(),
+    };
+    let grpc_address = env::var("AGENTX_RUNTIME_GRPC_BIND")
+        .unwrap_or_else(|_| "0.0.0.0:9090".into())
+        .parse::<SocketAddr>()
+        .context("AGENTX_RUNTIME_GRPC_BIND is invalid")?;
+    tokio::spawn(async move {
+        info!(%grpc_address, "runtime coordinator gRPC started");
+        if let Err(error) = Server::builder()
+            .add_service(RuntimeCoordinatorServer::new(service))
+            .serve(grpc_address)
+            .await
+        {
+            error!(%error, "runtime coordinator gRPC stopped");
+        }
+    });
+    tokio::spawn(outbox_loop(repository.clone(), queue));
+    tokio::spawn(reaper_loop(repository.clone()));
+    tokio::spawn(checkpoint_artifact_loop(repository.clone()));
+    tokio::spawn(heartbeat_loop(repository.clone(), "coordinator"));
+
+    let health = agentx_service_kit::HealthRegistry::default();
+    health.register("mysql", true).await;
+    health.register("redis", true).await;
+    health.set_status("mysql", "ready").await;
+    health.set_status("redis", "ready").await;
+    agentx_service_kit::serve("workflow-coordinator", axum::Router::new(), health).await
+}
+
+async fn checkpoint_artifact_loop(repository: RuntimeRepository) {
+    loop {
+        if let Err(error) = repository.externalize_checkpoints(100).await {
+            error!(%error, "checkpoint artifact externalization failed");
+        }
+        tokio::time::sleep(Duration::from_secs(2)).await;
+    }
+}
+
+async fn outbox_loop(repository: RuntimeRepository, queue: RuntimeQueue) {
+    loop {
+        match repository.claim_outbox(100, 30).await {
+            Ok(deliveries) if deliveries.is_empty() => {
+                tokio::time::sleep(Duration::from_millis(250)).await
+            }
+            Ok(deliveries) => {
+                for delivery in deliveries {
+                    match queue.publish(&delivery).await {
+                        Ok(_) => {
+                            if let Err(error) = repository.mark_outbox_published(&delivery).await {
+                                error!(%error, outbox_id=%delivery.id, "failed to mark runtime message published");
+                            }
+                        }
+                        Err(error) => {
+                            warn!(%error, outbox_id=%delivery.id, "runtime dispatch failed");
+                            let _ = repository
+                                .mark_outbox_failed(&delivery, &error.to_string())
+                                .await;
+                        }
+                    }
+                }
+            }
+            Err(error) => {
+                error!(%error, "runtime outbox loop failed");
+                tokio::time::sleep(Duration::from_secs(2)).await;
+            }
+        }
+    }
+}
+
+async fn reaper_loop(repository: RuntimeRepository) {
+    loop {
+        if let Err(error) = repository.reap_expired_leases().await {
+            error!(%error, "runtime lease reaper failed");
+        }
+        if let Err(error) = repository.resume_due_waits().await {
+            error!(%error, "runtime wait scanner failed");
+        }
+        tokio::time::sleep(Duration::from_secs(2)).await;
+    }
+}
+
+async fn heartbeat_loop(repository: RuntimeRepository, service_type: &'static str) {
+    let instance = format!("{}-{}", service_type, Uuid::now_v7());
+    loop {
+        match sqlx::query_scalar::<_, Uuid>("SELECT id FROM tenants")
+            .fetch_all(repository.pool())
+            .await
+        {
+            Ok(tenants) => {
+                for tenant in tenants {
+                    let _=sqlx::query("INSERT INTO runtime_service_heartbeats(tenant_id,service_type,instance_id,status,detail_json,heartbeat_at) VALUES(?,?,?,'ready',JSON_OBJECT(),CURRENT_TIMESTAMP(6)) ON DUPLICATE KEY UPDATE status='ready',heartbeat_at=CURRENT_TIMESTAMP(6)")
+                    .bind(tenant).bind(service_type).bind(&instance).execute(repository.pool()).await;
+                }
+            }
+            Err(error) => warn!(%error, "runtime heartbeat tenant query failed"),
+        }
+        tokio::time::sleep(Duration::from_secs(10)).await;
+    }
+}
+
+#[allow(clippy::result_large_err)]
+fn uuid(value: &str, field: &str) -> Result<Uuid, Status> {
+    Uuid::parse_str(value).map_err(|_| Status::invalid_argument(format!("{field} must be a UUID")))
+}
+#[allow(clippy::result_large_err)]
+fn optional_uuid(value: Option<String>, field: &str) -> Result<Option<Uuid>, Status> {
+    value.map(|value| uuid(&value, field)).transpose()
+}
+#[allow(clippy::result_large_err)]
+fn parse_json(value: &str, field: &str) -> Result<Value, Status> {
+    serde_json::from_str(value)
+        .map_err(|error| Status::invalid_argument(format!("{field}: {error}")))
+}
+fn internal_status(error: anyhow::Error) -> Status {
+    if error.to_string().contains("not found") {
+        Status::not_found(error.to_string())
+    } else if error.to_string().contains("IDEMPOTENCY") || error.to_string().contains("INVALID") {
+        Status::failed_precondition(error.to_string())
+    } else {
+        error!(%error, "runtime command failed");
+        Status::internal("runtime command failed")
+    }
 }

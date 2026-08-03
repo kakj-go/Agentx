@@ -15,6 +15,10 @@ configMapGenerator:
       - AGENTX_MYSQL_DATABASE=agentx
       - AGENTX_MYSQL_USER=agentx
       - AGENTX_REDIS_URL=redis://redis:6379/
+      - AGENTX_RUNTIME_COORDINATOR_URL=http://workflow-coordinator:9090
+      - AGENTX_NODE_BROKER_URL=http://workflow-worker:8080
+      - AGENTX_NODE_HANDLE_TTL_SECONDS=300
+      - AGENTX_CHECKPOINT_ARTIFACT_THRESHOLD_BYTES=65536
       - AGENTX_CLICKHOUSE_URL=http://clickhouse:8123
       - AGENTX_CLICKHOUSE_DATABASE=agentx
       - AGENTX_CLICKHOUSE_USER=agentx
@@ -33,6 +37,7 @@ configMapGenerator:
       - AGENTX_CONNECTION_ALLOWED_HOSTS=echo-mcp,lightrag,mem0
       - AGENTX_CONNECTION_ALLOWED_CIDRS=
       - AGENTX_CUBESANDBOX_ENDPOINT=
+      - AGENTX_REMOTE_NODE_ENDPOINT=http://echo-node:8080
 secretGenerator:
   - name: agentx-secrets
     literals:
@@ -42,11 +47,14 @@ secretGenerator:
       - AGENTX_MINIO_USER=agentx
       - AGENTX_MINIO_PASSWORD=agentx-local-secret
       - AGENTX_JWT_SIGNING_SECRET=agentx-local-jwt-signing-secret-change-me
+      - AGENTX_REMOTE_NODE_AUTH_TOKEN=agentx-local-node-token
       - 'AGENTX_CREDENTIAL_KEYS_JSON={"keys":{"local-v1":"YWdlbnR4LWxvY2FsLWNyZWRlbnRpYWwta2V5LTAwMDE="}}'
 images:
   - name: agentx/web
     newTag: dev
   - name: agentx/echo-mcp
+    newTag: dev
+  - name: agentx/echo-node
     newTag: dev
   - name: agentx/platform-api
     newTag: dev

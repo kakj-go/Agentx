@@ -49,7 +49,7 @@ Trace Event 记录：
 
 - 按租户、Workflow、版本、状态、时间和发起者查询
 - 在画布上显示运行路径
-- 查看节点的每个 runIndex 和 iterationIndex
+- 查看节点的每个 runIndex 和可选 loopIterationIndex
 - 查看输入输出和 Artifact
 - 查看模型请求、回复、Token 和成本
 - 查看 Agent 每轮工具调用
@@ -102,7 +102,8 @@ Checkpoint 包含：
 - Execution Snapshot
 - 当前图位置
 - 已完成节点集合
-- 连接状态
+- Node Activation Frontier
+- Edge Delivery Cursor 和待满足输入集合
 - Workflow 变量
 - 节点输出引用
 - Artifact 引用
@@ -261,4 +262,3 @@ Approval Node 是 waitAndResume 节点。
 4. 将 Execution 重新加入调度队列。
 
 待办中心只解决 Workflow 审批，不扩展成通用 OA。
-

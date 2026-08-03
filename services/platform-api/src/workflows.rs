@@ -1,5 +1,6 @@
 use agentx_api_types::{FieldError, PageResponse};
 use agentx_domain::{WorkflowDefinition, canonical_content_hash, validate_definition};
+use agentx_runtime::{CompileContext, NodeRegistry, WorkflowCompiler};
 use axum::{
     Json,
     extract::{Path, Query, State},
@@ -282,7 +283,7 @@ pub async fn create_workflow(
         .execute(&mut *tx)
         .await?;
     sqlx::query("INSERT INTO workflow_members(tenant_id,workflow_id,user_id,member_role,created_by) VALUES(?,?,?,'manager',?)").bind(actor.tenant_id).bind(workflow_id).bind(actor.user_id).bind(actor.user_id).execute(&mut *tx).await?;
-    sqlx::query("INSERT INTO workflow_drafts(id,tenant_id,workflow_id,schema_version,revision,definition_json,content_hash,updated_by) VALUES(?,?,?,'1.0',0,?,?,?)").bind(draft_id).bind(actor.tenant_id).bind(workflow_id).bind(&definition).bind(&hash).bind(actor.user_id).execute(&mut *tx).await?;
+    sqlx::query("INSERT INTO workflow_drafts(id,tenant_id,workflow_id,schema_version,revision,definition_json,content_hash,updated_by) VALUES(?,?,?,'2.0',0,?,?,?)").bind(draft_id).bind(actor.tenant_id).bind(workflow_id).bind(&definition).bind(&hash).bind(actor.user_id).execute(&mut *tx).await?;
     audit(
         &mut tx,
         &actor,
@@ -477,8 +478,8 @@ pub async fn save_draft(
     }
     let next = current + 1;
     let revision_id = Uuid::now_v7();
-    sqlx::query("UPDATE workflow_drafts SET revision=?,schema_version='1.0',definition_json=?,content_hash=?,updated_by=? WHERE id=?").bind(next).bind(&definition).bind(&hash).bind(actor.user_id).bind(draft_id).execute(&mut *tx).await?;
-    sqlx::query("INSERT INTO workflow_draft_revisions(id,tenant_id,workflow_id,draft_id,revision,schema_version,definition_json,content_hash,created_by) VALUES(?,?,?,?,?,'1.0',?,?,?)").bind(revision_id).bind(actor.tenant_id).bind(id).bind(draft_id).bind(next).bind(&definition).bind(&hash).bind(actor.user_id).execute(&mut *tx).await?;
+    sqlx::query("UPDATE workflow_drafts SET revision=?,schema_version='2.0',definition_json=?,content_hash=?,updated_by=? WHERE id=?").bind(next).bind(&definition).bind(&hash).bind(actor.user_id).bind(draft_id).execute(&mut *tx).await?;
+    sqlx::query("INSERT INTO workflow_draft_revisions(id,tenant_id,workflow_id,draft_id,revision,schema_version,definition_json,content_hash,created_by) VALUES(?,?,?,?,?,'2.0',?,?,?)").bind(revision_id).bind(actor.tenant_id).bind(id).bind(draft_id).bind(next).bind(&definition).bind(&hash).bind(actor.user_id).execute(&mut *tx).await?;
     audit(
         &mut tx,
         &actor,
@@ -606,7 +607,41 @@ pub async fn create_version(
     }
     let version_number:u64=sqlx::query_scalar("SELECT CAST(COALESCE(MAX(version_number),0)+1 AS UNSIGNED) FROM workflow_versions WHERE tenant_id=? AND workflow_id=? FOR UPDATE").bind(actor.tenant_id).bind(id).fetch_one(&mut *tx).await?;
     let version_id = Uuid::now_v7();
-    sqlx::query("INSERT INTO workflow_versions(id,tenant_id,workflow_id,version_number,source_revision,schema_version,definition_json,content_hash,created_by) VALUES(?,?,?,?,?,'1.0',?,?,?)").bind(version_id).bind(actor.tenant_id).bind(id).bind(version_number).bind(draft.revision).bind(&draft.definition).bind(&draft.content_hash).bind(actor.user_id).execute(&mut *tx).await?;
+    let registry = NodeRegistry::m4_defaults();
+    let compiled = match WorkflowCompiler::new(&registry).compile(
+        &definition,
+        &CompileContext {
+            current_workflow_version_id: Some(version_id.to_string()),
+            ancestor_workflow_version_ids: Default::default(),
+        },
+    ) {
+        Ok(compiled) => Some(compiled),
+        Err(error)
+            if error
+                .issues
+                .iter()
+                .all(|issue| issue.code == "NODE_UNSUPPORTED_IN_M4") =>
+        {
+            None
+        }
+        Err(error) => {
+            return Err(AppError::unprocessable(
+                "WORKFLOW_COMPILE_FAILED",
+                serde_json::to_string(&error.issues).unwrap_or_else(|_| error.to_string()),
+            ));
+        }
+    };
+    let compiled_json = compiled
+        .as_ref()
+        .map(serde_json::to_value)
+        .transpose()
+        .map_err(AppError::internal)?;
+    let compiled_hash = compiled.as_ref().map(|value| value.canonical_hash.as_str());
+    let compiler_version = compiled
+        .as_ref()
+        .map(|value| value.compiler_version.as_str());
+    let compiled_at = compiled.as_ref().map(|_| OffsetDateTime::now_utc());
+    sqlx::query("INSERT INTO workflow_versions(id,tenant_id,workflow_id,version_number,source_revision,schema_version,definition_json,content_hash,compiled_ir_json,compiled_ir_hash,compiler_version,compiled_at,created_by) VALUES(?,?,?,?,?,'2.0',?,?,?,?,?,?,?)").bind(version_id).bind(actor.tenant_id).bind(id).bind(version_number).bind(draft.revision).bind(&draft.definition).bind(&draft.content_hash).bind(compiled_json).bind(compiled_hash).bind(compiler_version).bind(compiled_at).bind(actor.user_id).execute(&mut *tx).await?;
     for snapshot in snapshots {
         sqlx::query("INSERT INTO workflow_version_resources(id,tenant_id,workflow_version_id,node_id,resource_type,resource_id,resource_version_id,operation_key,snapshot_json,snapshot_hash) VALUES(?,?,?,?,?,?,?,?,?,?)").bind(Uuid::now_v7()).bind(actor.tenant_id).bind(version_id).bind(snapshot.node_id).bind(snapshot.reference.resource_type.as_str()).bind(snapshot.reference.resource_id).bind(snapshot.reference.resource_version_id).bind(snapshot.reference.operation.as_str()).bind(snapshot.snapshot).bind(snapshot.snapshot_hash).execute(&mut *tx).await?;
     }

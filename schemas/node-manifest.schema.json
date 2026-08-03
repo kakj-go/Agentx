@@ -1,0 +1,238 @@
+{
+  "$defs": {
+    "CredentialRequirement": {
+      "additionalProperties": false,
+      "properties": {
+        "credentialType": {
+          "type": "string"
+        },
+        "required": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "credentialType"
+      ],
+      "type": "object"
+    },
+    "ExecutionStyle": {
+      "enum": [
+        "action",
+        "trigger",
+        "suspend",
+        "sub_workflow"
+      ],
+      "type": "string"
+    },
+    "LifecycleOperation": {
+      "enum": [
+        "activate",
+        "deactivate",
+        "poll",
+        "webhook",
+        "suspend",
+        "resume"
+      ],
+      "type": "string"
+    },
+    "NodeCapability": {
+      "enum": [
+        "builtin",
+        "declarative_http",
+        "remote_action"
+      ],
+      "type": "string"
+    },
+    "NodePort": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/PortKind"
+        },
+        "name": {
+          "type": "string"
+        },
+        "required": {
+          "default": false,
+          "type": "boolean"
+        },
+        "variadic": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "kind"
+      ],
+      "type": "object"
+    },
+    "NodeProtocolVersion": {
+      "enum": [
+        "1.0"
+      ],
+      "type": "string"
+    },
+    "NodeRetryPolicy": {
+      "additionalProperties": false,
+      "properties": {
+        "initialBackoffMs": {
+          "default": 0,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maxAttempts": {
+          "default": 0,
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maxBackoffMs": {
+          "default": 0,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "retryable": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "PortKind": {
+      "enum": [
+        "main",
+        "error"
+      ],
+      "type": "string"
+    },
+    "ReadinessPolicy": {
+      "enum": [
+        "any",
+        "all",
+        "required"
+      ],
+      "type": "string"
+    },
+    "SideEffectLevel": {
+      "enum": [
+        "none",
+        "idempotent",
+        "reversible",
+        "irreversible"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "capability": {
+      "$ref": "#/$defs/NodeCapability"
+    },
+    "credentials": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/CredentialRequirement"
+      },
+      "type": "array"
+    },
+    "defaultTimeoutMs": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "displayName": {
+      "type": "string"
+    },
+    "executionStyle": {
+      "$ref": "#/$defs/ExecutionStyle"
+    },
+    "inputPorts": {
+      "items": {
+        "$ref": "#/$defs/NodePort"
+      },
+      "type": "array"
+    },
+    "lifecycleOperations": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/LifecycleOperation"
+      },
+      "type": "array"
+    },
+    "nodeType": {
+      "type": "string"
+    },
+    "outputPorts": {
+      "items": {
+        "$ref": "#/$defs/NodePort"
+      },
+      "type": "array"
+    },
+    "parameterSchema": true,
+    "protocolVersion": {
+      "$ref": "#/$defs/NodeProtocolVersion"
+    },
+    "providers": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "readiness": {
+      "$ref": "#/$defs/ReadinessPolicy"
+    },
+    "retryPolicy": {
+      "$ref": "#/$defs/NodeRetryPolicy",
+      "default": {
+        "initialBackoffMs": 0,
+        "maxAttempts": 0,
+        "maxBackoffMs": 0,
+        "retryable": false
+      }
+    },
+    "sandboxRequired": {
+      "default": false,
+      "type": "boolean"
+    },
+    "sideEffectLevel": {
+      "$ref": "#/$defs/SideEffectLevel"
+    },
+    "supportsMock": {
+      "default": false,
+      "type": "boolean"
+    },
+    "uiSchema": {
+      "default": null
+    },
+    "version": {
+      "format": "uint32",
+      "minimum": 1,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "protocolVersion",
+    "nodeType",
+    "version",
+    "displayName",
+    "executionStyle",
+    "capability",
+    "readiness",
+    "inputPorts",
+    "outputPorts",
+    "parameterSchema",
+    "sideEffectLevel"
+  ],
+  "title": "NodeManifestVersion",
+  "type": "object"
+}

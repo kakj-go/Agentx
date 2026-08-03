@@ -8,9 +8,9 @@ import { ToastProvider } from '../../shared/ui/toast'
 import { WorkflowCanvas } from './workflow-canvas'
 
 const draft = {
-  id: 'draft-1', workflowId: 'workflow-1', revision: 1, schemaVersion: '1.0',
+  id: 'draft-1', workflowId: 'workflow-1', revision: 1, schemaVersion: '2.0',
   definition: {
-    schemaVersion: '1.0', settings: {},
+    schemaVersion: '2.0', settings: { executionOrder: 'n8n_v1', activationBudget: 10000 },
     nodes: [{ id: 'trigger', type: 'manual_trigger', typeVersion: 1, name: 'Manual Trigger', position: { x: 100, y: 100 }, disabled: false, parameters: {}, resourceReferences: [] }],
     connections: [],
   },

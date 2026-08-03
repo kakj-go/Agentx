@@ -1,5 +1,6 @@
 use std::{fmt, str::FromStr};
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use uuid::Uuid;
@@ -12,13 +13,26 @@ pub use resource::{
     ResourceVersionSnapshot,
 };
 pub use workflow::{
-    DefinitionIssue, WorkflowConnection, WorkflowDefinition, WorkflowNode, WorkflowPosition,
-    canonical_content_hash, validate_definition,
+    DefinitionIssue, ExecutionOrder, NodeErrorPolicy, NodeSettings, WorkflowConnection,
+    WorkflowDefinition, WorkflowNode, WorkflowPosition, WorkflowSettings, canonical_content_hash,
+    validate_definition,
 };
 
 macro_rules! domain_id {
     ($name:ident) => {
-        #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+        #[derive(
+            Clone,
+            Copy,
+            Debug,
+            Deserialize,
+            Eq,
+            Hash,
+            JsonSchema,
+            Ord,
+            PartialEq,
+            PartialOrd,
+            Serialize,
+        )]
         #[serde(transparent)]
         pub struct $name(Uuid);
 
@@ -77,6 +91,9 @@ domain_id!(ResourceVersionId);
 domain_id!(CredentialId);
 domain_id!(ExecutionId);
 domain_id!(NodeExecutionId);
+domain_id!(AttemptId);
+domain_id!(CheckpointId);
+domain_id!(ResumeTokenId);
 domain_id!(ArtifactId);
 domain_id!(AuditEventId);
 domain_id!(RefreshSessionId);

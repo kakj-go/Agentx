@@ -22,6 +22,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient()
   const { i18n } = useTranslation()
   const refreshInFlight = useRef<Promise<boolean>>()
+  const authVersion = useRef(0)
 
   const loadMe = useCallback(async () => {
     const me = await apiRequest<AuthUser>('/auth/me')
@@ -30,9 +31,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [i18n])
 
   const refresh = useCallback(() => {
+    const version = authVersion.current
     refreshInFlight.current ??= (async () => {
-      try { await refreshAccessToken(); await loadMe(); return true }
-      catch { setAccessToken(); setUser(undefined); setStatus('anonymous'); queryClient.clear(); return false }
+      try {
+        const response = await refreshAccessToken()
+        if (authVersion.current !== version) return true
+        setAccessToken(response.accessToken); await loadMe(); return true
+      } catch {
+        if (authVersion.current !== version) return true
+        setAccessToken(); setUser(undefined); setStatus('anonymous'); queryClient.clear(); return false
+      }
     })().finally(() => { refreshInFlight.current = undefined })
     return refreshInFlight.current
   }, [loadMe, queryClient])
@@ -49,6 +57,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [refresh])
 
   const acceptAuth = async (response: AuthResponse) => {
+    authVersion.current += 1
     if (response.passwordChangeRequired) { setChangeToken(response.changePasswordToken ?? undefined); setStatus('password-change'); return }
     setAccessToken(response.accessToken); await loadMe()
   }
@@ -58,7 +67,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!changeToken) throw new Error('Change password token is missing')
     await acceptAuth(await publicRequest<AuthResponse>('/auth/change-password', { method: 'POST', body: jsonBody({ token: changeToken, password }) })); setChangeToken(undefined)
   }
-  const logout = async () => { try { await apiRequest('/auth/logout', { method: 'POST' }) } finally { setAccessToken(); setUser(undefined); setStatus('anonymous'); queryClient.clear() } }
+  const logout = async () => { authVersion.current += 1; try { await apiRequest('/auth/logout', { method: 'POST' }) } finally { setAccessToken(); setUser(undefined); setStatus('anonymous'); queryClient.clear() } }
   const value: AuthContextValue = { status, user, changeToken, setup, login, changePassword, logout, hasPermission: (key) => user?.permissions.includes(key) ?? false }
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }

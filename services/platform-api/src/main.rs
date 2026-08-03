@@ -14,6 +14,7 @@ mod mcp_control;
 mod models;
 mod models_control;
 mod operations;
+mod runtime_operations;
 mod security;
 mod skills_control;
 mod state;
@@ -56,6 +57,13 @@ async fn main() -> Result<()> {
         .with_m3(
             agentx_infrastructure::clients::clickhouse(&infrastructure.clickhouse),
             infrastructure.redis.clone(),
+        )
+        .with_runtime(
+            agentx_infrastructure::runtime_client::GrpcExecutionRuntime::connect(
+                &env::var("AGENTX_RUNTIME_COORDINATOR_URL")
+                    .unwrap_or_else(|_| "http://127.0.0.1:9090".into()),
+                pool.clone(),
+            )?,
         );
     let health = agentx_service_kit::HealthRegistry::default();
     health.register("mysql", true).await;
@@ -78,7 +86,7 @@ fn start_health_checks(
         use futures::StreamExt;
         loop {
             let schema_ready = sqlx::query_scalar::<_, bool>(
-                "SELECT COALESCE(MAX(version),0) >= 10 AND COALESCE(MIN(success),0)=1 FROM _sqlx_migrations",
+                "SELECT COALESCE(MAX(version),0) >= 13 AND COALESCE(MIN(success),0)=1 FROM _sqlx_migrations",
             ).fetch_one(&pool).await.unwrap_or(false);
             let mysql_ready = mysql::ping(&pool).await.is_ok() && schema_ready;
             registry
@@ -140,11 +148,16 @@ mod integration_tests {
         config::{ClickHouseSettings, MySqlSettings, RedisSettings},
         credential::CredentialKeyring,
         mysql,
+        runtime_repository::{
+            CreateExecution, ForkExecution, ResumeExecution, RuntimeRepository, TaskResult,
+        },
     };
+    use agentx_node_protocol::Item;
     use object_store::memory::InMemory;
     use secrecy::SecretString;
     use serde_json::{Value, json};
-    use std::{borrow::Cow, path::Path, sync::Arc, time::Duration};
+    use sqlx::Row;
+    use std::{borrow::Cow, collections::BTreeMap, path::Path, sync::Arc, time::Duration};
     use testcontainers::{
         GenericImage, ImageExt,
         core::{IntoContainerPort, WaitFor},
@@ -258,6 +271,16 @@ mod integration_tests {
         mysql::run_migrations(&pool)
             .await
             .expect("second migration run");
+        let runtime_tables: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name IN ('node_definitions','node_definition_versions','execution_snapshots','node_executions','node_attempts','execution_edge_deliveries','item_lineage','execution_outbox','worker_leases','runtime_idempotency_keys','checkpoints','checkpoint_artifacts','execution_resume_tokens','wait_subscriptions','resume_webhook_bindings','side_effect_confirmations','node_invocation_handles')")
+            .fetch_one(&pool).await.expect("M4 runtime tables");
+        assert_eq!(runtime_tables, 17);
+        let migration_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM _sqlx_migrations WHERE success=1 AND version<=13",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("M4 migration versions");
+        assert_eq!(migration_count, 13);
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM bootstrap_state")
             .fetch_one(&pool)
             .await
@@ -574,8 +597,11 @@ mod integration_tests {
                 .as_array()
                 .expect("permission list")
                 .len(),
-            52
+            55
         );
+        let runtime_permissions: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM permissions WHERE permission_key IN ('execution:run','execution:fork','execution:resume')")
+            .fetch_one(&pool).await.expect("M4 runtime permissions");
+        assert_eq!(runtime_permissions, 3);
 
         let environments = router
             .clone()
@@ -775,7 +801,7 @@ mod integration_tests {
             serde_json::from_value(workflow["serviceIdentityId"].clone())
                 .expect("workflow service identity id");
         let definition = json!({
-            "schemaVersion":"1.0",
+            "schemaVersion":"2.0",
             "nodes":[
                 {"id":"trigger","type":"manual_trigger","typeVersion":1,"name":"Manual Trigger","position":{"x":100,"y":160},"disabled":false,"parameters":{},"resourceReferences":[]},
                 {"id":"model","type":"model","typeVersion":1,"name":"Model","position":{"x":420,"y":160},"disabled":false,"parameters":{},"resourceReferences":[{"resourceType":"model","resourceId":model_id,"resourceVersionId":null,"operation":"use"}]}
@@ -1362,6 +1388,386 @@ mod integration_tests {
                 .await
                 .expect("publish event")
         );
+
+        let runtime_definition = json!({
+            "schemaVersion":"2.0",
+            "nodes":[
+                {"id":"trigger","type":"manual_trigger","typeVersion":1,"name":"Manual Trigger","position":{"x":100,"y":160}},
+                {"id":"wait","type":"wait","typeVersion":1,"name":"Wait","position":{"x":420,"y":160},"parameters":{"kind":"webhook"}}
+            ],
+            "connections":[{"id":"trigger-wait","sourceNodeId":"trigger","sourceHandle":"main","targetNodeId":"wait","targetHandle":"main"}]
+        });
+        let saved = router
+            .clone()
+            .oneshot(idempotent_json_request(
+                "PUT",
+                &format!("/api/v1/workflows/{workflow_id}/draft"),
+                json!({"expectedRevision":1,"definition":runtime_definition}),
+                &access_token,
+                "m4-runtime-draft",
+            ))
+            .await
+            .expect("save M4 runtime draft");
+        assert_eq!(saved.status(), StatusCode::OK);
+        let runtime_version = router
+            .clone()
+            .oneshot(idempotent_json_request(
+                "POST",
+                &format!("/api/v1/workflows/{workflow_id}/versions"),
+                json!({"draftRevision":2}),
+                &access_token,
+                "m4-runtime-version",
+            ))
+            .await
+            .expect("create M4 runtime version");
+        assert_eq!(runtime_version.status(), StatusCode::CREATED);
+        let runtime_version_id: uuid::Uuid =
+            serde_json::from_value(response_json(runtime_version).await["id"].clone())
+                .expect("M4 runtime version id");
+        let runtime_tenant: uuid::Uuid =
+            sqlx::query_scalar("SELECT tenant_id FROM workflows WHERE id=?")
+                .bind(workflow_id)
+                .fetch_one(&pool)
+                .await
+                .expect("runtime tenant");
+        let runtime_user: uuid::Uuid =
+            sqlx::query_scalar("SELECT owner_user_id FROM workflows WHERE id=?")
+                .bind(workflow_id)
+                .fetch_one(&pool)
+                .await
+                .expect("runtime actor");
+        let runtime = RuntimeRepository::new(pool.clone());
+        let created = runtime
+            .create_execution(CreateExecution {
+                tenant_id: runtime_tenant,
+                workflow_version_id: runtime_version_id,
+                invocation_id: None,
+                session_id: None,
+                requested_by: Some(runtime_user),
+                trigger_type: "manual".into(),
+                input: json!({"value":1}),
+                idempotency_key: Some("m4-runtime-execution".into()),
+                caller_execution_id: None,
+                execution_type: "whole".into(),
+                parent_execution_id: None,
+                fork_checkpoint_id: None,
+                fork_mode: None,
+                runtime_settings: json!({"mode":"whole"}),
+                initial_machine: None,
+            })
+            .await
+            .expect("create runtime execution");
+        let mut dispatches = runtime
+            .claim_outbox(10, 30)
+            .await
+            .expect("claim trigger outbox");
+        assert_eq!(dispatches.len(), 1);
+        let trigger_dispatch = dispatches.pop().unwrap();
+        let trigger_claim = runtime
+            .claim_task(&trigger_dispatch.payload, "worker-a", 30)
+            .await
+            .expect("claim trigger")
+            .expect("trigger task");
+        assert!(
+            runtime
+                .claim_task(&trigger_dispatch.payload, "worker-b", 30)
+                .await
+                .expect("duplicate claim")
+                .is_none()
+        );
+        assert!(
+            runtime
+                .mark_outbox_published(&trigger_dispatch)
+                .await
+                .unwrap()
+        );
+        let trigger_output = vec![Item {
+            json: json!({"value":1}),
+            ..Item::default()
+        }];
+        assert!(
+            runtime
+                .report_task(
+                    runtime_tenant,
+                    created.execution_id,
+                    trigger_claim.task.node_execution_id,
+                    trigger_claim.task.attempt_id,
+                    trigger_claim.lease_token,
+                    TaskResult::Completed(BTreeMap::from([("main".into(), trigger_output)])),
+                )
+                .await
+                .expect("complete trigger")
+        );
+        assert!(
+            !runtime
+                .report_task(
+                    runtime_tenant,
+                    created.execution_id,
+                    trigger_claim.task.node_execution_id,
+                    trigger_claim.task.attempt_id,
+                    trigger_claim.lease_token,
+                    TaskResult::Completed(BTreeMap::new()),
+                )
+                .await
+                .expect("reject stale result")
+        );
+        let wait_dispatch = runtime
+            .claim_outbox(10, 30)
+            .await
+            .expect("claim wait outbox")
+            .pop()
+            .expect("wait dispatch");
+        let wait_claim = runtime
+            .claim_task(&wait_dispatch.payload, "worker-a", 30)
+            .await
+            .expect("claim wait")
+            .expect("wait task");
+        assert!(runtime.mark_outbox_published(&wait_dispatch).await.unwrap());
+        assert!(
+            runtime
+                .report_task(
+                    runtime_tenant,
+                    created.execution_id,
+                    wait_claim.task.node_execution_id,
+                    wait_claim.task.attempt_id,
+                    wait_claim.lease_token,
+                    TaskResult::Suspended(json!({
+                        "kind":"webhook",
+                        "authenticationMode":"signed",
+                        "payloadSchema":{"type":"object"}
+                    })),
+                )
+                .await
+                .expect("suspend wait")
+        );
+        let active_leases: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM worker_leases WHERE tenant_id=? AND node_execution_id=? AND released_at IS NULL")
+            .bind(runtime_tenant).bind(wait_claim.task.node_execution_id).fetch_one(&pool).await.expect("active wait leases");
+        assert_eq!(active_leases, 0);
+        let wait_id: uuid::Uuid = sqlx::query_scalar("SELECT id FROM wait_subscriptions WHERE tenant_id=? AND execution_id=? AND node_execution_id=?")
+            .bind(runtime_tenant).bind(created.execution_id).bind(wait_claim.task.node_execution_id).fetch_one(&pool).await.expect("wait subscription");
+        let resume = ResumeExecution {
+            tenant_id: runtime_tenant,
+            execution_id: created.execution_id,
+            node_execution_id: wait_claim.task.node_execution_id,
+            resume_token: wait_id.to_string(),
+            output_port: "resumed".into(),
+            payload: json!({"accepted":true}),
+            idempotency_key: "m4-wait-resume".into(),
+        };
+        assert!(
+            !runtime
+                .resume_execution(resume.clone())
+                .await
+                .expect("resume wait")
+        );
+        assert!(
+            runtime
+                .resume_execution(resume)
+                .await
+                .expect("replay resume")
+        );
+        let source_status: String =
+            sqlx::query_scalar("SELECT status FROM workflow_executions WHERE id=?")
+                .bind(created.execution_id)
+                .fetch_one(&pool)
+                .await
+                .expect("source status");
+        assert_eq!(source_status, "succeeded");
+
+        let timed = runtime
+            .create_execution(CreateExecution {
+                tenant_id: runtime_tenant,
+                workflow_version_id: runtime_version_id,
+                invocation_id: None,
+                session_id: None,
+                requested_by: Some(runtime_user),
+                trigger_type: "manual".into(),
+                input: json!({"value":2}),
+                idempotency_key: Some("m4-timeout-execution".into()),
+                caller_execution_id: None,
+                execution_type: "whole".into(),
+                parent_execution_id: None,
+                fork_checkpoint_id: None,
+                fork_mode: None,
+                runtime_settings: json!({"mode":"whole"}),
+                initial_machine: None,
+            })
+            .await
+            .expect("create timeout execution");
+        let timed_trigger_dispatch = runtime
+            .claim_outbox(10, 30)
+            .await
+            .expect("claim timeout trigger outbox")
+            .pop()
+            .expect("timeout trigger dispatch");
+        let timed_trigger = runtime
+            .claim_task(&timed_trigger_dispatch.payload, "worker-a", 30)
+            .await
+            .expect("claim timeout trigger")
+            .expect("timeout trigger task");
+        assert!(
+            runtime
+                .report_task(
+                    runtime_tenant,
+                    timed.execution_id,
+                    timed_trigger.task.node_execution_id,
+                    timed_trigger.task.attempt_id,
+                    timed_trigger.lease_token,
+                    TaskResult::Completed(BTreeMap::from([(
+                        "main".into(),
+                        vec![Item {
+                            json: json!({"value":2}),
+                            ..Item::default()
+                        }],
+                    )])),
+                )
+                .await
+                .expect("complete timeout trigger")
+        );
+        let timed_wait_dispatch = runtime
+            .claim_outbox(10, 30)
+            .await
+            .expect("claim timeout wait outbox")
+            .pop()
+            .expect("timeout wait dispatch");
+        let timed_wait = runtime
+            .claim_task(&timed_wait_dispatch.payload, "worker-a", 30)
+            .await
+            .expect("claim timeout wait")
+            .expect("timeout wait task");
+        assert!(
+            runtime
+                .report_task(
+                    runtime_tenant,
+                    timed.execution_id,
+                    timed_wait.task.node_execution_id,
+                    timed_wait.task.attempt_id,
+                    timed_wait.lease_token,
+                    TaskResult::Suspended(json!({
+                        "kind":"webhook",
+                        "timeoutAt":"2000-01-01T00:00:00Z",
+                        "authenticationMode":"signed",
+                        "payloadSchema":{"type":"object"}
+                    })),
+                )
+                .await
+                .expect("suspend timeout wait")
+        );
+        let timed_wait_id: uuid::Uuid = sqlx::query_scalar(
+            "SELECT id FROM wait_subscriptions WHERE execution_id=? AND node_execution_id=?",
+        )
+        .bind(timed.execution_id)
+        .bind(timed_wait.task.node_execution_id)
+        .fetch_one(&pool)
+        .await
+        .expect("timeout wait subscription");
+        let late_resume = ResumeExecution {
+            tenant_id: runtime_tenant,
+            execution_id: timed.execution_id,
+            node_execution_id: timed_wait.task.node_execution_id,
+            resume_token: timed_wait_id.to_string(),
+            output_port: "resumed".into(),
+            payload: json!({"late":true}),
+            idempotency_key: "m4-late-resume".into(),
+        };
+        assert!(
+            runtime
+                .resume_execution(late_resume.clone())
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("RESUME_TOKEN_EXPIRED")
+        );
+        let waiting_status: String =
+            sqlx::query_scalar("SELECT status FROM wait_subscriptions WHERE id=?")
+                .bind(timed_wait_id)
+                .fetch_one(&pool)
+                .await
+                .expect("waiting status after late resume");
+        assert_eq!(waiting_status, "waiting");
+        assert_eq!(runtime.resume_due_waits().await.expect("timeout scan"), 1);
+        let timeout_state: (String, String, String) = sqlx::query_as(
+            "SELECT e.status,w.status,t.status FROM workflow_executions e JOIN wait_subscriptions w ON w.execution_id=e.id JOIN execution_resume_tokens t ON t.id=w.resume_token_id WHERE e.id=?",
+        )
+        .bind(timed.execution_id)
+        .fetch_one(&pool)
+        .await
+        .expect("timeout state");
+        assert_eq!(
+            timeout_state,
+            ("succeeded".into(), "timed_out".into(), "expired".into())
+        );
+        assert!(
+            runtime
+                .resume_execution(ResumeExecution {
+                    output_port: "timed_out".into(),
+                    idempotency_key: format!("timer:{timed_wait_id}"),
+                    ..late_resume.clone()
+                })
+                .await
+                .expect("replay timeout")
+        );
+        assert!(runtime.resume_execution(late_resume).await.is_err());
+        let checkpoint = sqlx::query("SELECT id,state_hash FROM checkpoints WHERE tenant_id=? AND execution_id=? ORDER BY sequence_number DESC LIMIT 1")
+            .bind(runtime_tenant).bind(created.execution_id).fetch_one(&pool).await.expect("fork checkpoint");
+        let checkpoint_id: uuid::Uuid = checkpoint.try_get("id").unwrap();
+        let source_hash: String = checkpoint.try_get("state_hash").unwrap();
+        let source_checkpoint_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM checkpoints WHERE execution_id=?")
+                .bind(created.execution_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let fork = runtime
+            .fork_execution(ForkExecution {
+                tenant_id: runtime_tenant,
+                source_execution_id: created.execution_id,
+                checkpoint_id,
+                mode: "node".into(),
+                node_id: Some("wait".into()),
+                input_overrides: json!({"forked":true}),
+                side_effect_decisions: json!({}),
+                actor_user_id: runtime_user,
+                idempotency_key: Some("m4-node-fork".into()),
+            })
+            .await
+            .expect("create node fork");
+        let parent: uuid::Uuid =
+            sqlx::query_scalar("SELECT parent_execution_id FROM workflow_executions WHERE id=?")
+                .bind(fork.execution_id)
+                .fetch_one(&pool)
+                .await
+                .expect("fork parent");
+        assert_eq!(parent, created.execution_id);
+        let current_hash: String =
+            sqlx::query_scalar("SELECT state_hash FROM checkpoints WHERE id=?")
+                .bind(checkpoint_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let current_checkpoint_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM checkpoints WHERE execution_id=?")
+                .bind(created.execution_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            (current_hash, current_checkpoint_count),
+            (source_hash, source_checkpoint_count)
+        );
+        assert!(
+            runtime
+                .cancel_execution(runtime_tenant, fork.execution_id)
+                .await
+                .unwrap()
+        );
+        let source_status_after_fork: String =
+            sqlx::query_scalar("SELECT status FROM workflow_executions WHERE id=?")
+                .bind(created.execution_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(source_status_after_fork, "succeeded");
     }
 
     #[tokio::test]

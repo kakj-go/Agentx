@@ -1,7 +1,9 @@
 use std::{convert::Infallible, env, sync::Arc, time::Duration};
 
 use agentx_api_types::{ApiErrorResponse, FieldError};
-use agentx_application::{AcceptedExecution, ExecutionRuntime, RequestExecution};
+use agentx_application::{
+    AcceptedExecution, ExecutionRuntime, RequestExecution, ResumeExecutionCommand,
+};
 use agentx_domain::{
     ExecutionId, ExecutionStatus, InvocationId, SessionId, TenantId, WorkflowVersionId,
 };
@@ -36,6 +38,8 @@ struct GatewayState {
     jwt: Arc<JwtSettings>,
     keyring: Arc<CredentialKeyring>,
     runtime: Arc<dyn ExecutionRuntime>,
+    resume_runtime: Arc<dyn ExecutionRuntime>,
+    wait_resume_secret: Arc<SecretString>,
 }
 
 struct UnavailableExecutionRuntime;
@@ -293,8 +297,23 @@ struct InvocationResponse {
     created_at: OffsetDateTime,
 }
 
+#[derive(Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct WaitResumeRequest {
+    output_port: Option<String>,
+    #[serde(default)]
+    payload: Value,
+}
+
+#[derive(Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct WaitResumeResponse {
+    accepted: bool,
+    replayed: bool,
+}
+
 #[derive(OpenApi)]
-#[openapi(paths(create_session,get_session,create_invocation,send_message,get_invocation,cancel_invocation,invocation_events,webhook_trigger),components(schemas(CreateSessionRequest,SessionResponse,InvocationRequest,MessageRequest,MessagePartInput,InvocationResponse,ApiErrorResponse,FieldError)),tags((name="Agentx Gateway",description="Application invocation API")))]
+#[openapi(paths(create_session,get_session,create_invocation,send_message,get_invocation,cancel_invocation,invocation_events,webhook_trigger,resume_wait),components(schemas(CreateSessionRequest,SessionResponse,InvocationRequest,MessageRequest,MessagePartInput,InvocationResponse,WaitResumeRequest,WaitResumeResponse,ApiErrorResponse,FieldError)),tags((name="Agentx Gateway",description="Application invocation and runtime wait API")))]
 struct GatewayApi;
 
 #[tokio::main]
@@ -322,6 +341,19 @@ async fn main() -> Result<()> {
         jwt: Arc::new(JwtSettings::from_env()?),
         keyring: Arc::new(CredentialKeyring::from_json(key_id, &keys)?),
         runtime: Arc::new(UnavailableExecutionRuntime),
+        resume_runtime: Arc::new(
+            agentx_infrastructure::runtime_client::GrpcExecutionRuntime::connect(
+                &env::var("AGENTX_RUNTIME_COORDINATOR_URL")
+                    .unwrap_or_else(|_| "http://workflow-coordinator:9090".into()),
+                pool.clone(),
+            )?,
+        ),
+        wait_resume_secret: Arc::new(SecretString::from(
+            env::var("AGENTX_WAIT_RESUME_SECRET").unwrap_or_else(|_| {
+                env::var("AGENTX_JWT_SIGNING_SECRET")
+                    .unwrap_or_else(|_| "development-wait-resume-secret-change-me".into())
+            }),
+        )),
     };
     let health = agentx_service_kit::HealthRegistry::default();
     health.register("mysql", true).await;
@@ -341,6 +373,7 @@ fn router(state: GatewayState) -> Router {
                 .route("/invocations/{id}", get(get_invocation))
                 .route("/invocations/{id}/cancel", post(cancel_invocation))
                 .route("/invocations/{id}/events", get(invocation_events))
+                .route("/waits/{binding_id}/resume", post(resume_wait))
                 .route("/webhooks/{public_id}", post(webhook_trigger)),
         )
         .with_state(state)
@@ -532,10 +565,13 @@ async fn request_invocation(
         .runtime
         .request_execution(RequestExecution {
             tenant_id: TenantId::from_uuid(caller.tenant_id()),
-            invocation_id,
+            invocation_id: Some(invocation_id),
             session_id: session_id.map(SessionId::from_uuid),
             workflow_version_id: WorkflowVersionId::from_uuid(workflow_version_id),
+            requested_by: caller.user_id().map(agentx_domain::UserId::from_uuid),
+            trigger_type: "application".into(),
             input,
+            idempotency_key: Some(idempotency_key.into()),
         })
         .await
     {
@@ -732,6 +768,124 @@ fn last_event_cursor(headers: &HeaderMap) -> u64 {
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.parse::<u64>().ok())
         .unwrap_or(0)
+}
+
+#[utoipa::path(
+    post,
+    path = "/gateway/v1/waits/{binding_id}/resume",
+    request_body = WaitResumeRequest,
+    responses((status = 200, body = WaitResumeResponse))
+)]
+async fn resume_wait(
+    State(state): State<GatewayState>,
+    Path(binding_id): Path<Uuid>,
+    headers: HeaderMap,
+    body: String,
+) -> GatewayResult<Json<WaitResumeResponse>> {
+    let row=sqlx::query("SELECT w.tenant_id,w.execution_id,w.node_execution_id,w.wait_kind,w.authentication_mode,w.payload_schema_json,w.status,b.authentication_config_hash FROM wait_subscriptions w JOIN resume_webhook_bindings b ON b.wait_subscription_id=w.id AND b.tenant_id=w.tenant_id WHERE w.id=? AND b.id=?")
+        .bind(binding_id).bind(binding_id).fetch_optional(&state.pool).await?.ok_or_else(||GatewayError::not_found("Wait Resume Binding"))?;
+    let authentication: String = row.try_get("authentication_mode")?;
+    if authentication == "signed" {
+        let signature = headers
+            .get("x-agentx-wait-signature")
+            .and_then(|value| value.to_str().ok())
+            .ok_or_else(|| {
+                GatewayError::unauthorized(
+                    "WAIT_SIGNATURE_REQUIRED",
+                    "Wait resume signature is required",
+                )
+            })?;
+        let mut mac =
+            Hmac::<Sha256>::new_from_slice(state.wait_resume_secret.expose_secret().as_bytes())
+                .map_err(GatewayError::internal)?;
+        mac.update(binding_id.to_string().as_bytes());
+        mac.update(b".");
+        mac.update(body.as_bytes());
+        let expected = URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes());
+        if !constant_time_eq(signature.as_bytes(), expected.as_bytes()) {
+            return Err(GatewayError::unauthorized(
+                "INVALID_WAIT_SIGNATURE",
+                "Wait resume signature is invalid",
+            ));
+        }
+    } else if matches!(authentication.as_str(), "header" | "basic") {
+        let presented = if authentication == "header" {
+            headers.get("x-agentx-wait-auth")
+        } else {
+            headers.get(AUTHORIZATION)
+        }
+        .and_then(|value| value.to_str().ok())
+        .ok_or_else(|| {
+            GatewayError::unauthorized(
+                "WAIT_AUTH_REQUIRED",
+                "Wait resume authentication is required",
+            )
+        })?;
+        let actual = format!("{:x}", Sha256::digest(presented.as_bytes()));
+        let expected: String = row
+            .try_get::<Option<String>, _>("authentication_config_hash")?
+            .ok_or_else(|| {
+                GatewayError::unauthorized(
+                    "WAIT_AUTH_INVALID",
+                    "Wait authentication is not configured",
+                )
+            })?;
+        if !constant_time_eq(actual.as_bytes(), expected.as_bytes()) {
+            return Err(GatewayError::unauthorized(
+                "WAIT_AUTH_INVALID",
+                "Wait resume authentication is invalid",
+            ));
+        }
+    }
+    let input: WaitResumeRequest = serde_json::from_str(&body).map_err(|error| {
+        GatewayError::bad_request("INVALID_WAIT_RESUME_BODY", error.to_string())
+    })?;
+    let output_port = input.output_port.as_deref().unwrap_or("resumed");
+    if output_port != "resumed" {
+        return Err(GatewayError::bad_request(
+            "WAIT_OUTPUT_PORT_INVALID",
+            "External wait resume can only use the resumed output",
+        ));
+    }
+    if row.try_get::<String, _>("wait_kind")? == "form" {
+        let schema = row
+            .try_get::<Option<Value>, _>("payload_schema_json")?
+            .ok_or_else(|| {
+                GatewayError::bad_request(
+                    "FORM_SCHEMA_MISSING",
+                    "Form wait payload schema is missing",
+                )
+            })?;
+        let validator = jsonschema::validator_for(&schema)
+            .map_err(|error| GatewayError::bad_request("FORM_SCHEMA_INVALID", error.to_string()))?;
+        if let Err(error) = validator.validate(&input.payload) {
+            return Err(GatewayError::bad_request(
+                "FORM_PAYLOAD_INVALID",
+                error.to_string(),
+            ));
+        }
+    }
+    let idempotency_key = validate_idempotency(&headers)?;
+    let replayed = state
+        .resume_runtime
+        .resume_execution(ResumeExecutionCommand {
+            tenant_id: TenantId::from_uuid(row.try_get("tenant_id")?),
+            execution_id: ExecutionId::from_uuid(row.try_get("execution_id")?),
+            node_execution_id: agentx_domain::NodeExecutionId::from_uuid(
+                row.try_get("node_execution_id")?,
+            ),
+            resume_token: binding_id.to_string(),
+            output_port: output_port.into(),
+            payload: input.payload,
+            idempotency_key: idempotency_key.into(),
+            actor_user_id: None,
+        })
+        .await
+        .map_err(|_| GatewayError::runtime_unavailable())?;
+    Ok(Json(WaitResumeResponse {
+        accepted: true,
+        replayed,
+    }))
 }
 
 #[utoipa::path(post, path = "/gateway/v1/webhooks/{public_id}")]

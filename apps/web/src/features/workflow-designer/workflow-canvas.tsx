@@ -83,7 +83,7 @@ export function WorkflowCanvas() {
   const updateSelected = (data: Partial<CanvasNodeData>) => { setNodes((current) => current.map((node) => node.id === selectedId ? { ...node, data: { ...node.data, ...data } } : node)); setDirty(true) }
   const removeSelected = () => { if (!selectedId) return; setNodes((current) => current.filter((node) => node.id !== selectedId)); setEdges((current) => current.filter((edge) => edge.source !== selectedId && edge.target !== selectedId)); setSelectedId(undefined); setDirty(true) }
   const serialize = (): Definition => ({
-    schemaVersion: '1.0', settings: {},
+    schemaVersion: '2.0', settings: { executionOrder: 'n8n_v1', activationBudget: 10000 },
     nodes: nodes.map((node) => ({ id: node.id, type: node.data.kind, typeVersion: 1, name: node.data.label, position: node.position, disabled: false, parameters: {}, resourceReferences: node.data.kind === 'manual_trigger' ? [] : [{ resourceType: node.data.kind === 'model' ? 'model' : node.data.kind, resourceId: node.data.resourceId ?? '', resourceVersionId: null, operation: node.data.kind === 'rag' || node.data.kind === 'memory' ? 'read' : 'use' }] })),
     connections: edges.map((edge) => ({ id: edge.id, sourceNodeId: edge.source, sourceHandle: edge.sourceHandle ?? 'main', targetNodeId: edge.target, targetHandle: edge.targetHandle ?? 'main' })),
   })

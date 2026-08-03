@@ -22,6 +22,7 @@ Agentx 是一个以 n8n 式 Workflow 编辑和运行模型为核心，面向企�
 | [08-roadmap.md](08-roadmap.md) | 开发阶段、交付物、验收标准和 MVP 范围 |
 | [09-codebase-architecture.md](09-codebase-architecture.md) | Monorepo、Rust 服务、公共 Crate 和依赖边界 |
 | [10-frontend-architecture.md](10-frontend-architecture.md) | Tailwind UI 体系、企业工作台和 React Flow 画布 |
+| [11-node-integration.md](11-node-integration.md) | Node Manifest、Action/Provider/Lifecycle HTTP 协议与接入验证 |
 | [plan/README.md](plan/README.md) | 全量实施顺序、阶段任务、依赖、验收门禁和功能追踪 |
 | [plan/m2-task-list.md](plan/m2-task-list.md) | M2 Workflow 控制面与资源中心的详细实施批次和任务清单 |
 | [plan/m2.1-resource-redesign.md](plan/m2.1-resource-redesign.md) | M2.1 MCP、Skill Workspace、Kubernetes Addon 与全局 E2E 重构任务 |
@@ -30,6 +31,8 @@ Agentx 是一个以 n8n 式 Workflow 编辑和运行模型为核心，面向企�
 | [plan/m3-acceptance-evidence.md](plan/m3-acceptance-evidence.md) | M3 快速检查、Kubernetes E2E 和完成边界证据 |
 | [plan/m3.1-evaluation-profile-and-prerequisites.md](plan/m3.1-evaluation-profile-and-prerequisites.md) | M3.1 评测方案合并与依赖型操作交互修正任务 |
 | [plan/m3.1-acceptance-evidence.md](plan/m3.1-acceptance-evidence.md) | M3.1 契约、前端、Kubernetes E2E 和完成边界证据 |
+| [plan/m4-task-list.md](plan/m4-task-list.md) | M4 可靠运行的实施批次、依赖、门禁、Kubernetes E2E 与剩余任务统计 |
+| [plan/m4-acceptance-evidence.md](plan/m4-acceptance-evidence.md) | M4 Runtime、Recovery、Workbench、Kubernetes 故障注入和数据库断言证据 |
 | [plan/e2e-testing-standard.md](plan/e2e-testing-standard.md) | 临时 Kubernetes Playwright 端到端测试规范 |
 | [plan/m2-acceptance-evidence.md](plan/m2-acceptance-evidence.md) | 已被 M2.1 取代的旧 M2 历史证据 |
 
@@ -45,7 +48,7 @@ Agentx 是一个以 n8n 式 Workflow 编辑和运行模型为核心，面向企�
 ## 核心设计结论
 
 1. Workflow 是平台第一核心对象，其他功能都服务于其开发、运行、发布和评测。
-2. 交互和运行语义尽量接近 n8n，但内部定义独立协议；n8n JSON 导入作为适配能力处理。
+2. Workflow 行为和可实现能力以 n8n 一致为目标，但内部 Definition、IR 和节点 API 使用独立协议；n8n JSON 导入作为适配能力处理，不兼容社区节点二进制。
 3. Workflow 草稿可变，Workflow Version 不可变，Deployment 负责将版本发布到环境。
 4. 采用 Item 数据模型传递节点数据，保留 Item 的上下游来源关系。
 5. MySQL 保存权威业务状态；Redis 只负责缓存、租约、限流和任务派发。
@@ -58,13 +61,13 @@ Agentx 是一个以 n8n 式 Workflow 编辑和运行模型为核心，面向企�
 12. Workflow 画布使用 React Flow，画布状态通过转换层生成独立的 Workflow Definition。
 13. 本地 Kustomize 同时启动应用、MySQL、Redis、ClickHouse 和 MinIO。
 
-## 实施前详细设计
+## 分阶段详细设计
 
-进入编码前还需要继续固化以下规范：
+各规范在所属阶段冻结；已完成的阶段以验收证据和版本化 Schema 为准，未完成阶段继续按任务计划固化：
 
 - Workflow Definition JSON Schema
 - Workflow 编译后 IR
-- Node SDK 与节点版本兼容规则
+- Node Protocol/API 与节点版本兼容规则
 - 表达式语法和执行上下文
 - Execution 状态机
 - MySQL DDL 与索引

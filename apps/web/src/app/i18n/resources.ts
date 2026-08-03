@@ -2,6 +2,7 @@ export const resources = {
   'zh-CN': {
     translation: {
       app: { name: 'Agentx', subtitle: 'Workflow Cloud' },
+      m4: { runVersion: '运行版本' },
       auth: {
         brand: '企业级 Agent Workflow', companyName: '公司名称', username: '用户名', displayName: '管理员姓名', password: '密码', newPassword: '新密码', confirmPassword: '确认新密码',
         passwordHint: '密码长度为 12–128 个字符，系统不会自动去除首尾空格。', passwordMismatch: '两次输入的密码不一致',
@@ -133,6 +134,7 @@ export const resources = {
     translation: {
       skillWorkspace: { import: 'Import ZIP', export: 'Export ZIP', imported: 'Workspace imported' },
       app: { name: 'Agentx', subtitle: 'Workflow Cloud' },
+      m4: { runVersion: 'Run version' },
       auth: {
         brand: 'Enterprise Agent Workflow', companyName: 'Company name', username: 'Username', displayName: 'Administrator name', password: 'Password', newPassword: 'New password', confirmPassword: 'Confirm password',
         passwordHint: 'Use 12–128 characters. Leading and trailing spaces are preserved.', passwordMismatch: 'The passwords do not match.',

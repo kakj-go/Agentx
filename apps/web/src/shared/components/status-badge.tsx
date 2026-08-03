@@ -10,7 +10,7 @@ const tones = {
   pending: 'warning', waiting: 'warning', invited: 'warning', draft: 'neutral', inactive: 'neutral', untested: 'neutral', failed: 'danger', unhealthy: 'danger',
 } as const
 
-export function StatusBadge({ status }: { status: StatusValue }) {
+export function StatusBadge({ status, label }: { status: StatusValue; label?: string }) {
   const { t } = useTranslation()
-  return <Badge className="gap-1.5" tone={tones[status]}><span className="size-1.5 rounded-full bg-current" />{t(`common.${status}`)}</Badge>
+  return <Badge className="gap-1.5" tone={tones[status]}><span className="size-1.5 rounded-full bg-current" />{label ?? t(`common.${status}`)}</Badge>
 }

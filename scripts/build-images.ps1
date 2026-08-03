@@ -3,6 +3,7 @@ param(
     [string[]]$Services = @(
         "platform-api",
         "echo-mcp",
+        "echo-node",
         "trigger-gateway",
         "workflow-coordinator",
         "workflow-worker",

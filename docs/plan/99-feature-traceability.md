@@ -16,15 +16,15 @@
 | Dataset、Evaluation Profile Version、内嵌评分规则和空报告 | 01 §2/4、05 §11–12 | EVA-001–010、M3F-001～005 | platform-api | `/datasets`、`/evaluations` | MySQL、MinIO | dataset/evaluation_profile/evaluation manage | Dataset/Profile 版本不可变、导入原子、四类规则、Runtime 不可用零 Case Result | done / [M3.1 验收证据](m3.1-acceptance-evidence.md) |
 | Evaluation 批量真实 Execution 和指标 | 01 §2/4、05 §11–12 | INT-003 | coordinator、workflow-worker | `/evaluations` | MySQL、ClickHouse | evaluation manage/workflow run | Case Execution、成本、耗时和 Trace 指标 | planned / — |
 | 审批任务和站内通知外围能力 | 01 §1/4、04 §11、05 §13 | OBS-001–003 | platform-api | `/approvals`、消息中心 | MySQL、Redis | approval act/manage、notification view | 并发终态、候选资格、幂等投影和业务跳转 | done / [M3 验收证据](m3-acceptance-evidence.md) |
-| Approval Node 恢复和运行通知闭环 | 01 §1/4、04 §11、05 §13 | REC-005–006、INT-002/007 | coordinator、worker | `/approvals`、Execution | MySQL、Redis、ClickHouse | approval act/workflow run | 决策后恢复、输出端口和重复事件 | planned / — |
-| Item、表达式和基础节点 | 01 §4、03 §3–7 | RUN-001–005、RUN-012 | runtime、worker | Studio 参数和输出面板 | MySQL、MinIO | workflow edit/run | Item 来源、AST 安全、节点版本 | planned / — |
-| IF、Switch、Merge、Loop、Wait、Sub-workflow | 01 §4、03 §7–9 | RUN-006–008、REC-004、WCP-004 | runtime、coordinator、worker | Workflow Studio | MySQL、Redis | workflow edit/run | ClosedWithoutData、Join、Loop、固定子版本 | planned / — |
+| Approval Node 恢复和运行通知闭环 | 01 §1/4、04 §11、05 §13 | REC-005–006、INT-002/007 | coordinator、worker | `/approvals`、Execution | MySQL、Redis、ClickHouse | approval act/workflow run | 决策后恢复、输出端口和重复事件 | in_progress / [M4 验收证据](m4-acceptance-evidence.md)；M7 集成待完成 |
+| Item、表达式、Node Protocol 和基础节点 | 01 §4、03 §3–7/13 | RUN-001–005、RUN-012 | runtime、worker | Studio 参数和输出面板 | MySQL、MinIO | workflow edit/run | 多来源 Lineage、AST 安全、Manifest/Action 版本、协议一致性 | done / [M4 验收证据](m4-acceptance-evidence.md) |
+| IF、Switch、Readiness、Merge、普通图环、Loop、Wait、Sub-workflow | 01 §4、03 §7–10 | RUN-006–008、REC-004、WCP-004 | runtime、coordinator、worker | Workflow Studio | MySQL、Redis | workflow edit/run | n8n_v1 顺序、ClosedWithoutData、required inputs、回边激活预算、固定子版本 | done / [M4 验收证据](m4-acceptance-evidence.md) |
 | API、Webhook、Schedule 和 SSE 触发契约 | 01 §4、05 §10 | APP-006–008 | trigger-gateway | Application、Playground | MySQL、Redis | application invoke | JWT/API Key、触发幂等、Webhook 防重放和 SSE 回放 | done / [M3 验收证据](m3-acceptance-evidence.md) |
-| Schedule、Webhook 和手动触发到真实调度 | 01 §4、05 §10 | RUN-010–014、INT-004 | trigger-gateway、coordinator | Application、Studio | MySQL、Redis | application invoke/workflow run | 扫描、派发、取消和状态一致性 | planned / — |
-| Execution、Node Execution 和可靠调度 | 01 §2/3、03 §8–11 | RUN-006、RUN-009–014 | coordinator、worker | `/executions` | MySQL、Redis | workflow view_execution | 重复消息、Lease、崩溃、超时 | planned / — |
+| Schedule、Webhook、Poll 和手动触发到真实调度 | 01 §4、03 §13、05 §10 | RUN-002、RUN-010–014、INT-004 | trigger-gateway、coordinator | Application、Studio | MySQL、Redis | application invoke/workflow run | activate/deactivate、扫描、Webhook/Poll、派发、取消和状态一致性 | in_progress / [M4 验收证据](m4-acceptance-evidence.md)；M7 Trigger 接线待完成 |
+| Execution、Node Activation/Attempt/Delivery 和可靠调度 | 01 §2/3、03 §8–11 | RUN-006、RUN-009–014 | coordinator、worker | `/executions` | MySQL、Redis | workflow view_execution | 分支顺序、重复 Delivery、Lease、崩溃、超时 | done / [M4 验收证据](m4-acceptance-evidence.md) |
 | Execution Summary、Trace Pipeline、查询和 Artifact | 01 §4、04 §1–4 | OBS-004–006 | trace-writer、platform-api | Execution Trace | MySQL、Redis、ClickHouse、MinIO | execution/trace view | 脱敏、Outbox 交付、Span 树、Artifact 授权 | done / [M3 验收证据](m3-acceptance-evidence.md) |
 | 模型成本、MCP 错误和 Agent 循环运行 Trace | 01 §4、04 §8–9 | AGT-006–007/012 | worker、trace-writer | Execution Trace | MySQL、ClickHouse、MinIO | workflow run/trace view | Token、成本、重复错误和 A-B-A-B 循环 | planned / — |
-| Checkpoint、Fork 和部分执行 | 01 §1/4、04 §5–7 | REC-001–003、REC-007–010 | coordinator、worker | Execution、Studio | MySQL、MinIO | workflow fork_execution | 原记录不变、依赖恢复、副作用确认 | planned / — |
+| Checkpoint、Fork 和部分执行 | 01 §1/4、04 §5–7 | REC-001–003、REC-007–010 | coordinator、worker | Execution、Studio | MySQL、MinIO | workflow fork_execution | 原记录不变、依赖恢复、副作用确认 | done / [M4 验收证据](m4-acceptance-evidence.md) |
 | Model、Agent、MCP Tool、Skill、RAG 和 Memory 运行 | 01 §1/4、04 §8–9、05 §3–7 | AGT-001–007、AGT-012–013 | worker、infrastructure | Studio、Trace | MySQL、ClickHouse、MinIO | resource grant/workflow run | 运行时授权、预算、循环、依赖 | planned / — |
 | CubeSandbox 与 Code 节点 | 01 §1/4、04 §10、07 §11 | AGT-008–011/013 | sandbox-manager、worker | Studio、Trace | MySQL、Redis、MinIO、CubeSandbox | workflow run/resource grant | 隔离、配额、网络、Secret、强制回收 | planned / — |
 | n8n 式拖拽、调试和发布 | 01 §1/2、10 §7–10 | STU-001–014 | platform-api、runtime services | `/workflows/:id/editor` | MySQL、Redis、MinIO | workflow edit/run/publish | Serializer、连线、Pin、运行高亮、发布 | planned / — |
@@ -41,7 +41,7 @@
 | 5. 拖拽 Agent、MCP Tool、Code 和审批 Workflow | 11 | STU-001–008、AGT-013 | Studio E2E 和 Definition Snapshot | planned |
 | 6. 手动运行并查看节点输入输出 | 11 | STU-009–012、RUN-014 | 真实 Execution/Node Trace | planned |
 | 7. 查看模型、Tool、成本和循环 Trace | 10 | AGT-006–007/012、OBS-006 | Agent Fixture 和 Trace UI | planned |
-| 8. 从历史 Checkpoint 重新执行 | 09 | REC-001–003、REC-010 | Fork 父子记录和原记录 Hash | planned |
+| 8. 从历史 Checkpoint 重新执行 | 09 | REC-001–003、REC-010 | [M4 验收证据](m4-acceptance-evidence.md) | done |
 | 9. 用 Dataset 批量评测版本 | 12 | EVA-001–010、INT-003 | Case Execution 和报告指标 | planned |
 | 10. 发布为 Application | 12 | WCP-005/007、APP-001、INT-001 | Deployment 与调用记录 | planned |
 | 11. Playground/API 建立 Session 并发送消息 | 12 | APP-002–011、INT-001 | API Key、SSE、Message 和 Execution | planned |

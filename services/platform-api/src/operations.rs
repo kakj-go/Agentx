@@ -1,6 +1,6 @@
 use agentx_api_types::PageResponse;
-use agentx_application::ArtifactStore;
-use agentx_domain::{ArtifactId, TenantId};
+use agentx_application::{ArtifactStore, ResumeExecutionCommand};
+use agentx_domain::{ArtifactId, ExecutionId, NodeExecutionId, TenantId, UserId};
 use agentx_infrastructure::artifact::MySqlObjectArtifactStore;
 use axum::{
     Json,
@@ -133,6 +133,10 @@ pub struct ExecutionResponse {
     pub session_id: Option<Uuid>,
     pub trace_id: Uuid,
     pub trigger_type: String,
+    pub execution_type: String,
+    pub parent_execution_id: Option<Uuid>,
+    pub caller_execution_id: Option<Uuid>,
+    pub fork_checkpoint_id: Option<Uuid>,
     pub status: String,
     #[serde(with = "time::serde::rfc3339")]
     pub started_at: OffsetDateTime,
@@ -802,7 +806,7 @@ pub async fn dashboard_summary(
 }
 
 const APPROVAL_SELECT: &str = "SELECT t.id,t.execution_id,t.workflow_id,w.name workflow_name,t.node_id,t.title,t.description,t.request_payload_json,t.status,t.claimed_by,u.display_name claimed_by_name,t.resume_status,t.deadline_at,t.version,t.created_at FROM approval_tasks t JOIN workflows w ON w.id=t.workflow_id LEFT JOIN users u ON u.id=t.claimed_by";
-const EXECUTION_SELECT: &str = "SELECT e.id,e.workflow_id,w.name workflow_name,e.workflow_version_id,wv.version_number workflow_version_number,e.invocation_id,e.session_id,e.trace_id,e.trigger_type,e.status,e.started_at,e.ended_at,e.duration_ms,e.cost_micros,e.error_code,e.error_message FROM workflow_executions e JOIN workflows w ON w.id=e.workflow_id JOIN workflow_versions wv ON wv.id=e.workflow_version_id";
+const EXECUTION_SELECT: &str = "SELECT e.id,e.workflow_id,w.name workflow_name,e.workflow_version_id,wv.version_number workflow_version_number,e.invocation_id,e.session_id,e.trace_id,e.trigger_type,e.execution_type,e.parent_execution_id,e.caller_execution_id,e.fork_checkpoint_id,e.status,e.started_at,e.ended_at,e.duration_ms,e.cost_micros,e.error_code,e.error_message FROM workflow_executions e JOIN workflows w ON w.id=e.workflow_id JOIN workflow_versions wv ON wv.id=e.workflow_version_id";
 const WORKFLOW_VISIBILITY: &str = "(w.owner_user_id=? OR w.visibility='company' OR EXISTS(SELECT 1 FROM workflow_members wm WHERE wm.workflow_id=w.id AND wm.user_id=?) OR (w.visibility='department' AND EXISTS(SELECT 1 FROM user_roles ur JOIN department_closure dc ON dc.ancestor_id=ur.scope_department_id AND dc.tenant_id=ur.tenant_id WHERE ur.user_id=? AND ur.tenant_id=w.tenant_id AND dc.descendant_id=w.owner_department_id)))";
 
 fn workflow_visibility_sql(actor: &AuthActor) -> &'static str {
@@ -891,7 +895,9 @@ async fn decide(
         "reject"
     };
     let mut tx = state.pool.begin().await?;
-    let changed=sqlx::query("UPDATE approval_tasks SET status=?,resume_status='blocked_runtime',version=version+1 WHERE id=? AND tenant_id=? AND status='claimed' AND claimed_by=? AND version=?").bind(target).bind(id).bind(actor.tenant_id).bind(actor.user_id).bind(input.version).execute(&mut *tx).await?;
+    let runtime_row=sqlx::query("SELECT t.execution_id,t.node_execution_id,w.id wait_id FROM approval_tasks t LEFT JOIN wait_subscriptions w ON w.resume_token_id=t.resume_token_id AND w.tenant_id=t.tenant_id WHERE t.id=? AND t.tenant_id=? FOR UPDATE")
+        .bind(id).bind(actor.tenant_id).fetch_one(&mut *tx).await?;
+    let changed=sqlx::query("UPDATE approval_tasks SET status=?,resume_status=IF(node_execution_id IS NULL,'blocked_runtime','pending'),version=version+1 WHERE id=? AND tenant_id=? AND status='claimed' AND claimed_by=? AND version=?").bind(target).bind(id).bind(actor.tenant_id).bind(actor.user_id).bind(input.version).execute(&mut *tx).await?;
     if changed.rows_affected() != 1 {
         return Err(AppError::conflict(
             "APPROVAL_STATE_CONFLICT",
@@ -914,7 +920,7 @@ async fn decide(
         &format!("approval.{action}"),
         "approval",
         id,
-        json!({"resumeStatus":"blocked_runtime"}),
+        json!({"resumeStatus":if runtime_row.try_get::<Option<Uuid>,_>("node_execution_id")?.is_some(){"pending"}else{"blocked_runtime"}}),
     )
     .await?;
     outbox(
@@ -923,10 +929,50 @@ async fn decide(
         "ApprovalResolved",
         "approval",
         id,
-        json!({"decision":target,"resumeStatus":"blocked_runtime"}),
+        json!({"decision":target,"resumeStatus":"pending"}),
     )
     .await?;
     tx.commit().await?;
+    if let (Some(node_execution_id), Some(wait_id)) = (
+        runtime_row.try_get::<Option<Uuid>, _>("node_execution_id")?,
+        runtime_row.try_get::<Option<Uuid>, _>("wait_id")?,
+    ) {
+        let runtime = state.runtime.as_deref().ok_or_else(|| {
+            AppError::service_unavailable("RUNTIME_UNAVAILABLE", "Workflow runtime is unavailable")
+        })?;
+        let result = runtime
+            .resume_execution(ResumeExecutionCommand {
+                tenant_id: TenantId::from_uuid(actor.tenant_id),
+                execution_id: ExecutionId::from_uuid(runtime_row.try_get("execution_id")?),
+                node_execution_id: NodeExecutionId::from_uuid(node_execution_id),
+                resume_token: wait_id.to_string(),
+                output_port: if target == "approved" {
+                    "approved".into()
+                } else {
+                    "rejected".into()
+                },
+                payload: json!({"decision":target,"input":input.input,"actorUserId":actor.user_id}),
+                idempotency_key: format!("approval:{id}:{}:{target}", input.version),
+                actor_user_id: Some(UserId::from_uuid(actor.user_id)),
+            })
+            .await;
+        let (resume_status, error) = match result {
+            Ok(_) => ("succeeded", None),
+            Err(error) => ("failed", Some(error.to_string())),
+        };
+        sqlx::query("UPDATE approval_tasks SET resume_status=? WHERE id=? AND tenant_id=?")
+            .bind(resume_status)
+            .bind(id)
+            .bind(actor.tenant_id)
+            .execute(&state.pool)
+            .await?;
+        if let Some(error) = error {
+            return Err(AppError::service_unavailable(
+                "RUNTIME_RESUME_FAILED",
+                error,
+            ));
+        }
+    }
     Ok(Json(load_approval(state, actor.tenant_id, id).await?))
 }
 async fn terminal_admin_transition(
@@ -1078,6 +1124,10 @@ fn execution_from_row(r: sqlx::mysql::MySqlRow) -> AppResult<ExecutionResponse> 
         session_id: r.try_get("session_id")?,
         trace_id: r.try_get("trace_id")?,
         trigger_type: r.try_get("trigger_type")?,
+        execution_type: r.try_get("execution_type")?,
+        parent_execution_id: r.try_get("parent_execution_id")?,
+        caller_execution_id: r.try_get("caller_execution_id")?,
+        fork_checkpoint_id: r.try_get("fork_checkpoint_id")?,
         status: r.try_get("status")?,
         started_at: r.try_get("started_at")?,
         ended_at: r.try_get("ended_at")?,
@@ -1088,7 +1138,7 @@ fn execution_from_row(r: sqlx::mysql::MySqlRow) -> AppResult<ExecutionResponse> 
     })
 }
 async fn load_execution(state: &AppState, tenant: Uuid, id: Uuid) -> AppResult<ExecutionResponse> {
-    let sql = "SELECT e.id,e.workflow_id,w.name workflow_name,e.workflow_version_id,wv.version_number workflow_version_number,e.invocation_id,e.session_id,e.trace_id,e.trigger_type,e.status,e.started_at,e.ended_at,e.duration_ms,e.cost_micros,e.error_code,e.error_message FROM workflow_executions e JOIN workflows w ON w.id=e.workflow_id JOIN workflow_versions wv ON wv.id=e.workflow_version_id WHERE e.tenant_id=? AND e.id=?";
+    let sql = "SELECT e.id,e.workflow_id,w.name workflow_name,e.workflow_version_id,wv.version_number workflow_version_number,e.invocation_id,e.session_id,e.trace_id,e.trigger_type,e.execution_type,e.parent_execution_id,e.caller_execution_id,e.fork_checkpoint_id,e.status,e.started_at,e.ended_at,e.duration_ms,e.cost_micros,e.error_code,e.error_message FROM workflow_executions e JOIN workflows w ON w.id=e.workflow_id JOIN workflow_versions wv ON wv.id=e.workflow_version_id WHERE e.tenant_id=? AND e.id=?";
     let r = sqlx::query(sql)
         .bind(tenant)
         .bind(id)

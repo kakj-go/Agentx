@@ -170,6 +170,7 @@ test('M3 application, gateway, dataset, and evaluation control planes use real U
   await member.getByRole('button',{name:'登录'}).click()
   await expect(member).toHaveURL(/\/$/)
   await member.goto('/applications')
+  await expect(member.getByRole('heading',{name:'应用',exact:true})).toBeVisible()
   await expect(member.getByRole('button',{name:'新建应用'})).toHaveCount(0)
   await member.goto('/datasets')
   await expect(member).toHaveURL(/\/403$/)

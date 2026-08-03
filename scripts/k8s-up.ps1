@@ -14,6 +14,7 @@ kubectl -n agentx rollout status statefulset/minio --timeout=420s
 $deployments = @(
     "web",
     "echo-mcp",
+    "echo-node",
     "platform-api",
     "trigger-gateway",
     "workflow-coordinator",

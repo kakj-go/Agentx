@@ -1,0 +1,19 @@
+[package]
+name = "echo-node"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+agentx-domain.workspace = true
+agentx-node-protocol.workspace = true
+agentx-service-kit.workspace = true
+anyhow.workspace = true
+axum.workspace = true
+reqwest.workspace = true
+schemars.workspace = true
+serde_json.workspace = true
+time.workspace = true
+tokio.workspace = true
+uuid.workspace = true

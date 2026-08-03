@@ -44,7 +44,5 @@ export async function apiRequestBlob(path: string, init: RequestInit = {}) { ret
 export const jsonBody = (value: unknown) => JSON.stringify(value)
 
 export async function refreshAccessToken() {
-  const response = await publicRequest<AuthResponse>('/auth/refresh', { method: 'POST' })
-  setAccessToken(response.accessToken)
-  return response
+  return publicRequest<AuthResponse>('/auth/refresh', { method: 'POST' })
 }

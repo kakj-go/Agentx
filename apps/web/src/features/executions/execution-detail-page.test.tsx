@@ -1,0 +1,121 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+import { i18n } from '../../app/i18n'
+import { useAuth } from '../../app/providers/auth-provider'
+import { ToastProvider } from '../../shared/ui/toast'
+import { ExecutionDetailPage } from './execution-detail-page'
+
+vi.mock('../../app/providers/auth-provider', () => ({ useAuth: vi.fn() }))
+
+const execution = {
+  id: 'execution-1', workflowId: 'workflow-1', workflowName: 'Order recovery', workflowVersionId: 'version-1', workflowVersionNumber: 4,
+  invocationId: null, sessionId: null, traceId: 'trace-1', triggerType: 'manual', executionType: 'whole', parentExecutionId: null,
+  callerExecutionId: null, forkCheckpointId: null, status: 'waiting', startedAt: '2026-08-03T10:00:00Z', endedAt: null,
+  durationMs: 1200, costMicros: 0, errorCode: null, errorMessage: null,
+}
+
+const nodes = { items: [
+  {
+    id: 'node-execution-1', executionId: 'execution-1', nodeId: 'trigger', nodeName: 'Manual Trigger', nodeType: 'manual_trigger', nodeVersion: 1,
+    generation: 0, activationSlot: 0, runIndex: 0, iterationIndex: 0, status: 'succeeded', capability: 'builtin', sideEffectLevel: 'none',
+    input: { main: [{ json: { amount: 42 } }] }, output: { main: [{ json: { amount: 42 } }] }, errorCode: null, errorMessage: null,
+    startedAt: '2026-08-03T10:00:00Z', endedAt: '2026-08-03T10:00:00Z', attempts: [{ id: 'attempt-1', attemptNumber: 1, status: 'succeeded', workerInstanceId: 'worker-a', deadlineAt: null, errorCode: null, errorMessage: null, startedAt: '2026-08-03T10:00:00Z', endedAt: '2026-08-03T10:00:00Z' }], lineage: [],
+  },
+  {
+    id: 'node-execution-2', executionId: 'execution-1', nodeId: 'remote-charge', nodeName: 'Remote charge', nodeType: 'remote_action', nodeVersion: 1,
+    generation: 0, activationSlot: 0, runIndex: 0, iterationIndex: 0, status: 'waiting', capability: 'remote_action', sideEffectLevel: 'irreversible',
+    input: { main: [{ json: { amount: 42 } }] }, output: null, errorCode: null, errorMessage: null, startedAt: '2026-08-03T10:00:01Z', endedAt: null,
+    attempts: [], lineage: [{ deliveryId: 'delivery-1', targetItemIndex: 0, sourceNodeExecutionId: 'node-execution-1', sourceRunIndex: 0, sourceOutputIndex: 0, sourceItemIndex: 0 }],
+  },
+] }
+
+function response(value: unknown, status = 200) {
+  return new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } })
+}
+
+function installFetch(options: { execution?: unknown; nodes?: unknown; onRequest?: (path: string) => void } = {}) {
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+    const path = new URL(String(input), 'http://agentx.test').pathname
+    options.onRequest?.(path)
+    if (path === '/api/v1/executions/execution-1') return response(options.execution ?? execution)
+    if (path.endsWith('/nodes')) return response(options.nodes ?? nodes)
+    if (path.includes('/nodes/')) return response(nodes.items.find((node) => path.endsWith(node.id)))
+    if (path.endsWith('/checkpoints')) return response({ items: [{ id: 'checkpoint-1', executionId: 'execution-1', nodeExecutionId: 'node-execution-1', sequenceNumber: 2, checkpointType: 'node_completed', stateHash: 'sha256-state', activationCount: 2, deliveryCount: 1, createdAt: '2026-08-03T10:00:01Z' }] })
+    if (path.endsWith('/waits')) return response({ items: [{ id: 'wait-1', executionId: 'execution-1', nodeExecutionId: 'node-execution-2', waitKind: 'approval', status: 'waiting', wakeAt: null, timeoutAt: '2026-08-04T10:00:00Z', authenticationMode: 'signed', resumeUrl: '/gateway/v1/waits/wait-1/resume' }] })
+    if (path.endsWith('/trace')) return response({ executionId: 'execution-1', traceId: 'trace-1', nextCursor: null, events: [{ eventId: 'event-1', traceId: 'trace-1', spanId: 'span-1', parentSpanId: null, executionId: 'execution-1', nodeExecutionId: 'node-execution-2', nodeId: 'remote-charge', eventType: 'node.suspended', status: 'waiting', eventTime: '2026-08-03T10:00:01Z', durationMs: 1, runIndex: 0, iterationIndex: 0, modelName: null, providerName: null, mcpToolName: null, inputTokens: null, outputTokens: null, costMicros: 0, errorCode: null, errorMessage: null, attributes: { reason: 'approval' }, contentRef: null }] })
+    if (path.endsWith('/side-effect-confirmations')) return response({ accepted: true, replayed: false })
+    if (path === '/api/v1/approvals') return response({ items: [{ id: 'approval-1', executionId: 'execution-1', workflowId: 'workflow-1', workflowName: 'Order recovery', nodeId: 'remote-charge', title: 'Approve charge', description: null, status: 'pending', claimedBy: null, claimedByName: null, resumeStatus: 'pending', requestPayload: {}, deadlineAt: null, version: 1, createdAt: '2026-08-03T10:00:01Z' }], page: 1, pageSize: 100, total: 1 })
+    return response({ code: 'NOT_FOUND', message: path, requestId: 'test' }, 404)
+  }))
+}
+
+function renderPage(permissions: string[]) {
+  vi.mocked(useAuth).mockReturnValue({
+    status: 'authenticated', user: undefined, changeToken: undefined,
+    setup: vi.fn(), login: vi.fn(), changePassword: vi.fn(), logout: vi.fn(),
+    hasPermission: (permission) => permissions.includes(permission),
+  })
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  render(<QueryClientProvider client={queryClient}><ToastProvider><MemoryRouter initialEntries={['/executions/execution-1']}><Routes><Route element={<ExecutionDetailPage />} path="/executions/:id" /></Routes></MemoryRouter></ToastProvider></QueryClientProvider>)
+}
+
+describe('execution recovery workbench', () => {
+  beforeEach(async () => {
+    installFetch()
+    await i18n.changeLanguage('zh-CN')
+  })
+
+  it('shows node data, lineage, waits, approvals, checkpoints and fork risk preview', async () => {
+    const requests: string[] = []
+    installFetch({ onRequest: (path) => requests.push(path) })
+    renderPage(['execution:fork', 'execution:cancel', 'approval:view'])
+
+    const heading = await screen.findByRole('heading', { name: 'Order recovery' })
+    expect(heading).toHaveClass('min-w-0', 'flex-1', 'truncate')
+    expect(heading.parentElement?.parentElement?.parentElement).toHaveClass('grid-cols-[2.25rem_minmax(0,1fr)]', 'md:flex')
+    expect((await screen.findAllByText('Remote charge')).length).toBeGreaterThan(0)
+    expect(screen.getByText('Approve charge')).toBeInTheDocument()
+    expect(screen.getByText('#2 node_completed')).toBeInTheDocument()
+    expect(screen.getByText('/gateway/v1/waits/wait-1/resume')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /Manual Trigger/ }))
+    fireEvent.click(screen.getByRole('tab', { name: 'Input' }))
+    expect(screen.getByTestId('execution-json')).toHaveTextContent('"amount": 42')
+
+    const forkButton = screen.getByRole('button', { name: 'Fork' })
+    fireEvent.click(forkButton)
+    expect(screen.getByRole('dialog')).toBeVisible()
+    expect(screen.getByText('Execution preview')).toBeInTheDocument()
+    expect(screen.getByText(/不可逆节点需要明确决策/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '取消' }))
+    await waitFor(() => expect(forkButton).toHaveFocus())
+
+    fireEvent.click(screen.getByRole('button', { name: '处理' }))
+    expect(screen.getByRole('dialog', { name: 'Side effect confirmation' })).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: '确认决策' }))
+    await waitFor(() => expect(requests).toContain('/api/v1/executions/execution-1/side-effect-confirmations'))
+  })
+
+  it('does not render recovery commands without their permissions', async () => {
+    renderPage([])
+    expect(await screen.findByText('Order recovery')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Fork' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Cancel' })).not.toBeInTheDocument()
+    expect(screen.queryByText('Approve charge')).not.toBeInTheDocument()
+  })
+
+  it('refreshes runtime snapshots once when the execution reaches a terminal state', async () => {
+    let nodeRequests = 0
+    installFetch({
+      execution: { ...execution, status: 'succeeded', endedAt: '2026-08-03T10:00:03Z' },
+      onRequest: (path) => { if (path.endsWith('/nodes')) nodeRequests += 1 },
+    })
+    renderPage([])
+
+    expect(await screen.findByText('Order recovery')).toBeInTheDocument()
+    await waitFor(() => expect(nodeRequests).toBeGreaterThanOrEqual(2))
+  })
+})

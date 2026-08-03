@@ -18,7 +18,7 @@ Agentx 使用单仓库管理 Rust 服务、公共 Crate、前端、容器和 Kub
     │   ├── agentx-domain/
     │   ├── agentx-application/
     │   ├── agentx-runtime/
-    │   ├── agentx-node-sdk/
+    │   ├── agentx-node-protocol/
     │   ├── agentx-api-types/
     │   ├── agentx-infrastructure/
     │   └── agentx-service-kit/
@@ -68,9 +68,11 @@ Agentx 使用单仓库管理 Rust 服务、公共 Crate、前端、容器和 Kub
 
 Workflow 运行内核，包括 Item、图结构、连接类型、编译 IR、状态迁移、Merge 和 Loop。
 
-### agentx-node-sdk
+### agentx-node-protocol
 
-节点定义和执行协议，包括 Node Context、Item、Node Runner 和 Node Error。
+版本化节点协议 DTO，包括 Node Manifest、Item/Lineage、Action Invocation、Action Result、Lifecycle、动态 UI Provider、Artifact、Credential Handle 和错误结构。它不包含公共语言 SDK，也不暴露 Worker 内部调度接口。
+
+早期内部骨架 `agentx-node-sdk` 已删除并由 `agentx-node-protocol` 替代；内部 Rust `NodeRunner` 留在 runtime/worker Adapter 层，不能形成第二套执行协议。
 
 ### agentx-api-types
 
@@ -99,7 +101,7 @@ Workflow 运行内核，包括 Item、图结构、连接类型、编译 IR、状
 - services 之间不得直接依赖。
 - domain 不得依赖基础设施。
 - infrastructure 实现 application 中的 Port。
-- runtime 可以依赖 domain 和 node-sdk，不依赖具体数据库。
+- runtime 可以依赖 domain 和 node-protocol，不依赖具体数据库。
 - API DTO 和数据库实体分离。
 - 公共代码只有被两个以上模块稳定复用后才能进入 Crate。
 
@@ -134,4 +136,3 @@ Workflow 运行内核，包括 Item、图结构、连接类型、编译 IR、状
     └── modules/
 
 Crate 内部按领域拆分模块。任何单个前端或后端源文件不得超过 2000 行。
-

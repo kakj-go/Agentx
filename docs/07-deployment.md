@@ -9,6 +9,7 @@
 - trigger-gateway
 - workflow-coordinator
 - workflow-worker
+- echo-node
 - sandbox-manager
 - trace-writer
 
@@ -185,6 +186,7 @@ Base 中的 Web Service 保持 `ClusterIP`，不把本地暴露策略带入生�
 - trigger-gateway
 - workflow-coordinator
 - workflow-worker
+- echo-node
 - sandbox-manager
 - trace-writer
 

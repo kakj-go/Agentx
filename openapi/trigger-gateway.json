@@ -89,6 +89,34 @@
         "responses": {}
       }
     },
+    "/gateway/v1/waits/{binding_id}/resume": {
+      "post": {
+        "tags": [],
+        "operationId": "resume_wait",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WaitResumeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WaitResumeResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/gateway/v1/webhooks/{public_id}": {
       "post": {
         "tags": [],
@@ -315,13 +343,40 @@
             "format": "uuid"
           }
         }
+      },
+      "WaitResumeRequest": {
+        "type": "object",
+        "properties": {
+          "outputPort": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "payload": {}
+        }
+      },
+      "WaitResumeResponse": {
+        "type": "object",
+        "required": [
+          "accepted",
+          "replayed"
+        ],
+        "properties": {
+          "accepted": {
+            "type": "boolean"
+          },
+          "replayed": {
+            "type": "boolean"
+          }
+        }
       }
     }
   },
   "tags": [
     {
       "name": "Agentx Gateway",
-      "description": "Application invocation API"
+      "description": "Application invocation and runtime wait API"
     }
   ]
 }

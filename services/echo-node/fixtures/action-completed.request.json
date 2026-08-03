@@ -1,0 +1,47 @@
+{
+  "protocolVersion": "1.0",
+  "nodeType": "echo",
+  "nodeVersion": 1,
+  "tenantId": "018f0000-0000-7000-8000-000000000001",
+  "workflowVersionId": "018f0000-0000-7000-8000-000000000002",
+  "executionId": "018f0000-0000-7000-8000-000000000003",
+  "nodeExecutionId": "018f0000-0000-7000-8000-000000000004",
+  "attemptId": "018f0000-0000-7000-8000-000000000005",
+  "runIndex": 0,
+  "iterationIndex": 0,
+  "mode": "manual",
+  "inputs": [
+    {
+      "port": "main:0",
+      "branchIndex": 0,
+      "items": [
+        {
+          "json": { "value": 1 },
+          "lineage": [
+            {
+              "nodeExecutionId": "018f0000-0000-7000-8000-000000000006",
+              "nodeId": "source",
+              "runIndex": 0,
+              "outputIndex": 0,
+              "itemIndex": 0
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "parameters": {
+    "common": { "fixtureMode": "echo" },
+    "perItem": [{ "resolved": true }]
+  },
+  "artifactHandles": [],
+  "credentialHandles": [],
+  "idempotencyKey": "echo-fixture-completed-v1",
+  "deadline": "2099-01-01T00:00:00Z",
+  "cancellationUrl": "http://workflow-coordinator:8080/internal/cancellations/018f0000-0000-7000-8000-000000000004",
+  "traceContext": {
+    "traceId": "018f0000-0000-7000-8000-000000000007",
+    "spanId": "018f0000-0000-7000-8000-000000000008",
+    "traceFlags": "01"
+  }
+}

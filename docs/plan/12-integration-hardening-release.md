@@ -75,7 +75,7 @@
 | INT-001 | planned | APP-005–011、RUN-014 | Application Invocation 到真实 Execution | Session Message、Invocation、Execution 和 Trace 可双向定位 |
 | INT-002 | planned | OBS-001–003、REC-005–006 | Approval Node、Task、Notification 和 Resume 全链路 | Approve/Reject/Timeout 恢复正确端口且不重复 |
 | INT-003 | planned | EVA-005–010、RUN-014、AGT-012 | Evaluation 批量 Execution、Profile 评分规则和报告聚合 | Case Result 引用真实 Execution，指标来自真实运行 |
-| INT-004 | planned | STU-009–013、REC-002–003 | Studio 调试、Checkpoint、Fork、版本和发布闭环 | 同一 Runtime 支持手动、API、Webhook、Schedule 和 Evaluation |
+| INT-004 | planned | APP-006–008、RUN-002、STU-009–013、REC-002–003 | Studio 调试、Checkpoint/Fork、版本发布和 Node Lifecycle 到 Trigger Gateway 接线 | 同一 Runtime 支持手动、API、activate/deactivate、poll、Webhook、Schedule 和 Evaluation |
 | INT-005 | planned | RES-007、RUN-009、AGT-001–011 | 资源运行时二次授权和撤权策略 | 新执行在撤权后失败，历史记录保持可解释 |
 | INT-006 | planned | IAM-005、RUN-010–013、AGT-010 | 租户运行配额和限流 | 并发、Token、成本和 Sandbox 配额无跨租户影响 |
 | INT-007 | planned | OBS-003、INT-001–006 | 发布、执行、审批、评测、成本和循环通知 | 重复事件不重复通知，链接定位正确对象 |

@@ -1,5 +1,5 @@
 [package]
-name = "agentx-node-sdk"
+name = "agentx-node-protocol"
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
@@ -7,8 +7,8 @@ version.workspace = true
 
 [dependencies]
 agentx-domain.workspace = true
-async-trait.workspace = true
+schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-thiserror.workspace = true
-
+time.workspace = true
+uuid.workspace = true

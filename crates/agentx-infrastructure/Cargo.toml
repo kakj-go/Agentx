@@ -9,6 +9,9 @@ version.workspace = true
 aes-gcm.workspace = true
 agentx-application.workspace = true
 agentx-domain.workspace = true
+agentx-runtime-rpc.workspace = true
+agentx-runtime.workspace = true
+agentx-node-protocol.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
 base64.workspace = true
@@ -23,5 +26,11 @@ serde_json.workspace = true
 sha2.workspace = true
 sqlx.workspace = true
 time.workspace = true
+thiserror.workspace = true
+tonic.workspace = true
 uuid.workspace = true
 zeroize.workspace = true
+
+[dev-dependencies]
+testcontainers = "0.25"
+tokio.workspace = true

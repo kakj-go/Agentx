@@ -1,0 +1,279 @@
+{
+  "$defs": {
+    "ExecutionOrder": {
+      "enum": [
+        "n8n_v1",
+        "parallel"
+      ],
+      "type": "string"
+    },
+    "NodeErrorPolicy": {
+      "enum": [
+        "stop_workflow",
+        "continue_regular_output",
+        "continue_error_output"
+      ],
+      "type": "string"
+    },
+    "NodeSettings": {
+      "additionalProperties": false,
+      "properties": {
+        "alwaysOutputData": {
+          "default": false,
+          "type": "boolean"
+        },
+        "executeOnce": {
+          "default": false,
+          "type": "boolean"
+        },
+        "maxTries": {
+          "default": 1,
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "onError": {
+          "$ref": "#/$defs/NodeErrorPolicy",
+          "default": "stop_workflow"
+        },
+        "retryOnFail": {
+          "default": false,
+          "type": "boolean"
+        },
+        "timeoutMs": {
+          "default": null,
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "waitBetweenTriesMs": {
+          "default": 0,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "ResourceOperation": {
+      "enum": [
+        "view",
+        "use",
+        "read",
+        "write",
+        "manage"
+      ],
+      "type": "string"
+    },
+    "ResourceReference": {
+      "properties": {
+        "operation": {
+          "$ref": "#/$defs/ResourceOperation"
+        },
+        "resourceId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "resourceType": {
+          "$ref": "#/$defs/ResourceType"
+        },
+        "resourceVersionId": {
+          "format": "uuid",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "resourceType",
+        "resourceId",
+        "operation"
+      ],
+      "type": "object"
+    },
+    "ResourceType": {
+      "enum": [
+        "credential",
+        "model",
+        "mcp_server",
+        "mcp_tool",
+        "skill",
+        "rag",
+        "memory"
+      ],
+      "type": "string"
+    },
+    "WorkflowConnection": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "sourceHandle": {
+          "type": "string"
+        },
+        "sourceNodeId": {
+          "type": "string"
+        },
+        "targetHandle": {
+          "type": "string"
+        },
+        "targetNodeId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "sourceNodeId",
+        "sourceHandle",
+        "targetNodeId",
+        "targetHandle"
+      ],
+      "type": "object"
+    },
+    "WorkflowNode": {
+      "additionalProperties": false,
+      "properties": {
+        "disabled": {
+          "default": false,
+          "type": "boolean"
+        },
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "parameters": {
+          "default": null
+        },
+        "position": {
+          "$ref": "#/$defs/WorkflowPosition"
+        },
+        "resourceReferences": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/ResourceReference"
+          },
+          "type": "array"
+        },
+        "settings": {
+          "$ref": "#/$defs/NodeSettings",
+          "default": {
+            "alwaysOutputData": false,
+            "executeOnce": false,
+            "maxTries": 1,
+            "onError": "stop_workflow",
+            "retryOnFail": false,
+            "timeoutMs": null,
+            "waitBetweenTriesMs": 0
+          }
+        },
+        "type": {
+          "type": "string"
+        },
+        "typeVersion": {
+          "format": "uint32",
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "typeVersion",
+        "name",
+        "position"
+      ],
+      "type": "object"
+    },
+    "WorkflowPosition": {
+      "additionalProperties": false,
+      "properties": {
+        "x": {
+          "format": "double",
+          "type": "number"
+        },
+        "y": {
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "x",
+        "y"
+      ],
+      "type": "object"
+    },
+    "WorkflowSchemaVersion": {
+      "enum": [
+        "2.0"
+      ],
+      "type": "string"
+    },
+    "WorkflowSettings": {
+      "additionalProperties": false,
+      "properties": {
+        "activationBudget": {
+          "default": 10000,
+          "format": "uint32",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "executionOrder": {
+          "$ref": "#/$defs/ExecutionOrder",
+          "default": "n8n_v1"
+        },
+        "timeoutMs": {
+          "default": null,
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "connections": {
+      "items": {
+        "$ref": "#/$defs/WorkflowConnection"
+      },
+      "type": "array"
+    },
+    "nodes": {
+      "items": {
+        "$ref": "#/$defs/WorkflowNode"
+      },
+      "type": "array"
+    },
+    "schemaVersion": {
+      "$ref": "#/$defs/WorkflowSchemaVersion"
+    },
+    "settings": {
+      "$ref": "#/$defs/WorkflowSettings",
+      "default": {
+        "activationBudget": 10000,
+        "executionOrder": "n8n_v1",
+        "timeoutMs": null
+      }
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "nodes",
+    "connections"
+  ],
+  "title": "WorkflowDefinition",
+  "type": "object"
+}

@@ -8,7 +8,8 @@ use utoipa::OpenApi;
 
 use crate::{
     applications, auth, connection_test, credentials, datasets, external_resources, grants, iam,
-    mcp_control, models::*, models_control, operations, skills_control, state::AppState, workflows,
+    mcp_control, models::*, models_control, operations, runtime_operations, skills_control,
+    state::AppState, workflows,
 };
 
 #[derive(OpenApi)]
@@ -80,7 +81,11 @@ use crate::{
         operations::read_notification, operations::read_all_notifications,
         operations::list_executions, operations::get_execution,
         operations::execution_trace, operations::execution_artifact, operations::runtime_status,
-        operations::dashboard_summary
+        operations::dashboard_summary,
+        runtime_operations::start_execution, runtime_operations::cancel_execution,
+        runtime_operations::list_nodes, runtime_operations::get_node,
+        runtime_operations::list_checkpoints, runtime_operations::list_waits,
+        runtime_operations::fork_execution, runtime_operations::confirm_side_effect
     ),
     components(schemas(
         BootstrapStatus, BootstrapRequest, LoginRequest, ChangePasswordRequest, AuthResponse,
@@ -146,7 +151,14 @@ use crate::{
         operations::NotificationInboxResponse, operations::ExecutionResponse,
         operations::TraceEventResponse, operations::TraceResponse,
         operations::RuntimeComponentStatus, operations::RuntimeStatusResponse,
-        operations::DashboardSummaryResponse
+        operations::DashboardSummaryResponse,
+        runtime_operations::StartExecutionRequest, runtime_operations::ExecutionCommandResponse,
+        runtime_operations::NodeAttemptResponse, runtime_operations::LineageResponse,
+        runtime_operations::NodeExecutionResponse, runtime_operations::NodeExecutionListResponse,
+        runtime_operations::CheckpointResponse, runtime_operations::CheckpointListResponse,
+        runtime_operations::WaitResponse, runtime_operations::WaitListResponse,
+        runtime_operations::ForkRequest, runtime_operations::SideEffectConfirmationRequest,
+        runtime_operations::IdempotentCommandResponse
     )),
     tags(
         (name = "Agentx M1", description = "Bootstrap, authentication and IAM control plane"),
@@ -500,6 +512,38 @@ pub(crate) fn build_api_router(state: AppState) -> Router {
         )
         .route("/executions", get(operations::list_executions))
         .route("/executions/{id}", get(operations::get_execution))
+        .route(
+            "/workflow-versions/{version_id}/executions",
+            post(runtime_operations::start_execution),
+        )
+        .route(
+            "/executions/{id}/cancel",
+            post(runtime_operations::cancel_execution),
+        )
+        .route(
+            "/executions/{id}/nodes",
+            get(runtime_operations::list_nodes),
+        )
+        .route(
+            "/executions/{id}/nodes/{node_execution_id}",
+            get(runtime_operations::get_node),
+        )
+        .route(
+            "/executions/{id}/checkpoints",
+            get(runtime_operations::list_checkpoints),
+        )
+        .route(
+            "/executions/{id}/waits",
+            get(runtime_operations::list_waits),
+        )
+        .route(
+            "/executions/{id}/fork",
+            post(runtime_operations::fork_execution),
+        )
+        .route(
+            "/executions/{id}/side-effect-confirmations",
+            post(runtime_operations::confirm_side_effect),
+        )
         .route("/executions/{id}/trace", get(operations::execution_trace))
         .route(
             "/executions/{id}/artifacts/{artifact_id}",

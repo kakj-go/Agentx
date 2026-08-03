@@ -1181,6 +1181,139 @@
         "responses": {}
       }
     },
+    "/api/v1/executions/{id}/cancel": {
+      "post": {
+        "tags": [
+          "runtime_operations"
+        ],
+        "operationId": "cancel_execution",
+        "responses": {
+          "204": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/api/v1/executions/{id}/checkpoints": {
+      "get": {
+        "tags": [
+          "runtime_operations"
+        ],
+        "operationId": "list_checkpoints",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CheckpointListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/executions/{id}/fork": {
+      "post": {
+        "tags": [
+          "runtime_operations"
+        ],
+        "operationId": "fork_execution",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ForkRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecutionCommandResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/executions/{id}/nodes": {
+      "get": {
+        "tags": [
+          "runtime_operations"
+        ],
+        "operationId": "list_nodes",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NodeExecutionListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/executions/{id}/nodes/{node_execution_id}": {
+      "get": {
+        "tags": [
+          "runtime_operations"
+        ],
+        "operationId": "get_node",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NodeExecutionResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/executions/{id}/side-effect-confirmations": {
+      "post": {
+        "tags": [
+          "runtime_operations"
+        ],
+        "operationId": "confirm_side_effect",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SideEffectConfirmationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IdempotentCommandResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/executions/{id}/trace": {
       "get": {
         "tags": [
@@ -1188,6 +1321,26 @@
         ],
         "operationId": "execution_trace",
         "responses": {}
+      }
+    },
+    "/api/v1/executions/{id}/waits": {
+      "get": {
+        "tags": [
+          "runtime_operations"
+        ],
+        "operationId": "list_waits",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WaitListResponse"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/knowledge/connections": {
@@ -2588,6 +2741,36 @@
         "responses": {}
       }
     },
+    "/api/v1/workflow-versions/{version_id}/executions": {
+      "post": {
+        "tags": [
+          "runtime_operations"
+        ],
+        "operationId": "start_execution",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartExecutionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecutionCommandResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/workflows": {
       "get": {
         "tags": [
@@ -3483,6 +3666,75 @@
             "type": "string"
           },
           "token": {
+            "type": "string"
+          }
+        }
+      },
+      "CheckpointListResponse": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CheckpointResponse"
+            }
+          }
+        }
+      },
+      "CheckpointResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "executionId",
+          "sequenceNumber",
+          "checkpointType",
+          "stateHash",
+          "activationCount",
+          "deliveryCount",
+          "createdAt"
+        ],
+        "properties": {
+          "activationCount": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "checkpointType": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "deliveryCount": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "executionId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "nodeExecutionId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "sequenceNumber": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "stateHash": {
             "type": "string"
           }
         }
@@ -4928,6 +5180,26 @@
           }
         }
       },
+      "ExecutionCommandResponse": {
+        "type": "object",
+        "required": [
+          "executionId",
+          "status",
+          "replayed"
+        ],
+        "properties": {
+          "executionId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "replayed": {
+            "type": "boolean"
+          },
+          "status": {
+            "type": "string"
+          }
+        }
+      },
       "ExecutionResponse": {
         "type": "object",
         "required": [
@@ -4938,11 +5210,19 @@
           "workflowVersionNumber",
           "traceId",
           "triggerType",
+          "executionType",
           "status",
           "startedAt",
           "costMicros"
         ],
         "properties": {
+          "callerExecutionId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
           "costMicros": {
             "type": "integer",
             "format": "int64",
@@ -4975,11 +5255,28 @@
               "null"
             ]
           },
+          "executionType": {
+            "type": "string"
+          },
+          "forkCheckpointId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
           "id": {
             "type": "string",
             "format": "uuid"
           },
           "invocationId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "parentExecutionId": {
             "type": [
               "string",
               "null"
@@ -5042,6 +5339,36 @@
           "message": {
             "type": "string"
           }
+        }
+      },
+      "ForkRequest": {
+        "type": "object",
+        "required": [
+          "checkpointId",
+          "mode"
+        ],
+        "properties": {
+          "checkpointId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "idempotencyKey": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "inputOverrides": {},
+          "mode": {
+            "type": "string"
+          },
+          "nodeId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sideEffectDecisions": {}
         }
       },
       "GrantResponse": {
@@ -5195,6 +5522,21 @@
           }
         }
       },
+      "IdempotentCommandResponse": {
+        "type": "object",
+        "required": [
+          "accepted",
+          "replayed"
+        ],
+        "properties": {
+          "accepted": {
+            "type": "boolean"
+          },
+          "replayed": {
+            "type": "boolean"
+          }
+        }
+      },
       "ImportCasesRequest": {
         "type": "object",
         "required": [
@@ -5271,6 +5613,47 @@
           "version": {
             "type": "integer",
             "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "LineageResponse": {
+        "type": "object",
+        "required": [
+          "deliveryId",
+          "targetItemIndex",
+          "sourceNodeExecutionId",
+          "sourceRunIndex",
+          "sourceOutputIndex",
+          "sourceItemIndex"
+        ],
+        "properties": {
+          "deliveryId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "sourceItemIndex": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "sourceNodeExecutionId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "sourceOutputIndex": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "sourceRunIndex": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "targetItemIndex": {
+            "type": "integer",
+            "format": "int32",
             "minimum": 0
           }
         }
@@ -5916,6 +6299,194 @@
           }
         }
       },
+      "NodeAttemptResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "attemptNumber",
+          "status"
+        ],
+        "properties": {
+          "attemptNumber": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "deadlineAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "endedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "errorCode": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "errorMessage": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "startedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "status": {
+            "type": "string"
+          },
+          "workerInstanceId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "NodeExecutionListResponse": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NodeExecutionResponse"
+            }
+          }
+        }
+      },
+      "NodeExecutionResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "executionId",
+          "nodeId",
+          "nodeName",
+          "nodeType",
+          "nodeVersion",
+          "generation",
+          "activationSlot",
+          "runIndex",
+          "iterationIndex",
+          "status",
+          "capability",
+          "sideEffectLevel",
+          "attempts",
+          "lineage"
+        ],
+        "properties": {
+          "activationSlot": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "attempts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NodeAttemptResponse"
+            }
+          },
+          "capability": {
+            "type": "string"
+          },
+          "endedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "errorCode": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "errorMessage": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "executionId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "generation": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "input": {},
+          "iterationIndex": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "lineage": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LineageResponse"
+            }
+          },
+          "nodeId": {
+            "type": "string"
+          },
+          "nodeName": {
+            "type": "string"
+          },
+          "nodeType": {
+            "type": "string"
+          },
+          "nodeVersion": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "output": {},
+          "runIndex": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "sideEffectLevel": {
+            "type": "string"
+          },
+          "startedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "status": {
+            "type": "string"
+          }
+        }
+      },
       "NotificationInboxResponse": {
         "type": "object",
         "required": [
@@ -6381,6 +6952,33 @@
           }
         }
       },
+      "SideEffectConfirmationRequest": {
+        "type": "object",
+        "required": [
+          "nodeExecutionId",
+          "decision",
+          "idempotencyKey"
+        ],
+        "properties": {
+          "checkpointId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "decision": {
+            "type": "string"
+          },
+          "idempotencyKey": {
+            "type": "string"
+          },
+          "nodeExecutionId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
       "SkillDependencyInput": {
         "type": "object",
         "required": [
@@ -6606,6 +7204,18 @@
             "format": "int64",
             "minimum": 0
           }
+        }
+      },
+      "StartExecutionRequest": {
+        "type": "object",
+        "properties": {
+          "idempotencyKey": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "input": {}
         }
       },
       "TestCaseResponse": {
@@ -7401,6 +8011,74 @@
             "type": "integer",
             "format": "int64",
             "minimum": 0
+          }
+        }
+      },
+      "WaitListResponse": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WaitResponse"
+            }
+          }
+        }
+      },
+      "WaitResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "executionId",
+          "nodeExecutionId",
+          "waitKind",
+          "status",
+          "authenticationMode"
+        ],
+        "properties": {
+          "authenticationMode": {
+            "type": "string"
+          },
+          "executionId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "nodeExecutionId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "resumeUrl": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": "string"
+          },
+          "timeoutAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "waitKind": {
+            "type": "string"
+          },
+          "wakeAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
           }
         }
       },

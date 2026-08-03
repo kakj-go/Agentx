@@ -53,10 +53,13 @@ workflow_versions 保存：
 - execution_snapshots
 - node_executions
 - node_attempts
-- execution_edge_states
+- execution_edge_deliveries
+- item_lineage
 - execution_events
 - execution_outbox
 - checkpoints
+- checkpoint_artifacts
+- node_invocation_handles
 - artifacts
 
 workflow_executions 主要字段：
@@ -71,6 +74,7 @@ workflow_executions 主要字段：
 - status
 - trigger_type
 - parent_execution_id
+- caller_node_execution_id
 - fork_checkpoint_id
 - started_at
 - finished_at
@@ -78,13 +82,17 @@ workflow_executions 主要字段：
 - total_cost
 - error_summary
 
+parent_execution_id 同时用于 Fork 和 Sub-workflow 父子关联，由 execution_type 区分关系；Sub-workflow 额外保存 caller_node_execution_id，不能把子 Workflow 的节点记录混入父 Execution。
+
 node_executions 主要字段：
 
+- node_execution_id
 - execution_id
 - node_id
 - run_index
-- branch_index
-- iteration_index
+- activation_sequence
+- input_generation
+- loop_iteration_index
 - status
 - input_ref
 - output_ref
@@ -92,6 +100,24 @@ node_executions 主要字段：
 - finished_at
 - retry_count
 - waiting_reason
+
+node_executions 每行表示节点的一次逻辑激活。branch/output index 属于输入 Delivery 和 Item Lineage，不作为节点执行身份；普通图环依赖 run_index 和 activation_sequence，loop_iteration_index 只用于显式 Loop 节点。
+
+execution_edge_deliveries 主要字段：
+
+- execution_id
+- edge_id
+- source_node_execution_id
+- target_node_id
+- target_input_index
+- delivery_sequence
+- delivery_status
+- items_ref
+- source_run_index
+
+同一条 Edge 在循环中可以产生多条追加式 Delivery。`ClosedWithoutData` 记录某次 source activation 已关闭对应输出，不能把整条 Edge 更新为永久关闭。
+
+item_lineage 保存输出 Item 到零个、一个或多个来源 Item 的引用，至少包含 source_node_execution_id、source_output_index、source_item_index、target_node_execution_id、target_input_index 和 target_item_index。
 
 node_attempts 主要字段：
 
@@ -104,6 +130,10 @@ node_attempts 主要字段：
 - sandbox_id
 - error_code
 - error_message
+
+node_invocation_handles 保存远程节点调用期 Credential、Artifact 和 Cancellation Handle 的 SHA-256 Token Hash，不保存明文 Token 或 Secret。记录绑定 tenant_id、execution_id、node_execution_id、attempt_id、lease_token、resource_id/version、expires_at 和 consumed_at；Credential/Artifact Handle 一次性消费，只有仍在运行的 Attempt 和有效 Lease 可以解析。
+
+Checkpoint 小载荷保存在 `checkpoints.payload_json`。超过配置阈值的载荷先以内联权威状态提交，再上传对象存储，并在同一 MySQL 事务中写入 Artifact 元数据、`checkpoint_artifacts` 引用和 `payload_artifact_id`，同时清空 `payload_json`；切换失败必须补偿删除对象和 Artifact 元数据。恢复和 Fork 通过 Repository 透明读取两种存储形式，State Hash 不因外置而变化。
 
 ## 5. 资源表
 

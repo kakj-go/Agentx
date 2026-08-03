@@ -7,7 +7,7 @@
 ## 2. 当前状态和进入条件
 
 - 状态：`planned`。
-- 进入条件：[阶段 04](04-resource-center.md) 提供资源版本和授权，[阶段 08](08-workflow-runtime-core.md) 提供 Node SDK，[阶段 09](09-checkpoint-wait-recovery.md) 提供等待和恢复。
+- 进入条件：[阶段 04](04-resource-center.md) 提供资源版本和授权，[阶段 08](08-workflow-runtime-core.md) 提供 Node Manifest、Action/Lifecycle Protocol 和运行 Adapter，[阶段 09](09-checkpoint-wait-recovery.md) 提供等待和恢复。
 - CubeSandbox 必须按官方要求独立安装，Agentx 只通过稳定 Adapter 连接。
 
 ## 3. 范围和不做内容
