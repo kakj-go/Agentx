@@ -6,14 +6,14 @@
 
 ## 2. 当前状态和进入条件
 
-- 状态：`planned`。
+- 状态：`done`。资源引用和发布快照已按 [M2.1 计划](m2.1-resource-redesign.md) 重构为 MCP Tool，验收见 [M2.1 验收证据](m2.1-acceptance-evidence.md)。
 - 进入条件：[阶段 02](02-bootstrap-auth-iam.md) 的租户、权限和 Workflow Service Identity 基础完成。
 - 本阶段不依赖 Scheduler，但必须为运行时提供不可变 Version Snapshot。
 - M2 实际开发顺序、资源阶段交叉依赖和子任务见 [M2 实施任务清单](m2-task-list.md)。
 
 ## 3. 范围和不做内容
 
-实现 Workflow 元数据、Draft Revision、Version、Deployment、Environment、发布校验和资源授权外壳。不实现节点执行、表达式解释、复杂图编译、画布编辑或 n8n JSON 导入。
+实现 Workflow 元数据、Draft Revision、Version、Deployment、Environment、发布校验、资源授权外壳和保存最小 Definition 的 React Flow 画布。不实现节点执行、表达式解释、复杂图编译、完整 Studio 或 n8n JSON 导入。
 
 ## 4. 领域对象、状态和不变量
 
@@ -64,16 +64,16 @@ Application Port：`WorkflowRepository`、`DraftRepository`、`VersionRepository
 
 | 编号 | 状态 | 依赖 | 交付物 | 验收条件 |
 |---|---|---|---|---|
-| WCP-001 | planned | IAM-005–006 | Workflow、Member 和 Service Identity Schema | 创建 Workflow 同事务创建运行身份 |
-| WCP-002 | planned | WCP-001 | Draft、Revision 和并发保存用例 | 旧 revision 更新返回冲突且保留双方内容 |
-| WCP-003 | planned | WCP-002 | 最小 Workflow Definition Schema 和 Canonical Hash | 字段顺序不影响 Hash，非法 Schema 不能生成 Version |
-| WCP-004 | planned | WCP-003 | 不可变 Workflow Version 和资源快照 | Version API 不提供更新或删除历史内容能力 |
-| WCP-005 | planned | WCP-004 | Environment、Deployment、发布和回滚 | 同环境只有一个 Active Deployment |
-| WCP-006 | planned | IAM-005、WCP-001 | Workflow 成员、数据范围和 Resource Grant 外壳 | 非成员且无数据范围用户无法查看 Workflow |
-| WCP-007 | planned | WCP-004–006 | Publish Validator | 缺失资源、无授权或 Schema 错误阻止发布 |
-| WCP-008 | planned | WCP-001–007 | Workflow REST API、OpenAPI 和审计事件 | 契约测试覆盖创建、并发、版本、发布和回滚 |
-| WCP-009 | planned | WCP-008、FND-011 | Workflow 列表、详情、版本和部署页面 | 页面使用真实 API 并显示冲突、空状态和发布失败原因 |
-| WCP-010 | planned | WCP-006、WCP-009 | 成员和资源授权界面 | 授权变更受权限控制并产生审计记录 |
+| WCP-001 | done | IAM-005–006 | Workflow、Member 和 Service Identity Schema | 创建 Workflow 同事务创建运行身份 |
+| WCP-002 | done | WCP-001 | Draft、Revision 和并发保存用例 | 旧 revision 更新返回冲突且保留双方内容 |
+| WCP-003 | done | WCP-002 | 最小 Workflow Definition Schema 和 Canonical Hash | 字段顺序不影响 Hash，非法 Schema 不能生成 Version |
+| WCP-004 | done | WCP-003 | 不可变 Workflow Version 和资源快照 | Version API 不提供更新或删除历史内容能力 |
+| WCP-005 | done | WCP-004 | Environment、Deployment、发布和回滚 | 同环境只有一个 Active Deployment |
+| WCP-006 | done | IAM-005、WCP-001 | Workflow 成员、数据范围和 Resource Grant 外壳 | 非成员且无数据范围用户无法查看 Workflow |
+| WCP-007 | done | WCP-004–006 | Publish Validator | 缺失资源、无授权或 Schema 错误阻止发布 |
+| WCP-008 | done | WCP-001–007 | Workflow REST API、OpenAPI 和审计事件 | 契约测试覆盖创建、并发、版本、发布和回滚 |
+| WCP-009 | done | WCP-008、FND-011 | Workflow 列表、详情、版本和部署页面 | 页面使用真实 API 并显示冲突、空状态和发布失败原因 |
+| WCP-010 | done | WCP-006、WCP-009 | 成员和资源授权界面 | 授权变更受权限控制并产生审计记录 |
 
 ## 9. 失败、安全和幂等边界
 

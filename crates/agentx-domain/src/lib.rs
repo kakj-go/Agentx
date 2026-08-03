@@ -4,6 +4,18 @@ use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use uuid::Uuid;
 
+pub mod resource;
+pub mod workflow;
+
+pub use resource::{
+    MissingGrant, ResourceGrant, ResourceOperation, ResourceReference, ResourceType,
+    ResourceVersionSnapshot,
+};
+pub use workflow::{
+    DefinitionIssue, WorkflowConnection, WorkflowDefinition, WorkflowNode, WorkflowPosition,
+    canonical_content_hash, validate_definition,
+};
+
 macro_rules! domain_id {
     ($name:ident) => {
         #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
@@ -54,8 +66,15 @@ domain_id!(DepartmentId);
 domain_id!(UserId);
 domain_id!(RoleId);
 domain_id!(WorkflowId);
+domain_id!(WorkflowDraftId);
+domain_id!(WorkflowRevisionId);
 domain_id!(WorkflowVersionId);
+domain_id!(EnvironmentId);
 domain_id!(DeploymentId);
+domain_id!(WorkflowServiceIdentityId);
+domain_id!(ResourceId);
+domain_id!(ResourceVersionId);
+domain_id!(CredentialId);
 domain_id!(ExecutionId);
 domain_id!(NodeExecutionId);
 domain_id!(ArtifactId);
@@ -131,8 +150,10 @@ pub struct VersionedEntity {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkflowServiceIdentity {
+    pub id: WorkflowServiceIdentityId,
     pub tenant_id: TenantId,
     pub workflow_id: WorkflowId,
+    pub status: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

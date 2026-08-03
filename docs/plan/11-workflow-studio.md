@@ -8,7 +8,7 @@
 
 - 状态：`planned`。
 - 进入条件：[阶段 08](08-workflow-runtime-core.md) 的 Definition/IR/Execution API、[阶段 09](09-checkpoint-wait-recovery.md) 的调试命令和 [阶段 10](10-agent-cubesandbox.md) 的节点参数稳定。
-- 当前 React Flow 仅为示例画布，不能直接扩展成生产协议。
+- 当前 React Flow 已能保存最小资源引用 Draft，但尚未具备运行、表达式、Pin Data、Undo/Redo 和完整 Node Registry。
 
 ## 3. 范围和不做内容
 
@@ -55,7 +55,7 @@
 | STU-003 | planned | STU-001–002 | 统一 Node、Handle、Edge 和连接类型 | main/error/AI 连接视觉明确且非法连接被拒绝 |
 | STU-004 | planned | STU-002 | JSON Schema 参数表单和 UI Schema 组件映射 | 必填、条件字段、数组、Credential 和资源字段一致校验 |
 | STU-005 | planned | RUN-004、STU-004 | Monaco Expression Editor、上下文和自动完成 | 表达式前后端校验结果一致，Secret 不可预览 |
-| STU-006 | planned | RES-007、STU-004 | Model/Tool/Skill/RAG/Memory/Credential 资源选择器 | 只展示用户可见且 Workflow 已授权资源 |
+| STU-006 | planned | RES-007、STU-004 | Model/MCP Tool/Skill/RAG/Memory/Credential 资源选择器 | 只展示用户可见且 Workflow 已授权资源 |
 | STU-007 | planned | WCP-002、STU-001 | 自动保存、Revision 冲突、离开保护和恢复 | 并发编辑不静默覆盖，离线内容可恢复或明确丢弃 |
 | STU-008 | planned | STU-001、STU-007 | Undo/Redo、复制粘贴、多选、快捷键和自动布局 | History 不包含服务端查询状态，跨 Workflow 粘贴重新校验资源 |
 | STU-009 | planned | RUN-014、STU-001 | Run Workflow、Stop 和运行状态订阅 | 画布高亮来自真实 Execution Event |
@@ -97,4 +97,3 @@
 - Node Registry 驱动的参数与资源配置。
 - 真实运行、调试、Trace、Checkpoint、版本和发布 UI。
 - n8n 体验对照与差异清单。
-

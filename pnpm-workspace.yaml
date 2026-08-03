@@ -1,3 +1,4 @@
 packages:
   - "apps/*"
-
+minimumReleaseAgeExclude:
+  - '@mdxeditor/editor@4.2.0'

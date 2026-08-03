@@ -16,7 +16,7 @@ Agentx 是企业级 Workflow 开发、运行、发布和评测平台。
 
 在此基础上增加 Agent 场景需要的能力：
 
-- LLM、Agent、Tool、RAG、Memory 节点和可版本化 Skill
+- LLM、Agent、MCP Tool、RAG、Memory 节点和可版本化在线 Skill
 - Agent 内部工具循环记录和限制
 - CubeSandbox 中的不可信代码执行
 - 节点级 Trace、Checkpoint 和重新执行
@@ -31,7 +31,7 @@ Agentx 是企业级 Workflow 开发、运行、发布和评测平台。
 
 1. 创建 Workflow 草稿。
 2. 从节点面板拖入节点。
-3. 配置模型、工具、Skill、RAG、Memory 或外部连接。
+3. 配置模型、已发现的 MCP Tool、Skill、RAG 或 Memory。
 4. 使用表达式映射上下游数据。
 5. 手动运行或执行到指定节点。
 6. 查看画布高亮、节点输入输出和 Trace。
@@ -78,7 +78,9 @@ Agentx 是企业级 Workflow 开发、运行、发布和评测平台。
 | Node Attempt | 节点一次实际尝试，重试会产生多个 Attempt |
 | Trace Event | 模型、工具、节点和沙箱的过程记录 |
 | Checkpoint | 可用于继续或派生执行的状态点 |
-| Skill | Agent 可加载的版本化能力包及其依赖声明 |
+| MCP Server | 通过 Streamable HTTP 或 Legacy SSE 接入的工具服务 |
+| MCP Tool | 由 MCP Server 自动发现、可配置策略并独立授权的能力 |
+| Skill | 以在线文件工作区维护并发布不可变版本的 Agent 能力 |
 | Dataset | 测试用例集合 |
 | Evaluation Run | 某版本针对某测试集的批量评测 |
 
@@ -91,8 +93,9 @@ Agentx 是企业级 Workflow 开发、运行、发布和评测平台。
 - Item 数据传递和表达式
 - 手动、API、Webhook 和定时触发
 - IF、Switch、Merge、Loop、Wait 和 Sub-workflow
-- LLM、Agent、Tool、Code、RAG、Memory 和审批节点
-- Skill 定义、不可变版本、依赖校验和 Workflow 授权
+- LLM、Agent、MCP Tool、Code、RAG、Memory 和审批节点
+- MCP Server 接入、Tool 自动发现、调试策略和 Workflow 独立授权
+- Skill 在线文件工作区、不可变版本、引用校验和 Workflow 授权
 - Workflow 版本、发布和回滚
 - Trace、成本、工具错误和 Agent 循环记录
 - Checkpoint 和 Fork Execution
@@ -118,6 +121,6 @@ Agentx 是企业级 Workflow 开发、运行、发布和评测平台。
 - 版本不可变：生产执行始终指向明确版本。
 - 运行可解释：任一节点都能定位输入、输出、耗时、错误和依赖。
 - 状态可恢复：Worker 销毁后不影响等待或继续执行。
-- 权限随 Workflow：模型、工具、Skill、知识和记忆授权给运行身份。
+- 权限随 Workflow：模型、MCP Tool、Skill、知识和记忆分别授权给运行身份。
 - 调试不污染生产：Pin Data、Mock 和参数覆盖只作用于测试运行。
 - 历史不被改写：重新执行创建派生记录。

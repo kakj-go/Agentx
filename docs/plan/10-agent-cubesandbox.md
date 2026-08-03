@@ -2,7 +2,7 @@
 
 ## 1. 目标与用户价值
 
-让 Agent 在明确模型、Tool、Skill、RAG、Memory、成本和循环限制内运行，并将所有不可信代码交给 CubeSandbox 隔离执行。
+让 Agent 在明确模型、MCP Tool、Skill、RAG、Memory、成本和循环限制内运行，并将所有不可信代码交给 CubeSandbox 隔离执行。
 
 ## 2. 当前状态和进入条件
 
@@ -12,13 +12,13 @@
 
 ## 3. 范围和不做内容
 
-实现 Model、Tool、Skill、LightRAG、Mem0、Agent Tool Loop、成本、循环控制和 CubeSandbox Runner。不实现插件市场、任意未授权外网访问或在 Worker 直接运行动态代码。
+实现 Model、MCP Tool、Skill、LightRAG、Mem0、Agent Tool Loop、成本、循环控制和 CubeSandbox Runner。不实现插件市场、任意未授权外网访问或在 Worker 直接运行动态代码。Sandbox Profile 与 CubeSandbox Connection 是独立资源，不复用 MCP Server、连接测试或 Tool Policy。
 
 ## 4. 领域对象、状态和不变量
 
 - Model Call 固化 Provider、Deployment、Alias、参数、价格版本、Token、成本和停止原因。
-- Tool Call 固化 Tool Version、标准化参数指纹、结果、错误和副作用幂等键。
-- Skill Loader 固化 Skill Version，并分别检查其 Tool、Model、Credential 和 Artifact 依赖。
+- Tool Call 固化 MCP Server Version、MCP Tool Version、标准化参数指纹、结果、错误和副作用幂等键。
+- Skill Loader 固化 Skill Version，并分别检查其 MCP Tool、Model、Credential 和 Artifact 依赖。
 - Agent Iteration 包含模型请求、回复、Tool 请求、Tool 结果、Token、成本和 Agent State 引用。
 - Agent 限制可配置最大迭代、模型调用、工具调用、Token、成本、时间、单 Tool 错误和重复指纹。
 - Sandbox Execution 使用短期凭证、受限网络和资源配额，标准化返回 stdout、stderr、exitCode 和 Artifact。
@@ -32,7 +32,7 @@ Redis 保存租户并发配额、短期 Sandbox Lease 和运行事件，但不�
 ## 6. Port、命令和 Trace
 
 - `ModelRuntime`：流式/非流式调用、Token 和错误标准化。
-- `ToolRuntime`：Schema 校验、权限、副作用、超时和结果标准化。
+- `McpToolRuntime`：MCP 会话、Schema 校验、权限、副作用、超时和结果标准化。
 - `SkillRuntime`：Manifest 加载、依赖解析和 Prompt/Asset 注入。
 - `RagRuntime`：query、retrieve、insert、delete、healthCheck。
 - `MemoryRuntime`：get、search、add、update、delete。
@@ -54,7 +54,7 @@ Redis 保存租户并发配额、短期 Sandbox Lease 和运行事件，但不�
 | 编号 | 状态 | 依赖 | 交付物 | 验收条件 |
 |---|---|---|---|---|
 | AGT-001 | planned | RES-002、RUN-012 | Model Runtime、统一请求/响应和流式事件 | Provider 错误映射稳定，Token 与价格版本可追溯 |
-| AGT-002 | planned | RES-003、RUN-012 | Tool Runtime、Schema、权限、超时和幂等 | 未授权 Tool 在发起外部请求前失败 |
+| AGT-002 | planned | RES-003、RUN-012 | MCP Tool Runtime、会话、Schema、权限、超时和幂等 | 未授权 MCP Tool 在发起外部请求前失败 |
 | AGT-003 | planned | RES-004、AGT-001–002 | Skill Loader、Manifest 和依赖校验 | Skill Grant 不绕过任一直接或间接依赖权限 |
 | AGT-004 | planned | RES-005–006、RUN-012 | LightRAG 与 Mem0 Runtime Adapter | 读写操作遵循 Resource Scope 和 Workflow Grant |
 | AGT-005 | planned | AGT-001–004 | Agent State、Iteration 和 Tool Loop | 多 Tool 循环产生完整有序 Trace 和最终 Item |
@@ -99,4 +99,3 @@ Redis 保存租户并发配额、短期 Sandbox Lease 和运行事件，但不�
 - CubeSandbox Runtime 和安全策略。
 - 预算、成本、循环检测和 Agent Trace。
 - Studio 可配置的 AI 资源端口和参数 Schema。
-

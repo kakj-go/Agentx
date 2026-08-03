@@ -1,5 +1,15 @@
 param(
-    [string]$Tag = "dev"
+    [string]$Tag = "dev",
+    [string[]]$Services = @(
+        "platform-api",
+        "echo-mcp",
+        "trigger-gateway",
+        "workflow-coordinator",
+        "workflow-worker",
+        "sandbox-manager",
+        "trace-writer"
+    ),
+    [switch]$SkipWeb
 )
 
 $ErrorActionPreference = "Stop"
@@ -36,25 +46,18 @@ function Import-LocalKubernetesImage([string]$Image) {
     kubectl -n agentx exec $imageLoaderPod -- sh -c "ctr --address /run/containerd/containerd.sock --namespace k8s.io images remove '$containerdImage' >/dev/null 2>&1 || true"
     docker save $Image | kubectl -n agentx exec -i $imageLoaderPod -- ctr --address /run/containerd/containerd.sock --namespace k8s.io images import -
 }
-$services = @(
-    "platform-api",
-    "trigger-gateway",
-    "workflow-coordinator",
-    "workflow-worker",
-    "sandbox-manager",
-    "trace-writer"
-)
-
 try {
-    foreach ($service in $services) {
+    foreach ($service in $Services) {
         $image = "agentx/{0}:{1}" -f $service, $Tag
         docker build --file "$root/deploy/docker/backend.Dockerfile" --build-arg "APP=$service" --tag $image $root
         Import-LocalKubernetesImage $image
     }
 
-    $webImage = "agentx/web:$Tag"
-    docker build --file "$root/deploy/docker/web.Dockerfile" --tag $webImage $root
-    Import-LocalKubernetesImage $webImage
+    if (-not $SkipWeb) {
+        $webImage = "agentx/web:$Tag"
+        docker build --file "$root/deploy/docker/web.Dockerfile" --tag $webImage $root
+        Import-LocalKubernetesImage $webImage
+    }
 }
 finally {
     if ($imageLoaderReady) {

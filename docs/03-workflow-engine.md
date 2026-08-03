@@ -53,7 +53,7 @@ Connection 包含：
 
 - main：普通数据和控制流
 - ai_model：Agent 使用的模型
-- ai_tool：Agent 可调用工具
+- ai_tool：Agent 可调用的 MCP Tool；资源引用类型固定为 `mcp_tool`
 - ai_memory：Agent 使用的 Memory
 - ai_retriever：Agent 使用的 RAG
 - ai_output_parser：Agent 结果解析器
@@ -179,7 +179,7 @@ Draft 保存为 Version 前编译为内部 IR。
 - Merge 等待条件
 - 表达式引用
 - Credential 是否存在
-- Model、Tool、RAG 和 Memory 授权
+- Model、MCP Tool、Skill、RAG、Memory 和独立 Credential 授权
 - Sub-workflow 版本
 - 副作用节点配置
 - 运行预算
@@ -322,3 +322,9 @@ Studio 支持：
 - Fork From Checkpoint
 
 Pin Data 只属于 Draft 和手动调试。发布时必须移除或阻止带 Pin Data 的草稿发布。
+
+## 13. 控制面 Definition 与运行协议边界
+
+M2.1 的最小画布只保存 `manual_trigger`、`model`、`mcp_tool`、`skill`、`rag` 和 `memory` 节点。资源节点通过 `resourceReferences` 引用控制面资源；MCP Tool 使用 `resourceType=mcp_tool`，不接受旧 `tool` 类型。
+
+React Flow 的节点和连线状态必须经过 Serializer 生成独立 Workflow Definition。阶段 08 编译器再把 Definition 转换为运行 IR，因此画布数据、控制面 Definition 和运行状态不能共用一个对象模型。

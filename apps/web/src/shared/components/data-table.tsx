@@ -5,7 +5,7 @@ import {
   useReactTable,
   type ColumnDef,
 } from '@tanstack/react-table'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Card } from '../ui/card'
@@ -24,9 +24,10 @@ type DataTableProps<T> = {
   searchPlaceholder: string
   getStatus?: (row: T) => string
   statusOptions?: StatusOption[]
+  tableHeader?: ReactNode
 }
 
-export function DataTable<T>({ columns, data, getSearchText, searchPlaceholder, getStatus, statusOptions = [] }: DataTableProps<T>) {
+export function DataTable<T>({ columns, data, getSearchText, searchPlaceholder, getStatus, statusOptions = [], tableHeader }: DataTableProps<T>) {
   const { t } = useTranslation()
   const [search, setSearch] = useState('')
   const [status, setStatus] = useState('all')
@@ -51,6 +52,7 @@ export function DataTable<T>({ columns, data, getSearchText, searchPlaceholder, 
 
   return (
     <Card className="mt-6 overflow-hidden">
+      {tableHeader && <div className="border-b border-border px-5">{tableHeader}</div>}
       <div className="flex min-h-16 items-center gap-3 border-b border-border px-5">
         <SearchField onChange={(event) => setSearch(event.target.value)} placeholder={searchPlaceholder} value={search} />
         {statusOptions.length > 0 && (

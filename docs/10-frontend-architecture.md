@@ -91,10 +91,11 @@ Feature 页面优先组合共享组件，不重复定义页面标题、表格密
     ├── datasets/
     ├── evaluations/
     ├── models/
-    ├── tools/
+    ├── mcp/
     ├── skills/
     ├── knowledge/
     ├── memory/
+    ├── resource-grants/
     └── organization/
 
 Feature 不得引用其他 Feature 的内部文件。共享逻辑进入 shared，稳定的业务协议通过 Feature 公共入口暴露。
@@ -179,10 +180,11 @@ React Flow 的 Node 和 Edge 结构只属于前端编辑状态，不能直接成
 - /datasets
 - /evaluations
 - /models
-- /tools
+- /mcp
 - /skills
 - /knowledge
 - /memory
+- /resource-grants
 - /organization
 - /roles
 - /workflows/:workflowId/editor
@@ -190,3 +192,18 @@ React Flow 的 Node 和 Edge 结构只属于前端编辑状态，不能直接成
 Playground 调用正式 Application API，不建立单独的执行实现。
 
 首期企业工作台只验收 1280px 及以上桌面布局。Sidebar 折叠状态保存到 agentx.sidebar.collapsed；不实现移动端 Drawer。一级列表页统一使用本地搜索、状态筛选、8 条分页和无结果状态。
+
+## 11. M2.1 资源界面
+
+- Model 详情使用统一 Dialog 编辑 Provider、Alias 和 Deployment Revision，并展示不可变历史。
+- Credential 详情允许修改名称和状态，但绝不把 Secret 放入表单默认值或 Query Cache。
+- MCP 列表和详情替代旧 Tool 页面，Tool Schema 使用只读 JSON Schema 字段树展示名称、类型、必填、说明、约束及嵌套关系，策略和受控调试使用独立 Dialog。
+- Skill 详情采用文件树、编辑/预览区和元数据区三栏布局；根 `SKILL.md` 在正文上方独立编辑必填描述并隐藏 YAML frontmatter 细节，Markdown 正文使用 MIT 许可的 MDXEditor/Lexical 富文本层并继续保存标准 Markdown，上传和 ZIP 导入继续走统一 API Client。
+- 资源详情页不嵌入授权面板；`/resource-grants` 使用资源类型 Tab 分栏聚合 Credential、Model、MCP Server、MCP Tool、Skill、Knowledge 和 Memory，每栏列出对应资源并统一处理 Department 与 Workflow Service Identity Grant。
+- Model 列表展示与当前 Alias/Deployment 配置绑定的 `untested/healthy/unhealthy` 连接状态，连接测试从 Alias 详情页手动触发。
+- Dialog 默认按内容完整展开并垂直居中；字段超过六项的通用表单自动使用双列宽布局，只有内容真实超过 `100dvh - 32px` 时才允许外层滚动。
+- Workflow 最小画布通过 Serializer 保存 MCP Tool 资源引用，运行按钮在 Runtime 接入前保持禁用。
+
+## 12. 界面 E2E 门禁
+
+业务 E2E 位于 apps/e2e，使用 1440×900 Chromium 和临时 Kubernetes Namespace。业务数据必须通过可见按钮和表单创建；API 与数据库只能准备环境、清理现场和校验证据。新增或修改业务按钮时必须补充真实点击测试，危险操作同时覆盖取消和确认，中英文与浅深主题纳入阶段验收。

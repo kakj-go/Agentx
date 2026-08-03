@@ -1,20 +1,30 @@
 mod auth;
 mod config;
+mod connection_test;
+mod control_common;
+mod credentials;
 mod error;
+mod external_resources;
+mod grants;
 mod iam;
+mod mcp_control;
 mod models;
+mod models_control;
 mod security;
+mod skills_control;
 mod state;
+mod workflows;
 
 use std::{env, time::Duration};
 
-use agentx_infrastructure::{config::InfrastructureSettings, mysql};
+use agentx_infrastructure::{config::InfrastructureSettings, credential::CredentialKeyring, mysql};
 use anyhow::{Context, Result};
 use axum::{
     Router,
+    extract::DefaultBodyLimit,
     routing::{get, patch, post},
 };
-use config::AuthSettings;
+use config::{AuthSettings, ConnectionSettings, CredentialSettings};
 use models::*;
 use state::AppState;
 use utoipa::OpenApi;
@@ -27,7 +37,41 @@ use utoipa::OpenApi;
         auth::logout, auth::me, iam::list_departments, iam::create_department,
         iam::update_department, iam::delete_department, iam::list_users, iam::create_user,
         iam::update_user, iam::disable_user, iam::list_roles, iam::create_role, iam::update_role,
-        iam::list_permissions
+        iam::list_permissions,
+        workflows::list_workflows, workflows::create_workflow, workflows::get_workflow,
+        workflows::update_workflow, workflows::archive_workflow, workflows::get_draft,
+        workflows::save_draft, workflows::list_revisions, workflows::create_version,
+        workflows::list_versions, workflows::list_members, workflows::upsert_member,
+        workflows::delete_member, workflows::list_environments, workflows::create_environment,
+        workflows::update_environment, workflows::list_deployments, workflows::publish,
+        workflows::rollback, workflows::runtime_unavailable,
+        credentials::list_credentials, credentials::create_credential, credentials::get_credential,
+        credentials::update_credential, credentials::rotate_credential,
+        models_control::list_models, models_control::get_model, models_control::list_providers,
+        models_control::create_provider, models_control::list_deployments,
+        models_control::create_deployment, models_control::create_alias, models_control::update_alias,
+        models_control::update_provider, models_control::create_deployment_revision,
+        models_control::list_deployment_history, models_control::create_price,
+        models_control::list_prices, models_control::test_model,
+        mcp_control::list_servers, mcp_control::create_server, mcp_control::get_server,
+        mcp_control::update_server, mcp_control::test_connection, mcp_control::discover_tools,
+        mcp_control::list_tools, mcp_control::list_all_tools, mcp_control::update_tool_policy, mcp_control::debug_invoke,
+        skills_control::list_skills, skills_control::create_skill, skills_control::get_skill,
+        skills_control::update_skill, skills_control::get_workspace, skills_control::create_entry,
+        skills_control::export_workspace, skills_control::import_workspace,
+        skills_control::move_entry, skills_control::delete_entry, skills_control::get_file,
+        skills_control::update_markdown, skills_control::upload_file,
+        skills_control::list_versions, skills_control::create_version,
+        external_resources::list_rag_connections, external_resources::create_rag_connection,
+        external_resources::test_rag_connection, external_resources::list_knowledge,
+        external_resources::create_knowledge, external_resources::get_knowledge,
+        external_resources::update_knowledge,
+        external_resources::list_memory_connections, external_resources::create_memory_connection,
+        external_resources::test_memory_connection, external_resources::list_memory,
+        external_resources::create_memory, external_resources::get_memory,
+        external_resources::update_memory,
+        grants::list_grantable_resources, grants::list_grants, grants::create_grant, grants::delete_grant,
+        grants::validate_workflow_resources
     ),
     components(schemas(
         BootstrapStatus, BootstrapRequest, LoginRequest, ChangePasswordRequest, AuthResponse,
@@ -36,8 +80,45 @@ use utoipa::OpenApi;
         UpdateRoleRequest, PermissionResponse, agentx_api_types::ApiErrorResponse,
         agentx_api_types::FieldError,
         agentx_api_types::HealthResponse, agentx_api_types::DependencyHealth
+        ,workflows::WorkflowResponse, workflows::CreateWorkflowRequest,
+        workflows::UpdateWorkflowRequest, workflows::DraftResponse, workflows::SaveDraftRequest,
+        workflows::RevisionResponse, workflows::WorkflowVersionResponse,
+        workflows::CreateVersionRequest, workflows::WorkflowMemberResponse,
+        workflows::UpsertWorkflowMemberRequest, workflows::EnvironmentResponse,
+        workflows::CreateEnvironmentRequest, workflows::UpdateEnvironmentRequest,
+        workflows::DeploymentResponse,
+        workflows::PublishWorkflowRequest, workflows::RollbackWorkflowRequest,
+        credentials::CredentialResponse, credentials::CreateCredentialRequest,
+        credentials::UpdateCredentialRequest, credentials::RotateCredentialRequest,
+        models_control::ModelResponse, models_control::ModelProviderResponse,
+        models_control::CreateModelProviderRequest, models_control::ModelDeploymentResponse,
+        models_control::CreateModelDeploymentRequest, models_control::CreateModelAliasRequest,
+        models_control::UpdateModelAliasRequest, models_control::ModelPriceResponse,
+        models_control::CreateModelPriceRequest, models_control::UpdateModelProviderRequest,
+        models_control::CreateDeploymentRevisionRequest,
+        models_control::ModelDeploymentHistoryResponse,
+        mcp_control::McpServerResponse, mcp_control::CreateMcpServerRequest,
+        mcp_control::UpdateMcpServerRequest, mcp_control::McpToolResponse,
+        mcp_control::UpdateMcpToolPolicyRequest, mcp_control::DebugMcpToolRequest,
+        mcp_control::DebugMcpToolResponse, mcp_control::McpDiscoveryResponse,
+        skills_control::SkillResponse, skills_control::CreateSkillRequest,
+        skills_control::UpdateSkillRequest, skills_control::SkillVersionResponse,
+        skills_control::SkillDependencyInput, skills_control::SkillWorkspaceEntry,
+        skills_control::SkillWorkspaceResponse, skills_control::CreateEntryRequest,
+        skills_control::MoveEntryRequest, skills_control::UpdateMarkdownRequest,
+        skills_control::PublishSkillVersionRequest, skills_control::ArtifactUploadResponse,
+        external_resources::ConnectionResponse, external_resources::CreateConnectionRequest,
+        external_resources::KnowledgeResponse, external_resources::CreateKnowledgeRequest,
+        external_resources::MemoryResponse, external_resources::CreateMemoryRequest,
+        external_resources::UpdateExternalResourceRequest,
+        connection_test::HealthCheckResponse, grants::GrantableResourceResponse, grants::GrantResponse,
+        grants::CreateGrantRequest, grants::ResourceValidationResponse,
+        grants::MissingGrantResponse
     )),
-    tags((name = "Agentx M1", description = "Bootstrap, authentication and IAM control plane"))
+    tags(
+        (name = "Agentx M1", description = "Bootstrap, authentication and IAM control plane"),
+        (name = "Agentx M2", description = "Workflow and resource control plane")
+    )
 )]
 struct ApiDoc;
 
@@ -62,7 +143,15 @@ async fn main() -> Result<()> {
         return Ok(());
     }
     let auth = AuthSettings::from_env()?;
-    let state = AppState::new(pool.clone(), auth);
+    let credential = CredentialSettings::from_env()?;
+    let keyring = CredentialKeyring::from_json(credential.active_key_id, &credential.keys_json)?;
+    let object_store =
+        agentx_infrastructure::clients::object_store(&infrastructure.object_storage).ok();
+    let state = AppState::new(pool.clone(), auth).with_m2(
+        keyring,
+        object_store,
+        ConnectionSettings::from_env()?,
+    );
     let health = agentx_service_kit::HealthRegistry::default();
     health.register("mysql", true).await;
     health.register("redis", false).await;
@@ -97,7 +186,206 @@ fn build_api_router(state: AppState) -> Router {
         .route("/roles", get(iam::list_roles).post(iam::create_role))
         .route("/roles/{id}", patch(iam::update_role))
         .route("/permissions", get(iam::list_permissions));
-    Router::new().nest("/api/v1", api).with_state(state)
+    let api = api
+        .route(
+            "/workflows",
+            get(workflows::list_workflows).post(workflows::create_workflow),
+        )
+        .route(
+            "/workflows/{id}",
+            get(workflows::get_workflow).patch(workflows::update_workflow),
+        )
+        .route("/workflows/{id}/archive", post(workflows::archive_workflow))
+        .route(
+            "/workflows/{id}/draft",
+            get(workflows::get_draft).put(workflows::save_draft),
+        )
+        .route("/workflows/{id}/revisions", get(workflows::list_revisions))
+        .route(
+            "/workflows/{id}/versions",
+            get(workflows::list_versions).post(workflows::create_version),
+        )
+        .route(
+            "/workflows/{id}/members",
+            get(workflows::list_members).post(workflows::upsert_member),
+        )
+        .route(
+            "/workflows/{id}/members/{user_id}",
+            axum::routing::delete(workflows::delete_member),
+        )
+        .route(
+            "/workflows/{id}/deployments",
+            get(workflows::list_deployments).post(workflows::publish),
+        )
+        .route(
+            "/workflows/{id}/deployments/{environment_id}/rollback",
+            post(workflows::rollback),
+        )
+        .route(
+            "/workflows/{id}/resource-validation",
+            get(grants::validate_workflow_resources),
+        )
+        .route("/workflows/{id}/run", post(workflows::runtime_unavailable))
+        .route(
+            "/environments",
+            get(workflows::list_environments).post(workflows::create_environment),
+        )
+        .route("/environments/{id}", patch(workflows::update_environment))
+        .route(
+            "/credentials",
+            get(credentials::list_credentials).post(credentials::create_credential),
+        )
+        .route(
+            "/credentials/{id}",
+            get(credentials::get_credential).patch(credentials::update_credential),
+        )
+        .route(
+            "/credentials/{id}/rotate",
+            post(credentials::rotate_credential),
+        )
+        .route(
+            "/models/aliases",
+            get(models_control::list_models).post(models_control::create_alias),
+        )
+        .route(
+            "/models/aliases/{id}",
+            get(models_control::get_model).patch(models_control::update_alias),
+        )
+        .route(
+            "/models/providers",
+            get(models_control::list_providers).post(models_control::create_provider),
+        )
+        .route(
+            "/models/providers/{id}",
+            patch(models_control::update_provider),
+        )
+        .route(
+            "/models/aliases/{id}/test-connection",
+            post(models_control::test_model),
+        )
+        .route(
+            "/models/deployments",
+            get(models_control::list_deployments).post(models_control::create_deployment),
+        )
+        .route(
+            "/models/deployments/{id}/prices",
+            get(models_control::list_prices).post(models_control::create_price),
+        )
+        .route(
+            "/models/aliases/{id}/deployment-revisions",
+            post(models_control::create_deployment_revision),
+        )
+        .route(
+            "/models/aliases/{id}/deployment-history",
+            get(models_control::list_deployment_history),
+        )
+        .route(
+            "/mcp/servers",
+            get(mcp_control::list_servers).post(mcp_control::create_server),
+        )
+        .route(
+            "/mcp/servers/{id}",
+            get(mcp_control::get_server).patch(mcp_control::update_server),
+        )
+        .route(
+            "/mcp/servers/{id}/test-connection",
+            post(mcp_control::test_connection),
+        )
+        .route(
+            "/mcp/servers/{id}/discover",
+            post(mcp_control::discover_tools),
+        )
+        .route("/mcp/servers/{id}/tools", get(mcp_control::list_tools))
+        .route("/mcp/tools", get(mcp_control::list_all_tools))
+        .route(
+            "/mcp/tools/{id}/policy",
+            patch(mcp_control::update_tool_policy),
+        )
+        .route(
+            "/mcp/tools/{id}/debug-invoke",
+            post(mcp_control::debug_invoke),
+        )
+        .route(
+            "/skills",
+            get(skills_control::list_skills).post(skills_control::create_skill),
+        )
+        .route(
+            "/skills/{id}",
+            get(skills_control::get_skill).patch(skills_control::update_skill),
+        )
+        .route("/skills/{id}/workspace", get(skills_control::get_workspace))
+        .route(
+            "/skills/{id}/workspace/export",
+            get(skills_control::export_workspace),
+        )
+        .route(
+            "/skills/{id}/workspace/import",
+            post(skills_control::import_workspace),
+        )
+        .route("/skills/{id}/entries", post(skills_control::create_entry))
+        .route(
+            "/skills/{id}/entries/{entry_id}",
+            patch(skills_control::move_entry).delete(skills_control::delete_entry),
+        )
+        .route(
+            "/skills/{id}/files/{entry_id}",
+            get(skills_control::get_file).put(skills_control::update_markdown),
+        )
+        .route("/skills/{id}/uploads", post(skills_control::upload_file))
+        .route(
+            "/skills/{id}/versions",
+            get(skills_control::list_versions).post(skills_control::create_version),
+        )
+        .route(
+            "/knowledge/connections",
+            get(external_resources::list_rag_connections)
+                .post(external_resources::create_rag_connection),
+        )
+        .route(
+            "/knowledge/connections/{id}/test-connection",
+            post(external_resources::test_rag_connection),
+        )
+        .route(
+            "/knowledge/resources",
+            get(external_resources::list_knowledge).post(external_resources::create_knowledge),
+        )
+        .route(
+            "/knowledge/resources/{id}",
+            get(external_resources::get_knowledge).patch(external_resources::update_knowledge),
+        )
+        .route(
+            "/memory/connections",
+            get(external_resources::list_memory_connections)
+                .post(external_resources::create_memory_connection),
+        )
+        .route(
+            "/memory/connections/{id}/test-connection",
+            post(external_resources::test_memory_connection),
+        )
+        .route(
+            "/memory/namespaces",
+            get(external_resources::list_memory).post(external_resources::create_memory),
+        )
+        .route(
+            "/memory/namespaces/{id}",
+            get(external_resources::get_memory).patch(external_resources::update_memory),
+        )
+        .route(
+            "/resources/grantable",
+            get(grants::list_grantable_resources),
+        )
+        .route(
+            "/resources/{resource_type}/{resource_id}/grants",
+            get(grants::list_grants).post(grants::create_grant),
+        )
+        .route(
+            "/resources/{resource_type}/{resource_id}/grants/{grant_id}",
+            axum::routing::delete(grants::delete_grant),
+        );
+    Router::new()
+        .nest("/api/v1", api)
+        .layer(DefaultBodyLimit::max(105 * 1024 * 1024))
+        .with_state(state)
 }
 
 fn start_health_checks(
@@ -110,7 +398,7 @@ fn start_health_checks(
         use futures::StreamExt;
         loop {
             let schema_ready = sqlx::query_scalar::<_, bool>(
-                "SELECT COALESCE(MAX(version),0) >= 3 AND COALESCE(MIN(success),0)=1 FROM _sqlx_migrations",
+                "SELECT COALESCE(MAX(version),0) >= 7 AND COALESCE(MIN(success),0)=1 FROM _sqlx_migrations",
             ).fetch_one(&pool).await.unwrap_or(false);
             let mysql_ready = mysql::ping(&pool).await.is_ok() && schema_ready;
             registry
@@ -170,12 +458,13 @@ mod integration_tests {
     use agentx_infrastructure::{
         clients,
         config::{ClickHouseSettings, MySqlSettings, RedisSettings},
+        credential::CredentialKeyring,
         mysql,
     };
     use object_store::memory::InMemory;
     use secrecy::SecretString;
     use serde_json::{Value, json};
-    use std::time::Duration;
+    use std::{borrow::Cow, path::Path, sync::Arc, time::Duration};
     use testcontainers::{
         GenericImage, ImageExt,
         core::{IntoContainerPort, WaitFor},
@@ -184,12 +473,17 @@ mod integration_tests {
     use tower::ServiceExt;
 
     use axum::{
+        Router,
         body::{Body, to_bytes},
         http::{Request, StatusCode},
         response::Response,
+        routing::get,
     };
 
-    use crate::{config::AuthSettings, state::AppState};
+    use crate::{
+        config::{AuthSettings, ConnectionSettings},
+        state::AppState,
+    };
 
     fn auth_settings() -> AuthSettings {
         AuthSettings {
@@ -219,6 +513,21 @@ mod integration_tests {
         builder
             .body(Body::from(body.to_string()))
             .expect("valid test request")
+    }
+
+    fn idempotent_json_request(
+        method: &str,
+        uri: &str,
+        body: Value,
+        token: &str,
+        key: &str,
+    ) -> Request<Body> {
+        let mut request = json_request(method, uri, body, Some(token));
+        request.headers_mut().insert(
+            "idempotency-key",
+            key.parse().expect("valid idempotency header"),
+        );
+        request
     }
 
     async fn response_json(response: Response) -> Value {
@@ -275,7 +584,46 @@ mod integration_tests {
             .expect("bootstrap row");
         assert_eq!(count, 1);
 
-        let router = super::build_api_router(AppState::new(pool.clone(), auth_settings()));
+        let keyring = CredentialKeyring::from_json(
+            "test-v1".to_owned(),
+            &SecretString::from(
+                r#"{"keys":{"test-v1":"YWdlbnR4LWxvY2FsLWNyZWRlbnRpYWwta2V5LTAwMDE="}}"#.to_owned(),
+            ),
+        )
+        .expect("test credential keyring");
+        let fake_listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind fake connection server");
+        let fake_port = fake_listener
+            .local_addr()
+            .expect("fake server address")
+            .port();
+        tokio::spawn(async move {
+            let fake = Router::new()
+                .route("/health", get(|| async { StatusCode::NO_CONTENT }))
+                .route(
+                    "/slow",
+                    get(|| async {
+                        tokio::time::sleep(Duration::from_secs(2)).await;
+                        StatusCode::OK
+                    }),
+                );
+            axum::serve(fake_listener, fake)
+                .await
+                .expect("serve fake connection server");
+        });
+        let object_store = Arc::new(InMemory::new());
+        let router = super::build_api_router(AppState::new(pool.clone(), auth_settings()).with_m2(
+            keyring,
+            Some(object_store.clone()),
+            ConnectionSettings {
+                timeout_seconds: 1,
+                max_concurrency: 4,
+                allow_private_networks: false,
+                allowed_hosts: vec!["localhost".to_owned()],
+                allowed_cidrs: Vec::new(),
+            },
+        ));
         let bootstrap_body = json!({
             "companyName": "Agentx Test",
             "adminUsername": "admin",
@@ -546,8 +894,659 @@ mod integration_tests {
                 .as_array()
                 .expect("permission list")
                 .len(),
-            12
+            34
         );
+
+        let environments = router
+            .clone()
+            .oneshot(json_request(
+                "GET",
+                "/api/v1/environments",
+                json!({}),
+                Some(&access_token),
+            ))
+            .await
+            .expect("list bootstrap environments");
+        assert_eq!(environments.status(), StatusCode::OK);
+        let environments = response_json(environments).await;
+        let environments = environments.as_array().expect("environment list");
+        assert_eq!(environments.len(), 2);
+        let development_id: uuid::Uuid = serde_json::from_value(
+            environments
+                .iter()
+                .find(|item| item["code"] == "development")
+                .expect("development environment")["id"]
+                .clone(),
+        )
+        .expect("development id");
+        let production_id: uuid::Uuid = serde_json::from_value(
+            environments
+                .iter()
+                .find(|item| item["code"] == "production")
+                .expect("production environment")["id"]
+                .clone(),
+        )
+        .expect("production id");
+
+        let credential = router
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/v1/credentials",
+                json!({
+                    "name":"M2 OpenAI Key",
+                    "credentialType":"bearer",
+                    "secret":"m2-super-secret-value",
+                    "ownerDepartmentId":root_department
+                }),
+                Some(&access_token),
+            ))
+            .await
+            .expect("create credential");
+        assert_eq!(credential.status(), StatusCode::CREATED);
+        let credential = response_json(credential).await;
+        assert!(!credential.to_string().contains("m2-super-secret-value"));
+        let credential_id: uuid::Uuid =
+            serde_json::from_value(credential["id"].clone()).expect("credential id");
+        let renamed_credential = router
+            .clone()
+            .oneshot(json_request(
+                "PATCH",
+                &format!("/api/v1/credentials/{credential_id}"),
+                json!({"name":"M2 Renamed Key","status":"active","version":1}),
+                Some(&access_token),
+            ))
+            .await
+            .expect("rename credential");
+        assert_eq!(renamed_credential.status(), StatusCode::OK);
+        let renamed_credential = response_json(renamed_credential).await;
+        assert_eq!(renamed_credential["currentSecretVersion"], 1);
+        let credential_version = renamed_credential["version"]
+            .as_u64()
+            .expect("renamed credential version");
+        let secret_versions: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM credential_secret_versions WHERE credential_id=?",
+        )
+        .bind(credential_id)
+        .fetch_one(&pool)
+        .await
+        .expect("credential secret versions");
+        assert_eq!(secret_versions, 1, "renaming must not rotate the secret");
+
+        let provider = router
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/v1/models/providers",
+                json!({
+                    "name":"M2 Provider",
+                    "providerType":"openai_compatible",
+                    "endpoint":"https://models.example.test/v1",
+                    "credentialId":credential_id,
+                    "ownerDepartmentId":root_department
+                }),
+                Some(&access_token),
+            ))
+            .await
+            .expect("create provider");
+        assert_eq!(provider.status(), StatusCode::CREATED);
+        let provider_id: uuid::Uuid =
+            serde_json::from_value(response_json(provider).await["id"].clone())
+                .expect("provider id");
+        let deployment = router
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/v1/models/deployments",
+                json!({
+                    "providerId":provider_id,
+                    "name":"M2 GPT Deployment",
+                    "modelName":"gpt-m2",
+                    "endpointOverride":null,
+                    "credentialId":null,
+                    "defaultParameters":{}
+                }),
+                Some(&access_token),
+            ))
+            .await
+            .expect("create model deployment");
+        assert_eq!(deployment.status(), StatusCode::CREATED);
+        let deployment_id: uuid::Uuid =
+            serde_json::from_value(response_json(deployment).await["id"].clone())
+                .expect("deployment id");
+        let model = router
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/v1/models/aliases",
+                json!({"alias":"m2-chat","deploymentId":deployment_id}),
+                Some(&access_token),
+            ))
+            .await
+            .expect("create model alias");
+        assert_eq!(model.status(), StatusCode::CREATED);
+        let model_id: uuid::Uuid = serde_json::from_value(response_json(model).await["id"].clone())
+            .expect("model alias id");
+        let revised_model = router
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                &format!("/api/v1/models/aliases/{model_id}/deployment-revisions"),
+                json!({
+                    "providerId":provider_id,
+                    "name":"M2 GPT Deployment",
+                    "modelName":"gpt-m2-r2",
+                    "endpointOverride":"https://models.example.test/v2",
+                    "credentialId":credential_id,
+                    "defaultParameters":{"temperature":0.1},
+                    "expectedAliasVersion":1,
+                    "price":{"currency":"USD","inputPerMillion":"1.25","outputPerMillion":"2.50"}
+                }),
+                Some(&access_token),
+            ))
+            .await
+            .expect("create model deployment revision");
+        assert_eq!(revised_model.status(), StatusCode::CREATED);
+        let revised_model = response_json(revised_model).await;
+        assert_eq!(revised_model["modelName"], "gpt-m2-r2");
+        assert_eq!(revised_model["aliasVersion"], 2);
+        let history = router
+            .clone()
+            .oneshot(json_request(
+                "GET",
+                &format!("/api/v1/models/aliases/{model_id}/deployment-history"),
+                json!({}),
+                Some(&access_token),
+            ))
+            .await
+            .expect("load deployment history");
+        assert_eq!(history.status(), StatusCode::OK);
+        let history = response_json(history).await;
+        assert_eq!(history.as_array().expect("deployment history").len(), 2);
+        assert!(
+            history[0]["changedAt"]
+                .as_str()
+                .is_some_and(|value| value.ends_with('Z')),
+            "timestamps use RFC3339"
+        );
+        let original_model_name: String =
+            sqlx::query_scalar("SELECT model_name FROM model_deployments WHERE id=?")
+                .bind(deployment_id)
+                .fetch_one(&pool)
+                .await
+                .expect("load original deployment");
+        assert_eq!(original_model_name, "gpt-m2");
+
+        let workflow = router
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/v1/workflows",
+                json!({"name":"M2 Workflow","description":"Control plane closure","visibility":"private"}),
+                Some(&access_token),
+            ))
+            .await
+            .expect("create workflow");
+        assert_eq!(workflow.status(), StatusCode::CREATED);
+        let workflow = response_json(workflow).await;
+        let workflow_id: uuid::Uuid =
+            serde_json::from_value(workflow["id"].clone()).expect("workflow id");
+        let service_identity_id: uuid::Uuid =
+            serde_json::from_value(workflow["serviceIdentityId"].clone())
+                .expect("workflow service identity id");
+        let definition = json!({
+            "schemaVersion":"1.0",
+            "nodes":[
+                {"id":"trigger","type":"manual_trigger","typeVersion":1,"name":"Manual Trigger","position":{"x":100,"y":160},"disabled":false,"parameters":{},"resourceReferences":[]},
+                {"id":"model","type":"model","typeVersion":1,"name":"Model","position":{"x":420,"y":160},"disabled":false,"parameters":{},"resourceReferences":[{"resourceType":"model","resourceId":model_id,"resourceVersionId":null,"operation":"use"}]}
+            ],
+            "connections":[{"id":"trigger-model","sourceNodeId":"trigger","sourceHandle":"main","targetNodeId":"model","targetHandle":"main"}],
+            "settings":{}
+        });
+        let saved = router
+            .clone()
+            .oneshot(idempotent_json_request(
+                "PUT",
+                &format!("/api/v1/workflows/{workflow_id}/draft"),
+                json!({"expectedRevision":0,"definition":definition}),
+                &access_token,
+                "m2-draft-1",
+            ))
+            .await
+            .expect("save M2 draft");
+        assert_eq!(saved.status(), StatusCode::OK);
+        assert_eq!(response_json(saved).await["revision"], 1);
+        let stale = router
+            .clone()
+            .oneshot(json_request(
+                "PUT",
+                &format!("/api/v1/workflows/{workflow_id}/draft"),
+                json!({"expectedRevision":0,"definition":definition}),
+                Some(&access_token),
+            ))
+            .await
+            .expect("reject stale draft");
+        assert_eq!(stale.status(), StatusCode::CONFLICT);
+        assert_eq!(
+            response_json(stale).await["code"],
+            "DRAFT_REVISION_CONFLICT"
+        );
+
+        let validation = router
+            .clone()
+            .oneshot(json_request(
+                "GET",
+                &format!("/api/v1/workflows/{workflow_id}/resource-validation"),
+                json!({}),
+                Some(&access_token),
+            ))
+            .await
+            .expect("validate missing grants");
+        let validation = response_json(validation).await;
+        assert_eq!(validation["valid"], false);
+        let missing = validation["missingGrants"]
+            .as_array()
+            .expect("missing grants");
+        assert!(missing.iter().any(|item| item["resourceType"] == "model"));
+        assert!(
+            missing
+                .iter()
+                .any(|item| item["resourceType"] == "credential")
+        );
+
+        let model_grant = router
+            .clone()
+            .oneshot(idempotent_json_request(
+                "POST",
+                &format!("/api/v1/resources/model/{model_id}/grants"),
+                json!({"subjectType":"workflow_service_identity","subjectId":service_identity_id,"resourceVersionId":null,"operation":"use"}),
+                &access_token,
+                "m2-model-grant",
+            ))
+            .await
+            .expect("grant model");
+        assert_eq!(model_grant.status(), StatusCode::CREATED);
+        let credential_grant = router
+            .clone()
+            .oneshot(idempotent_json_request(
+                "POST",
+                &format!("/api/v1/resources/credential/{credential_id}/grants"),
+                json!({"subjectType":"workflow_service_identity","subjectId":service_identity_id,"resourceVersionId":null,"operation":"use"}),
+                &access_token,
+                "m2-credential-grant",
+            ))
+            .await
+            .expect("grant credential");
+        assert_eq!(credential_grant.status(), StatusCode::CREATED);
+        let credential_grant_id: uuid::Uuid =
+            serde_json::from_value(response_json(credential_grant).await["id"].clone())
+                .expect("credential grant id");
+
+        let version_request = json!({"draftRevision":1});
+        let version = router
+            .clone()
+            .oneshot(idempotent_json_request(
+                "POST",
+                &format!("/api/v1/workflows/{workflow_id}/versions"),
+                version_request.clone(),
+                &access_token,
+                "m2-version-1",
+            ))
+            .await
+            .expect("create workflow version");
+        let version_status = version.status();
+        let version = response_json(version).await;
+        assert_eq!(version_status, StatusCode::CREATED, "{version}");
+        let version_id: uuid::Uuid =
+            serde_json::from_value(version["id"].clone()).expect("workflow version id");
+        let replayed_version = router
+            .clone()
+            .oneshot(idempotent_json_request(
+                "POST",
+                &format!("/api/v1/workflows/{workflow_id}/versions"),
+                version_request,
+                &access_token,
+                "m2-version-1",
+            ))
+            .await
+            .expect("replay workflow version");
+        assert_eq!(replayed_version.status(), StatusCode::OK);
+        assert_eq!(response_json(replayed_version).await["id"], version["id"]);
+        let reused_key = router
+            .clone()
+            .oneshot(idempotent_json_request(
+                "POST",
+                &format!("/api/v1/workflows/{workflow_id}/versions"),
+                json!({"draftRevision":2}),
+                &access_token,
+                "m2-version-1",
+            ))
+            .await
+            .expect("reject reused idempotency key");
+        assert_eq!(reused_key.status(), StatusCode::CONFLICT);
+        assert_eq!(
+            response_json(reused_key).await["code"],
+            "IDEMPOTENCY_KEY_REUSED"
+        );
+
+        let published = router
+            .clone()
+            .oneshot(idempotent_json_request(
+                "POST",
+                &format!("/api/v1/workflows/{workflow_id}/deployments"),
+                json!({"environmentId":development_id,"workflowVersionId":version_id}),
+                &access_token,
+                "m2-publish-development",
+            ))
+            .await
+            .expect("publish workflow");
+        assert_eq!(published.status(), StatusCode::CREATED);
+        let revoked = router
+            .clone()
+            .oneshot(json_request(
+                "DELETE",
+                &format!(
+                    "/api/v1/resources/credential/{credential_id}/grants/{credential_grant_id}"
+                ),
+                json!({}),
+                Some(&access_token),
+            ))
+            .await
+            .expect("revoke credential grant");
+        assert_eq!(revoked.status(), StatusCode::NO_CONTENT);
+        let blocked_publish = router
+            .clone()
+            .oneshot(idempotent_json_request(
+                "POST",
+                &format!("/api/v1/workflows/{workflow_id}/deployments"),
+                json!({"environmentId":production_id,"workflowVersionId":version_id}),
+                &access_token,
+                "m2-publish-production-blocked",
+            ))
+            .await
+            .expect("block publish after revocation");
+        assert_eq!(blocked_publish.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(
+            response_json(blocked_publish).await["code"],
+            "RESOURCE_GRANT_MISSING"
+        );
+        let restored_grant = router
+            .clone()
+            .oneshot(idempotent_json_request(
+                "POST",
+                &format!("/api/v1/resources/credential/{credential_id}/grants"),
+                json!({"subjectType":"workflow_service_identity","subjectId":service_identity_id,"resourceVersionId":null,"operation":"use"}),
+                &access_token,
+                "m2-credential-grant-restored",
+            ))
+            .await
+            .expect("restore credential grant");
+        assert_eq!(restored_grant.status(), StatusCode::CREATED);
+        let disabled_credential = router
+            .clone()
+            .oneshot(json_request(
+                "PATCH",
+                &format!("/api/v1/credentials/{credential_id}"),
+                json!({"name":"M2 OpenAI Key","status":"disabled","version":credential_version}),
+                Some(&access_token),
+            ))
+            .await
+            .expect("disable credential");
+        assert_eq!(disabled_credential.status(), StatusCode::OK);
+        let disabled_credential = response_json(disabled_credential).await;
+        let disabled_publish = router
+            .clone()
+            .oneshot(idempotent_json_request(
+                "POST",
+                &format!("/api/v1/workflows/{workflow_id}/deployments"),
+                json!({"environmentId":production_id,"workflowVersionId":version_id}),
+                &access_token,
+                "m2-publish-disabled-resource",
+            ))
+            .await
+            .expect("block disabled resource publish");
+        assert_eq!(disabled_publish.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(
+            response_json(disabled_publish).await["code"],
+            "RESOURCE_UNAVAILABLE"
+        );
+        let enabled_credential = router
+            .clone()
+            .oneshot(json_request(
+                "PATCH",
+                &format!("/api/v1/credentials/{credential_id}"),
+                json!({"name":"M2 OpenAI Key","status":"active","version":disabled_credential["version"]}),
+                Some(&access_token),
+            ))
+            .await
+            .expect("enable credential");
+        assert_eq!(enabled_credential.status(), StatusCode::OK);
+        let (concurrent_a, concurrent_b) = tokio::join!(
+            router.clone().oneshot(idempotent_json_request(
+                "POST",
+                &format!("/api/v1/workflows/{workflow_id}/deployments"),
+                json!({"environmentId":production_id,"workflowVersionId":version_id}),
+                &access_token,
+                "m2-concurrent-publish-a",
+            )),
+            router.clone().oneshot(idempotent_json_request(
+                "POST",
+                &format!("/api/v1/workflows/{workflow_id}/deployments"),
+                json!({"environmentId":production_id,"workflowVersionId":version_id}),
+                &access_token,
+                "m2-concurrent-publish-b",
+            )),
+        );
+        assert_eq!(
+            concurrent_a.expect("first concurrent publish").status(),
+            StatusCode::CREATED
+        );
+        assert_eq!(
+            concurrent_b.expect("second concurrent publish").status(),
+            StatusCode::CREATED
+        );
+        let active_production: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM workflow_deployments WHERE tenant_id=(SELECT tenant_id FROM workflows WHERE id=?) AND workflow_id=? AND environment_id=? AND status='active'")
+            .bind(workflow_id).bind(workflow_id).bind(production_id).fetch_one(&pool).await.expect("active production deployment");
+        assert_eq!(active_production, 1);
+        let rollback = router
+            .clone()
+            .oneshot(idempotent_json_request(
+                "POST",
+                &format!("/api/v1/workflows/{workflow_id}/deployments/{development_id}/rollback"),
+                json!({"targetWorkflowVersionId":version_id}),
+                &access_token,
+                "m2-rollback-development",
+            ))
+            .await
+            .expect("rollback workflow");
+        assert_eq!(rollback.status(), StatusCode::CREATED);
+        assert_eq!(response_json(rollback).await["source"], "rollback");
+        let runtime = router
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                &format!("/api/v1/workflows/{workflow_id}/run"),
+                json!({}),
+                Some(&access_token),
+            ))
+            .await
+            .expect("runtime remains unavailable");
+        assert_eq!(runtime.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(response_json(runtime).await["code"], "RUNTIME_UNAVAILABLE");
+        let snapshot_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM workflow_version_resources WHERE workflow_version_id=?",
+        )
+        .bind(version_id)
+        .fetch_one(&pool)
+        .await
+        .expect("version snapshots");
+        assert_eq!(snapshot_count, 2);
+        let fake_runtime_tables: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name IN ('executions','trace_events','evaluation_runs')")
+            .fetch_one(&pool).await.expect("runtime table check");
+        assert_eq!(fake_runtime_tables, 0);
+
+        let rag_connection = router.clone().oneshot(json_request("POST","/api/v1/knowledge/connections",json!({"name":"M2 LightRAG","endpoint":"http://127.0.0.1:9","healthPath":"/health","credentialId":credential_id,"ownerDepartmentId":root_department,"configuration":{}}),Some(&access_token))).await.expect("create RAG connection");
+        assert_eq!(rag_connection.status(), StatusCode::CREATED);
+        let rag_connection_id: uuid::Uuid =
+            serde_json::from_value(response_json(rag_connection).await["id"].clone()).unwrap();
+        let ssrf = router
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                &format!("/api/v1/knowledge/connections/{rag_connection_id}/test-connection"),
+                json!({}),
+                Some(&access_token),
+            ))
+            .await
+            .expect("block local connection test");
+        assert_eq!(ssrf.status(), StatusCode::FORBIDDEN);
+        let healthy_connection = router.clone().oneshot(json_request("POST","/api/v1/knowledge/connections",json!({"name":"M2 Healthy LightRAG","endpoint":format!("http://localhost:{fake_port}"),"healthPath":"/health","credentialId":null,"ownerDepartmentId":root_department,"configuration":{}}),Some(&access_token))).await.expect("create healthy RAG connection");
+        assert_eq!(healthy_connection.status(), StatusCode::CREATED);
+        let healthy_connection_id: uuid::Uuid =
+            serde_json::from_value(response_json(healthy_connection).await["id"].clone())
+                .expect("healthy connection id");
+        let healthy_check = router
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                &format!("/api/v1/knowledge/connections/{healthy_connection_id}/test-connection"),
+                json!({}),
+                Some(&access_token),
+            ))
+            .await
+            .expect("test healthy RAG connection");
+        assert_eq!(healthy_check.status(), StatusCode::OK);
+        assert_eq!(response_json(healthy_check).await["status"], "healthy");
+        let slow_connection = router.clone().oneshot(json_request("POST","/api/v1/memory/connections",json!({"name":"M2 Slow Mem0","endpoint":format!("http://localhost:{fake_port}"),"healthPath":"/slow","credentialId":null,"ownerDepartmentId":root_department,"configuration":{}}),Some(&access_token))).await.expect("create slow memory connection");
+        let slow_connection_id: uuid::Uuid =
+            serde_json::from_value(response_json(slow_connection).await["id"].clone())
+                .expect("slow connection id");
+        let slow_check = router
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                &format!("/api/v1/memory/connections/{slow_connection_id}/test-connection"),
+                json!({}),
+                Some(&access_token),
+            ))
+            .await
+            .expect("test connection timeout");
+        assert_eq!(slow_check.status(), StatusCode::OK);
+        let slow_check = response_json(slow_check).await;
+        assert_eq!(slow_check["status"], "unhealthy");
+        assert_eq!(slow_check["errorCode"], "CONNECTION_TIMEOUT");
+        assert_eq!(slow_check["errorMessage"], "Connection test timed out");
+        let knowledge = router.clone().oneshot(json_request("POST","/api/v1/knowledge/resources",json!({"connectionId":rag_connection_id,"name":"M2 Knowledge","externalResourceId":"kb-m2","ownerDepartmentId":root_department}),Some(&access_token))).await.expect("create knowledge resource");
+        assert_eq!(knowledge.status(), StatusCode::CREATED);
+        let memory_connection = router.clone().oneshot(json_request("POST","/api/v1/memory/connections",json!({"name":"M2 Mem0","endpoint":"https://memory.example.test","healthPath":"/health","credentialId":credential_id,"ownerDepartmentId":root_department,"configuration":{}}),Some(&access_token))).await.expect("create memory connection");
+        let memory_connection_id: uuid::Uuid =
+            serde_json::from_value(response_json(memory_connection).await["id"].clone()).unwrap();
+        let memory = router.clone().oneshot(json_request("POST","/api/v1/memory/namespaces",json!({"connectionId":memory_connection_id,"name":"M2 Memory","externalNamespace":"namespace-m2","accessMode":"read_write","ownerDepartmentId":root_department}),Some(&access_token))).await.expect("create memory namespace");
+        assert_eq!(memory.status(), StatusCode::CREATED);
+
+        let skill = router
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/v1/skills",
+                json!({"name":"Workspace Integration Skill","description":"test","ownerDepartmentId":root_department}),
+                Some(&access_token),
+            ))
+            .await
+            .expect("create workspace skill");
+        assert_eq!(skill.status(), StatusCode::CREATED);
+        let skill_id: uuid::Uuid = serde_json::from_value(response_json(skill).await["id"].clone())
+            .expect("workspace skill id");
+        let workspace = router
+            .clone()
+            .oneshot(json_request(
+                "GET",
+                &format!("/api/v1/skills/{skill_id}/workspace"),
+                json!({}),
+                Some(&access_token),
+            ))
+            .await
+            .expect("load initial skill workspace");
+        let workspace = response_json(workspace).await;
+        assert_eq!(workspace["revision"], 1);
+        assert_eq!(workspace["entries"][0]["path"], "SKILL.md");
+        let directory = router
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                &format!("/api/v1/skills/{skill_id}/entries"),
+                json!({"parentId":null,"name":"docs","entryType":"directory","expectedRevision":1}),
+                Some(&access_token),
+            ))
+            .await
+            .expect("create skill directory");
+        let directory = response_json(directory).await;
+        let directory_id: uuid::Uuid = serde_json::from_value(
+            directory["entries"]
+                .as_array()
+                .and_then(|entries| entries.iter().find(|entry| entry["path"] == "docs"))
+                .expect("skill directory entry")["id"]
+                .clone(),
+        )
+        .expect("skill directory id");
+        let markdown = router
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                &format!("/api/v1/skills/{skill_id}/entries"),
+                json!({"parentId":directory_id,"name":"guide.md","entryType":"file","expectedRevision":2}),
+                Some(&access_token),
+            ))
+            .await
+            .expect("create skill markdown");
+        let markdown = response_json(markdown).await;
+        let markdown_id: uuid::Uuid = serde_json::from_value(
+            markdown["entries"]
+                .as_array()
+                .and_then(|entries| {
+                    entries
+                        .iter()
+                        .find(|entry| entry["path"] == "docs/guide.md")
+                })
+                .expect("skill markdown entry")["id"]
+                .clone(),
+        )
+        .expect("skill markdown id");
+        let saved_markdown = router
+            .clone()
+            .oneshot(json_request(
+                "PUT",
+                &format!("/api/v1/skills/{skill_id}/files/{markdown_id}"),
+                json!({"content":"# Guide\n[Root](../SKILL.md)\n","expectedRevision":3}),
+                Some(&access_token),
+            ))
+            .await
+            .expect("save skill markdown");
+        assert_eq!(saved_markdown.status(), StatusCode::OK);
+        let skill_version = router
+            .clone()
+            .oneshot(idempotent_json_request(
+                "POST",
+                &format!("/api/v1/skills/{skill_id}/versions"),
+                json!({"expectedRevision":4,"dependencies":[]}),
+                &access_token,
+                "m2-skill-version-1",
+            ))
+            .await
+            .expect("publish skill workspace");
+        assert_eq!(skill_version.status(), StatusCode::CREATED);
+        let skill_version = response_json(skill_version).await;
+        assert_eq!(skill_version["fileCount"], 2);
+        let frozen_files: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM skill_version_files WHERE skill_version_id=?")
+                .bind(
+                    serde_json::from_value::<uuid::Uuid>(skill_version["id"].clone())
+                        .expect("skill version id"),
+                )
+                .fetch_one(&pool)
+                .await
+                .expect("frozen skill files");
+        assert_eq!(frozen_files, 2);
 
         let tenant_id = TenantId::new();
         sqlx::query("INSERT INTO tenants(id,name,normalized_name) VALUES(?,'Artifact Test','artifact test')")
@@ -579,6 +1578,20 @@ mod integration_tests {
             .expect("tenant-scoped users");
         let users = response_json(users).await.to_string();
         assert!(!users.contains("foreign.user"));
+        let foreign_credential = uuid::Uuid::now_v7();
+        sqlx::query("INSERT INTO credentials(id,tenant_id,name,credential_type,masked_hint,owner_department_id,created_by) VALUES(?,?,'Foreign Secret','bearer','****test',?,?)")
+            .bind(foreign_credential).bind(tenant_id.as_uuid()).bind(foreign_department).bind(foreign_user).execute(&pool).await.expect("foreign credential");
+        let foreign_read = router
+            .clone()
+            .oneshot(json_request(
+                "GET",
+                &format!("/api/v1/credentials/{foreign_credential}"),
+                json!({}),
+                Some(&access_token),
+            ))
+            .await
+            .expect("reject cross-tenant credential read");
+        assert_eq!(foreign_read.status(), StatusCode::NOT_FOUND);
         let artifacts = agentx_infrastructure::artifact::MySqlObjectArtifactStore::new(
             pool.clone(),
             std::sync::Arc::new(InMemory::new()),
@@ -764,5 +1777,83 @@ mod integration_tests {
             tokio::time::sleep(Duration::from_millis(250)).await;
         }
         assert!(minio_ready);
+    }
+
+    #[tokio::test]
+    async fn mysql_migrations_upgrade_an_m1_schema_to_mcp_and_skill_workspace() {
+        let container = GenericImage::new("mysql", "8.4")
+            .with_exposed_port(3306.tcp())
+            .with_wait_for(WaitFor::message_on_stderr("ready for connections"))
+            .with_env_var("MYSQL_DATABASE", "agentx")
+            .with_env_var("MYSQL_USER", "agentx")
+            .with_env_var("MYSQL_PASSWORD", "agentx-test-password")
+            .with_env_var("MYSQL_ROOT_PASSWORD", "agentx-root-password")
+            .start()
+            .await
+            .expect("MySQL container should start");
+        let port = container
+            .get_host_port_ipv4(3306.tcp())
+            .await
+            .expect("mapped MySQL port");
+        let settings = MySqlSettings {
+            host: "127.0.0.1".to_owned(),
+            port,
+            database: "agentx".to_owned(),
+            username: "agentx".to_owned(),
+            password: SecretString::from("agentx-test-password".to_owned()),
+            max_connections: 5,
+        };
+        let mut pool = None;
+        for _ in 0..30 {
+            match mysql::connect(&settings).await {
+                Ok(value) => {
+                    pool = Some(value);
+                    break;
+                }
+                Err(_) => tokio::time::sleep(Duration::from_millis(500)).await,
+            }
+        }
+        let pool = pool.expect("connect to test MySQL");
+        let path = Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../migrations/mysql"
+        ));
+        let all = sqlx::migrate::Migrator::new(path)
+            .await
+            .expect("load migrations");
+        let m1 = sqlx::migrate::Migrator {
+            migrations: Cow::Owned(
+                all.migrations
+                    .iter()
+                    .filter(|migration| migration.version <= 3)
+                    .cloned()
+                    .collect(),
+            ),
+            ..sqlx::migrate::Migrator::DEFAULT
+        };
+        m1.run(&pool).await.expect("apply M1 migrations");
+        let before: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='mcp_servers'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("query pre-upgrade schema");
+        assert_eq!(before, 0);
+
+        all.run(&pool).await.expect("append M2.1 migrations");
+        let current_tables: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name IN ('mcp_servers','mcp_tools','skill_workspace_entries')",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("query M2.1 schema");
+        assert_eq!(current_tables, 3);
+        let removed_tables: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name IN ('tools','tool_versions')",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("query removed schema");
+        assert_eq!(removed_tables, 0);
     }
 }

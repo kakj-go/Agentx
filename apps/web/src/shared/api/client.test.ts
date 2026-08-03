@@ -17,4 +17,18 @@ describe('api client', () => {
     const [first, second] = await Promise.all([apiRequest<{ ok: boolean }>('/one'), apiRequest<{ ok: boolean }>('/two')])
     expect(first.ok).toBe(true); expect(second.ok).toBe(true); expect(refreshes).toBe(1)
   })
+
+  it('lets the browser set the multipart boundary for FormData', async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      expect(new Headers(init?.headers).has('Content-Type')).toBe(false)
+      return new Response(JSON.stringify({ id: 'artifact' }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const form = new FormData()
+    form.append('file', new Blob(['PK\u0003\u0004'], { type: 'application/zip' }), 'skill.zip')
+
+    await apiRequest('/skills/skill-id/artifact', { method: 'POST', body: form })
+
+    expect(fetchMock).toHaveBeenCalledOnce()
+  })
 })

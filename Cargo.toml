@@ -8,6 +8,7 @@ members = [
   "crates/agentx-runtime",
   "crates/agentx-service-kit",
   "services/platform-api",
+  "services/echo-mcp",
   "services/sandbox-manager",
   "services/trace-writer",
   "services/trigger-gateway",
@@ -23,27 +24,35 @@ rust-version = "1.85"
 version = "0.1.0"
 
 [workspace.dependencies]
+aes-gcm = "0.10"
 anyhow = "1.0"
 argon2 = "0.5"
 async-trait = "0.1"
-axum = "0.8"
+axum = { version = "0.8", features = ["multipart"] }
 axum-extra = { version = "0.10", features = ["cookie"] }
 base64 = "0.22"
+bytes = "1.10"
 clickhouse = "0.13"
+comrak = { version = "0.35", default-features = false }
 config = "0.15"
 futures = "0.3"
 jsonwebtoken = "9.3"
+ipnet = "2.11"
 object_store = { version = "0.11", features = ["aws"] }
 rand = "0.8"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+rmcp = { version = "0.12", default-features = false, features = ["base64", "macros", "server", "transport-streamable-http-server"] }
 redis = { version = "0.29", features = ["tokio-comp", "connection-manager"] }
 secrecy = { version = "0.10", features = ["serde"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+serde_yaml = "0.9"
 sha2 = "0.10"
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "mysql", "uuid", "time", "json", "migrate", "macros"] }
 thiserror = "2.0"
 time = { version = "0.3", features = ["serde", "formatting", "parsing", "macros"] }
-tokio = { version = "1.0", features = ["macros", "net", "rt-multi-thread", "signal"] }
+tokio = { version = "1.0", features = ["macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+tokio-util = "0.7"
 tower = "0.5"
 tower-http = { version = "0.6", features = ["catch-panic", "request-id", "trace"] }
 tracing = "0.1"
@@ -51,6 +60,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 utoipa = { version = "5", features = ["uuid", "time"] }
 utoipa-axum = "0.2"
 uuid = { version = "1.0", features = ["serde", "v7"] }
+url = "2.5"
+zeroize = "1.8"
+zip = { version = "2.4", default-features = false, features = ["deflate"] }
 
 agentx-api-types = { path = "crates/agentx-api-types" }
 agentx-application = { path = "crates/agentx-application" }

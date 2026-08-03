@@ -7,12 +7,14 @@ import {
   FlaskConical,
   KeyRound,
   Library,
+  LockKeyhole,
   MemoryStick,
   Play,
+  Shield,
   ShieldCheck,
   Sparkles,
   UsersRound,
-  Wrench,
+  ServerCog,
 } from 'lucide-react'
 
 import type { NavigationGroup, NotificationItem } from '../shared/types/app'
@@ -22,7 +24,7 @@ export const navigationGroups: NavigationGroup[] = [
     labelKey: 'nav.groups.workspace',
     items: [
       { labelKey: 'nav.dashboard', path: '/', icon: CircleGauge, keywords: ['overview', 'home'] },
-      { labelKey: 'nav.workflows', path: '/workflows', icon: Blocks, badge: '24', keywords: ['agent', 'flow'] },
+      { labelKey: 'nav.workflows', path: '/workflows', icon: Blocks, badge: '24', keywords: ['agent', 'flow'], requiredPermission: 'workflow:view' },
       { labelKey: 'nav.applications', path: '/applications', icon: AppWindow, keywords: ['deployment', 'api'] },
       { labelKey: 'nav.playground', path: '/playground', icon: Play, keywords: ['chat', 'test'] },
     ],
@@ -39,11 +41,13 @@ export const navigationGroups: NavigationGroup[] = [
   {
     labelKey: 'nav.groups.resources',
     items: [
-      { labelKey: 'nav.models', path: '/models', icon: BrainCircuit, keywords: ['llm', 'provider'] },
-      { labelKey: 'nav.tools', path: '/tools', icon: Wrench, keywords: ['connector', 'mcp'] },
-      { labelKey: 'nav.skills', path: '/skills', icon: Sparkles, keywords: ['skill', 'agent', 'capability'] },
-      { labelKey: 'nav.knowledge', path: '/knowledge', icon: Library, keywords: ['rag', 'lightrag'] },
-      { labelKey: 'nav.memory', path: '/memory', icon: MemoryStick, keywords: ['mem0'] },
+      { labelKey: 'nav.credentials', path: '/credentials', icon: LockKeyhole, keywords: ['secret', 'key'], requiredPermission: 'credential:view' },
+      { labelKey: 'nav.models', path: '/models', icon: BrainCircuit, keywords: ['llm', 'provider'], requiredPermission: 'model:view' },
+      { labelKey: 'nav.mcp', path: '/mcp', icon: ServerCog, keywords: ['connector', 'server', 'tool'], requiredPermission: 'mcp:view' },
+      { labelKey: 'nav.skills', path: '/skills', icon: Sparkles, keywords: ['skill', 'agent', 'capability'], requiredPermission: 'skill:view' },
+      { labelKey: 'nav.knowledge', path: '/knowledge', icon: Library, keywords: ['rag', 'lightrag'], requiredPermission: 'knowledge:view' },
+      { labelKey: 'nav.memory', path: '/memory', icon: MemoryStick, keywords: ['mem0'], requiredPermission: 'memory:view' },
+      { labelKey: 'nav.resourceGrants', path: '/resource-grants', icon: Shield, keywords: ['grant', 'permission', 'resource'], requiredPermission: 'resource:grant' },
     ],
   },
   {

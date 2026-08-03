@@ -1,16 +1,118 @@
 use std::time::Duration;
 
 use agentx_domain::{
-    ArtifactId, ExecutionId, ExecutionStatus, TenantId, WorkflowId, WorkflowSummary,
+    ArtifactId, ExecutionId, ExecutionStatus, MissingGrant, ResourceOperation, ResourceReference,
+    ResourceType, ResourceVersionSnapshot, TenantId, WorkflowDefinition, WorkflowId,
+    WorkflowServiceIdentity, WorkflowSummary, WorkflowVersionId,
 };
 use anyhow::Result;
 use async_trait::async_trait;
 use serde_json::Value;
 use uuid::Uuid;
+use zeroize::Zeroize;
 
 #[async_trait]
 pub trait WorkflowRepository: Send + Sync {
     async fn find_summary(&self, id: WorkflowId) -> Result<Option<WorkflowSummary>>;
+}
+
+#[async_trait]
+pub trait WorkflowControlRepository: Send + Sync {
+    async fn definition(
+        &self,
+        tenant_id: TenantId,
+        workflow_id: WorkflowId,
+    ) -> Result<Option<WorkflowDefinition>>;
+    async fn service_identity(
+        &self,
+        tenant_id: TenantId,
+        workflow_id: WorkflowId,
+    ) -> Result<Option<WorkflowServiceIdentity>>;
+    async fn version_snapshots(
+        &self,
+        tenant_id: TenantId,
+        version_id: WorkflowVersionId,
+    ) -> Result<Vec<ResourceVersionSnapshot>>;
+}
+
+#[async_trait]
+pub trait PublishValidator: Send + Sync {
+    async fn validate(
+        &self,
+        tenant_id: TenantId,
+        workflow_id: WorkflowId,
+        definition: &WorkflowDefinition,
+    ) -> Result<Vec<MissingGrant>>;
+    async fn snapshot(
+        &self,
+        tenant_id: TenantId,
+        workflow_id: WorkflowId,
+        definition: &WorkflowDefinition,
+    ) -> Result<Vec<ResourceVersionSnapshot>>;
+}
+
+#[async_trait]
+pub trait ResourceAuthorizer: Send + Sync {
+    async fn authorize(
+        &self,
+        tenant_id: TenantId,
+        identity: &WorkflowServiceIdentity,
+        reference: &ResourceReference,
+    ) -> Result<bool>;
+    async fn missing_dependencies(
+        &self,
+        tenant_id: TenantId,
+        identity: &WorkflowServiceIdentity,
+        reference: &ResourceReference,
+    ) -> Result<Vec<MissingGrant>>;
+}
+
+pub struct SecretMaterial(Vec<u8>);
+
+impl SecretMaterial {
+    #[must_use]
+    pub fn new(value: Vec<u8>) -> Self {
+        Self(value)
+    }
+    #[must_use]
+    pub fn expose(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl Drop for SecretMaterial {
+    fn drop(&mut self) {
+        self.0.zeroize();
+    }
+}
+
+pub struct ResolvedCredential {
+    pub credential_type: String,
+    pub secret: SecretMaterial,
+}
+
+#[async_trait]
+pub trait CredentialResolver: Send + Sync {
+    async fn resolve(&self, tenant_id: TenantId, credential_id: Uuid)
+    -> Result<ResolvedCredential>;
+}
+
+#[derive(Clone, Debug)]
+pub struct ConnectionTestResult {
+    pub status: String,
+    pub latency_ms: Option<u64>,
+    pub error_code: Option<String>,
+}
+
+#[async_trait]
+pub trait ConnectionTester: Send + Sync {
+    async fn test(
+        &self,
+        tenant_id: TenantId,
+        resource_type: ResourceType,
+        resource_id: Uuid,
+        operation: ResourceOperation,
+    ) -> Result<ConnectionTestResult>;
 }
 
 #[async_trait]

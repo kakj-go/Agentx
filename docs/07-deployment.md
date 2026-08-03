@@ -194,6 +194,7 @@ Base 中的 Web Service 保持 `ClusterIP`，不把本地暴露策略带入生�
 - Redis StatefulSet 和 PVC
 - ClickHouse StatefulSet 和 PVC
 - MinIO StatefulSet、PVC 和 Bucket 初始化 Job
+- Echo MCP Deployment，仅存在于 local 和 e2e Overlay
 
 应用进程必须自行重试外部依赖。Liveness 只表示进程存活，Readiness 在后续接入基础设施适配器后负责确认必要依赖可用。
 
@@ -207,3 +208,13 @@ CubeSandbox 官方标准 Kubernetes 部署目前仍处于预览阶段，计算�
 2. 将 AGENTX_CUBESANDBOX_ENDPOINT 指向该 Cube API。
 
 生产环境必须使用 CubeSandbox 官方部署包和经过验证的计算节点。
+
+## 12. 可选业务 Addon
+
+LightRAG 和 Mem0 不进入生产 Base，也不随默认 Agentx 控制面强制启动。deploy/k8s/addons 提供固定镜像版本、独立 PVC、ConfigMap 和 Secret；scripts/k8s-addons-up.ps1、k8s-addons-status.ps1 和 k8s-addons-down.ps1 负责本地一键启停。
+
+模型与 Embedding 密钥必须通过环境变量或 Kubernetes Secret 注入。未配置模型时只验收 Pod、Service 和健康接口，不伪造 RAG 查询或 Memory 写入成功。
+
+## 13. 临时 Kubernetes E2E
+
+scripts/e2e.ps1 创建 agentx-e2e Namespace，从空 PVC 部署 MySQL、Redis、ClickHouse、MinIO、Migration Job、应用和 Echo MCP，并自动建立 Web port-forward。Playwright 完成后保存 HTML、JUnit、Trace、失败 Screenshot/Video、Kubernetes 资源、事件和服务日志；默认删除 Namespace，KeepNamespace 仅用于本地排障。

@@ -91,11 +91,11 @@
 
 1. 空环境初始化企业和 Admin，并登录。
 2. 创建部门、用户、角色和数据范围。
-3. 接入 Credential、Model、Tool、Skill、LightRAG 和 Mem0。
+3. 接入 Credential、Model、MCP Server/Tool、Skill Workspace、LightRAG 和 Mem0。
 4. 创建 Workflow 并授权全部依赖资源。
-5. 拖拽创建包含 Agent、Tool、Code 和 Approval 的 Workflow。
+5. 拖拽创建包含 Agent、MCP Tool、Code 和 Approval 的 Workflow。
 6. 手动运行并查看节点输入输出、Attempt 和 Trace。
-7. 查看模型、Tool、Agent 循环、Token、成本和错误。
+7. 查看模型、MCP Tool、Agent 循环、Token、成本和错误。
 8. 从历史 Checkpoint 创建 Fork Execution。
 9. 用 Dataset Version 批量评测 Workflow Version 并查看报告。
 10. 发布 Workflow Version 为 Application Deployment。

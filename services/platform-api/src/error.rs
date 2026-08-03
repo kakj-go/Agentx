@@ -52,8 +52,32 @@ impl AppError {
         Self::new(StatusCode::TOO_MANY_REQUESTS, code, message)
     }
 
+    pub fn unprocessable(code: &'static str, message: impl Into<String>) -> Self {
+        Self::new(StatusCode::UNPROCESSABLE_ENTITY, code, message)
+    }
+
+    pub fn service_unavailable(code: &'static str, message: impl Into<String>) -> Self {
+        Self::new(StatusCode::SERVICE_UNAVAILABLE, code, message)
+    }
+
+    pub fn with_field(
+        mut self,
+        field: impl Into<String>,
+        code: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Self {
+        self.fields.push(FieldError {
+            field: field.into(),
+            code: code.into(),
+            message: message.into(),
+        });
+        self
+    }
+
     pub fn internal(error: impl std::fmt::Display) -> Self {
         tracing::error!(error = %error, "request failed");
+        #[cfg(test)]
+        eprintln!("request failed: {error}");
         Self::new(
             StatusCode::INTERNAL_SERVER_ERROR,
             "INTERNAL_ERROR",

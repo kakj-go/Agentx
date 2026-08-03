@@ -8,9 +8,9 @@
 |---|---|---|---|---|---|---|---|---|
 | 单公司初始化、登录和租户上下文 | 01 §4、07 §5 | IAM-001–003、IAM-007、IAM-009 | platform-api | `/setup`、`/login`、`/change-password` | MySQL、Refresh Cookie | bootstrap、auth | 初始化、Token 轮换、tenant_id 伪造 | done / [M1 验收证据](m1-acceptance-evidence.md) |
 | 部门、用户、角色和数据范围 | 01 §4、05 §1 | IAM-004–005、IAM-010 | platform-api | `/organization`、`/roles` | MySQL | user/role/department manage | 部门闭包、权限矩阵、跨租户 Repository | done / [M1 验收证据](m1-acceptance-evidence.md) |
-| Workflow 草稿、版本、部署和回滚 | 01 §2–4、03 §2/6 | WCP-001–009；[M2-001～105](m2-task-list.md) | platform-api | `/workflows` 及详情 | MySQL、MinIO | workflow create/edit/publish | Revision 冲突、版本不可变、并发发布 | planned / — |
-| Credential 和资源授权 | 01 §5、05 §2–5 | RES-001–011；[M2-001～105](m2-task-list.md) | platform-api | Credential、Model、Tool、Skill 详情 | MySQL、K8s Secret/外部 Secret、MinIO | resource manage/grant | Secret 脱敏、版本、依赖和 Grant | planned / — |
-| LightRAG 和 Mem0 控制面 | 01 §4、05 §6–7 | RES-005–011；[M2-060～074](m2-task-list.md) | platform-api | `/knowledge`、`/memory` | MySQL | rag/memory manage/grant | 连接、读写范围、跨租户 | planned / — |
+| Workflow 草稿、版本、部署和回滚 | 01 §2–4、03 §2/6 | WCP-001–010；M2R-070～076 | platform-api | `/workflows` 及详情/画布 | MySQL、MinIO | workflow create/edit/publish | Revision 冲突、MCP 连线、版本不可变、发布 | done / [M2.1 验收证据](m2.1-acceptance-evidence.md) |
+| Credential、Model、MCP、Skill 和资源授权 | 01 §5、05 §2–5 | RES-001–011；M2R-020～076；M2F-001～005 | platform-api、echo-mcp | Credential、Model、MCP、Skill Workspace、统一资源授权 | MySQL、MinIO | resource manage/grant、mcp discover/debug | Secret 脱敏、连接状态、Schema 字段树、富文本、MCP 三段 Grant | done / [M2.1 验收证据](m2.1-acceptance-evidence.md) |
+| LightRAG、Mem0 控制面和可选 Addon | 01 §4、05 §6–7 | RES-005–011；M2R-080～086 | platform-api | `/knowledge`、`/memory` | MySQL、Kubernetes PVC | rag/memory manage/grant | 连接、读写范围、Addon 渲染与健康 | done / [M2.1 验收证据](m2.1-acceptance-evidence.md) |
 | Application、API Key、Session、Message 和 SSE | 01 §2/4、05 §8–10 | APP-001–011、INT-001 | platform-api、trigger-gateway | `/applications`、`/playground` | MySQL、Redis、MinIO | application manage/invoke | Key、幂等、Session 固定版本、SSE 重连 | planned / — |
 | Dataset、Evaluator 和报告 | 01 §2/4、05 §11–12 | EVA-001–010、INT-003 | platform-api、workflow-worker | `/datasets`、`/evaluations` | MySQL、MinIO、ClickHouse | dataset/evaluation manage | 版本不可变、导入原子、真实 Case Execution | planned / — |
 | 审批任务和站内通知 | 01 §1/4、04 §11、05 §13 | OBS-001–003、REC-005–006、INT-002/007 | platform-api、coordinator | `/approvals`、消息中心 | MySQL、Redis | approval handle | 并发终态、候选资格、重复事件 | planned / — |
@@ -20,7 +20,7 @@
 | Execution、Node Execution 和可靠调度 | 01 §2/3、03 §8–11 | RUN-006、RUN-009–014 | coordinator、worker | `/executions` | MySQL、Redis | workflow view_execution | 重复消息、Lease、崩溃、超时 | planned / — |
 | Trace、成本、Tool 错误和循环记录 | 01 §4、04 §1–4/8–9 | OBS-004–006、AGT-006–007/012 | trace-writer、platform-api | Execution Trace | MySQL、ClickHouse、MinIO | workflow view_execution | 脱敏、写入中断、Span 树、循环 Fixture | planned / — |
 | Checkpoint、Fork 和部分执行 | 01 §1/4、04 §5–7 | REC-001–003、REC-007–010 | coordinator、worker | Execution、Studio | MySQL、MinIO | workflow fork_execution | 原记录不变、依赖恢复、副作用确认 | planned / — |
-| Model、Agent、Tool、Skill、RAG 和 Memory 运行 | 01 §1/4、04 §8–9、05 §3–7 | AGT-001–007、AGT-012–013 | worker、infrastructure | Studio、Trace | MySQL、ClickHouse、MinIO | resource grant/workflow run | 运行时授权、预算、循环、依赖 | planned / — |
+| Model、Agent、MCP Tool、Skill、RAG 和 Memory 运行 | 01 §1/4、04 §8–9、05 §3–7 | AGT-001–007、AGT-012–013 | worker、infrastructure | Studio、Trace | MySQL、ClickHouse、MinIO | resource grant/workflow run | 运行时授权、预算、循环、依赖 | planned / — |
 | CubeSandbox 与 Code 节点 | 01 §1/4、04 §10、07 §11 | AGT-008–011/013 | sandbox-manager、worker | Studio、Trace | MySQL、Redis、MinIO、CubeSandbox | workflow run/resource grant | 隔离、配额、网络、Secret、强制回收 | planned / — |
 | n8n 式拖拽、调试和发布 | 01 §1/2、10 §7–10 | STU-001–014 | platform-api、runtime services | `/workflows/:id/editor` | MySQL、Redis、MinIO | workflow edit/run/publish | Serializer、连线、Pin、运行高亮、发布 | planned / — |
 | 配额、保留、扩容和发布 | 07 §2/6–9 | INT-006、INT-008–014 | 全部服务 | Runtime Status | MySQL、Redis、ClickHouse、MinIO、K8s | tenant admin | 故障、容量、清理、滚动升级 | planned / — |
@@ -31,9 +31,9 @@
 |---|---|---|---|---|
 | 1. 初始化企业和 Admin | 02 | IAM-001–003、IAM-009 | [M1 验收证据](m1-acceptance-evidence.md) | done |
 | 2. 创建部门、用户和角色 | 02 | IAM-004–005、IAM-010 | [M1 验收证据](m1-acceptance-evidence.md) | done |
-| 3. 接入模型、Tool、Skill、LightRAG 和 Mem0 | 04 | RES-001–011 | 连接、版本和敏感字段测试 | planned |
-| 4. 将资源授权给 Workflow | 04 | WCP-006、RES-007/011 | 直接和间接依赖授权报告 | planned |
-| 5. 拖拽 Agent、Tool、Code 和审批 Workflow | 11 | STU-001–008、AGT-013 | Studio E2E 和 Definition Snapshot | planned |
+| 3. 接入 Credential、模型、MCP、Skill Workspace、LightRAG 和 Mem0 | 04 | RES-001–011、M2R-020～086 | [M2.1 验收证据](m2.1-acceptance-evidence.md) | done |
+| 4. 将直接和递归资源依赖授权给 Workflow | 04 | WCP-006、RES-007/011、M2R-070～076、M2F-001/003/005 | [M2.1 验收证据](m2.1-acceptance-evidence.md) | done |
+| 5. 拖拽 Agent、MCP Tool、Code 和审批 Workflow | 11 | STU-001–008、AGT-013 | Studio E2E 和 Definition Snapshot | planned |
 | 6. 手动运行并查看节点输入输出 | 11 | STU-009–012、RUN-014 | 真实 Execution/Node Trace | planned |
 | 7. 查看模型、Tool、成本和循环 Trace | 10 | AGT-006–007/012、OBS-006 | Agent Fixture 和 Trace UI | planned |
 | 8. 从历史 Checkpoint 重新执行 | 09 | REC-001–003、REC-010 | Fork 父子记录和原记录 Hash | planned |

@@ -1,6 +1,7 @@
 use std::env;
 
 use anyhow::{Context, Result};
+use ipnet::IpNet;
 use secrecy::SecretString;
 
 #[derive(Clone)]
@@ -15,6 +16,63 @@ pub struct AuthSettings {
     pub login_max_failures: u32,
     pub login_failure_window_seconds: i64,
     pub login_lock_seconds: i64,
+}
+
+#[derive(Clone)]
+pub struct CredentialSettings {
+    pub active_key_id: String,
+    pub keys_json: SecretString,
+}
+
+impl CredentialSettings {
+    pub fn from_env() -> Result<Self> {
+        Ok(Self {
+            active_key_id: env::var("AGENTX_CREDENTIAL_ACTIVE_KEY_ID")
+                .context("AGENTX_CREDENTIAL_ACTIVE_KEY_ID is required")?,
+            keys_json: SecretString::from(
+                env::var("AGENTX_CREDENTIAL_KEYS_JSON")
+                    .context("AGENTX_CREDENTIAL_KEYS_JSON is required")?,
+            ),
+        })
+    }
+}
+
+#[derive(Clone)]
+pub struct ConnectionSettings {
+    pub timeout_seconds: u64,
+    pub max_concurrency: usize,
+    pub allow_private_networks: bool,
+    pub allowed_hosts: Vec<String>,
+    pub allowed_cidrs: Vec<IpNet>,
+}
+
+impl ConnectionSettings {
+    pub fn from_env() -> Result<Self> {
+        Ok(Self {
+            timeout_seconds: parse("AGENTX_CONNECTION_TEST_TIMEOUT_SECONDS", 10_u64)?,
+            max_concurrency: parse("AGENTX_CONNECTION_TEST_MAX_CONCURRENCY", 4_usize)?,
+            allow_private_networks: parse_bool(
+                "AGENTX_CONNECTION_ALLOW_PRIVATE_NETWORKS",
+                value("AGENTX_ENV", "production").eq_ignore_ascii_case("local"),
+            )?,
+            allowed_hosts: value("AGENTX_CONNECTION_ALLOWED_HOSTS", "")
+                .split(',')
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_ascii_lowercase)
+                .collect(),
+            allowed_cidrs: value("AGENTX_CONNECTION_ALLOWED_CIDRS", "")
+                .split(',')
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(|value| {
+                    value.parse::<IpNet>().with_context(|| {
+                        format!("AGENTX_CONNECTION_ALLOWED_CIDRS contains invalid CIDR {value}")
+                    })
+                })
+                .collect::<Result<Vec<_>>>()?,
+        })
+    }
 }
 
 impl AuthSettings {

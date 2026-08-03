@@ -1,13 +1,22 @@
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
+use agentx_infrastructure::credential::CredentialKeyring;
+use object_store::ObjectStore;
 use sqlx::MySqlPool;
+use tokio::sync::{Mutex, Semaphore};
+use uuid::Uuid;
 
-use crate::config::AuthSettings;
+use crate::config::{AuthSettings, ConnectionSettings};
 
 #[derive(Clone)]
 pub struct AppState {
     pub pool: MySqlPool,
     pub auth: Arc<AuthSettings>,
+    pub credential_keyring: Option<Arc<CredentialKeyring>>,
+    pub object_store: Option<Arc<dyn ObjectStore>>,
+    pub http: reqwest::Client,
+    pub connections: Arc<ConnectionSettings>,
+    connection_limits: Arc<Mutex<HashMap<Uuid, Arc<Semaphore>>>>,
 }
 
 impl AppState {
@@ -15,6 +24,47 @@ impl AppState {
         Self {
             pool,
             auth: Arc::new(auth),
+            credential_keyring: None,
+            object_store: None,
+            http: reqwest::Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .expect("HTTP client configuration is valid"),
+            connections: Arc::new(ConnectionSettings {
+                timeout_seconds: 10,
+                max_concurrency: 4,
+                allow_private_networks: false,
+                allowed_hosts: Vec::new(),
+                allowed_cidrs: Vec::new(),
+            }),
+            connection_limits: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    #[must_use]
+    pub fn with_m2(
+        mut self,
+        credential_keyring: CredentialKeyring,
+        object_store: Option<Arc<dyn ObjectStore>>,
+        connections: ConnectionSettings,
+    ) -> Self {
+        self.credential_keyring = Some(Arc::new(credential_keyring));
+        self.object_store = object_store;
+        self.connections = Arc::new(connections);
+        self
+    }
+
+    pub async fn connection_permit(&self, tenant_id: Uuid) -> tokio::sync::OwnedSemaphorePermit {
+        let limit = {
+            let mut limits = self.connection_limits.lock().await;
+            limits
+                .entry(tenant_id)
+                .or_insert_with(|| Arc::new(Semaphore::new(self.connections.max_concurrency)))
+                .clone()
+        };
+        limit
+            .acquire_owned()
+            .await
+            .expect("connection semaphore remains open")
     }
 }

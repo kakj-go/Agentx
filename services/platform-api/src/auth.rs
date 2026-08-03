@@ -29,6 +29,28 @@ const PERMISSIONS: &[(&str, &str)] = &[
     ("role:manage", "Manage roles"),
     ("role:assign", "Assign roles"),
     ("audit:view", "View audit events"),
+    ("workflow:view", "View workflows"),
+    ("workflow:create", "Create workflows"),
+    ("workflow:edit", "Edit workflows"),
+    ("workflow:archive", "Archive workflows"),
+    ("workflow:publish", "Publish workflows"),
+    ("workflow:manage_member", "Manage workflow members"),
+    ("workflow:manage_permission", "Manage workflow permissions"),
+    ("credential:view", "View credentials"),
+    ("credential:manage", "Manage credentials"),
+    ("model:view", "View models"),
+    ("model:manage", "Manage models"),
+    ("mcp:view", "View MCP servers and tools"),
+    ("mcp:manage", "Manage MCP servers and tool policies"),
+    ("mcp:discover", "Discover MCP tools"),
+    ("mcp:debug", "Debug MCP tools"),
+    ("skill:view", "View skills"),
+    ("skill:manage", "Manage skills"),
+    ("knowledge:view", "View knowledge resources"),
+    ("knowledge:manage", "Manage knowledge resources"),
+    ("memory:view", "View memory resources"),
+    ("memory:manage", "Manage memory resources"),
+    ("resource:grant", "Grant resources"),
 ];
 
 #[utoipa::path(get, path = "/api/v1/bootstrap/status")]
@@ -92,6 +114,15 @@ pub async fn bootstrap(
         .bind(&input.timezone)
         .execute(&mut *tx)
         .await?;
+    for (code, name) in [("development", "Development"), ("production", "Production")] {
+        sqlx::query("INSERT INTO workflow_environments(id,tenant_id,code,name,is_builtin) VALUES(?,?,?,?,TRUE)")
+            .bind(Uuid::now_v7())
+            .bind(tenant_id)
+            .bind(code)
+            .bind(name)
+            .execute(&mut *tx)
+            .await?;
+    }
     sqlx::query("INSERT INTO departments(id,tenant_id,parent_id,name,normalized_name,is_root) VALUES(?,?,NULL,?,?,TRUE)").bind(department_id).bind(tenant_id).bind(input.company_name.trim()).bind(normalize(&input.company_name)).execute(&mut *tx).await?;
     sqlx::query(
         "INSERT INTO department_closure(tenant_id,ancestor_id,descendant_id,depth) VALUES(?,?,?,0)",
@@ -156,6 +187,13 @@ async fn seed_roles(
         "user:disable",
         "role:view",
         "role:assign",
+        "workflow:view",
+        "credential:view",
+        "model:view",
+        "mcp:view",
+        "skill:view",
+        "knowledge:view",
+        "memory:view",
     ] {
         sqlx::query("INSERT INTO role_permissions(tenant_id,role_id,permission_id) SELECT ?,?,id FROM permissions WHERE permission_key=?").bind(tenant_id).bind(department).bind(key).execute(&mut **tx).await?;
     }

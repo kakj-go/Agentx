@@ -5,8 +5,9 @@
 ## 1. 当前基线
 
 - M1 基础管理闭环已经完成：单公司 Bootstrap、JWT、部门、用户、角色、数据范围、OpenAPI 和 Kubernetes Migration Job 可用。
-- `/organization`、`/roles` 和 Header 用户状态已接入真实 API；Workflow 等后续业务页面继续使用 Mock，并受真实认证路由保护。
-- Workflow 控制面、资源中心、运行引擎、Trace 写入和 CubeSandbox Adapter 尚未实现，下一阶段从阶段 03 开始。
+- M2.1 资源中心重构主体已经完成：旧 Tool/ZIP-only Skill 已废弃，当前模型为 MCP Server、自动发现的 MCP Tool 和在线 Skill Workspace。
+- 统一资源授权、Model 连接状态、MCP Schema 字段树、Skill 富文本和 Dialog 自适应已经通过临时 Kubernetes E2E。
+- 当前基线为 M2.1 和 M2 `done`；M3 仍为 `planned`，后续从阶段 05 开始。
 
 因此后续不能以“逐页替换 Mock”的方式推进。所有业务先建立稳定契约和权威数据，再接入页面；与运行相关的外围接口在引擎可用前必须返回明确的 `RUNTIME_UNAVAILABLE`，不得伪造成功记录。
 
@@ -41,8 +42,8 @@
 | 00 | [基线与决策](00-baseline-and-decisions.md) | done | 首期边界和全局决策无阻塞项 |
 | 01 | [契约和公共基础](01-contracts-and-foundation.md) | done | Migration、统一 API、Tenant Context 和依赖 Readiness 可用 |
 | 02 | [初始化、认证和 IAM](02-bootstrap-auth-iam.md) | done | Bootstrap、JWT、单公司隔离和 RBAC 可用 |
-| 03 | [Workflow 控制面](03-workflow-control-plane.md) | planned | Draft、Version、Deployment 和资源快照边界稳定 |
-| 04 | [资源中心](04-resource-center.md) | planned | Credential 与全部资源授权可用 |
+| 03 | [Workflow 控制面](03-workflow-control-plane.md) | done | Draft、Version、Deployment 和 MCP/Skill 资源快照边界稳定 |
+| 04 | [资源中心](04-resource-center.md) | done | MCP、Skill Workspace、连接状态、统一授权和界面 E2E 可用 |
 | 05 | [应用、会话和调用入口](05-applications-sessions-gateway.md) | planned | Application、API Key、Session、Message 和 Gateway 契约可用 |
 | 06 | [测试集和评测](06-datasets-evaluations.md) | planned | 不可变 Dataset Version 和 Evaluation 控制面可用 |
 | 07 | [审批、消息和 Trace](07-approvals-notifications-trace.md) | planned | 外围任务、通知、Trace 写入与查询可用 |
@@ -54,17 +55,17 @@
 
 功能覆盖和验收证据统一维护在 [功能追踪矩阵](99-feature-traceability.md)。
 
-M2 的阶段 03、04 采用交错实施顺序，详细批次、子任务、Migration、权限种子和验收流程见 [M2 实施任务清单](m2-task-list.md)。
+M2 原实现已被 M2.1 取代。完成任务和门禁见 [M2.1 资源中心重构](m2.1-resource-redesign.md) 与 [M2.1 验收证据](m2.1-acceptance-evidence.md)，旧 [M2 验收证据](m2-acceptance-evidence.md) 只作为历史记录。
 
 ## 4. 里程碑
 
 | 里程碑 | 结果 | 对应阶段 |
 |---|---|---|
 | M1 | Bootstrap、JWT、单公司、部门、用户和 RBAC 可用（done） | 01–02 |
-| M2 | Workflow 控制面和全部资源管理可用 | 03–04；[详细任务清单](m2-task-list.md) |
+| M2 | Workflow 控制面和全部资源管理可用（done） | 03–04；[M2.1 任务](m2.1-resource-redesign.md)；[验收证据](m2.1-acceptance-evidence.md) |
 | M3 | Application、Session、Dataset、Approval、Notification、Trace 外围能力可用 | 05–07 |
 | M4 | JSON Fixture 定义的非 AI Workflow 能可靠执行 | 08–09 |
-| M5 | Agent、Tool、Skill、RAG、Memory 和 CubeSandbox 能执行 | 10 |
+| M5 | Agent、MCP Tool、Skill、RAG、Memory 和 CubeSandbox 能执行 | 10 |
 | M6 | n8n 式 Workflow Studio 可拖拽、调试和发布 | 11 |
 | M7 | 应用调用、审批、Checkpoint、评测、Trace 和通知全链路贯通 | 12 |
 

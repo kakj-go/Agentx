@@ -1,0 +1,20 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: agentx-e2e
+resources:
+  - ../local
+patches:
+  - target:
+      kind: Namespace
+      name: agentx
+    patch: |-
+      - op: replace
+        path: /metadata/name
+        value: agentx-e2e
+  - target:
+      kind: Service
+      name: web
+    patch: |-
+      - op: replace
+        path: /spec/type
+        value: ClusterIP

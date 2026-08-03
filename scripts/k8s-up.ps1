@@ -11,6 +11,7 @@ kubectl -n agentx rollout status statefulset/clickhouse --timeout=420s
 kubectl -n agentx rollout status statefulset/minio --timeout=420s
 $deployments = @(
     "web",
+    "echo-mcp",
     "platform-api",
     "trigger-gateway",
     "workflow-coordinator",

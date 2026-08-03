@@ -14,8 +14,12 @@
 
     ./scripts/k8s-up.ps1
 
-This starts the Agentx application processes, MySQL, Redis, ClickHouse and MinIO.
+This starts the Agentx application processes, MySQL, Redis, ClickHouse, MinIO and the local Echo MCP service.
 The startup script waits for the database migration job. On a fresh database, open the web URL and complete the company setup form.
+
+M2.1 replaces the development-stage Tool and ZIP-only Skill schema. Existing local M2 data is not compatible; recreate the development MySQL PVC before testing this version:
+
+    ./scripts/reset-dev-data.ps1
 
 ## Check status
 
@@ -36,3 +40,17 @@ Then open http://127.0.0.1:18080.
 ## Stop all local services
 
     ./scripts/k8s-down.ps1
+
+## Optional LightRAG and Mem0 addons
+
+    ./scripts/k8s-addons-up.ps1 -Addon all
+    ./scripts/k8s-addons-status.ps1
+    ./scripts/k8s-addons-down.ps1 -Addon all
+
+Use Addon lightrag or mem0 to manage only one service. Set the model and embedding keys in the generated Kubernetes Secrets before testing real LightRAG queries or Mem0 writes; without keys, only deployment health is accepted.
+
+## Kubernetes UI E2E
+
+    ./scripts/e2e.ps1
+
+The script creates a temporary agentx-e2e Namespace, deploys clean storage and Echo MCP, runs Playwright through the Web UI, saves reports under apps/e2e, and removes the Namespace. Use KeepNamespace only when debugging a failure.

@@ -1,5 +1,7 @@
 # M2 实施任务清单：Workflow 控制面与资源中心
 
+> 本清单记录已被 M2.1 取代的首次 M2 实现，不再作为当前完成证据。当前资源模型、任务状态和验收见 [M2.1 资源中心重构](m2.1-resource-redesign.md) 与 [M2.1 验收证据](m2.1-acceptance-evidence.md)。
+
 本文将[阶段 03](03-workflow-control-plane.md)和[阶段 04](04-resource-center.md)拆成可直接实施的批次。阶段文档定义领域边界，本清单定义实际开发顺序、任务依赖、接口冻结点和验收证据。
 
 ## 1. 目标与完成结果
@@ -16,16 +18,16 @@ M2 完成后，Company Admin 和获得授权的部门用户能够：
 
 M2 不产生真实 Execution。运行、测试执行、Agent 调用和节点调试入口必须返回 `RUNTIME_UNAVAILABLE` 或保持禁用，并明确说明运行引擎将在后续里程碑接入。
 
-## 2. 当前基线与进入条件
+## 2. 完成基线
 
 - M1 已完成，阶段 01、02 及 FND-001～FND-011、IAM-001～IAM-011 均为 `done`。
 - 单公司 Bootstrap、JWT、Refresh Token、部门树、用户、角色、数据范围和审计能力可复用。
-- MySQL Migration 当前到 `0003_m1_hardening.sql`，已发布 Migration 不得修改。
+- MySQL Migration 已追加到 `0007_rag_memory_and_resource_grants.sql`，`0001`～`0003` 未修改。
 - OpenAPI 导出、TypeScript Client、同源 `/api/v1`、统一错误和 Request ID 已可用。
 - Artifact、Outbox、事务和依赖健康检查基础 Port 已存在。
-- `/workflows`、`/models`、`/tools`、`/skills`、`/knowledge` 和 `/memory` 当前仍为 Mock 页面。
+- `/workflows`、`/credentials`、`/models`、`/tools`、`/skills`、`/knowledge` 和 `/memory` 已使用真实 API。
 
-开始 M2 编码时，将本文件、阶段 03、阶段 04 和总计划中的 M2 状态改为 `in_progress`；仅完成规划不改变状态。
+阶段 03、阶段 04 和本清单的 52 项任务均已完成，验证结果见 [M2 验收证据](m2-acceptance-evidence.md)。
 
 ## 3. 范围与明确不做内容
 
@@ -94,97 +96,97 @@ M2-0 契约、权限与 Migration
 
 | 编号 | 状态 | 映射 | 依赖 | 交付物 | 可验证验收条件 |
 |---|---|---|---|---|---|
-| M2-001 | planned | WCP-003、RES-007 | M1 | Workflow/Resource 公共 ID、Reference、Grant、Version Snapshot 和枚举 Schema 评审记录 | Domain、API DTO 和前端生成类型职责明确，无数据库实体直接暴露 |
-| M2-002 | planned | WCP-006、RES-007 | M2-001 | M2 权限种子、内置角色增量和权限矩阵 | Company Admin、Department Admin、Member 与自定义角色用例覆盖允许和拒绝路径 |
-| M2-003 | planned | WCP-001–006 | M2-001 | `0004_workflow_control_plane.sql` | 空库和 M1 已有库均可向前迁移，唯一键和 tenant_id 约束通过集成测试 |
-| M2-004 | planned | RES-001–007 | M2-001 | `0005_credentials_and_models.sql`、`0006_tools_and_skills.sql`、`0007_rag_memory_and_resource_grants.sql` | Migration 可重复检查且不会修改 `0001`～`0003` |
-| M2-005 | planned | WCP-008、RES-009 | M2-001–004 | Repository、事务边界、审计与 Outbox 事件约定 | 两个测试 tenant_id 的 ID 猜测和列表越权均返回不可见或拒绝 |
+| M2-001 | done | WCP-003、RES-007 | M1 | Workflow/Resource 公共 ID、Reference、Grant、Version Snapshot 和枚举 Schema 评审记录 | Domain、API DTO 和前端生成类型职责明确，无数据库实体直接暴露 |
+| M2-002 | done | WCP-006、RES-007 | M2-001 | M2 权限种子、内置角色增量和权限矩阵 | Company Admin、Department Admin、Member 与自定义角色用例覆盖允许和拒绝路径 |
+| M2-003 | done | WCP-001–006 | M2-001 | `0004_workflow_control_plane.sql` | 空库和 M1 已有库均可向前迁移，唯一键和 tenant_id 约束通过集成测试 |
+| M2-004 | done | RES-001–007 | M2-001 | `0005_credentials_and_models.sql`、`0006_tools_and_skills.sql`、`0007_rag_memory_and_resource_grants.sql` | Migration 可重复检查且不会修改 `0001`～`0003` |
+| M2-005 | done | WCP-008、RES-009 | M2-001–004 | Repository、事务边界、审计与 Outbox 事件约定 | 两个测试 tenant_id 的 ID 猜测和列表越权均返回不可见或拒绝 |
 
 ### 6.2 M2-1：Workflow 容器、成员和运行身份
 
 | 编号 | 状态 | 映射 | 依赖 | 交付物 | 可验证验收条件 |
 |---|---|---|---|---|---|
-| M2-010 | planned | WCP-001 | M2-003、M2-005 | Workflow 聚合、状态、Repository 和 Service Identity | 创建 Workflow 与 Service Identity 同事务提交，失败不留下孤立记录 |
-| M2-011 | planned | WCP-001、WCP-008 | M2-010 | Workflow 创建、读取、更新、归档 API 与审计事件 | 归档后禁止修改 Draft 和发布，历史引用仍可读取 |
-| M2-012 | planned | WCP-006 | M2-002、M2-010 | Workflow Member、角色和可见范围 | 非成员且无组织数据范围的用户不能列出或读取目标 Workflow |
-| M2-013 | planned | WCP-006、WCP-010 | M2-012 | Workflow 成员管理和作用域 API | 授权人不能授予自身不具备的权限，所有变更写入审计 |
+| M2-010 | done | WCP-001 | M2-003、M2-005 | Workflow 聚合、状态、Repository 和 Service Identity | 创建 Workflow 与 Service Identity 同事务提交，失败不留下孤立记录 |
+| M2-011 | done | WCP-001、WCP-008 | M2-010 | Workflow 创建、读取、更新、归档 API 与审计事件 | 归档后禁止修改 Draft 和发布，历史引用仍可读取 |
+| M2-012 | done | WCP-006 | M2-002、M2-010 | Workflow Member、角色和可见范围 | 非成员且无组织数据范围的用户不能列出或读取目标 Workflow |
+| M2-013 | done | WCP-006、WCP-010 | M2-012 | Workflow 成员管理和作用域 API | 授权人不能授予自身不具备的权限，所有变更写入审计 |
 
 ### 6.3 M2-2：Draft、Revision 与 Definition
 
 | 编号 | 状态 | 映射 | 依赖 | 交付物 | 可验证验收条件 |
 |---|---|---|---|---|---|
-| M2-020 | planned | WCP-002 | M2-010 | Draft 和 append-only Draft Revision Repository | 使用旧 Revision 保存返回 `409`，服务器内容和冲突草稿均不丢失 |
-| M2-021 | planned | WCP-003 | M2-001、M2-020 | 最小 Workflow Definition JSON Schema、Schema Version 和 Validator | 非法节点 ID、重复 ID、悬空边、未知顶层字段按契约拒绝 |
-| M2-022 | planned | WCP-003 | M2-021 | Canonical JSON、Content Hash 和 Definition 升级接口边界 | 对象字段顺序不影响 Hash，数组顺序仍保持业务语义 |
-| M2-023 | planned | WCP-002、WCP-008 | M2-020–022 | Draft 读取、保存、Revision 历史 API 和 OpenAPI | 契约测试覆盖首次保存、幂等重试、冲突和历史读取 |
+| M2-020 | done | WCP-002 | M2-010 | Draft 和 append-only Draft Revision Repository | 使用旧 Revision 保存返回 `409`，服务器内容和冲突草稿均不丢失 |
+| M2-021 | done | WCP-003 | M2-001、M2-020 | 最小 Workflow Definition JSON Schema、Schema Version 和 Validator | 非法节点 ID、重复 ID、悬空边、未知顶层字段按契约拒绝 |
+| M2-022 | done | WCP-003 | M2-021 | Canonical JSON、Content Hash 和 Definition 升级接口边界 | 对象字段顺序不影响 Hash，数组顺序仍保持业务语义 |
+| M2-023 | done | WCP-002、WCP-008 | M2-020–022 | Draft 读取、保存、Revision 历史 API 和 OpenAPI | 契约测试覆盖首次保存、幂等重试、冲突和历史读取 |
 
 ### 6.4 M2-3：Credential 安全基础
 
 | 编号 | 状态 | 映射 | 依赖 | 交付物 | 可验证验收条件 |
 |---|---|---|---|---|---|
-| M2-030 | planned | RES-001 | M2-004–005 | Credential 类型、Secret Envelope、主密钥配置和脱敏类型 | 缺失或错误主密钥时服务明确失败或资源功能不可用，不输出密文和明文 |
-| M2-031 | planned | RES-001 | M2-030 | 本地加密 Secret Version 与外部 Secret Reference | 更新产生新版本，读取只返回掩码、类型、版本和更新时间 |
-| M2-032 | planned | RES-001、RES-009 | M2-002、M2-031 | Credential CRUD、轮换、停用 API、权限和审计 | 创建响应也不返回可恢复明文；日志、错误和审计通过敏感信息扫描 |
-| M2-033 | planned | RES-008 | M2-031 | Credential Resolver 控制面接口和短生命周期 Secret 容器 | Secret 使用后清理，Debug/Serialize 均不能输出内容 |
+| M2-030 | done | RES-001 | M2-004–005 | Credential 类型、Secret Envelope、主密钥配置和脱敏类型 | 缺失或错误主密钥时服务明确失败或资源功能不可用，不输出密文和明文 |
+| M2-031 | done | RES-001 | M2-030 | 本地加密 Secret Version 与外部 Secret Reference | 更新产生新版本，读取只返回掩码、类型、版本和更新时间 |
+| M2-032 | done | RES-001、RES-009 | M2-002、M2-031 | Credential CRUD、轮换、停用 API、权限和审计 | 创建响应也不返回可恢复明文；日志、错误和审计通过敏感信息扫描 |
+| M2-033 | done | RES-008 | M2-031 | Credential Resolver 控制面接口和短生命周期 Secret 容器 | Secret 使用后清理，Debug/Serialize 均不能输出内容 |
 
 ### 6.5 M2-4：Model 与 Tool 控制面
 
 | 编号 | 状态 | 映射 | 依赖 | 交付物 | 可验证验收条件 |
 |---|---|---|---|---|---|
-| M2-040 | planned | RES-002 | M2-032 | Model Provider、Deployment、Alias、Price Version 领域与 Repository | Alias 可原子切换 Deployment，历史 Price Version 不可更新 |
-| M2-041 | planned | RES-002、RES-009 | M2-040 | Model REST API、分页筛选、权限和审计 | API 不展开 Credential Secret，跨部门不可见模型不能被引用 |
-| M2-042 | planned | RES-003 | M2-032 | Tool Definition、Tool Version、输入输出 Schema、副作用等级、超时和 Runner 类型 | 已发布 Tool Version 不可变，无效 JSON Schema 被拒绝 |
-| M2-043 | planned | RES-003、RES-009 | M2-042 | Tool REST API、版本创建、停用和审计 | 重复 Content Hash 幂等，历史版本仍可被快照读取 |
-| M2-044 | planned | RES-008 | M2-033、M2-040、M2-042 | 可取消的 Model/HTTP Tool 控制面连接测试 Adapter | 超时和错误被脱敏，测试不创建 Execution 或 Trace |
+| M2-040 | done | RES-002 | M2-032 | Model Provider、Deployment、Alias、Price Version 领域与 Repository | Alias 可原子切换 Deployment，历史 Price Version 不可更新 |
+| M2-041 | done | RES-002、RES-009 | M2-040 | Model REST API、分页筛选、权限和审计 | API 不展开 Credential Secret，跨部门不可见模型不能被引用 |
+| M2-042 | done | RES-003 | M2-032 | Tool Definition、Tool Version、输入输出 Schema、副作用等级、超时和 Runner 类型 | 已发布 Tool Version 不可变，无效 JSON Schema 被拒绝 |
+| M2-043 | done | RES-003、RES-009 | M2-042 | Tool REST API、版本创建、停用和审计 | 重复 Content Hash 幂等，历史版本仍可被快照读取 |
+| M2-044 | done | RES-008 | M2-033、M2-040、M2-042 | 可取消的 Model/HTTP Tool 控制面连接测试 Adapter | 超时和错误被脱敏，测试不创建 Execution 或 Trace |
 
 ### 6.6 M2-5：Skill、Artifact 与依赖图
 
 | 编号 | 状态 | 映射 | 依赖 | 交付物 | 可验证验收条件 |
 |---|---|---|---|---|---|
-| M2-050 | planned | RES-004 | M2-004、M2-042 | Skill Manifest Schema、Definition、Version 和 Content Hash | Manifest 声明的资源类型受白名单约束，不能声明 Worker 内直接执行高风险代码 |
-| M2-051 | planned | RES-004 | M2-050 | Skill Artifact 上传、Hash、对象存储元数据和失败清理 | Artifact Hash 与元数据一致，事务失败不会留下可引用孤儿对象 |
-| M2-052 | planned | RES-004 | M2-040–043、M2-050 | Skill 依赖图和循环检测 | 直接循环、间接循环、跨租户依赖和不存在版本均被拒绝 |
-| M2-053 | planned | RES-004、RES-009 | M2-051–052 | Skill REST API、版本、依赖、Artifact 下载授权和审计 | 下载使用授权后的短期访问方式，未授权用户不能根据 Object Key 读取 |
+| M2-050 | done | RES-004 | M2-004、M2-042 | Skill Manifest Schema、Definition、Version 和 Content Hash | Manifest 声明的资源类型受白名单约束，不能声明 Worker 内直接执行高风险代码 |
+| M2-051 | done | RES-004 | M2-050 | Skill Artifact 上传、Hash、对象存储元数据和失败清理 | Artifact Hash 与元数据一致，事务失败不会留下可引用孤儿对象 |
+| M2-052 | done | RES-004 | M2-040–043、M2-050 | Skill 依赖图和循环检测 | 直接循环、间接循环、跨租户依赖和不存在版本均被拒绝 |
+| M2-053 | done | RES-004、RES-009 | M2-051–052 | Skill REST API、版本、依赖、Artifact 下载授权和审计 | 下载使用授权后的短期访问方式，未授权用户不能根据 Object Key 读取 |
 
 ### 6.7 M2-6：LightRAG 与 Mem0 控制面
 
 | 编号 | 状态 | 映射 | 依赖 | 交付物 | 可验证验收条件 |
 |---|---|---|---|---|---|
-| M2-060 | planned | RES-005 | M2-032–033 | LightRAG Connection、Knowledge Resource、读范围和同步状态 | Connection 与 Resource 均受 tenant_id 和部门范围约束 |
-| M2-061 | planned | RES-005、RES-008–009 | M2-060 | LightRAG REST API 和 Fake Server 连接测试 | 请求/响应正文不写日志，超时可取消且错误脱敏 |
-| M2-062 | planned | RES-006 | M2-032–033 | Mem0 Connection、Namespace、读写权限和状态 | Namespace 唯一性和跨租户引用约束通过测试 |
-| M2-063 | planned | RES-006、RES-008–009 | M2-062 | Mem0 REST API 和 Fake Server 连接测试 | 本阶段不创建真实 Memory 记录，失败不暴露 Secret |
+| M2-060 | done | RES-005 | M2-032–033 | LightRAG Connection、Knowledge Resource、读范围和同步状态 | Connection 与 Resource 均受 tenant_id 和部门范围约束 |
+| M2-061 | done | RES-005、RES-008–009 | M2-060 | LightRAG REST API 和 Fake Server 连接测试 | 请求/响应正文不写日志，超时可取消且错误脱敏 |
+| M2-062 | done | RES-006 | M2-032–033 | Mem0 Connection、Namespace、读写权限和状态 | Namespace 唯一性和跨租户引用约束通过测试 |
+| M2-063 | done | RES-006、RES-008–009 | M2-062 | Mem0 REST API 和 Fake Server 连接测试 | 本阶段不创建真实 Memory 记录，失败不暴露 Secret |
 
 ### 6.8 M2-7：统一资源授权与发布解释
 
 | 编号 | 状态 | 映射 | 依赖 | 交付物 | 可验证验收条件 |
 |---|---|---|---|---|---|
-| M2-070 | planned | RES-007 | M2-012、M2-040～044、M2-050～053、M2-060～063 | 统一 Resource Type/Operation、Department Grant 和 Workflow Grant | 同一 Authorizer 覆盖 Model、Tool、Skill、RAG、Memory 和 Credential |
-| M2-071 | planned | RES-007 | M2-070 | Resource Authorizer 与 Workflow Service Identity 授权解析 | 用户可管理资源不等于 Workflow 可运行资源，两条权限链分别校验 |
-| M2-072 | planned | RES-007、RES-011 | M2-052、M2-071 | Skill 直接/间接依赖展开和缺失授权解释 | 只授权 Skill 时，未授权 Tool/Model/Credential 被逐项报告而非隐式放行 |
-| M2-073 | planned | WCP-006、RES-009 | M2-070–072 | Grant CRUD、批量校验、可选资源查询 API 与审计 | Department Admin 不能向范围外 Workflow 或资源授权，重复请求幂等 |
-| M2-074 | planned | RES-008 | M2-044、M2-061、M2-063 | 统一资源健康结果、最近检查和状态更新规则 | 连接测试并发受限，旧响应不能覆盖较新的检查结果 |
+| M2-070 | done | RES-007 | M2-012、M2-040～044、M2-050～053、M2-060～063 | 统一 Resource Type/Operation、Department Grant 和 Workflow Grant | 同一 Authorizer 覆盖 Model、Tool、Skill、RAG、Memory 和 Credential |
+| M2-071 | done | RES-007 | M2-070 | Resource Authorizer 与 Workflow Service Identity 授权解析 | 用户可管理资源不等于 Workflow 可运行资源，两条权限链分别校验 |
+| M2-072 | done | RES-007、RES-011 | M2-052、M2-071 | Skill 直接/间接依赖展开和缺失授权解释 | 只授权 Skill 时，未授权 Tool/Model/Credential 被逐项报告而非隐式放行 |
+| M2-073 | done | WCP-006、RES-009 | M2-070–072 | Grant CRUD、批量校验、可选资源查询 API 与审计 | Department Admin 不能向范围外 Workflow 或资源授权，重复请求幂等 |
+| M2-074 | done | RES-008 | M2-044、M2-061、M2-063 | 统一资源健康结果、最近检查和状态更新规则 | 连接测试并发受限，旧响应不能覆盖较新的检查结果 |
 
 ### 6.9 M2-8：Version、Environment、发布与回滚
 
 | 编号 | 状态 | 映射 | 依赖 | 交付物 | 可验证验收条件 |
 |---|---|---|---|---|---|
-| M2-080 | planned | WCP-004、WCP-007 | M2-022–023、M2-070–073 | Publish Validator 和不可变 Resource Version Snapshot | Schema、资源不存在、停用、缺 Grant 或间接依赖缺失均阻止创建 Version |
-| M2-081 | planned | WCP-004 | M2-080 | Workflow Version Repository、顺序号和幂等创建 API | 相同 Draft Revision 与 Hash 的重试返回同一 Version，历史内容无更新 API |
-| M2-082 | planned | WCP-005 | M2-003、M2-081 | Environment 种子、Deployment 状态机和 History | 同一 Workflow/Environment 仅一个 Active，状态迁移通过数据库约束和事务保证 |
-| M2-083 | planned | WCP-005、WCP-008 | M2-082 | 发布、回滚、历史查询 API、审计和 Outbox 事件 | 并发发布只有一个目标成为 Active，回滚创建新历史记录且不修改旧 Version |
-| M2-084 | planned | WCP-007、RES-007 | M2-080–083 | 撤权、停用、归档与发布策略集成 | 历史快照可读，新发布被阻止；所有失败返回结构化原因和 Request ID |
+| M2-080 | done | WCP-004、WCP-007 | M2-022–023、M2-070–073 | Publish Validator 和不可变 Resource Version Snapshot | Schema、资源不存在、停用、缺 Grant 或间接依赖缺失均阻止创建 Version |
+| M2-081 | done | WCP-004 | M2-080 | Workflow Version Repository、顺序号和幂等创建 API | 相同 Draft Revision 与 Hash 的重试返回同一 Version，历史内容无更新 API |
+| M2-082 | done | WCP-005 | M2-003、M2-081 | Environment 种子、Deployment 状态机和 History | 同一 Workflow/Environment 仅一个 Active，状态迁移通过数据库约束和事务保证 |
+| M2-083 | done | WCP-005、WCP-008 | M2-082 | 发布、回滚、历史查询 API、审计和 Outbox 事件 | 并发发布只有一个目标成为 Active，回滚创建新历史记录且不修改旧 Version |
+| M2-084 | done | WCP-007、RES-007 | M2-080–083 | 撤权、停用、归档与发布策略集成 | 历史快照可读，新发布被阻止；所有失败返回结构化原因和 Request ID |
 
 ### 6.10 M2-9：真实前端页面收口
 
 | 编号 | 状态 | 映射 | 依赖 | 交付物 | 可验证验收条件 |
 |---|---|---|---|---|---|
-| M2-090 | planned | WCP-009–010 | M2-011–013、M2-023、M2-081–084 | Workflow 列表、创建、详情、成员、Draft、Version、Deployment 和 Grant 页面 | `/workflows` 不再读取 Mock；冲突、权限不足、发布失败和空状态可见 |
-| M2-091 | planned | RES-010–011 | M2-032–033 | Credential 列表、创建、轮换、停用和授权页面及菜单入口 | 页面从不回显 Secret，复制和浏览器状态中无明文 |
-| M2-092 | planned | RES-010–011 | M2-041、M2-043–044 | Model、Tool 列表/详情、版本、价格、连接测试和授权页面 | 搜索、筛选、分页、错误、权限和中英文状态统一 |
-| M2-093 | planned | RES-010–011 | M2-053、M2-072–074 | Skill 列表/详情、版本、Artifact、依赖图和授权解释页面 | 可明确显示每个间接依赖及授权缺口，不使用含糊的“不可用”提示 |
-| M2-094 | planned | RES-010–011 | M2-061、M2-063、M2-073–074 | Knowledge 与 Memory 列表/详情、连接、范围、健康和授权页面 | Mock 全部移除，连接测试结果不显示敏感请求或响应 |
-| M2-095 | planned | WCP-009、RES-010 | M2-090–094 | 统一资源选择器、权限指令和未实现运行提示 | 选择器仅显示对当前用户可见且可授权给目标 Workflow 的资源 |
+| M2-090 | done | WCP-009–010 | M2-011–013、M2-023、M2-081–084 | Workflow 列表、创建、详情、成员、Draft、Version、Deployment 和 Grant 页面 | `/workflows` 不再读取 Mock；冲突、权限不足、发布失败和空状态可见 |
+| M2-091 | done | RES-010–011 | M2-032–033 | Credential 列表、创建、轮换、停用和授权页面及菜单入口 | 页面从不回显 Secret，复制和浏览器状态中无明文 |
+| M2-092 | done | RES-010–011 | M2-041、M2-043–044 | Model、Tool 列表/详情、版本、价格、连接测试和授权页面 | 搜索、筛选、分页、错误、权限和中英文状态统一 |
+| M2-093 | done | RES-010–011 | M2-053、M2-072–074 | Skill 列表/详情、版本、Artifact、依赖图和授权解释页面 | 可明确显示每个间接依赖及授权缺口，不使用含糊的“不可用”提示 |
+| M2-094 | done | RES-010–011 | M2-061、M2-063、M2-073–074 | Knowledge 与 Memory 列表/详情、连接、范围、健康和授权页面 | Mock 全部移除，连接测试结果不显示敏感请求或响应 |
+| M2-095 | done | WCP-009、RES-010 | M2-090–094 | 统一资源选择器、权限指令和未实现运行提示 | 选择器仅显示对当前用户可见且可授权给目标 Workflow 的资源 |
 
 前端继续复用 `shared/ui`、`shared/components`、Tailwind 语义 Token、Radix、TanStack Query/Table 和 i18next。Feature 禁止直接调用 `fetch`，不引入第二套 UI 库，单文件不得超过 2000 行。
 
@@ -192,12 +194,12 @@ M2-0 契约、权限与 Migration
 
 | 编号 | 状态 | 映射 | 依赖 | 交付物 | 可验证验收条件 |
 |---|---|---|---|---|---|
-| M2-100 | planned | WCP-008、RES-009 | M2-011、M2-013、M2-023、M2-032、M2-041、M2-043、M2-053、M2-061、M2-063、M2-073～074、M2-081、M2-083～084 | OpenAPI 导出、生成 Client 和漂移检查 | 后端重新生成 OpenAPI 与仓库文件无差异，前端类型检查通过 |
-| M2-101 | planned | WCP-001–010 | M2-090、M2-100 | Workflow 单元、MySQL 集成、API 契约和前端测试 | Revision、Hash、不可变 Version、并发发布、回滚、归档和权限矩阵通过 |
-| M2-102 | planned | RES-001–011 | M2-091～095、M2-100 | Resource 单元、Fake Server、MinIO、MySQL、API 和前端测试 | Secret、版本、依赖、Grant、连接超时、跨租户和 Artifact 权限通过 |
-| M2-103 | planned | WCP-007、RES-007 | M2-101–102 | M2 端到端业务闭环和越权测试 | 从创建 Workflow 到资源授权、Version、发布、撤权阻断和回滚全程使用真实 API |
-| M2-104 | planned | WCP-008、RES-008 | M2-103 | Kubernetes 配置、Secret/主密钥、Migration Job 和滚动升级验证 | M1 数据升级后服务 Ready，多副本发布/轮换无进程内状态依赖 |
-| M2-105 | planned | WCP-001–010、RES-001–011 | M2-100–104 | M2 验收证据、阶段状态和追踪矩阵更新 | 全部门禁通过后阶段 03、04 和 M2 同步标记 `done` |
+| M2-100 | done | WCP-008、RES-009 | M2-011、M2-013、M2-023、M2-032、M2-041、M2-043、M2-053、M2-061、M2-063、M2-073～074、M2-081、M2-083～084 | OpenAPI 导出、生成 Client 和漂移检查 | 后端重新生成 OpenAPI 与仓库文件无差异，前端类型检查通过 |
+| M2-101 | done | WCP-001–010 | M2-090、M2-100 | Workflow 单元、MySQL 集成、API 契约和前端测试 | Revision、Hash、不可变 Version、并发发布、回滚、归档和权限矩阵通过 |
+| M2-102 | done | RES-001–011 | M2-091～095、M2-100 | Resource 单元、Fake Server、MinIO、MySQL、API 和前端测试 | Secret、版本、依赖、Grant、连接超时、跨租户和 Artifact 权限通过 |
+| M2-103 | done | WCP-007、RES-007 | M2-101–102 | M2 端到端业务闭环和越权测试 | 从创建 Workflow 到资源授权、Version、发布、撤权阻断和回滚全程使用真实 API |
+| M2-104 | done | WCP-008、RES-008 | M2-103 | Kubernetes 配置、Secret/主密钥、Migration Job 和滚动升级验证 | M1 数据升级后服务 Ready，多副本发布/轮换无进程内状态依赖 |
+| M2-105 | done | WCP-001–010、RES-001–011 | M2-100–104 | M2 验收证据、阶段状态和追踪矩阵更新 | 全部门禁通过后阶段 03、04 和 M2 同步标记 `done` |
 
 ## 7. 稳定公共契约与冻结点
 

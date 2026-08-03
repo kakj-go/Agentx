@@ -3,6 +3,7 @@ kind: Kustomization
 namespace: agentx
 resources:
   - ../../base
+  - echo-mcp.yaml
 generatorOptions:
   disableNameSuffixHash: true
 configMapGenerator:
@@ -25,6 +26,12 @@ configMapGenerator:
       - AGENTX_LOGIN_MAX_FAILURES=5
       - AGENTX_LOGIN_FAILURE_WINDOW_SECONDS=900
       - AGENTX_LOGIN_LOCK_SECONDS=900
+      - AGENTX_CREDENTIAL_ACTIVE_KEY_ID=local-v1
+      - AGENTX_CONNECTION_TEST_TIMEOUT_SECONDS=10
+      - AGENTX_CONNECTION_TEST_MAX_CONCURRENCY=4
+      - AGENTX_CONNECTION_ALLOW_PRIVATE_NETWORKS=false
+      - AGENTX_CONNECTION_ALLOWED_HOSTS=echo-mcp,lightrag,mem0
+      - AGENTX_CONNECTION_ALLOWED_CIDRS=
       - AGENTX_CUBESANDBOX_ENDPOINT=
 secretGenerator:
   - name: agentx-secrets
@@ -35,8 +42,11 @@ secretGenerator:
       - AGENTX_MINIO_USER=agentx
       - AGENTX_MINIO_PASSWORD=agentx-local-secret
       - AGENTX_JWT_SIGNING_SECRET=agentx-local-jwt-signing-secret-change-me
+      - 'AGENTX_CREDENTIAL_KEYS_JSON={"keys":{"local-v1":"YWdlbnR4LWxvY2FsLWNyZWRlbnRpYWwta2V5LTAwMDE="}}'
 images:
   - name: agentx/web
+    newTag: dev
+  - name: agentx/echo-mcp
     newTag: dev
   - name: agentx/platform-api
     newTag: dev

@@ -108,24 +108,36 @@ node_attempts 主要字段：
 ## 5. 资源表
 
 - credentials
+- credential_secret_versions
 - model_providers
 - model_deployments
+- model_aliases
+- model_alias_deployment_history
 - model_price_versions
-- tools
-- tool_versions
+- mcp_servers
+- mcp_server_versions
+- mcp_discovery_runs
+- mcp_tools
+- mcp_tool_versions
+- mcp_tool_policies
 - skills
+- skill_workspace_entries
+- skill_file_revisions
 - skill_versions
+- skill_version_files
+- skill_file_references
 - skill_dependencies
 - rag_connections
 - rag_resources
 - memory_connections
 - memory_namespaces
-- workflow_skill_grants
-- workflow_resource_grants
+- resource_grants
 
 Credential 表只保存加密数据或外部 Secret Reference，不向前端返回明文。
 
-skills 保存租户内 Skill Definition 和生命周期状态。skill_versions 保存不可变 Manifest、Content Hash、兼容 Runtime 和 Artifact Reference；skill_dependencies 记录版本所需的 Tool、Model、Credential 及其他资源。workflow_skill_grants 显式记录 Workflow 对 Skill Definition 或固定版本的使用权限，不能替代依赖资源自身的授权。
+mcp_servers 保存连接元数据，mcp_server_versions 固化传输、Endpoint、Credential Reference 和非敏感配置 Hash。mcp_tools 及 mcp_tool_versions 只由发现流程写入；用户只能修改 mcp_tool_policies，不能人工维护 Tool Schema。
+
+skills 保存租户内 Skill Definition 和工作区 Revision。skill_workspace_entries 表示目录与文件，文件内容由 Artifact 引用；skill_file_revisions 保存每次 Markdown 修改。skill_versions、skill_version_files 和 skill_file_references 固化发布时每个文件的路径、Hash 和引用目标。skill_dependencies 只允许 Model、MCP Tool、Credential、Skill、RAG 和 Memory 等当前资源类型。
 
 ## 6. 应用和会话表
 
