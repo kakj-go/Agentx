@@ -1,0 +1,52 @@
+import { expect, type Page, test } from '@playwright/test'
+
+async function login(page:Page){await page.goto('/login');await page.getByLabel('用户名').fill('admin');await page.getByLabel('密码').fill('agentx-e2e-admin-password');await page.getByRole('button',{name:'登录'}).click();await expect(page).toHaveURL(/\/$/)}
+
+test('M3 fixture is visible through approval, notification, execution, trace, and runtime pages', async ({ page }) => {
+  await login(page)
+  await page.getByRole('button',{name:'通知'}).click()
+  await expect(page.getByText('有一项审批已指派给你')).toBeVisible()
+  await page.getByText('有一项审批已指派给你').click()
+  await expect(page.getByRole('heading',{name:'M3 E2E 发布审批'})).toBeVisible()
+  await page.getByRole('button',{name:'处理人'}).click()
+  const reassign=page.getByRole('dialog',{name:'处理人'})
+  await reassign.getByRole('combobox',{name:'处理人'}).click()
+  await page.getByRole('option',{name:'E2E Admin'}).click()
+  await reassign.getByRole('button',{name:'保存'}).click()
+  await expect(reassign).toBeHidden()
+  await page.getByRole('button',{name:'释放'}).click()
+  await page.getByRole('button',{name:'领取'}).click()
+  await expect(page.getByText('等待中')).toBeVisible()
+  await page.getByRole('button',{name:'释放'}).click()
+  await page.getByRole('button',{name:'领取'}).click()
+  await page.getByRole('button',{name:'通过'}).click()
+  let approve=page.getByRole('dialog',{name:'通过'})
+  await approve.getByRole('button',{name:'取消'}).click()
+  await expect(approve).toBeHidden()
+  await page.getByRole('button',{name:'通过'}).click()
+  approve=page.getByRole('dialog',{name:'通过'})
+  await approve.getByRole('button',{name:'通过'}).click()
+  await expect(page.getByText(/blocked_runtime/)).toBeVisible()
+
+  await page.getByRole('link',{name:'消息中心'}).click()
+  await expect(page.getByText('执行出现工具错误')).toBeVisible()
+  await page.getByRole('button',{name:'全部标为已读'}).click()
+  await expect(page.getByRole('button',{name:'全部标为已读'})).toHaveCount(0)
+
+  await page.getByRole('link',{name:'执行记录'}).click()
+  const row=page.getByRole('row').filter({hasText:'e2e_fixture'}).first()
+  await expect(row).toBeVisible()
+  await row.getByRole('link',{name:'查看 Trace'}).click()
+  await expect(page.getByText('workflow.started')).toBeVisible()
+  await expect(page.getByText('model.completed')).toBeVisible()
+  await expect(page.getByText('must-not-leak')).toHaveCount(0)
+  const artifactDownload=page.waitForEvent('download')
+  await page.getByRole('button',{name:'下载'}).click()
+  const artifact=await artifactDownload
+  expect(await artifact.createReadStream()).toBeTruthy()
+
+  await page.getByRole('link',{name:'运行状态'}).click()
+  await expect(page.getByText('trace_writer')).toBeVisible()
+  await page.getByRole('link',{name:'总览'}).click()
+  await expect(page.getByText('MCP Echo Workflow')).toBeVisible()
+})

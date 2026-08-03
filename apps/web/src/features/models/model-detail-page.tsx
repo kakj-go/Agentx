@@ -9,6 +9,7 @@ import { apiRequest, jsonBody } from '../../shared/api/client'
 import type { Credential, HealthCheck, Model, ModelDeployment, ModelDeploymentHistory, ModelPrice, ModelProvider, PageResponse } from '../../shared/api/types'
 import { EntityFormDialog, type EntityFormField } from '../../shared/components/entity-form-dialog'
 import { ResourceDetailLayout } from '../../shared/components/resource-detail-layout'
+import { PrerequisiteAction } from '../../shared/components/prerequisite-action'
 import { StatusBadge } from '../../shared/components/status-badge'
 import { Button } from '../../shared/ui/button'
 import { Card } from '../../shared/ui/card'
@@ -82,7 +83,7 @@ export function ModelDetailPage() {
     { name: 'output', label: t('m2.outputPrice'), type: 'number', step: 'any' },
   ] : []
   const actions = auth.hasPermission('model:manage') ? <div className="flex gap-2">
-    <Button disabled={!deployment} onClick={() => setEditOpen(true)} variant="secondary"><Pencil className="size-4" />{t('m2.editModel')}</Button>
+    <PrerequisiteAction description={t('prerequisites.modelEditDescription')} loading={deployments.isLoading} onReady={() => setEditOpen(true)} requirements={[{ key: 'deployment', label: t('prerequisites.modelDeployment'), met: Boolean(deployment) }]} variant="secondary"><Pencil className="size-4" />{t('m2.editModel')}</PrerequisiteAction>
     <Button disabled={test.isPending} onClick={() => test.mutate()} variant="secondary"><Activity className="size-4" />{t('m2.connectionTest')}</Button>
   </div> : undefined
   return <>

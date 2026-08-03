@@ -10,6 +10,7 @@ import type { Skill, SkillVersion, SkillWorkspace, SkillWorkspaceEntry } from '.
 import { EntityFormDialog, type EntityFormField } from '../../shared/components/entity-form-dialog'
 import { PageContainer } from '../../shared/components/page-container'
 import { PageHeader } from '../../shared/components/page-header'
+import { PrerequisiteAction } from '../../shared/components/prerequisite-action'
 import { StatusBadge } from '../../shared/components/status-badge'
 import { Button } from '../../shared/ui/button'
 import { Dialog, DialogContent } from '../../shared/ui/dialog'
@@ -142,7 +143,7 @@ export function SkillDetailPage() {
     <Button onClick={() => setDialog('edit')} variant="secondary"><Pencil className="size-4" />{t('common.edit')}</Button>
     <Button onClick={() => importInput.current?.click()} variant="secondary"><ArchiveRestore className="size-4" />{t('skillWorkspace.import')}</Button>
     <Button onClick={() => void exportWorkspace().catch((error: Error) => showToast(error.message))} variant="secondary"><Download className="size-4" />{t('skillWorkspace.export')}</Button>
-    <Button disabled={!skill.data.latestVersion || toggle.isPending} onClick={() => toggle.mutate()} variant="secondary"><Power className="size-4" />{skill.data.status === 'active' ? t('m2.disable') : t('m2.enable')}</Button>
+    <PrerequisiteAction description={t('prerequisites.skillEnableDescription')} disabled={toggle.isPending} loading={versions.isLoading} onReady={() => toggle.mutate()} requirements={[{ key: 'version', label: t('prerequisites.skillVersion'), met: Boolean(skill.data.latestVersion), actionLabel: t('prerequisites.publishSkill'), onAction: () => setDialog('publish') }]} variant="secondary"><Power className="size-4" />{skill.data.status === 'active' ? t('m2.disable') : t('m2.enable')}</PrerequisiteAction>
     <Button onClick={() => setDialog('publish')}><Save className="size-4" />{t('m2.publishWorkspace')}</Button>
   </div> : undefined
 

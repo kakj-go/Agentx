@@ -12,10 +12,17 @@ import { ChangePasswordPage } from '../features/auth/change-password-page'
 import { ForbiddenPage } from '../features/auth/forbidden-page'
 
 const ApplicationsPage = lazy(() => import('../features/applications/applications-page').then((module) => ({ default: module.ApplicationsPage })))
+const ApplicationDetailPage = lazy(() => import('../features/applications/application-detail-page').then((module) => ({ default: module.ApplicationDetailPage })))
 const ApprovalsPage = lazy(() => import('../features/approvals/approvals-page').then((module) => ({ default: module.ApprovalsPage })))
+const ApprovalDetailPage = lazy(() => import('../features/approvals/approval-detail-page').then((module) => ({ default: module.ApprovalDetailPage })))
 const DatasetsPage = lazy(() => import('../features/datasets/datasets-page').then((module) => ({ default: module.DatasetsPage })))
+const DatasetDetailPage = lazy(() => import('../features/datasets/dataset-detail-page').then((module) => ({ default: module.DatasetDetailPage })))
 const EvaluationsPage = lazy(() => import('../features/evaluations/evaluations-page').then((module) => ({ default: module.EvaluationsPage })))
+const EvaluationDetailPage = lazy(() => import('../features/evaluations/evaluation-detail-page').then((module) => ({ default: module.EvaluationDetailPage })))
 const ExecutionsPage = lazy(() => import('../features/executions/executions-page').then((module) => ({ default: module.ExecutionsPage })))
+const ExecutionDetailPage = lazy(() => import('../features/executions/execution-detail-page').then((module) => ({ default: module.ExecutionDetailPage })))
+const NotificationsPage = lazy(() => import('../features/notifications/notifications-page').then((module) => ({ default: module.NotificationsPage })))
+const RuntimeStatusPage = lazy(() => import('../features/runtime/runtime-status-page').then((module) => ({ default: module.RuntimeStatusPage })))
 const KnowledgePage = lazy(() => import('../features/knowledge/knowledge-page').then((module) => ({ default: module.KnowledgePage })))
 const KnowledgeDetailPage = lazy(() => import('../features/knowledge/knowledge-detail-page').then((module) => ({ default: module.KnowledgeDetailPage })))
 const MemoryPage = lazy(() => import('../features/memory/memory-page').then((module) => ({ default: module.MemoryPage })))
@@ -52,12 +59,19 @@ export const router = createBrowserRouter([
       { path: 'workflows', element: deferred(<RequirePermission permission="workflow:view"><WorkflowsPage /></RequirePermission>) },
       { path: 'workflows/:workflowId', element: deferred(<RequirePermission permission="workflow:view"><WorkflowDetailPage /></RequirePermission>) },
       { path: 'workflows/:workflowId/editor', element: deferred(<RequirePermission permission="workflow:edit"><WorkflowCanvas /></RequirePermission>) },
-      { path: 'applications', element: deferred(<ApplicationsPage />) },
-      { path: 'playground', element: deferred(<PlaygroundPage />) },
-      { path: 'executions', element: deferred(<ExecutionsPage />) },
-      { path: 'approvals', element: deferred(<ApprovalsPage />) },
-      { path: 'datasets', element: deferred(<DatasetsPage />) },
-      { path: 'evaluations', element: deferred(<EvaluationsPage />) },
+      { path: 'applications', element: deferred(<RequirePermission permission="application:view"><ApplicationsPage /></RequirePermission>) },
+      { path: 'applications/:id', element: deferred(<RequirePermission permission="application:view"><ApplicationDetailPage /></RequirePermission>) },
+      { path: 'playground', element: deferred(<RequirePermission permission="application:invoke"><PlaygroundPage /></RequirePermission>) },
+      { path: 'executions', element: deferred(<RequirePermission permission="execution:view"><ExecutionsPage /></RequirePermission>) },
+      { path: 'executions/:id', element: deferred(<RequirePermission permission="execution:view"><ExecutionDetailPage /></RequirePermission>) },
+      { path: 'approvals', element: deferred(<RequirePermission permission="approval:view"><ApprovalsPage /></RequirePermission>) },
+      { path: 'approvals/:id', element: deferred(<RequirePermission permission="approval:view"><ApprovalDetailPage /></RequirePermission>) },
+      { path: 'notifications', element: deferred(<RequirePermission permission="notification:view"><NotificationsPage /></RequirePermission>) },
+      { path: 'datasets', element: deferred(<RequirePermission permission="dataset:view"><DatasetsPage /></RequirePermission>) },
+      { path: 'datasets/:id', element: deferred(<RequirePermission permission="dataset:view"><DatasetDetailPage /></RequirePermission>) },
+      { path: 'evaluations', element: deferred(<RequirePermission permission="evaluation:view"><EvaluationsPage /></RequirePermission>) },
+      { path: 'evaluations/:id', element: deferred(<RequirePermission permission="evaluation:view"><EvaluationDetailPage /></RequirePermission>) },
+      { path: 'runtime', element: deferred(<RequirePermission permission="runtime:view"><RuntimeStatusPage /></RequirePermission>) },
       { path: 'credentials', element: deferred(<RequirePermission permission="credential:view"><CredentialsPage /></RequirePermission>) },
       { path: 'credentials/:id', element: deferred(<RequirePermission permission="credential:view"><CredentialDetailPage /></RequirePermission>) },
       { path: 'models', element: deferred(<RequirePermission permission="model:view"><ModelsPage /></RequirePermission>) },

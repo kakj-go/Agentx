@@ -1,9 +1,10 @@
 use std::time::Duration;
 
 use agentx_domain::{
-    ArtifactId, ExecutionId, ExecutionStatus, MissingGrant, ResourceOperation, ResourceReference,
-    ResourceType, ResourceVersionSnapshot, TenantId, WorkflowDefinition, WorkflowId,
-    WorkflowServiceIdentity, WorkflowSummary, WorkflowVersionId,
+    ApprovalTaskId, ArtifactId, DatasetVersionId, EvaluationProfileVersionId, EvaluationRunId,
+    ExecutionId, ExecutionStatus, InvocationId, MissingGrant, NotificationId, ResourceOperation,
+    ResourceReference, ResourceType, ResourceVersionSnapshot, SessionId, TenantId, TraceEvent,
+    WorkflowDefinition, WorkflowId, WorkflowServiceIdentity, WorkflowSummary, WorkflowVersionId,
 };
 use anyhow::Result;
 use async_trait::async_trait;
@@ -219,4 +220,120 @@ pub struct ExternalIdentity {
 #[async_trait]
 pub trait IdentityProvider: Send + Sync {
     async fn authenticate(&self, authorization_code: &str) -> Result<ExternalIdentity>;
+}
+
+#[derive(Clone, Debug)]
+pub struct RequestExecution {
+    pub tenant_id: TenantId,
+    pub invocation_id: InvocationId,
+    pub session_id: Option<SessionId>,
+    pub workflow_version_id: WorkflowVersionId,
+    pub input: Value,
+}
+
+#[derive(Clone, Debug)]
+pub struct AcceptedExecution {
+    pub execution_id: ExecutionId,
+    pub status: ExecutionStatus,
+}
+
+#[async_trait]
+pub trait ExecutionRuntime: Send + Sync {
+    async fn request_execution(&self, request: RequestExecution) -> Result<AcceptedExecution>;
+    async fn get_execution(
+        &self,
+        tenant_id: TenantId,
+        id: ExecutionId,
+    ) -> Result<Option<ExecutionStatus>>;
+    async fn cancel_execution(&self, tenant_id: TenantId, id: ExecutionId) -> Result<()>;
+}
+
+#[derive(Clone, Debug)]
+pub struct RequestEvaluation {
+    pub tenant_id: TenantId,
+    pub run_id: EvaluationRunId,
+    pub workflow_version_id: WorkflowVersionId,
+    pub dataset_version_id: DatasetVersionId,
+    pub evaluation_profile_version_id: EvaluationProfileVersionId,
+}
+
+#[async_trait]
+pub trait EvaluationRuntime: Send + Sync {
+    async fn start(&self, request: RequestEvaluation) -> Result<()>;
+    async fn cancel(&self, tenant_id: TenantId, run_id: EvaluationRunId) -> Result<()>;
+}
+
+#[async_trait]
+pub trait ScheduleTrigger: Send + Sync {
+    async fn trigger(
+        &self,
+        tenant_id: TenantId,
+        schedule_id: Uuid,
+        idempotency_key: &str,
+    ) -> Result<()>;
+}
+
+#[async_trait]
+pub trait ApprovalTaskPort: Send + Sync {
+    async fn create_task(
+        &self,
+        tenant_id: TenantId,
+        task_id: ApprovalTaskId,
+        payload: Value,
+    ) -> Result<()>;
+}
+
+#[async_trait]
+pub trait ApprovalResumePort: Send + Sync {
+    async fn resume(
+        &self,
+        tenant_id: TenantId,
+        task_id: ApprovalTaskId,
+        decision: &str,
+        input: Value,
+    ) -> Result<()>;
+}
+
+#[async_trait]
+pub trait NotificationPublisher: Send + Sync {
+    async fn publish(
+        &self,
+        tenant_id: TenantId,
+        notification_id: NotificationId,
+        payload: Value,
+    ) -> Result<()>;
+}
+
+#[async_trait]
+pub trait InvocationEventPublisher: Send + Sync {
+    async fn publish(
+        &self,
+        tenant_id: TenantId,
+        invocation_id: InvocationId,
+        event: Value,
+    ) -> Result<()>;
+}
+
+#[async_trait]
+pub trait TraceSink: Send + Sync {
+    async fn append(&self, event: TraceEvent) -> Result<()>;
+}
+
+#[async_trait]
+pub trait ExecutionQuery: Send + Sync {
+    async fn status(
+        &self,
+        tenant_id: TenantId,
+        execution_id: ExecutionId,
+    ) -> Result<Option<ExecutionStatus>>;
+}
+
+#[async_trait]
+pub trait ExecutionProjectionPort: Send + Sync {
+    async fn create(&self, summary: &agentx_domain::ExecutionSummary) -> Result<()>;
+}
+
+#[async_trait]
+pub trait RuntimeStatusProvider: Send + Sync {
+    async fn snapshot(&self, tenant_id: TenantId) -> Result<Value>;
 }

@@ -15,27 +15,31 @@ import {
   Sparkles,
   UsersRound,
   ServerCog,
+  Bell,
+  RadioTower,
 } from 'lucide-react'
 
-import type { NavigationGroup, NotificationItem } from '../shared/types/app'
+import type { NavigationGroup } from '../shared/types/app'
 
 export const navigationGroups: NavigationGroup[] = [
   {
     labelKey: 'nav.groups.workspace',
     items: [
       { labelKey: 'nav.dashboard', path: '/', icon: CircleGauge, keywords: ['overview', 'home'] },
-      { labelKey: 'nav.workflows', path: '/workflows', icon: Blocks, badge: '24', keywords: ['agent', 'flow'], requiredPermission: 'workflow:view' },
-      { labelKey: 'nav.applications', path: '/applications', icon: AppWindow, keywords: ['deployment', 'api'] },
-      { labelKey: 'nav.playground', path: '/playground', icon: Play, keywords: ['chat', 'test'] },
+      { labelKey: 'nav.workflows', path: '/workflows', icon: Blocks, keywords: ['agent', 'flow'], requiredPermission: 'workflow:view' },
+      { labelKey: 'nav.applications', path: '/applications', icon: AppWindow, keywords: ['deployment', 'api'], requiredPermission: 'application:view' },
+      { labelKey: 'nav.playground', path: '/playground', icon: Play, keywords: ['chat', 'test'], requiredPermission: 'application:invoke' },
     ],
   },
   {
     labelKey: 'nav.groups.runtime',
     items: [
-      { labelKey: 'nav.executions', path: '/executions', icon: CircleGauge, keywords: ['trace', 'run'] },
-      { labelKey: 'nav.approvals', path: '/approvals', icon: ShieldCheck, badge: '3', keywords: ['review', 'todo'] },
-      { labelKey: 'nav.datasets', path: '/datasets', icon: Database, keywords: ['cases', 'test'] },
-      { labelKey: 'nav.evaluations', path: '/evaluations', icon: FlaskConical, keywords: ['report', 'quality'] },
+      { labelKey: 'nav.executions', path: '/executions', icon: CircleGauge, keywords: ['trace', 'run'], requiredPermission: 'execution:view' },
+      { labelKey: 'nav.approvals', path: '/approvals', icon: ShieldCheck, keywords: ['review', 'todo'], requiredPermission: 'approval:view' },
+      { labelKey: 'nav.notifications', path: '/notifications', icon: Bell, keywords: ['inbox', 'message'], requiredPermission: 'notification:view' },
+      { labelKey: 'nav.datasets', path: '/datasets', icon: Database, keywords: ['cases', 'test'], requiredPermission: 'dataset:view' },
+      { labelKey: 'nav.evaluations', path: '/evaluations', icon: FlaskConical, keywords: ['report', 'quality'], requiredPermission: 'evaluation:view' },
+      { labelKey: 'nav.runtime', path: '/runtime', icon: RadioTower, keywords: ['worker', 'queue'], requiredPermission: 'runtime:view' },
     ],
   },
   {
@@ -60,30 +64,3 @@ export const navigationGroups: NavigationGroup[] = [
 ]
 
 export const navigationItems = navigationGroups.flatMap((group) => group.items)
-
-export const notifications: NotificationItem[] = [
-  {
-    id: 'approval-refund',
-    titleKey: 'notifications.refund.title',
-    descriptionKey: 'notifications.refund.description',
-    path: '/approvals',
-    tone: 'warning',
-    timeKey: 'notifications.time.minutes',
-  },
-  {
-    id: 'evaluation-complete',
-    titleKey: 'notifications.evaluation.title',
-    descriptionKey: 'notifications.evaluation.description',
-    path: '/evaluations',
-    tone: 'success',
-    timeKey: 'notifications.time.hour',
-  },
-  {
-    id: 'execution-failed',
-    titleKey: 'notifications.execution.title',
-    descriptionKey: 'notifications.execution.description',
-    path: '/executions',
-    tone: 'primary',
-    timeKey: 'notifications.time.hours',
-  },
-]

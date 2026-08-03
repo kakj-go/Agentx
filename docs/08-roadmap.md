@@ -4,7 +4,7 @@
 
 ## 1. 当前基线
 
-M1 基础管理闭环和 M2.1 资源中心重构、交互收口已经完成：
+M1 基础管理闭环、M2.1 资源中心重构和 M3 外围控制面已经完成：
 
 - Rust Cargo Workspace、独立服务和公共 Crate
 - React、TypeScript、Tailwind CSS 企业工作台
@@ -14,9 +14,10 @@ M1 基础管理闭环和 M2.1 资源中心重构、交互收口已经完成：
 - Docker 镜像、本地 Kubernetes、Migration Job、MySQL、Redis、ClickHouse 和 MinIO
 - `/organization`、`/roles` 和 Header 用户状态使用真实 API
 - Workflow Draft/Version/Deployment 保留，资源模型改为 Credential、Model、MCP Server/Tool、在线 Skill Workspace、LightRAG 和 Mem0
-- M2F-001～005 已重新通过临时 Kubernetes Playwright 门禁；M3 仍为 `planned`
+- M2F-001～005、M3-001～099 与 M3F-001～005 已通过临时 Kubernetes Playwright 门禁
+- Application、Gateway、Dataset、Evaluation、Approval、Notification、Execution/Trace 查询与 Runtime Status 已接入真实 API
 
-运行引擎尚未实现。M2.1 的完成证据见 [M2.1 验收证据](plan/m2.1-acceptance-evidence.md)；进入 M3 后，与运行相关的功能仍不得伪造成功结果。
+运行引擎尚未实现。完成证据见 [M2.1 验收证据](plan/m2.1-acceptance-evidence.md)、[M3 验收证据](plan/m3-acceptance-evidence.md) 和 [M3.1 验收证据](plan/m3.1-acceptance-evidence.md)；进入 M4 后，与运行相关的功能仍不得伪造成功结果。
 
 ## 2. 总体实施顺序
 
@@ -40,7 +41,7 @@ M1 基础管理闭环和 M2.1 资源中心重构、交互收口已经完成：
 |---|---|---|
 | M1 基础管理（done） | Bootstrap、JWT、单公司、部门、用户、角色和数据范围可用 | [阶段 01](plan/01-contracts-and-foundation.md)、[阶段 02](plan/02-bootstrap-auth-iam.md)；[验收证据](plan/m1-acceptance-evidence.md) |
 | M2 控制面（done） | Workflow Draft/Version/Deployment 和 Model、MCP、Skill Workspace、RAG、Memory、Credential、统一授权可用 | [阶段 03](plan/03-workflow-control-plane.md)、[阶段 04](plan/04-resource-center.md)；[M2.1 任务](plan/m2.1-resource-redesign.md)；[验收证据](plan/m2.1-acceptance-evidence.md) |
-| M3 外围闭环 | Application、Session、Dataset、Evaluation、Approval、Notification、Execution/Trace 查询可用 | [阶段 05](plan/05-applications-sessions-gateway.md) 至 [阶段 07](plan/07-approvals-notifications-trace.md) |
+| M3 外围闭环（done） | Application、Session、Dataset、Evaluation、Approval、Notification、Execution/Trace 查询可用 | [阶段 05](plan/05-applications-sessions-gateway.md) 至 [阶段 07](plan/07-approvals-notifications-trace.md)；[M3 任务](plan/m3-task-list.md)与[验收证据](plan/m3-acceptance-evidence.md)；[M3.1 修正](plan/m3.1-evaluation-profile-and-prerequisites.md)与[验收证据](plan/m3.1-acceptance-evidence.md) |
 | M4 可靠运行 | 非 AI JSON Workflow、Checkpoint、Fork、Wait 和审批恢复可用 | [阶段 08](plan/08-workflow-runtime-core.md)、[阶段 09](plan/09-checkpoint-wait-recovery.md) |
 | M5 Agent 运行 | Agent、MCP Tool、Skill、RAG、Memory、成本、循环限制和 CubeSandbox 可用 | [阶段 10](plan/10-agent-cubesandbox.md) |
 | M6 Studio | 拖拽、配置、表达式、部分执行、Pin Data、Trace、版本和发布可用 | [阶段 11](plan/11-workflow-studio.md) |

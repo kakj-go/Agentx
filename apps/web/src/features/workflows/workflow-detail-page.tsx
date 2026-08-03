@@ -10,6 +10,7 @@ import type { PageResponse, ResourceValidation, User, Workflow, WorkflowDeployme
 import { EntityFormDialog, type EntityFormField } from '../../shared/components/entity-form-dialog'
 import { PageContainer } from '../../shared/components/page-container'
 import { PageHeader } from '../../shared/components/page-header'
+import { PrerequisiteAction } from '../../shared/components/prerequisite-action'
 import { StatusBadge } from '../../shared/components/status-badge'
 import { Button } from '../../shared/ui/button'
 import { Card } from '../../shared/ui/card'
@@ -44,15 +45,15 @@ export function WorkflowDetailPage() {
   if (workflow.isLoading) return <PageContainer><p className="text-sm text-muted-foreground">{t('m2.loading')}</p></PageContainer>
   if (!value) return <PageContainer><p className="text-sm text-danger">{String(workflow.error ?? t('m2.loadFailed'))}</p></PageContainer>
   const publishFields: EntityFormField[] = [
-    { name: 'environment', label: t('m2.selectEnvironment'), type: 'select', options: (environments.data ?? []).filter((item) => item.status === 'active').map((item) => ({ value: item.id, label: item.name })) },
-    { name: 'version', label: t('m2.selectVersion'), type: 'select', options: (versions.data ?? []).map((item) => ({ value: item.id, label: `v${item.versionNumber}` })) },
+    { name: 'environment', label: t('m2.selectEnvironment'), type: 'select', required: true, options: (environments.data ?? []).filter((item) => item.status === 'active').map((item) => ({ value: item.id, label: item.name })) },
+    { name: 'version', label: t('m2.selectVersion'), type: 'select', required: true, options: (versions.data ?? []).map((item) => ({ value: item.id, label: `v${item.versionNumber}` })) },
   ]
   const memberFields: EntityFormField[] = [
     { name: 'user', label: t('header.user'), type: 'select', options: (users.data?.items ?? []).map((item) => ({ value: item.id, label: `${item.displayName} · ${item.username}` })) },
     { name: 'role', label: t('header.roles'), type: 'select', defaultValue: 'viewer', options: ['viewer', 'editor', 'manager'].map((item) => ({ value: item, label: item })) },
   ]
   return <PageContainer>
-    <PageHeader action={<div className="flex gap-2"><Button asChild variant="secondary"><Link to={`/workflows/${workflowId}/editor`}><GitBranch className="size-4" />{t('m2.openEditor')}</Link></Button>{auth.hasPermission('workflow:publish') && <Button disabled={!versions.data?.length || value.status !== 'active'} onClick={() => setPublishOpen(true)}><Play className="size-4" />{t('m2.publish')}</Button>}</div>} description={value.description ?? t('pages.workflows.description')} title={value.name} />
+    <PageHeader action={<div className="flex gap-2"><Button asChild variant="secondary"><Link to={`/workflows/${workflowId}/editor`}><GitBranch className="size-4" />{t('m2.openEditor')}</Link></Button>{auth.hasPermission('workflow:publish') && <PrerequisiteAction description={t('prerequisites.workflowPublishDescription')} loading={versions.isLoading} onReady={() => setPublishOpen(true)} requirements={[{ key: 'version', label: t('prerequisites.workflowVersion'), met: Boolean(versions.data?.length), actionLabel: t('m2.createVersion'), onAction: () => createVersion.mutate() }, { key: 'status', label: t('prerequisites.activeWorkflow'), met: value.status === 'active' }]}><Play className="size-4" />{t('m2.publish')}</PrerequisiteAction>}</div>} description={value.description ?? t('pages.workflows.description')} title={value.name} />
     <div className="mt-5 flex items-center gap-3 text-xs"><StatusBadge status={value.status === 'active' ? 'active' : 'inactive'} /><span>{t('m2.revision', { revision: value.draftRevision })}</span><span>{value.latestVersion ? t('m2.versionNumber', { version: value.latestVersion }) : t('m2.draftLabel')}</span><span className="text-muted-foreground">{value.ownerName}</span></div>
     <div className="mt-6 grid grid-cols-3 gap-5">
       <Card className="col-span-2 p-5"><h2 className="text-sm font-semibold">{t('m2.resources')}</h2><div className={`mt-4 rounded-lg border p-4 text-xs ${validation.data?.valid ? 'border-success/20 bg-success/10 text-success' : 'border-warning/20 bg-warning/10 text-warning'}`}><div className="flex items-center gap-2"><ShieldCheck className="size-4" />{validation.data?.valid ? t('m2.validationPassed') : t('m2.validationFailed', { count: validation.data?.missingGrants.length ?? 0 })}</div>{validation.data?.missingGrants.map((issue) => <p className="mt-2 font-mono text-[11px]" key={`${issue.nodeId}-${issue.resourceId}-${issue.operation}`}>{issue.nodeId}: {issue.resourceType}/{issue.resourceId} · {issue.reason}</p>)}</div></Card>

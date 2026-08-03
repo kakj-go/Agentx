@@ -51,6 +51,24 @@ const PERMISSIONS: &[(&str, &str)] = &[
     ("memory:view", "View memory resources"),
     ("memory:manage", "Manage memory resources"),
     ("resource:grant", "Grant resources"),
+    ("application:view", "View applications"),
+    ("application:manage", "Manage applications"),
+    ("application:invoke", "Invoke applications"),
+    ("application:manage_key", "Manage application API keys"),
+    ("dataset:view", "View datasets"),
+    ("dataset:manage", "Manage datasets"),
+    ("evaluation_profile:view", "View evaluation profiles"),
+    ("evaluation_profile:manage", "Manage evaluation profiles"),
+    ("evaluation:view", "View evaluations"),
+    ("evaluation:manage", "Manage evaluations"),
+    ("approval:view", "View approval tasks"),
+    ("approval:act", "Act on approval tasks"),
+    ("approval:manage", "Manage approval tasks"),
+    ("notification:view", "View own notifications"),
+    ("execution:view", "View workflow executions"),
+    ("execution:cancel", "Cancel workflow executions"),
+    ("trace:view", "View workflow traces"),
+    ("runtime:view", "View workflow runtime status"),
 ];
 
 #[utoipa::path(get, path = "/api/v1/bootstrap/status")]
@@ -194,10 +212,29 @@ async fn seed_roles(
         "skill:view",
         "knowledge:view",
         "memory:view",
+        "application:view",
+        "application:invoke",
+        "dataset:view",
+        "evaluation_profile:view",
+        "evaluation:view",
+        "approval:view",
+        "approval:act",
+        "notification:view",
+        "execution:view",
+        "trace:view",
+        "runtime:view",
     ] {
         sqlx::query("INSERT INTO role_permissions(tenant_id,role_id,permission_id) SELECT ?,?,id FROM permissions WHERE permission_key=?").bind(tenant_id).bind(department).bind(key).execute(&mut **tx).await?;
     }
-    for key in ["company:view", "department:view"] {
+    for key in [
+        "company:view",
+        "department:view",
+        "application:view",
+        "application:invoke",
+        "approval:view",
+        "approval:act",
+        "notification:view",
+    ] {
         sqlx::query("INSERT INTO role_permissions(tenant_id,role_id,permission_id) SELECT ?,?,id FROM permissions WHERE permission_key=?").bind(tenant_id).bind(member).bind(key).execute(&mut **tx).await?;
     }
     sqlx::query("INSERT INTO user_roles(id,tenant_id,user_id,role_id) VALUES(?,?,?,?)")

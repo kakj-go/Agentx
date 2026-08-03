@@ -9,3 +9,4 @@ resources:
   - workflow-worker.yaml
   - sandbox-manager.yaml
   - trace-writer.yaml
+  - trace-writer-migration.yaml

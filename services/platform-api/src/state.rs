@@ -1,5 +1,6 @@
 use std::{collections::HashMap, sync::Arc};
 
+use agentx_infrastructure::config::RedisSettings;
 use agentx_infrastructure::credential::CredentialKeyring;
 use object_store::ObjectStore;
 use sqlx::MySqlPool;
@@ -16,6 +17,8 @@ pub struct AppState {
     pub object_store: Option<Arc<dyn ObjectStore>>,
     pub http: reqwest::Client,
     pub connections: Arc<ConnectionSettings>,
+    pub clickhouse: Option<clickhouse::Client>,
+    pub redis: Option<Arc<RedisSettings>>,
     connection_limits: Arc<Mutex<HashMap<Uuid, Arc<Semaphore>>>>,
 }
 
@@ -37,8 +40,17 @@ impl AppState {
                 allowed_hosts: Vec::new(),
                 allowed_cidrs: Vec::new(),
             }),
+            clickhouse: None,
+            redis: None,
             connection_limits: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    #[must_use]
+    pub fn with_m3(mut self, clickhouse: clickhouse::Client, redis: RedisSettings) -> Self {
+        self.clickhouse = Some(clickhouse);
+        self.redis = Some(Arc::new(redis));
+        self
     }
 
     #[must_use]

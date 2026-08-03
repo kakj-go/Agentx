@@ -27,7 +27,7 @@
 - Model、Tool、Skill、RAG、Memory、Credential
 - Application、Session、Message
 - Approval Task 和 Notification
-- Dataset、Evaluator、Evaluation Run
+- Dataset、Evaluation Profile Version、Evaluation Run
 
 ### Workflow 运行面
 

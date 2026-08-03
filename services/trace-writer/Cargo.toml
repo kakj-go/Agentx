@@ -6,7 +6,16 @@ rust-version.workspace = true
 version.workspace = true
 
 [dependencies]
+agentx-infrastructure.workspace = true
 agentx-service-kit.workspace = true
 anyhow.workspace = true
+axum.workspace = true
+clickhouse.workspace = true
+redis.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sqlx.workspace = true
+time.workspace = true
 tokio.workspace = true
-
+tracing.workspace = true
+uuid.workspace = true

@@ -9,6 +9,7 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': { target: process.env.AGENTX_DEV_API_TARGET ?? 'http://127.0.0.1:8080' },
+      '/gateway': { target: process.env.AGENTX_DEV_GATEWAY_TARGET ?? 'http://127.0.0.1:8081' },
     },
   },
   test: {

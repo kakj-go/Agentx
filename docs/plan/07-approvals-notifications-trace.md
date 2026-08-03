@@ -6,7 +6,7 @@
 
 ## 2. 当前状态和进入条件
 
-- 状态：`planned`。
+- 状态：`done`。验收证据见 [M3 验收证据](m3-acceptance-evidence.md)。
 - 进入条件：[阶段 02](02-bootstrap-auth-iam.md) 提供候选人与权限，[阶段 01](01-contracts-and-foundation.md) 提供 Outbox、Artifact 和 ClickHouse Client。
 - Production API 不提供人工创建伪审批或伪 Trace 的入口；测试通过内部 Port 和 Fixture 验证。
 
@@ -61,17 +61,17 @@ ClickHouse：
 
 | 编号 | 状态 | 依赖 | 交付物 | 验收条件 |
 |---|---|---|---|---|
-| OBS-001 | planned | IAM-004–005、FND-003 | Approval Task、Candidate、Action Schema 和状态机 | 并发终态动作只有一个成功，动作追加不可改 |
-| OBS-002 | planned | OBS-001 | Claim、Approve、Reject、Cancel、Timeout 用例和审计 | 动作时重新校验候选资格和 Tenant |
-| OBS-003 | planned | FND-006、IAM-005 | Notification 投影、已读状态和业务链接 | 重复业务事件不产生重复通知 |
-| OBS-004 | planned | FND-003 | Execution Summary 和查询 Repository | 列表不扫描 ClickHouse 且支持租户/Workflow/状态过滤 |
-| OBS-005 | planned | FND-004–006 | Trace Event Schema、Queue 和 Trace Writer | 批量重复写入按事件 ID 去重或保持查询幂等 |
-| OBS-006 | planned | OBS-005、FND-005 | Trace Query、Span 树和 Artifact 授权 | 父子 Span、Node Attempt 和内容引用可还原 |
-| OBS-007 | planned | OBS-001–002 | `ApprovalTaskPort` 和 `ApprovalResumePort` | 引擎未接入时审批可记录但恢复明确不可用 |
-| OBS-008 | planned | OBS-004–006 | Runtime Status Query | Redis/服务健康数据缺失时显示 unknown 而非伪零值 |
-| OBS-009 | planned | OBS-001–008 | REST API、OpenAPI 和权限检查 | 契约测试覆盖并发审批、Trace 游标和 Artifact 越权 |
-| OBS-010 | planned | OBS-009、FND-011 | Approval、Notification、Execution 和 Trace 页面 | Mock 移除，业务跳转与权限不足状态正确 |
-| OBS-011 | planned | OBS-008–010 | 简要运行状态页面 | 不依赖 Prometheus/Grafana，查询失败不影响 Workflow API |
+| OBS-001 | done | IAM-004–005、FND-003 | Approval Task、Candidate、Action Schema 和状态机 | 并发终态动作只有一个成功，动作追加不可改 |
+| OBS-002 | done | OBS-001 | Claim、Approve、Reject、Cancel、Timeout 用例和审计 | 动作时重新校验候选资格和 Tenant |
+| OBS-003 | done | FND-006、IAM-005 | Notification 投影、已读状态和业务链接 | 重复业务事件不产生重复通知 |
+| OBS-004 | done | FND-003 | Execution Summary 和查询 Repository | 列表不扫描 ClickHouse 且支持租户/Workflow/状态过滤 |
+| OBS-005 | done | FND-004–006 | Trace Event Schema、Queue 和 Trace Writer | 批量重复写入按事件 ID 去重或保持查询幂等 |
+| OBS-006 | done | OBS-005、FND-005 | Trace Query、Span 树和 Artifact 授权 | 父子 Span、Node Attempt 和内容引用可还原 |
+| OBS-007 | done | OBS-001–002 | `ApprovalTaskPort` 和 `ApprovalResumePort` | 引擎未接入时审批可记录但恢复明确不可用 |
+| OBS-008 | done | OBS-004–006 | Runtime Status Query | Redis/服务健康数据缺失时显示 unknown 而非伪零值 |
+| OBS-009 | done | OBS-001–008 | REST API、OpenAPI 和权限检查 | 契约测试覆盖并发审批、Trace 游标和 Artifact 越权 |
+| OBS-010 | done | OBS-009、FND-011 | Approval、Notification、Execution 和 Trace 页面 | Mock 移除，业务跳转与权限不足状态正确 |
+| OBS-011 | done | OBS-008–010 | 简要运行状态页面 | 不依赖 Prometheus/Grafana，查询失败不影响 Workflow API |
 
 ## 9. 失败、安全和幂等边界
 
@@ -104,4 +104,3 @@ ClickHouse：
 - Notification 投影协议。
 - Execution Summary、Trace Event、Trace Writer 和查询 API。
 - 运行状态的有限业务边界。
-

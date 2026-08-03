@@ -1,28 +1,41 @@
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { ColumnDef } from '@tanstack/react-table'
-import { Database } from 'lucide-react'
-import { useMemo } from 'react'
+import { Database, Plus } from 'lucide-react'
+import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { Link, useNavigate } from 'react-router-dom'
 
+import { useAuth } from '../../app/providers/auth-provider'
+import { apiRequest, jsonBody } from '../../shared/api/client'
+import type { Dataset, PageResponse } from '../../shared/api/types'
 import { EntityCell } from '../../shared/components/entity-cell'
+import { EntityFormDialog, type EntityFormField } from '../../shared/components/entity-form-dialog'
 import { ListPage } from '../../shared/components/list-page'
-import { StatusBadge, type StatusValue } from '../../shared/components/status-badge'
-
-type DatasetRow = { name: string; version: string; cases: number; owner: string; updatedAt: string; status: StatusValue }
+import { StatusBadge } from '../../shared/components/status-badge'
+import { Button } from '../../shared/ui/button'
+import { useToast } from '../../shared/ui/toast'
 
 export function DatasetsPage() {
   const { t } = useTranslation()
-  const data = useMemo<DatasetRow[]>(() => [
-    { name: t('mocks.dataset.customer'), version: 'v12', cases: 248, owner: t('mocks.user.chen'), updatedAt: '2026-08-02 12:04', status: 'active' },
-    { name: t('mocks.dataset.contract'), version: 'v6', cases: 86, owner: t('mocks.user.zhou'), updatedAt: '2026-08-01 17:30', status: 'active' },
-    { name: t('mocks.dataset.faq'), version: 'v9', cases: 412, owner: t('mocks.user.li'), updatedAt: '2026-07-30 11:16', status: 'inactive' },
+  const auth = useAuth()
+  const navigate = useNavigate()
+  const queryClient = useQueryClient()
+  const { showToast } = useToast()
+  const [open, setOpen] = useState(false)
+  const datasets = useQuery({ queryKey: ['datasets'], queryFn: () => apiRequest<PageResponse<Dataset>>('/datasets?pageSize=100') })
+  const create = useMutation({ mutationFn: (values: Record<string, string>) => apiRequest<Dataset>('/datasets', { method: 'POST', body: jsonBody({ name: values.name, description: values.description || null, visibility: values.visibility }) }), onSuccess: async (value) => { await queryClient.invalidateQueries({ queryKey: ['datasets'] }); showToast(t('m3.created')); navigate(`/datasets/${value.id}`) } })
+  const columns = useMemo<Array<ColumnDef<Dataset>>>(() => [
+    { accessorKey: 'name', header: t('common.name'), cell: ({ row }) => <EntityCell detail={`${t('m3.revision')} ${row.original.revision}`} icon={Database} name={row.original.name} /> },
+    { accessorKey: 'latestVersion', header: t('common.version'), cell: ({ row }) => row.original.latestVersion ? `v${row.original.latestVersion}` : '—' },
+    { accessorKey: 'caseCount', header: t('pages.datasets.cases') },
+    { accessorKey: 'visibility', header: t('m2.visibility') },
+    { accessorKey: 'status', header: t('common.status'), cell: ({ row }) => <StatusBadge status={row.original.status === 'active' ? 'active' : 'inactive'} /> },
+    { accessorKey: 'updatedAt', header: t('common.updatedAt'), cell: ({ row }) => new Date(row.original.updatedAt).toLocaleString() },
+    { id: 'actions', header: '', cell: ({ row }) => <Button asChild size="sm" variant="ghost"><Link to={`/datasets/${row.original.id}`}>{t('m3.manage')}</Link></Button> },
   ], [t])
-  const columns = useMemo<Array<ColumnDef<DatasetRow>>>(() => [
-    { accessorKey: 'name', header: t('common.name'), cell: ({ row }) => <EntityCell detail={`${row.original.version} · ${row.original.cases} cases`} icon={Database} name={row.original.name} /> },
-    { accessorKey: 'version', header: t('common.version') },
-    { accessorKey: 'cases', header: t('pages.datasets.cases') },
-    { accessorKey: 'owner', header: t('common.owner') },
-    { accessorKey: 'status', header: t('common.status'), cell: ({ row }) => <StatusBadge status={row.original.status} /> },
-    { accessorKey: 'updatedAt', header: t('common.updatedAt') },
-  ], [t])
-  return <ListPage actionLabel={t('pages.datasets.create')} columns={columns} data={data} description={t('pages.datasets.description')} getSearchText={(row) => `${row.name} ${row.owner}`} getStatus={(row) => row.status} searchPlaceholder={t('pages.datasets.search')} statusOptions={[{ value: 'active', label: t('common.active') }, { value: 'inactive', label: t('common.inactive') }]} title={t('pages.datasets.title')} />
+  const fields: EntityFormField[] = [{ name: 'name', label: t('common.name'), required: true }, { name: 'description', label: t('common.description'), type: 'textarea' }, { name: 'visibility', label: t('m2.visibility'), type: 'select', defaultValue: 'department', options: [{ value: 'private', label: t('m2.private') }, { value: 'department', label: t('m2.departmentVisible') }, { value: 'company', label: t('m2.companyVisible') }] }]
+  return <>
+    <ListPage action={auth.hasPermission('dataset:manage') ? <Button onClick={() => setOpen(true)}><Plus className="size-4" />{t('pages.datasets.create')}</Button> : undefined} columns={columns} data={datasets.data?.items ?? []} description={t('pages.datasets.description')} getSearchText={(row) => `${row.name} ${row.description ?? ''}`} getStatus={(row) => row.status === 'active' ? 'active' : 'inactive'} searchPlaceholder={t('pages.datasets.search')} statusOptions={[{ value: 'active', label: t('common.active') }, { value: 'inactive', label: t('common.inactive') }]} title={t('pages.datasets.title')} />
+    {open && <EntityFormDialog cancelLabel={t('common.cancel')} fields={fields} onClose={() => setOpen(false)} onSubmit={(values) => create.mutateAsync(values).then(() => undefined)} open submitLabel={t('common.save')} title={t('pages.datasets.create')} />}
+  </>
 }

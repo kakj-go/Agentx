@@ -19,6 +19,18 @@ try {
         throw "Generated TypeScript API contract drift detected. Run: pnpm --filter @agentx/web generate:api"
     }
     Remove-Item -LiteralPath $typeScriptTemp -Force
+    $gatewayOpenApiTemp = Join-Path ([System.IO.Path]::GetTempPath()) "agentx-trigger-gateway-$PID.json"
+    cargo run --quiet -p trigger-gateway -- openapi $gatewayOpenApiTemp
+    if ((Get-Content -Raw -LiteralPath $gatewayOpenApiTemp) -cne (Get-Content -Raw -LiteralPath "$root/openapi/trigger-gateway.json")) {
+        throw "Gateway OpenAPI schema drift detected. Run: cargo run -p trigger-gateway -- openapi openapi/trigger-gateway.json"
+    }
+    Remove-Item -LiteralPath $gatewayOpenApiTemp -Force
+    $gatewayTypeScriptTemp = Join-Path ([System.IO.Path]::GetTempPath()) "agentx-trigger-gateway-$PID.ts"
+    pnpm --filter @agentx/web exec node scripts/generate-gateway-types.mjs $gatewayTypeScriptTemp
+    if ((Get-Content -Raw -LiteralPath $gatewayTypeScriptTemp) -cne (Get-Content -Raw -LiteralPath "$root/apps/web/src/shared/api/generated-gateway.ts")) {
+        throw "Generated Gateway TypeScript contract drift detected. Run: pnpm --filter @agentx/web generate:gateway"
+    }
+    Remove-Item -LiteralPath $gatewayTypeScriptTemp -Force
     pnpm lint:web
     pnpm --filter @agentx/web test
     pnpm build:web

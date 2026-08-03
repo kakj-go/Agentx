@@ -1,5 +1,6 @@
 [package]
 name = "platform-api"
+default-run = "platform-api"
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
@@ -19,13 +20,16 @@ axum.workspace = true
 axum-extra.workspace = true
 base64.workspace = true
 bytes.workspace = true
+clickhouse.workspace = true
 comrak.workspace = true
+csv.workspace = true
 futures.workspace = true
 jsonwebtoken.workspace = true
 ipnet.workspace = true
 object_store.workspace = true
 rand.workspace = true
 redis.workspace = true
+regex.workspace = true
 reqwest.workspace = true
 secrecy.workspace = true
 serde.workspace = true

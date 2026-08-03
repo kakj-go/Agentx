@@ -26,6 +26,10 @@ Agentx 是一个以 n8n 式 Workflow 编辑和运行模型为核心，面向企�
 | [plan/m2-task-list.md](plan/m2-task-list.md) | M2 Workflow 控制面与资源中心的详细实施批次和任务清单 |
 | [plan/m2.1-resource-redesign.md](plan/m2.1-resource-redesign.md) | M2.1 MCP、Skill Workspace、Kubernetes Addon 与全局 E2E 重构任务 |
 | [plan/m2.1-acceptance-evidence.md](plan/m2.1-acceptance-evidence.md) | M2.1 当前验收状态和最终证据入口 |
+| [plan/m3-task-list.md](plan/m3-task-list.md) | M3 应用入口、评测控制面与运行可观测外围任务 |
+| [plan/m3-acceptance-evidence.md](plan/m3-acceptance-evidence.md) | M3 快速检查、Kubernetes E2E 和完成边界证据 |
+| [plan/m3.1-evaluation-profile-and-prerequisites.md](plan/m3.1-evaluation-profile-and-prerequisites.md) | M3.1 评测方案合并与依赖型操作交互修正任务 |
+| [plan/m3.1-acceptance-evidence.md](plan/m3.1-acceptance-evidence.md) | M3.1 契约、前端、Kubernetes E2E 和完成边界证据 |
 | [plan/e2e-testing-standard.md](plan/e2e-testing-standard.md) | 临时 Kubernetes Playwright 端到端测试规范 |
 | [plan/m2-acceptance-evidence.md](plan/m2-acceptance-evidence.md) | 已被 M2.1 取代的旧 M2 历史证据 |
 

@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "generate:api": "node scripts/generate-api-types.mjs",
+    "generate:gateway": "node scripts/generate-gateway-types.mjs",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "test": "vitest run",

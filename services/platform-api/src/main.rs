@@ -1,8 +1,11 @@
+mod api;
+mod applications;
 mod auth;
 mod config;
 mod connection_test;
 mod control_common;
 mod credentials;
+mod datasets;
 mod error;
 mod external_resources;
 mod grants;
@@ -10,6 +13,7 @@ mod iam;
 mod mcp_control;
 mod models;
 mod models_control;
+mod operations;
 mod security;
 mod skills_control;
 mod state;
@@ -19,108 +23,9 @@ use std::{env, time::Duration};
 
 use agentx_infrastructure::{config::InfrastructureSettings, credential::CredentialKeyring, mysql};
 use anyhow::{Context, Result};
-use axum::{
-    Router,
-    extract::DefaultBodyLimit,
-    routing::{get, patch, post},
-};
+use api::build_api_router;
 use config::{AuthSettings, ConnectionSettings, CredentialSettings};
-use models::*;
 use state::AppState;
-use utoipa::OpenApi;
-
-#[derive(OpenApi)]
-#[openapi(
-    info(title = "Agentx Platform API", version = "1.0.0"),
-    paths(
-        auth::bootstrap_status, auth::bootstrap, auth::login, auth::refresh, auth::change_password,
-        auth::logout, auth::me, iam::list_departments, iam::create_department,
-        iam::update_department, iam::delete_department, iam::list_users, iam::create_user,
-        iam::update_user, iam::disable_user, iam::list_roles, iam::create_role, iam::update_role,
-        iam::list_permissions,
-        workflows::list_workflows, workflows::create_workflow, workflows::get_workflow,
-        workflows::update_workflow, workflows::archive_workflow, workflows::get_draft,
-        workflows::save_draft, workflows::list_revisions, workflows::create_version,
-        workflows::list_versions, workflows::list_members, workflows::upsert_member,
-        workflows::delete_member, workflows::list_environments, workflows::create_environment,
-        workflows::update_environment, workflows::list_deployments, workflows::publish,
-        workflows::rollback, workflows::runtime_unavailable,
-        credentials::list_credentials, credentials::create_credential, credentials::get_credential,
-        credentials::update_credential, credentials::rotate_credential,
-        models_control::list_models, models_control::get_model, models_control::list_providers,
-        models_control::create_provider, models_control::list_deployments,
-        models_control::create_deployment, models_control::create_alias, models_control::update_alias,
-        models_control::update_provider, models_control::create_deployment_revision,
-        models_control::list_deployment_history, models_control::create_price,
-        models_control::list_prices, models_control::test_model,
-        mcp_control::list_servers, mcp_control::create_server, mcp_control::get_server,
-        mcp_control::update_server, mcp_control::test_connection, mcp_control::discover_tools,
-        mcp_control::list_tools, mcp_control::list_all_tools, mcp_control::update_tool_policy, mcp_control::debug_invoke,
-        skills_control::list_skills, skills_control::create_skill, skills_control::get_skill,
-        skills_control::update_skill, skills_control::get_workspace, skills_control::create_entry,
-        skills_control::export_workspace, skills_control::import_workspace,
-        skills_control::move_entry, skills_control::delete_entry, skills_control::get_file,
-        skills_control::update_markdown, skills_control::upload_file,
-        skills_control::list_versions, skills_control::create_version,
-        external_resources::list_rag_connections, external_resources::create_rag_connection,
-        external_resources::test_rag_connection, external_resources::list_knowledge,
-        external_resources::create_knowledge, external_resources::get_knowledge,
-        external_resources::update_knowledge,
-        external_resources::list_memory_connections, external_resources::create_memory_connection,
-        external_resources::test_memory_connection, external_resources::list_memory,
-        external_resources::create_memory, external_resources::get_memory,
-        external_resources::update_memory,
-        grants::list_grantable_resources, grants::list_grants, grants::create_grant, grants::delete_grant,
-        grants::validate_workflow_resources
-    ),
-    components(schemas(
-        BootstrapStatus, BootstrapRequest, LoginRequest, ChangePasswordRequest, AuthResponse,
-        MeResponse, DepartmentResponse, CreateDepartmentRequest, UpdateDepartmentRequest,
-        UserResponse, CreateUserRequest, UpdateUserRequest, RoleResponse, CreateRoleRequest,
-        UpdateRoleRequest, PermissionResponse, agentx_api_types::ApiErrorResponse,
-        agentx_api_types::FieldError,
-        agentx_api_types::HealthResponse, agentx_api_types::DependencyHealth
-        ,workflows::WorkflowResponse, workflows::CreateWorkflowRequest,
-        workflows::UpdateWorkflowRequest, workflows::DraftResponse, workflows::SaveDraftRequest,
-        workflows::RevisionResponse, workflows::WorkflowVersionResponse,
-        workflows::CreateVersionRequest, workflows::WorkflowMemberResponse,
-        workflows::UpsertWorkflowMemberRequest, workflows::EnvironmentResponse,
-        workflows::CreateEnvironmentRequest, workflows::UpdateEnvironmentRequest,
-        workflows::DeploymentResponse,
-        workflows::PublishWorkflowRequest, workflows::RollbackWorkflowRequest,
-        credentials::CredentialResponse, credentials::CreateCredentialRequest,
-        credentials::UpdateCredentialRequest, credentials::RotateCredentialRequest,
-        models_control::ModelResponse, models_control::ModelProviderResponse,
-        models_control::CreateModelProviderRequest, models_control::ModelDeploymentResponse,
-        models_control::CreateModelDeploymentRequest, models_control::CreateModelAliasRequest,
-        models_control::UpdateModelAliasRequest, models_control::ModelPriceResponse,
-        models_control::CreateModelPriceRequest, models_control::UpdateModelProviderRequest,
-        models_control::CreateDeploymentRevisionRequest,
-        models_control::ModelDeploymentHistoryResponse,
-        mcp_control::McpServerResponse, mcp_control::CreateMcpServerRequest,
-        mcp_control::UpdateMcpServerRequest, mcp_control::McpToolResponse,
-        mcp_control::UpdateMcpToolPolicyRequest, mcp_control::DebugMcpToolRequest,
-        mcp_control::DebugMcpToolResponse, mcp_control::McpDiscoveryResponse,
-        skills_control::SkillResponse, skills_control::CreateSkillRequest,
-        skills_control::UpdateSkillRequest, skills_control::SkillVersionResponse,
-        skills_control::SkillDependencyInput, skills_control::SkillWorkspaceEntry,
-        skills_control::SkillWorkspaceResponse, skills_control::CreateEntryRequest,
-        skills_control::MoveEntryRequest, skills_control::UpdateMarkdownRequest,
-        skills_control::PublishSkillVersionRequest, skills_control::ArtifactUploadResponse,
-        external_resources::ConnectionResponse, external_resources::CreateConnectionRequest,
-        external_resources::KnowledgeResponse, external_resources::CreateKnowledgeRequest,
-        external_resources::MemoryResponse, external_resources::CreateMemoryRequest,
-        external_resources::UpdateExternalResourceRequest,
-        connection_test::HealthCheckResponse, grants::GrantableResourceResponse, grants::GrantResponse,
-        grants::CreateGrantRequest, grants::ResourceValidationResponse,
-        grants::MissingGrantResponse
-    )),
-    tags(
-        (name = "Agentx M1", description = "Bootstrap, authentication and IAM control plane"),
-        (name = "Agentx M2", description = "Workflow and resource control plane")
-    )
-)]
-struct ApiDoc;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -129,8 +34,7 @@ async fn main() -> Result<()> {
         let path = env::args()
             .nth(2)
             .unwrap_or_else(|| "openapi/platform-api.json".to_owned());
-        let content = serde_json::to_string_pretty(&ApiDoc::openapi())
-            .context("failed to serialize OpenAPI")?;
+        let content = api::openapi_json()?;
         std::fs::write(&path, format!("{content}\n"))
             .with_context(|| format!("failed to write {path}"))?;
         return Ok(());
@@ -147,11 +51,12 @@ async fn main() -> Result<()> {
     let keyring = CredentialKeyring::from_json(credential.active_key_id, &credential.keys_json)?;
     let object_store =
         agentx_infrastructure::clients::object_store(&infrastructure.object_storage).ok();
-    let state = AppState::new(pool.clone(), auth).with_m2(
-        keyring,
-        object_store,
-        ConnectionSettings::from_env()?,
-    );
+    let state = AppState::new(pool.clone(), auth)
+        .with_m2(keyring, object_store, ConnectionSettings::from_env()?)
+        .with_m3(
+            agentx_infrastructure::clients::clickhouse(&infrastructure.clickhouse),
+            infrastructure.redis.clone(),
+        );
     let health = agentx_service_kit::HealthRegistry::default();
     health.register("mysql", true).await;
     health.register("redis", false).await;
@@ -161,231 +66,6 @@ async fn main() -> Result<()> {
 
     let router = build_api_router(state);
     agentx_service_kit::serve("platform-api", router, health).await
-}
-
-fn build_api_router(state: AppState) -> Router {
-    let api = Router::new()
-        .route("/bootstrap/status", get(auth::bootstrap_status))
-        .route("/bootstrap", post(auth::bootstrap))
-        .route("/auth/login", post(auth::login))
-        .route("/auth/refresh", post(auth::refresh))
-        .route("/auth/change-password", post(auth::change_password))
-        .route("/auth/logout", post(auth::logout))
-        .route("/auth/me", get(auth::me))
-        .route(
-            "/departments",
-            get(iam::list_departments).post(iam::create_department),
-        )
-        .route(
-            "/departments/{id}",
-            patch(iam::update_department).delete(iam::delete_department),
-        )
-        .route("/users", get(iam::list_users).post(iam::create_user))
-        .route("/users/{id}", patch(iam::update_user))
-        .route("/users/{id}/disable", post(iam::disable_user))
-        .route("/roles", get(iam::list_roles).post(iam::create_role))
-        .route("/roles/{id}", patch(iam::update_role))
-        .route("/permissions", get(iam::list_permissions));
-    let api = api
-        .route(
-            "/workflows",
-            get(workflows::list_workflows).post(workflows::create_workflow),
-        )
-        .route(
-            "/workflows/{id}",
-            get(workflows::get_workflow).patch(workflows::update_workflow),
-        )
-        .route("/workflows/{id}/archive", post(workflows::archive_workflow))
-        .route(
-            "/workflows/{id}/draft",
-            get(workflows::get_draft).put(workflows::save_draft),
-        )
-        .route("/workflows/{id}/revisions", get(workflows::list_revisions))
-        .route(
-            "/workflows/{id}/versions",
-            get(workflows::list_versions).post(workflows::create_version),
-        )
-        .route(
-            "/workflows/{id}/members",
-            get(workflows::list_members).post(workflows::upsert_member),
-        )
-        .route(
-            "/workflows/{id}/members/{user_id}",
-            axum::routing::delete(workflows::delete_member),
-        )
-        .route(
-            "/workflows/{id}/deployments",
-            get(workflows::list_deployments).post(workflows::publish),
-        )
-        .route(
-            "/workflows/{id}/deployments/{environment_id}/rollback",
-            post(workflows::rollback),
-        )
-        .route(
-            "/workflows/{id}/resource-validation",
-            get(grants::validate_workflow_resources),
-        )
-        .route("/workflows/{id}/run", post(workflows::runtime_unavailable))
-        .route(
-            "/environments",
-            get(workflows::list_environments).post(workflows::create_environment),
-        )
-        .route("/environments/{id}", patch(workflows::update_environment))
-        .route(
-            "/credentials",
-            get(credentials::list_credentials).post(credentials::create_credential),
-        )
-        .route(
-            "/credentials/{id}",
-            get(credentials::get_credential).patch(credentials::update_credential),
-        )
-        .route(
-            "/credentials/{id}/rotate",
-            post(credentials::rotate_credential),
-        )
-        .route(
-            "/models/aliases",
-            get(models_control::list_models).post(models_control::create_alias),
-        )
-        .route(
-            "/models/aliases/{id}",
-            get(models_control::get_model).patch(models_control::update_alias),
-        )
-        .route(
-            "/models/providers",
-            get(models_control::list_providers).post(models_control::create_provider),
-        )
-        .route(
-            "/models/providers/{id}",
-            patch(models_control::update_provider),
-        )
-        .route(
-            "/models/aliases/{id}/test-connection",
-            post(models_control::test_model),
-        )
-        .route(
-            "/models/deployments",
-            get(models_control::list_deployments).post(models_control::create_deployment),
-        )
-        .route(
-            "/models/deployments/{id}/prices",
-            get(models_control::list_prices).post(models_control::create_price),
-        )
-        .route(
-            "/models/aliases/{id}/deployment-revisions",
-            post(models_control::create_deployment_revision),
-        )
-        .route(
-            "/models/aliases/{id}/deployment-history",
-            get(models_control::list_deployment_history),
-        )
-        .route(
-            "/mcp/servers",
-            get(mcp_control::list_servers).post(mcp_control::create_server),
-        )
-        .route(
-            "/mcp/servers/{id}",
-            get(mcp_control::get_server).patch(mcp_control::update_server),
-        )
-        .route(
-            "/mcp/servers/{id}/test-connection",
-            post(mcp_control::test_connection),
-        )
-        .route(
-            "/mcp/servers/{id}/discover",
-            post(mcp_control::discover_tools),
-        )
-        .route("/mcp/servers/{id}/tools", get(mcp_control::list_tools))
-        .route("/mcp/tools", get(mcp_control::list_all_tools))
-        .route(
-            "/mcp/tools/{id}/policy",
-            patch(mcp_control::update_tool_policy),
-        )
-        .route(
-            "/mcp/tools/{id}/debug-invoke",
-            post(mcp_control::debug_invoke),
-        )
-        .route(
-            "/skills",
-            get(skills_control::list_skills).post(skills_control::create_skill),
-        )
-        .route(
-            "/skills/{id}",
-            get(skills_control::get_skill).patch(skills_control::update_skill),
-        )
-        .route("/skills/{id}/workspace", get(skills_control::get_workspace))
-        .route(
-            "/skills/{id}/workspace/export",
-            get(skills_control::export_workspace),
-        )
-        .route(
-            "/skills/{id}/workspace/import",
-            post(skills_control::import_workspace),
-        )
-        .route("/skills/{id}/entries", post(skills_control::create_entry))
-        .route(
-            "/skills/{id}/entries/{entry_id}",
-            patch(skills_control::move_entry).delete(skills_control::delete_entry),
-        )
-        .route(
-            "/skills/{id}/files/{entry_id}",
-            get(skills_control::get_file).put(skills_control::update_markdown),
-        )
-        .route("/skills/{id}/uploads", post(skills_control::upload_file))
-        .route(
-            "/skills/{id}/versions",
-            get(skills_control::list_versions).post(skills_control::create_version),
-        )
-        .route(
-            "/knowledge/connections",
-            get(external_resources::list_rag_connections)
-                .post(external_resources::create_rag_connection),
-        )
-        .route(
-            "/knowledge/connections/{id}/test-connection",
-            post(external_resources::test_rag_connection),
-        )
-        .route(
-            "/knowledge/resources",
-            get(external_resources::list_knowledge).post(external_resources::create_knowledge),
-        )
-        .route(
-            "/knowledge/resources/{id}",
-            get(external_resources::get_knowledge).patch(external_resources::update_knowledge),
-        )
-        .route(
-            "/memory/connections",
-            get(external_resources::list_memory_connections)
-                .post(external_resources::create_memory_connection),
-        )
-        .route(
-            "/memory/connections/{id}/test-connection",
-            post(external_resources::test_memory_connection),
-        )
-        .route(
-            "/memory/namespaces",
-            get(external_resources::list_memory).post(external_resources::create_memory),
-        )
-        .route(
-            "/memory/namespaces/{id}",
-            get(external_resources::get_memory).patch(external_resources::update_memory),
-        )
-        .route(
-            "/resources/grantable",
-            get(grants::list_grantable_resources),
-        )
-        .route(
-            "/resources/{resource_type}/{resource_id}/grants",
-            get(grants::list_grants).post(grants::create_grant),
-        )
-        .route(
-            "/resources/{resource_type}/{resource_id}/grants/{grant_id}",
-            axum::routing::delete(grants::delete_grant),
-        );
-    Router::new()
-        .nest("/api/v1", api)
-        .layer(DefaultBodyLimit::max(105 * 1024 * 1024))
-        .with_state(state)
 }
 
 fn start_health_checks(
@@ -398,7 +78,7 @@ fn start_health_checks(
         use futures::StreamExt;
         loop {
             let schema_ready = sqlx::query_scalar::<_, bool>(
-                "SELECT COALESCE(MAX(version),0) >= 7 AND COALESCE(MIN(success),0)=1 FROM _sqlx_migrations",
+                "SELECT COALESCE(MAX(version),0) >= 10 AND COALESCE(MIN(success),0)=1 FROM _sqlx_migrations",
             ).fetch_one(&pool).await.unwrap_or(false);
             let mysql_ready = mysql::ping(&pool).await.is_ok() && schema_ready;
             registry
@@ -894,7 +574,7 @@ mod integration_tests {
                 .as_array()
                 .expect("permission list")
                 .len(),
-            34
+            52
         );
 
         let environments = router
@@ -1381,7 +1061,7 @@ mod integration_tests {
         .await
         .expect("version snapshots");
         assert_eq!(snapshot_count, 2);
-        let fake_runtime_tables: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name IN ('executions','trace_events','evaluation_runs')")
+        let fake_runtime_tables: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name IN ('executions','trace_events')")
             .fetch_one(&pool).await.expect("runtime table check");
         assert_eq!(fake_runtime_tables, 0);
 

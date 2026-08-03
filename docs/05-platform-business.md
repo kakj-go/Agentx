@@ -229,15 +229,15 @@ Dataset 包含不可变 Dataset Version。Test Case 包含：
 - Expected Output
 - Context
 - Tags
-- Evaluator Config
+- Evaluation Profile Rule Override
 
 测试数据改变后生成新版本，保证历史报告可复现。
 
 ## 12. Evaluation
 
-Evaluation Run 将一个 Workflow Version 和一个 Dataset Version 绑定，批量创建 Test Execution。
+Evaluation Run 将一个 Workflow Version、一个 Dataset Version 和一个不可变 Evaluation Profile Version 绑定，批量创建 Test Execution。
 
-首期 Evaluator：
+Evaluation Profile 是用户唯一需要管理的评测配置。一个 Profile 包含多条评分规则、聚合策略和通过阈值；发布后生成不可变 Profile Version。首期评分规则：
 
 - Exact Match
 - Contains

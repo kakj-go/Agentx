@@ -10,6 +10,577 @@
     "version": "1.0.0"
   },
   "paths": {
+    "/api/v1/applications": {
+      "get": {
+        "tags": [
+          "applications"
+        ],
+        "operationId": "list_applications",
+        "responses": {}
+      },
+      "post": {
+        "tags": [
+          "applications"
+        ],
+        "operationId": "create_application",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateApplicationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {}
+      }
+    },
+    "/api/v1/applications/{id}": {
+      "get": {
+        "tags": [
+          "applications"
+        ],
+        "operationId": "get_application",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {}
+      },
+      "patch": {
+        "tags": [
+          "applications"
+        ],
+        "operationId": "update_application",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateApplicationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {}
+      }
+    },
+    "/api/v1/applications/{id}/api-keys": {
+      "get": {
+        "tags": [
+          "applications"
+        ],
+        "operationId": "list_api_keys",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {}
+      },
+      "post": {
+        "tags": [
+          "applications"
+        ],
+        "operationId": "create_api_key",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateApiKeyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {}
+      }
+    },
+    "/api/v1/applications/{id}/api-keys/{key_id}/revoke": {
+      "post": {
+        "tags": [
+          "applications"
+        ],
+        "operationId": "revoke_api_key",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "key_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {}
+      }
+    },
+    "/api/v1/applications/{id}/api-keys/{key_id}/rotate": {
+      "post": {
+        "tags": [
+          "applications"
+        ],
+        "operationId": "rotate_api_key",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "key_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {}
+      }
+    },
+    "/api/v1/applications/{id}/deployments": {
+      "get": {
+        "tags": [
+          "applications"
+        ],
+        "operationId": "list_application_deployments",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {}
+      },
+      "post": {
+        "tags": [
+          "applications"
+        ],
+        "operationId": "create_application_deployment",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateApplicationDeploymentRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {}
+      }
+    },
+    "/api/v1/applications/{id}/schedules": {
+      "get": {
+        "tags": [
+          "applications"
+        ],
+        "operationId": "list_schedules",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {}
+      },
+      "post": {
+        "tags": [
+          "applications"
+        ],
+        "operationId": "create_schedule",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateScheduleRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {}
+      }
+    },
+    "/api/v1/applications/{id}/schedules/{schedule_id}": {
+      "patch": {
+        "tags": [
+          "applications"
+        ],
+        "operationId": "update_schedule",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "schedule_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateScheduleRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {}
+      }
+    },
+    "/api/v1/applications/{id}/sessions": {
+      "get": {
+        "tags": [
+          "applications"
+        ],
+        "operationId": "list_sessions",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {}
+      }
+    },
+    "/api/v1/applications/{id}/webhooks": {
+      "get": {
+        "tags": [
+          "applications"
+        ],
+        "operationId": "list_webhooks",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {}
+      },
+      "post": {
+        "tags": [
+          "applications"
+        ],
+        "operationId": "create_webhook",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateWebhookRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {}
+      }
+    },
+    "/api/v1/applications/{id}/webhooks/{webhook_id}": {
+      "patch": {
+        "tags": [
+          "applications"
+        ],
+        "operationId": "update_webhook",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateWebhookRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {}
+      }
+    },
+    "/api/v1/approvals": {
+      "get": {
+        "tags": [
+          "operations"
+        ],
+        "operationId": "list_approvals",
+        "responses": {}
+      }
+    },
+    "/api/v1/approvals/{id}": {
+      "get": {
+        "tags": [
+          "operations"
+        ],
+        "operationId": "get_approval",
+        "responses": {}
+      }
+    },
+    "/api/v1/approvals/{id}/actions": {
+      "get": {
+        "tags": [
+          "operations"
+        ],
+        "operationId": "list_approval_actions",
+        "responses": {}
+      }
+    },
+    "/api/v1/approvals/{id}/approve": {
+      "post": {
+        "tags": [
+          "operations"
+        ],
+        "operationId": "approve",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DecideApprovalRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {}
+      }
+    },
+    "/api/v1/approvals/{id}/cancel": {
+      "post": {
+        "tags": [
+          "operations"
+        ],
+        "operationId": "cancel_approval",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VersionActionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {}
+      }
+    },
+    "/api/v1/approvals/{id}/candidates": {
+      "get": {
+        "tags": [
+          "operations"
+        ],
+        "operationId": "list_approval_candidates",
+        "responses": {}
+      }
+    },
+    "/api/v1/approvals/{id}/claim": {
+      "post": {
+        "tags": [
+          "operations"
+        ],
+        "operationId": "claim_approval",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VersionActionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {}
+      }
+    },
+    "/api/v1/approvals/{id}/reassign": {
+      "post": {
+        "tags": [
+          "operations"
+        ],
+        "operationId": "reassign_approval",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReassignApprovalRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {}
+      }
+    },
+    "/api/v1/approvals/{id}/reject": {
+      "post": {
+        "tags": [
+          "operations"
+        ],
+        "operationId": "reject",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DecideApprovalRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {}
+      }
+    },
+    "/api/v1/approvals/{id}/release": {
+      "post": {
+        "tags": [
+          "operations"
+        ],
+        "operationId": "release_approval",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VersionActionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {}
+      }
+    },
+    "/api/v1/approvals/{id}/timeout": {
+      "post": {
+        "tags": [
+          "operations"
+        ],
+        "operationId": "timeout_approval",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VersionActionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {}
+      }
+    },
     "/api/v1/auth/change-password": {
       "post": {
         "tags": [
@@ -207,6 +778,173 @@
         "responses": {}
       }
     },
+    "/api/v1/dashboard/summary": {
+      "get": {
+        "tags": [
+          "operations"
+        ],
+        "operationId": "dashboard_summary",
+        "responses": {}
+      }
+    },
+    "/api/v1/datasets": {
+      "get": {
+        "tags": [
+          "datasets"
+        ],
+        "operationId": "list_datasets",
+        "responses": {}
+      },
+      "post": {
+        "tags": [
+          "datasets"
+        ],
+        "operationId": "create_dataset",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateDatasetRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {}
+      }
+    },
+    "/api/v1/datasets/{id}": {
+      "get": {
+        "tags": [
+          "datasets"
+        ],
+        "operationId": "get_dataset",
+        "responses": {}
+      },
+      "patch": {
+        "tags": [
+          "datasets"
+        ],
+        "operationId": "update_dataset",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateDatasetRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {}
+      }
+    },
+    "/api/v1/datasets/{id}/cases": {
+      "get": {
+        "tags": [
+          "datasets"
+        ],
+        "operationId": "list_cases",
+        "responses": {}
+      },
+      "post": {
+        "tags": [
+          "datasets"
+        ],
+        "operationId": "create_case",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateCaseRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {}
+      }
+    },
+    "/api/v1/datasets/{id}/cases/{case_id}": {
+      "delete": {
+        "tags": [
+          "datasets"
+        ],
+        "operationId": "delete_case",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeleteCaseRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {}
+      },
+      "patch": {
+        "tags": [
+          "datasets"
+        ],
+        "operationId": "update_case",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateCaseRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {}
+      }
+    },
+    "/api/v1/datasets/{id}/export": {
+      "get": {
+        "tags": [
+          "datasets"
+        ],
+        "operationId": "export_cases",
+        "responses": {}
+      }
+    },
+    "/api/v1/datasets/{id}/import": {
+      "post": {
+        "tags": [
+          "datasets"
+        ],
+        "operationId": "import_cases",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImportCasesRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {}
+      }
+    },
+    "/api/v1/datasets/{id}/versions": {
+      "get": {
+        "tags": [
+          "datasets"
+        ],
+        "operationId": "list_dataset_versions",
+        "responses": {}
+      },
+      "post": {
+        "tags": [
+          "datasets"
+        ],
+        "operationId": "publish_version",
+        "responses": {}
+      }
+    },
     "/api/v1/departments": {
       "get": {
         "tags": [
@@ -334,6 +1072,121 @@
           },
           "required": true
         },
+        "responses": {}
+      }
+    },
+    "/api/v1/evaluation-profiles": {
+      "get": {
+        "tags": [
+          "datasets"
+        ],
+        "operationId": "list_profiles",
+        "responses": {}
+      },
+      "post": {
+        "tags": [
+          "datasets"
+        ],
+        "operationId": "create_profile",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateEvaluationProfileRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {}
+      }
+    },
+    "/api/v1/evaluations": {
+      "get": {
+        "tags": [
+          "datasets"
+        ],
+        "operationId": "list_evaluations",
+        "responses": {}
+      },
+      "post": {
+        "tags": [
+          "datasets"
+        ],
+        "operationId": "create_evaluation",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateEvaluationRunRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {}
+      }
+    },
+    "/api/v1/evaluations/{id}/cancel": {
+      "post": {
+        "tags": [
+          "datasets"
+        ],
+        "operationId": "cancel_evaluation",
+        "responses": {}
+      }
+    },
+    "/api/v1/evaluations/{id}/report": {
+      "get": {
+        "tags": [
+          "datasets"
+        ],
+        "operationId": "get_report",
+        "responses": {}
+      }
+    },
+    "/api/v1/evaluations/{id}/start": {
+      "post": {
+        "tags": [
+          "datasets"
+        ],
+        "operationId": "start_evaluation",
+        "responses": {}
+      }
+    },
+    "/api/v1/executions": {
+      "get": {
+        "tags": [
+          "operations"
+        ],
+        "operationId": "list_executions",
+        "responses": {}
+      }
+    },
+    "/api/v1/executions/{id}": {
+      "get": {
+        "tags": [
+          "operations"
+        ],
+        "operationId": "get_execution",
+        "responses": {}
+      }
+    },
+    "/api/v1/executions/{id}/artifacts/{artifact_id}": {
+      "get": {
+        "tags": [
+          "operations"
+        ],
+        "operationId": "execution_artifact",
+        "responses": {}
+      }
+    },
+    "/api/v1/executions/{id}/trace": {
+      "get": {
+        "tags": [
+          "operations"
+        ],
+        "operationId": "execution_trace",
         "responses": {}
       }
     },
@@ -1054,6 +1907,33 @@
         "responses": {}
       }
     },
+    "/api/v1/notifications": {
+      "get": {
+        "tags": [
+          "operations"
+        ],
+        "operationId": "list_notifications",
+        "responses": {}
+      }
+    },
+    "/api/v1/notifications/read-all": {
+      "post": {
+        "tags": [
+          "operations"
+        ],
+        "operationId": "read_all_notifications",
+        "responses": {}
+      }
+    },
+    "/api/v1/notifications/{id}/read": {
+      "post": {
+        "tags": [
+          "operations"
+        ],
+        "operationId": "read_notification",
+        "responses": {}
+      }
+    },
     "/api/v1/permissions": {
       "get": {
         "tags": [
@@ -1221,6 +2101,45 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/UpdateRoleRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {}
+      }
+    },
+    "/api/v1/runtime/status": {
+      "get": {
+        "tags": [
+          "operations"
+        ],
+        "operationId": "runtime_status",
+        "responses": {}
+      }
+    },
+    "/api/v1/sessions/{id}/upgrade": {
+      "post": {
+        "tags": [
+          "applications"
+        ],
+        "operationId": "upgrade_session",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpgradeSessionRequest"
               }
             }
           },
@@ -2112,6 +3031,322 @@
           }
         }
       },
+      "ApiKeyResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "familyId",
+          "name",
+          "prefix",
+          "status",
+          "createdAt"
+        ],
+        "properties": {
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "familyId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "lastUsedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "name": {
+            "type": "string"
+          },
+          "prefix": {
+            "type": "string"
+          },
+          "secret": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": "string"
+          }
+        }
+      },
+      "ApplicationDeploymentResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "applicationId",
+          "workflowVersionId",
+          "workflowVersionNumber",
+          "environmentId",
+          "environmentName",
+          "sequenceNumber",
+          "inputSchema",
+          "outputSchema",
+          "sessionVersionPolicy",
+          "status",
+          "createdAt"
+        ],
+        "properties": {
+          "applicationId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "environmentId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "environmentName": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "inputSchema": {},
+          "outputSchema": {},
+          "sequenceNumber": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "sessionVersionPolicy": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "workflowVersionId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "workflowVersionNumber": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "ApplicationResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "workflowId",
+          "workflowName",
+          "name",
+          "slug",
+          "visibility",
+          "status",
+          "ownerDepartmentId",
+          "version",
+          "updatedAt"
+        ],
+        "properties": {
+          "activeDeploymentId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "activeVersionNumber": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "ownerDepartmentId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "visibility": {
+            "type": "string"
+          },
+          "workflowId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "workflowName": {
+            "type": "string"
+          }
+        }
+      },
+      "ApprovalActionResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "actionType",
+          "actorUserId",
+          "actorName",
+          "fromStatus",
+          "toStatus",
+          "createdAt"
+        ],
+        "properties": {
+          "actionType": {
+            "type": "string"
+          },
+          "actorName": {
+            "type": "string"
+          },
+          "actorUserId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "fromStatus": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "input": {},
+          "toStatus": {
+            "type": "string"
+          }
+        }
+      },
+      "ApprovalCandidateResponse": {
+        "type": "object",
+        "required": [
+          "userId",
+          "displayName"
+        ],
+        "properties": {
+          "displayName": {
+            "type": "string"
+          },
+          "userId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "ApprovalResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "executionId",
+          "workflowId",
+          "workflowName",
+          "nodeId",
+          "title",
+          "status",
+          "resumeStatus",
+          "version",
+          "createdAt"
+        ],
+        "properties": {
+          "claimedBy": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "claimedByName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "deadlineAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "executionId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "nodeId": {
+            "type": "string"
+          },
+          "requestPayload": {},
+          "resumeStatus": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "workflowId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "workflowName": {
+            "type": "string"
+          }
+        }
+      },
       "ArtifactUploadResponse": {
         "type": "object",
         "required": [
@@ -2211,6 +3446,32 @@
           }
         }
       },
+      "CaseInput": {
+        "type": "object",
+        "required": [
+          "caseKey",
+          "name",
+          "input"
+        ],
+        "properties": {
+          "caseKey": {
+            "type": "string"
+          },
+          "context": {},
+          "evaluatorOverride": {},
+          "expectedOutput": {},
+          "input": {},
+          "name": {
+            "type": "string"
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
       "ChangePasswordRequest": {
         "type": "object",
         "required": [
@@ -2274,6 +3535,92 @@
           }
         }
       },
+      "CreateApiKeyRequest": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "CreateApplicationDeploymentRequest": {
+        "type": "object",
+        "required": [
+          "workflowVersionId",
+          "environmentId",
+          "inputSchema",
+          "outputSchema",
+          "sessionVersionPolicy"
+        ],
+        "properties": {
+          "environmentId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "inputSchema": {},
+          "outputSchema": {},
+          "sessionVersionPolicy": {
+            "type": "string"
+          },
+          "workflowVersionId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "CreateApplicationRequest": {
+        "type": "object",
+        "required": [
+          "workflowId",
+          "name",
+          "slug",
+          "visibility"
+        ],
+        "properties": {
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "visibility": {
+            "type": "string"
+          },
+          "workflowId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "CreateCaseRequest": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/CaseInput"
+          },
+          {
+            "type": "object",
+            "required": [
+              "expectedRevision"
+            ],
+            "properties": {
+              "expectedRevision": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              }
+            }
+          }
+        ]
+      },
       "CreateConnectionRequest": {
         "type": "object",
         "required": [
@@ -2329,6 +3676,27 @@
             "format": "uuid"
           },
           "secret": {}
+        }
+      },
+      "CreateDatasetRequest": {
+        "type": "object",
+        "required": [
+          "name",
+          "visibility"
+        ],
+        "properties": {
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "visibility": {
+            "type": "string"
+          }
         }
       },
       "CreateDepartmentRequest": {
@@ -2438,6 +3806,70 @@
           },
           "name": {
             "type": "string"
+          }
+        }
+      },
+      "CreateEvaluationProfileRequest": {
+        "type": "object",
+        "required": [
+          "name",
+          "rules"
+        ],
+        "properties": {
+          "aggregation": {
+            "type": "string"
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "passThreshold": {
+            "type": "string"
+          },
+          "rules": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EvaluationRuleInput"
+            }
+          },
+          "visibility": {
+            "type": "string"
+          }
+        }
+      },
+      "CreateEvaluationRunRequest": {
+        "type": "object",
+        "required": [
+          "name",
+          "workflowVersionId",
+          "datasetVersionId",
+          "evaluationProfileVersionId",
+          "parameters"
+        ],
+        "properties": {
+          "datasetVersionId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "evaluationProfileVersionId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "parameters": {},
+          "visibility": {
+            "type": "string"
+          },
+          "workflowVersionId": {
+            "type": "string",
+            "format": "uuid"
           }
         }
       },
@@ -2693,6 +4125,27 @@
           }
         }
       },
+      "CreateScheduleRequest": {
+        "type": "object",
+        "required": [
+          "name",
+          "cronExpression",
+          "timezone",
+          "input"
+        ],
+        "properties": {
+          "cronExpression": {
+            "type": "string"
+          },
+          "input": {},
+          "name": {
+            "type": "string"
+          },
+          "timezone": {
+            "type": "string"
+          }
+        }
+      },
       "CreateSkillRequest": {
         "type": "object",
         "required": [
@@ -2748,6 +4201,17 @@
             "type": "integer",
             "format": "int64",
             "minimum": 0
+          }
+        }
+      },
+      "CreateWebhookRequest": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
           }
         }
       },
@@ -2826,6 +4290,165 @@
           }
         }
       },
+      "DashboardSummaryResponse": {
+        "type": "object",
+        "required": [
+          "workflowCount",
+          "runningExecutions",
+          "executionsToday",
+          "succeededToday",
+          "failedToday",
+          "costMicrosToday",
+          "pendingApprovals"
+        ],
+        "properties": {
+          "costMicrosToday": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "executionsToday": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "failedToday": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "pendingApprovals": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "runningExecutions": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "succeededToday": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "workflowCount": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "DatasetResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "visibility",
+          "status",
+          "ownerDepartmentId",
+          "revision",
+          "caseCount",
+          "version",
+          "updatedAt"
+        ],
+        "properties": {
+          "caseCount": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "latestVersion": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "name": {
+            "type": "string"
+          },
+          "ownerDepartmentId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "status": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "visibility": {
+            "type": "string"
+          }
+        }
+      },
+      "DatasetVersionResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "datasetId",
+          "versionNumber",
+          "sourceRevision",
+          "contentHash",
+          "caseCount",
+          "createdAt"
+        ],
+        "properties": {
+          "caseCount": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "contentHash": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "datasetId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "sourceRevision": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "versionNumber": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
       "DebugMcpToolRequest": {
         "type": "object",
         "required": [
@@ -2867,6 +4490,33 @@
           "toolVersionId": {
             "type": "string",
             "format": "uuid"
+          }
+        }
+      },
+      "DecideApprovalRequest": {
+        "type": "object",
+        "required": [
+          "version"
+        ],
+        "properties": {
+          "input": {},
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "DeleteCaseRequest": {
+        "type": "object",
+        "required": [
+          "expectedRevision"
+        ],
+        "properties": {
+          "expectedRevision": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
           }
         }
       },
@@ -3054,6 +4704,327 @@
           }
         }
       },
+      "EvaluationProfileResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "versionId",
+          "versionNumber",
+          "name",
+          "visibility",
+          "ownerDepartmentId",
+          "status",
+          "aggregation",
+          "passThreshold",
+          "rules",
+          "version"
+        ],
+        "properties": {
+          "aggregation": {
+            "type": "string"
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "ownerDepartmentId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "passThreshold": {
+            "type": "string"
+          },
+          "rules": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EvaluationRuleResponse"
+            }
+          },
+          "status": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "versionId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "versionNumber": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "visibility": {
+            "type": "string"
+          }
+        }
+      },
+      "EvaluationReportResponse": {
+        "type": "object",
+        "required": [
+          "run",
+          "results",
+          "metrics",
+          "reportStatus"
+        ],
+        "properties": {
+          "metrics": {
+            "type": "array",
+            "items": {}
+          },
+          "reportStatus": {
+            "type": "string"
+          },
+          "results": {
+            "type": "array",
+            "items": {}
+          },
+          "run": {
+            "$ref": "#/components/schemas/EvaluationRunResponse"
+          }
+        }
+      },
+      "EvaluationRuleInput": {
+        "type": "object",
+        "required": [
+          "key",
+          "name",
+          "evaluatorType",
+          "configuration"
+        ],
+        "properties": {
+          "configuration": {},
+          "evaluatorType": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "weight": {
+            "type": "string"
+          }
+        }
+      },
+      "EvaluationRuleResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "key",
+          "name",
+          "evaluatorType",
+          "configuration",
+          "weight",
+          "required",
+          "sortOrder"
+        ],
+        "properties": {
+          "configuration": {},
+          "evaluatorType": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "key": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "sortOrder": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "weight": {
+            "type": "string"
+          }
+        }
+      },
+      "EvaluationRunResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "workflowVersionId",
+          "workflowName",
+          "datasetVersionId",
+          "datasetName",
+          "evaluationProfileVersionId",
+          "visibility",
+          "ownerDepartmentId",
+          "status",
+          "resultCount",
+          "parameters",
+          "createdAt"
+        ],
+        "properties": {
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "datasetName": {
+            "type": "string"
+          },
+          "datasetVersionId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "evaluationProfileVersionId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "ownerDepartmentId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "parameters": {},
+          "resultCount": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "status": {
+            "type": "string"
+          },
+          "visibility": {
+            "type": "string"
+          },
+          "workflowName": {
+            "type": "string"
+          },
+          "workflowVersionId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "ExecutionResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "workflowId",
+          "workflowName",
+          "workflowVersionId",
+          "workflowVersionNumber",
+          "traceId",
+          "triggerType",
+          "status",
+          "startedAt",
+          "costMicros"
+        ],
+        "properties": {
+          "costMicros": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "durationMs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "endedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "errorCode": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "errorMessage": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "invocationId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "sessionId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "startedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "status": {
+            "type": "string"
+          },
+          "traceId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "triggerType": {
+            "type": "string"
+          },
+          "workflowId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "workflowName": {
+            "type": "string"
+          },
+          "workflowVersionId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "workflowVersionNumber": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
       "FieldError": {
         "type": "object",
         "required": [
@@ -3220,6 +5191,27 @@
             "type": "string"
           },
           "version": {
+            "type": "string"
+          }
+        }
+      },
+      "ImportCasesRequest": {
+        "type": "object",
+        "required": [
+          "expectedRevision",
+          "format",
+          "content"
+        ],
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "format": {
             "type": "string"
           }
         }
@@ -3924,6 +5916,78 @@
           }
         }
       },
+      "NotificationInboxResponse": {
+        "type": "object",
+        "required": [
+          "items",
+          "unreadCount"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NotificationResponse"
+            }
+          },
+          "unreadCount": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "NotificationResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "notificationType",
+          "titleKey",
+          "bodyKey",
+          "arguments",
+          "targetType",
+          "targetId",
+          "targetPath",
+          "tone",
+          "read",
+          "createdAt"
+        ],
+        "properties": {
+          "arguments": {},
+          "bodyKey": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "notificationType": {
+            "type": "string"
+          },
+          "read": {
+            "type": "boolean"
+          },
+          "targetId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "targetPath": {
+            "type": "string"
+          },
+          "targetType": {
+            "type": "string"
+          },
+          "titleKey": {
+            "type": "string"
+          },
+          "tone": {
+            "type": "string"
+          }
+        }
+      },
       "PermissionResponse": {
         "type": "object",
         "required": [
@@ -3978,6 +6042,24 @@
           "workflowVersionId": {
             "type": "string",
             "format": "uuid"
+          }
+        }
+      },
+      "ReassignApprovalRequest": {
+        "type": "object",
+        "required": [
+          "targetUserId",
+          "version"
+        ],
+        "properties": {
+          "targetUserId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
           }
         }
       },
@@ -4119,6 +6201,75 @@
           }
         }
       },
+      "RuntimeComponentStatus": {
+        "type": "object",
+        "required": [
+          "component",
+          "status"
+        ],
+        "properties": {
+          "component": {
+            "type": "string"
+          },
+          "instances": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "lastHeartbeat": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "queueDepth": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "status": {
+            "type": "string"
+          }
+        }
+      },
+      "RuntimeStatusResponse": {
+        "type": "object",
+        "required": [
+          "components",
+          "running",
+          "waiting",
+          "failedToday"
+        ],
+        "properties": {
+          "components": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RuntimeComponentStatus"
+            }
+          },
+          "failedToday": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "running": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "waiting": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
       "SaveDraftRequest": {
         "type": "object",
         "required": [
@@ -4131,6 +6282,102 @@
             "type": "integer",
             "format": "int64",
             "minimum": 0
+          }
+        }
+      },
+      "ScheduleResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "cronExpression",
+          "timezone",
+          "input",
+          "status",
+          "version"
+        ],
+        "properties": {
+          "cronExpression": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "input": {},
+          "name": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "timezone": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "SessionResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "applicationId",
+          "applicationDeploymentId",
+          "versionPolicy",
+          "status",
+          "version",
+          "updatedAt"
+        ],
+        "properties": {
+          "applicationDeploymentId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "applicationId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "externalUserId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "type": "string"
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "versionPolicy": {
+            "type": "string"
+          },
+          "workflowVersionId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
           }
         }
       },
@@ -4361,6 +6608,270 @@
           }
         }
       },
+      "TestCaseResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "caseKey",
+          "name",
+          "input",
+          "tags",
+          "sortOrder",
+          "version"
+        ],
+        "properties": {
+          "caseKey": {
+            "type": "string"
+          },
+          "context": {},
+          "evaluatorOverride": {},
+          "expectedOutput": {},
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "input": {},
+          "name": {
+            "type": "string"
+          },
+          "sortOrder": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "TraceEventResponse": {
+        "type": "object",
+        "required": [
+          "eventId",
+          "traceId",
+          "spanId",
+          "executionId",
+          "eventType",
+          "status",
+          "eventTime",
+          "runIndex",
+          "iterationIndex",
+          "costMicros",
+          "attributes"
+        ],
+        "properties": {
+          "attributes": {},
+          "contentRef": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "costMicros": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "durationMs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "errorCode": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "errorMessage": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "eventId": {
+            "type": "string"
+          },
+          "eventTime": {
+            "type": "string"
+          },
+          "eventType": {
+            "type": "string"
+          },
+          "executionId": {
+            "type": "string"
+          },
+          "inputTokens": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "iterationIndex": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "mcpToolName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "modelName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "nodeExecutionId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "nodeId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "outputTokens": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "parentSpanId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "providerName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "runIndex": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "spanId": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "traceId": {
+            "type": "string"
+          }
+        }
+      },
+      "TraceResponse": {
+        "type": "object",
+        "required": [
+          "executionId",
+          "traceId",
+          "events"
+        ],
+        "properties": {
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TraceEventResponse"
+            }
+          },
+          "executionId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "traceId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "UpdateApplicationRequest": {
+        "type": "object",
+        "required": [
+          "name",
+          "visibility",
+          "status",
+          "version"
+        ],
+        "properties": {
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "visibility": {
+            "type": "string"
+          }
+        }
+      },
+      "UpdateCaseRequest": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/CaseInput"
+          },
+          {
+            "type": "object",
+            "required": [
+              "expectedRevision",
+              "version"
+            ],
+            "properties": {
+              "expectedRevision": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              },
+              "version": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              }
+            }
+          }
+        ]
+      },
       "UpdateCredentialRequest": {
         "type": "object",
         "required": [
@@ -4379,6 +6890,37 @@
             "type": "integer",
             "format": "int64",
             "minimum": 0
+          }
+        }
+      },
+      "UpdateDatasetRequest": {
+        "type": "object",
+        "required": [
+          "name",
+          "visibility",
+          "status",
+          "version"
+        ],
+        "properties": {
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "visibility": {
+            "type": "string"
           }
         }
       },
@@ -4632,6 +7174,37 @@
           }
         }
       },
+      "UpdateScheduleRequest": {
+        "type": "object",
+        "required": [
+          "name",
+          "cronExpression",
+          "timezone",
+          "input",
+          "status",
+          "version"
+        ],
+        "properties": {
+          "cronExpression": {
+            "type": "string"
+          },
+          "input": {},
+          "name": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "timezone": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
       "UpdateSkillRequest": {
         "type": "object",
         "required": [
@@ -4686,6 +7259,27 @@
           }
         }
       },
+      "UpdateWebhookRequest": {
+        "type": "object",
+        "required": [
+          "name",
+          "status",
+          "version"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
       "UpdateWorkflowRequest": {
         "type": "object",
         "required": [
@@ -4710,6 +7304,24 @@
           },
           "visibility": {
             "type": "string"
+          }
+        }
+      },
+      "UpgradeSessionRequest": {
+        "type": "object",
+        "required": [
+          "workflowVersionId",
+          "version"
+        ],
+        "properties": {
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "workflowVersionId": {
+            "type": "string",
+            "format": "uuid"
           }
         }
       },
@@ -4770,6 +7382,59 @@
             "type": "string"
           },
           "username": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "VersionActionRequest": {
+        "type": "object",
+        "required": [
+          "version"
+        ],
+        "properties": {
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "WebhookResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "publicId",
+          "path",
+          "status",
+          "version"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "publicId": {
+            "type": "string"
+          },
+          "secret": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
             "type": "string"
           },
           "version": {
@@ -4936,6 +7601,10 @@
     {
       "name": "Agentx M2",
       "description": "Workflow and resource control plane"
+    },
+    {
+      "name": "Agentx M3",
+      "description": "Application, evaluation and operations control plane"
     }
   ]
 }

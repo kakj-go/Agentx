@@ -7,7 +7,8 @@
 - M1 基础管理闭环已经完成：单公司 Bootstrap、JWT、部门、用户、角色、数据范围、OpenAPI 和 Kubernetes Migration Job 可用。
 - M2.1 资源中心重构主体已经完成：旧 Tool/ZIP-only Skill 已废弃，当前模型为 MCP Server、自动发现的 MCP Tool 和在线 Skill Workspace。
 - 统一资源授权、Model 连接状态、MCP Schema 字段树、Skill 富文本和 Dialog 自适应已经通过临时 Kubernetes E2E。
-- 当前基线为 M2.1 和 M2 `done`；M3 仍为 `planned`，后续从阶段 05 开始。
+- M3 外围控制面已经完成：Application、Session、Dataset、Evaluation、Approval、Notification、Execution/Trace 查询和 Runtime Status 均使用真实存储与 API。
+- M3.1 已将评测器/Profile 合并为不可变评测方案版本，并统一依赖型按钮的前置条件引导；当前可以进入阶段 08。
 
 因此后续不能以“逐页替换 Mock”的方式推进。所有业务先建立稳定契约和权威数据，再接入页面；与运行相关的外围接口在引擎可用前必须返回明确的 `RUNTIME_UNAVAILABLE`，不得伪造成功记录。
 
@@ -44,9 +45,9 @@
 | 02 | [初始化、认证和 IAM](02-bootstrap-auth-iam.md) | done | Bootstrap、JWT、单公司隔离和 RBAC 可用 |
 | 03 | [Workflow 控制面](03-workflow-control-plane.md) | done | Draft、Version、Deployment 和 MCP/Skill 资源快照边界稳定 |
 | 04 | [资源中心](04-resource-center.md) | done | MCP、Skill Workspace、连接状态、统一授权和界面 E2E 可用 |
-| 05 | [应用、会话和调用入口](05-applications-sessions-gateway.md) | planned | Application、API Key、Session、Message 和 Gateway 契约可用 |
-| 06 | [测试集和评测](06-datasets-evaluations.md) | planned | 不可变 Dataset Version 和 Evaluation 控制面可用 |
-| 07 | [审批、消息和 Trace](07-approvals-notifications-trace.md) | planned | 外围任务、通知、Trace 写入与查询可用 |
+| 05 | [应用、会话和调用入口](05-applications-sessions-gateway.md) | done | Application、API Key、Session、Message 和 Gateway 契约可用 |
+| 06 | [测试集和评测](06-datasets-evaluations.md) | done | 不可变 Dataset Version 和 Evaluation 控制面可用 |
+| 07 | [审批、消息和 Trace](07-approvals-notifications-trace.md) | done | 外围任务、通知、Trace 写入与查询可用 |
 | 08 | [Workflow 运行内核](08-workflow-runtime-core.md) | planned | 非 AI JSON Fixture 可分布式可靠执行 |
 | 09 | [恢复、等待和审批运行](09-checkpoint-wait-recovery.md) | planned | Checkpoint、Fork、Wait 和审批恢复可用 |
 | 10 | [Agent 与 CubeSandbox](10-agent-cubesandbox.md) | planned | Agent 在授权和沙箱约束内执行 |
@@ -57,13 +58,15 @@
 
 M2 原实现已被 M2.1 取代。完成任务和门禁见 [M2.1 资源中心重构](m2.1-resource-redesign.md) 与 [M2.1 验收证据](m2.1-acceptance-evidence.md)，旧 [M2 验收证据](m2-acceptance-evidence.md) 只作为历史记录。
 
+M3 评测模型和前端依赖引导的破坏性修正见 [M3.1 评测方案与前置条件交互](m3.1-evaluation-profile-and-prerequisites.md) 与 [M3.1 验收证据](m3.1-acceptance-evidence.md)。
+
 ## 4. 里程碑
 
 | 里程碑 | 结果 | 对应阶段 |
 |---|---|---|
 | M1 | Bootstrap、JWT、单公司、部门、用户和 RBAC 可用（done） | 01–02 |
 | M2 | Workflow 控制面和全部资源管理可用（done） | 03–04；[M2.1 任务](m2.1-resource-redesign.md)；[验收证据](m2.1-acceptance-evidence.md) |
-| M3 | Application、Session、Dataset、Approval、Notification、Trace 外围能力可用 | 05–07 |
+| M3 | Application、Session、Dataset、Approval、Notification、Trace 外围能力可用（done） | 05–07；[M3 任务](m3-task-list.md)与[验收证据](m3-acceptance-evidence.md)；[M3.1 修正](m3.1-evaluation-profile-and-prerequisites.md)与[验收证据](m3.1-acceptance-evidence.md) |
 | M4 | JSON Fixture 定义的非 AI Workflow 能可靠执行 | 08–09 |
 | M5 | Agent、MCP Tool、Skill、RAG、Memory 和 CubeSandbox 能执行 | 10 |
 | M6 | n8n 式 Workflow Studio 可拖拽、调试和发布 | 11 |

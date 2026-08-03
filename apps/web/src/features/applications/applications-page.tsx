@@ -1,28 +1,52 @@
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { ColumnDef } from '@tanstack/react-table'
-import { AppWindow } from 'lucide-react'
-import { useMemo } from 'react'
+import { AppWindow, Plus } from 'lucide-react'
+import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { Link, useNavigate } from 'react-router-dom'
 
+import { useAuth } from '../../app/providers/auth-provider'
+import { apiRequest, jsonBody } from '../../shared/api/client'
+import type { Application, PageResponse, Workflow } from '../../shared/api/types'
 import { EntityCell } from '../../shared/components/entity-cell'
+import { EntityFormDialog, type EntityFormField } from '../../shared/components/entity-form-dialog'
 import { ListPage } from '../../shared/components/list-page'
-import { StatusBadge, type StatusValue } from '../../shared/components/status-badge'
-
-type ApplicationRow = { name: string; environment: string; deployment: string; publishedAt: string; status: StatusValue }
+import { PrerequisiteAction } from '../../shared/components/prerequisite-action'
+import { StatusBadge } from '../../shared/components/status-badge'
+import { Button } from '../../shared/ui/button'
+import { useToast } from '../../shared/ui/toast'
 
 export function ApplicationsPage() {
   const { t } = useTranslation()
-  const data = useMemo<ApplicationRow[]>(() => [
-    { name: t('mocks.app.customer'), environment: t('mocks.environment.production'), deployment: 'Customer Routing · v17', publishedAt: '2026-08-02 13:44', status: 'active' },
-    { name: t('mocks.app.contract'), environment: t('mocks.environment.production'), deployment: 'Contract Review · v8', publishedAt: '2026-08-01 10:15', status: 'active' },
-    { name: t('mocks.app.sales'), environment: t('mocks.environment.staging'), deployment: 'Lead Scoring · Draft', publishedAt: '2026-07-31 18:22', status: 'inactive' },
-    { name: t('mocks.app.faq'), environment: t('mocks.environment.production'), deployment: 'FAQ Agent · v5', publishedAt: '2026-07-29 09:38', status: 'active' },
+  const auth = useAuth()
+  const navigate = useNavigate()
+  const queryClient = useQueryClient()
+  const { showToast } = useToast()
+  const [open, setOpen] = useState(false)
+  const applications = useQuery({ queryKey: ['applications'], queryFn: () => apiRequest<PageResponse<Application>>('/applications?pageSize=100') })
+  const workflows = useQuery({ queryKey: ['workflows', 'application-options'], queryFn: () => apiRequest<PageResponse<Workflow>>('/workflows?pageSize=100&status=active') })
+  const create = useMutation({
+    mutationFn: (values: Record<string, string>) => apiRequest<Application>('/applications', { method: 'POST', body: jsonBody({ workflowId: values.workflowId, name: values.name, slug: values.slug, description: values.description || null, visibility: values.visibility }) }),
+    onSuccess: async (value) => { await queryClient.invalidateQueries({ queryKey: ['applications'] }); showToast(t('m3.created')); navigate(`/applications/${value.id}`) },
+  })
+  const columns = useMemo<Array<ColumnDef<Application>>>(() => [
+    { accessorKey: 'name', header: t('table.application'), cell: ({ row }) => <EntityCell detail={`${row.original.workflowName} · ${row.original.slug}`} icon={AppWindow} name={row.original.name} /> },
+    { accessorKey: 'workflowName', header: t('table.workflow') },
+    { accessorKey: 'activeVersionNumber', header: t('pages.applications.deployment'), cell: ({ row }) => row.original.activeVersionNumber ? `v${row.original.activeVersionNumber}` : '—' },
+    { accessorKey: 'status', header: t('common.status'), cell: ({ row }) => <StatusBadge status={row.original.status === 'active' ? 'active' : row.original.status === 'draft' ? 'draft' : 'inactive'} /> },
+    { accessorKey: 'updatedAt', header: t('common.updatedAt'), cell: ({ row }) => new Date(row.original.updatedAt).toLocaleString() },
+    { id: 'actions', header: '', cell: ({ row }) => <Button asChild size="sm" variant="ghost"><Link to={`/applications/${row.original.id}`}>{t('m3.manage')}</Link></Button> },
   ], [t])
-  const columns = useMemo<Array<ColumnDef<ApplicationRow>>>(() => [
-    { accessorKey: 'name', header: t('table.application'), cell: ({ row }) => <EntityCell detail={row.original.deployment} icon={AppWindow} name={row.original.name} /> },
-    { accessorKey: 'environment', header: t('pages.applications.environment') },
-    { accessorKey: 'deployment', header: t('pages.applications.deployment') },
-    { accessorKey: 'status', header: t('common.status'), cell: ({ row }) => <StatusBadge status={row.original.status} /> },
-    { accessorKey: 'publishedAt', header: t('pages.applications.publishedAt') },
-  ], [t])
-  return <ListPage actionLabel={t('pages.applications.create')} columns={columns} data={data} description={t('pages.applications.description')} getSearchText={(row) => `${row.name} ${row.deployment} ${row.environment}`} getStatus={(row) => row.status} searchPlaceholder={t('pages.applications.search')} statusOptions={[{ value: 'active', label: t('common.active') }, { value: 'inactive', label: t('common.inactive') }]} title={t('pages.applications.title')} />
+  const fields: EntityFormField[] = [
+    { name: 'workflowId', label: t('table.workflow'), type: 'select', required: true, options: (workflows.data?.items ?? []).map((item) => ({ value: item.id, label: item.name })) },
+    { name: 'name', label: t('common.name'), required: true },
+    { name: 'slug', label: 'Slug', required: true, placeholder: 'customer-service' },
+    { name: 'description', label: t('common.description'), type: 'textarea' },
+    { name: 'visibility', label: t('m2.visibility'), type: 'select', defaultValue: 'department', options: [{ value: 'private', label: t('m2.private') }, { value: 'department', label: t('m2.departmentVisible') }, { value: 'company', label: t('m2.companyVisible') }] },
+  ]
+  return <>
+    <ListPage action={auth.hasPermission('application:manage') ? <PrerequisiteAction description={t('prerequisites.applicationDescription')} loading={workflows.isLoading} onReady={() => setOpen(true)} requirements={[{ key: 'workflow', label: t('prerequisites.workflow'), met: Boolean(workflows.data?.items.length), href: auth.hasPermission('workflow:create') ? '/workflows' : undefined, actionLabel: t('prerequisites.goWorkflows') }]}><Plus className="size-4" />{t('pages.applications.create')}</PrerequisiteAction> : undefined} columns={columns} data={applications.data?.items ?? []} description={t('pages.applications.description')} getSearchText={(row) => `${row.name} ${row.workflowName} ${row.slug}`} getStatus={(row) => row.status === 'active' ? 'active' : row.status === 'draft' ? 'draft' : 'inactive'} searchPlaceholder={t('pages.applications.search')} statusOptions={[{ value: 'active', label: t('common.active') }, { value: 'draft', label: t('common.draft') }, { value: 'inactive', label: t('common.inactive') }]} title={t('pages.applications.title')} />
+    {applications.error && <p className="fixed bottom-5 left-1/2 z-20 -translate-x-1/2 rounded-lg bg-danger px-4 py-2 text-xs text-white">{String(applications.error)}</p>}
+    {open && <EntityFormDialog cancelLabel={t('common.cancel')} fields={fields} onClose={() => setOpen(false)} onSubmit={(values) => create.mutateAsync(values).then(() => undefined)} open submitLabel={t('common.save')} title={t('pages.applications.create')} />}
+  </>
 }

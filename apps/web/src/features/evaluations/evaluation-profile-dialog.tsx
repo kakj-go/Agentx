@@ -1,0 +1,91 @@
+import { Plus, Trash2 } from 'lucide-react'
+import { type FormEvent, useState } from 'react'
+import { useTranslation } from 'react-i18next'
+
+import { Button } from '../../shared/ui/button'
+import { Dialog, DialogContent } from '../../shared/ui/dialog'
+import { Input } from '../../shared/ui/input'
+import { Select } from '../../shared/ui/select'
+
+export type EvaluationRuleDraft = {
+  key: string
+  name: string
+  evaluatorType: string
+  configuration: Record<string, unknown>
+  weight: string
+  required: boolean
+}
+
+export type EvaluationProfileDraft = {
+  name: string
+  description: string | null
+  visibility: string
+  aggregation: string
+  passThreshold: string
+  rules: EvaluationRuleDraft[]
+}
+
+type RuleForm = Omit<EvaluationRuleDraft, 'configuration'> & { id: string; configuration: string }
+
+export function EvaluationProfileDialog({ onClose, onSubmit, open }: { onClose: () => void; onSubmit: (value: EvaluationProfileDraft) => Promise<void>; open: boolean }) {
+  const { t } = useTranslation()
+  const [name, setName] = useState('')
+  const [description, setDescription] = useState('')
+  const [visibility, setVisibility] = useState('department')
+  const [aggregation, setAggregation] = useState('all')
+  const [passThreshold, setPassThreshold] = useState('1')
+  const [rules, setRules] = useState<RuleForm[]>([newRule(0)])
+  const [error, setError] = useState('')
+  const [pending, setPending] = useState(false)
+  const updateRule = (id: string, value: Partial<RuleForm>) => setRules((current) => current.map((rule) => rule.id === id ? { ...rule, ...value } : rule))
+  const submit = async (event: FormEvent) => {
+    event.preventDefault()
+    setError('')
+    try {
+      if (!name.trim() || rules.some((rule) => !rule.name.trim() || !rule.key.trim())) throw new Error(t('m3.profileRequiredFields'))
+      const parsed = rules.map(({ id: _, configuration, ...rule }) => ({ ...rule, configuration: JSON.parse(configuration || '{}') as Record<string, unknown> }))
+      setPending(true)
+      await onSubmit({ name: name.trim(), description: description.trim() || null, visibility, aggregation, passThreshold, rules: parsed })
+      onClose()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setPending(false)
+    }
+  }
+  return <Dialog onOpenChange={(value) => { if (!value && !pending) onClose() }} open={open}>
+    <DialogContent className="w-[min(900px,calc(100vw-48px))]" description={t('m3.profileDescription')} title={t('m3.newProfile')}>
+      <form onSubmit={(event) => void submit(event)}>
+        <div className="border-b border-border px-6 py-5"><h2 className="text-base font-semibold">{t('m3.newProfile')}</h2><p className="mt-1 text-xs text-muted-foreground">{t('m3.profileDescription')}</p></div>
+        <div className="space-y-6 p-6">
+          <div className="grid grid-cols-2 gap-4">
+            <Field label={t('common.name')}><Input onChange={(event) => setName(event.target.value)} required value={name} /></Field>
+            <Field label={t('m2.visibility')}><Select aria-label={t('m2.visibility')} className="w-full" onValueChange={setVisibility} options={['private', 'department', 'company'].map((value) => ({ value, label: t(`m2.${value}`) }))} value={visibility} /></Field>
+            <Field className="col-span-2" label={t('common.description')}><textarea className="min-h-20 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm outline-none focus:border-primary/60 focus:ring-2 focus:ring-primary/15" onChange={(event) => setDescription(event.target.value)} value={description} /></Field>
+            <Field label={t('m3.aggregation')}><Select aria-label={t('m3.aggregation')} className="w-full" onValueChange={setAggregation} options={['all', 'any', 'weighted'].map((value) => ({ value, label: t(`m3.aggregationOptions.${value}`) }))} value={aggregation} /></Field>
+            <Field label={t('m3.passThreshold')}><Input max="1" min="0" onChange={(event) => setPassThreshold(event.target.value)} required step="0.01" type="number" value={passThreshold} /></Field>
+          </div>
+          <section>
+            <div className="flex items-center justify-between"><div><h3 className="text-sm font-semibold">{t('m3.scoringRules')}</h3><p className="mt-1 text-xs text-muted-foreground">{t('m3.scoringRulesDescription')}</p></div><Button onClick={() => setRules((current) => [...current, newRule(current.length)])} size="sm" type="button" variant="secondary"><Plus className="size-3.5" />{t('m3.addRule')}</Button></div>
+            <div className="mt-4 space-y-3">{rules.map((rule, index) => <div className="rounded-lg border border-border bg-canvas/30 p-4" key={rule.id}>
+              <div className="flex items-center justify-between"><span className="text-xs font-semibold">{t('m3.ruleNumber', { number: index + 1 })}</span><Button aria-label={t('m3.removeRule')} disabled={rules.length === 1} onClick={() => setRules((current) => current.filter((item) => item.id !== rule.id))} size="icon" type="button" variant="ghost"><Trash2 className="size-3.5" /></Button></div>
+              <div className="mt-3 grid grid-cols-2 gap-3">
+                <Field label={t('m3.ruleName')}><Input onChange={(event) => updateRule(rule.id, { name: event.target.value })} required value={rule.name} /></Field>
+                <Field label={t('m3.ruleKey')}><Input onChange={(event) => updateRule(rule.id, { key: event.target.value })} pattern="[A-Za-z0-9_-]+" required value={rule.key} /></Field>
+                <Field label={t('m3.ruleType')}><Select aria-label={t('m3.ruleType')} className="w-full" onValueChange={(value) => updateRule(rule.id, { evaluatorType: value })} options={['exact', 'contains', 'regex', 'json_schema'].map((value) => ({ value, label: t(`m3.ruleTypes.${value}`) }))} value={rule.evaluatorType} /></Field>
+                <Field label={t('m3.ruleWeight')}><Input min="0.0001" onChange={(event) => updateRule(rule.id, { weight: event.target.value })} required step="any" type="number" value={rule.weight} /></Field>
+                <Field className="col-span-2" label={t('m3.ruleConfiguration')}><textarea className="min-h-20 w-full rounded-lg border border-border bg-surface px-3 py-2 font-mono text-xs outline-none focus:border-primary/60 focus:ring-2 focus:ring-primary/15" onChange={(event) => updateRule(rule.id, { configuration: event.target.value })} value={rule.configuration} /></Field>
+                <label className="col-span-2 flex items-center gap-2 text-xs"><input checked={rule.required} onChange={(event) => updateRule(rule.id, { required: event.target.checked })} type="checkbox" />{t('m3.ruleRequired')}</label>
+              </div>
+            </div>)}</div>
+          </section>
+          {error && <p className="rounded-lg border border-danger/25 bg-danger/10 px-3 py-2 text-xs text-danger">{error}</p>}
+        </div>
+        <div className="flex justify-end gap-2 border-t border-border px-6 py-4"><Button disabled={pending} onClick={onClose} type="button" variant="ghost">{t('common.cancel')}</Button><Button disabled={pending} type="submit">{t('common.save')}</Button></div>
+      </form>
+    </DialogContent>
+  </Dialog>
+}
+
+function newRule(index: number): RuleForm { return { id: crypto.randomUUID(), key: `rule_${index + 1}`, name: '', evaluatorType: 'exact', configuration: '{}', weight: '1', required: true } }
+function Field({ children, className = '', label }: { children: React.ReactNode; className?: string; label: string }) { return <label className={`space-y-1.5 text-xs font-medium ${className}`}><span>{label}</span>{children}</label> }

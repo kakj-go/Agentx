@@ -28,4 +28,4 @@ kubectl apply -k "$root/deploy/k8s/overlays/local"
 kubectl -n $namespace rollout status statefulset/mysql --timeout=420s
 kubectl -n $namespace wait --for=condition=complete job/platform-api-migrate --timeout=300s
 
-Write-Output "Agentx development MySQL was recreated from migrations 0001-0007."
+Write-Output "Agentx development MySQL was recreated from all current migrations."

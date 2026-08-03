@@ -80,6 +80,20 @@ domain_id!(NodeExecutionId);
 domain_id!(ArtifactId);
 domain_id!(AuditEventId);
 domain_id!(RefreshSessionId);
+domain_id!(ApplicationId);
+domain_id!(ApplicationDeploymentId);
+domain_id!(ApiKeyId);
+domain_id!(SessionId);
+domain_id!(MessageId);
+domain_id!(InvocationId);
+domain_id!(DatasetId);
+domain_id!(DatasetVersionId);
+domain_id!(EvaluationProfileId);
+domain_id!(EvaluationProfileVersionId);
+domain_id!(EvaluationRunId);
+domain_id!(ApprovalTaskId);
+domain_id!(NotificationId);
+domain_id!(TraceId);
 
 #[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 #[serde(transparent)]
@@ -178,4 +192,57 @@ pub enum ExecutionStatus {
     Failed,
     Cancelled,
     TimedOut,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExecutionSummary {
+    pub id: ExecutionId,
+    pub tenant_id: TenantId,
+    pub workflow_id: WorkflowId,
+    pub workflow_version_id: WorkflowVersionId,
+    pub invocation_id: Option<InvocationId>,
+    pub session_id: Option<SessionId>,
+    pub trace_id: TraceId,
+    pub trigger_type: String,
+    pub status: ExecutionStatus,
+    #[serde(with = "time::serde::rfc3339")]
+    pub started_at: OffsetDateTime,
+    #[serde(default, with = "time::serde::rfc3339::option")]
+    pub ended_at: Option<OffsetDateTime>,
+    pub duration_ms: Option<u64>,
+    pub cost_micros: u64,
+    pub error_code: Option<String>,
+    pub error_message: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TraceEvent {
+    pub event_id: Uuid,
+    pub tenant_id: TenantId,
+    pub trace_id: TraceId,
+    pub span_id: Uuid,
+    pub parent_span_id: Option<Uuid>,
+    pub execution_id: ExecutionId,
+    pub workflow_id: WorkflowId,
+    pub workflow_version_id: WorkflowVersionId,
+    pub node_execution_id: Option<NodeExecutionId>,
+    pub event_type: String,
+    pub status: String,
+    #[serde(with = "time::serde::rfc3339")]
+    pub event_time: OffsetDateTime,
+    pub run_index: u32,
+    pub iteration_index: u32,
+    pub duration_ms: Option<u64>,
+    pub model_name: Option<String>,
+    pub provider_name: Option<String>,
+    pub mcp_tool_name: Option<String>,
+    pub input_tokens: Option<u64>,
+    pub output_tokens: Option<u64>,
+    pub cost_micros: u64,
+    pub error_code: Option<String>,
+    pub error_message: Option<String>,
+    pub content_ref: Option<ArtifactId>,
+    pub attributes: serde_json::Value,
 }
