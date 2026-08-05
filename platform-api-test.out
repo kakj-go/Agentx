@@ -1,0 +1,52 @@
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 27 tests
+test connection_test::tests::blocks_local_private_and_metadata_networks ... ok
+test applications::tests::validates_public_configuration ... ok
+test operations::tests::company_admin_visibility_does_not_require_candidate_bindings ... ok
+test runtime_operations::tests::public_status_names_match_database ... ok
+test operations::tests::runtime_timestamps_use_rfc3339 ... ok
+test datasets::tests::profile_requires_valid_unique_rules_and_threshold ... ok
+test operations::tests::trace_query_redacts_secrets_even_for_legacy_rows ... ok
+test applications::tests::api_key_is_prefixed_and_only_its_hash_is_persistable ... ok
+test datasets::tests::jsonl_errors_include_line ... ok
+test datasets::tests::deterministic_rules_are_repeatable ... ok
+test sandbox_profiles::tests::configuration_hash_ignores_object_key_order ... ok
+test sandbox_profiles::tests::network_policy_must_default_to_deny ... ok
+test mcp_control::tests::streamable_http_discovers_and_invokes_tools ... ok
+test mcp_control::tests::legacy_sse_discovers_and_invokes_tools ... ok
+test security::tests::token_validates_kind_issuer_and_audience ... ok
+test skills_control::tests::markdown_links_follow_moved_files_and_sources ... ok
+test skills_control::tests::skill_document_requires_a_description ... ok
+test skills_control::tests::skill_document_round_trips_description_and_body ... ok
+test skills_control::tests::workspace_zip_accepts_a_valid_workspace ... ok
+test skills_control::tests::workspace_zip_requires_root_skill_markdown ... ok
+test skills_control::tests::workspace_zip_rejects_parent_traversal_and_duplicate_paths ... ok
+test connection_test::tests::accepts_json_and_yaml_openapi_documents ... ok
+test security::tests::initial_temporary_password_uses_the_dedicated_short_password_path ... ok
+test security::tests::password_hash_is_salted_and_verifiable ... ok
+test integration_tests::optional_infrastructure_containers_are_self_contained ... ok
+test migration_tests::mysql_migrations_upgrade_an_m1_schema_to_mcp_and_skill_workspace ... ok
+test integration_tests::mysql_migrations_are_idempotent_on_an_empty_database ... FAILED
+
+failures:
+
+failures:
+    integration_tests::mysql_migrations_are_idempotent_on_an_empty_database
+
+test result: FAILED. 26 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 46.31s
+

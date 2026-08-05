@@ -239,7 +239,7 @@ fn scope(context: &RuntimeContext) -> SandboxScope {
     SandboxScope {
         tenant_id: context.tenant_id.to_string(),
         workflow_id: context.workflow_id.to_string(),
-        workflow_version_id: context.workflow_version_id.to_string(),
+        workflow_version_id: context.workflow_version_id.map(|value| value.to_string()),
         execution_id: context.execution_id.to_string(),
         node_execution_id: context.node_execution_id.to_string(),
         attempt_id: context.attempt_id.to_string(),

@@ -6,12 +6,14 @@ use agentx_infrastructure::{
     config::RuntimeInfrastructureSettings,
     mysql,
     runtime_queue::RuntimeQueue,
-    runtime_repository::{CreateExecution, ResumeExecution, RuntimeRepository, TaskResult},
+    runtime_repository::{
+        CreateExecution, ResumeExecution, RuntimeExecutionSource, RuntimeRepository, TaskResult,
+    },
 };
 use agentx_runtime_rpc::v1::{
     CommandAccepted, ConfirmSideEffectRequest, ExecutionAccepted, ForkExecutionRequest,
     HeartbeatLeaseRequest, HeartbeatLeaseResponse, ReportNodeResultRequest,
-    RequestExecutionRequest, ResumeExecutionRequest,
+    RequestExecutionRequest, ResumeExecutionRequest, request_execution_request,
     runtime_coordinator_server::{RuntimeCoordinator, RuntimeCoordinatorServer},
 };
 use anyhow::{Context, Result};
@@ -38,11 +40,33 @@ impl RuntimeCoordinator for CoordinatorService {
         } else {
             "whole"
         };
+        let source = match request
+            .source
+            .ok_or_else(|| Status::invalid_argument("source is required"))?
+        {
+            request_execution_request::Source::Version(value) => {
+                RuntimeExecutionSource::Version(uuid(&value.version_id, "version.version_id")?)
+            }
+            request_execution_request::Source::DraftRevision(value) => {
+                RuntimeExecutionSource::DraftRevision {
+                    workflow_id: uuid(&value.workflow_id, "draft_revision.workflow_id")?,
+                    revision: value.revision,
+                }
+            }
+        };
+        let debug_plan = parse_json(&request.debug_plan_json, "debug_plan_json")?;
+        let runtime_settings = serde_json::json!({
+            "mode": "whole",
+            "sideEffectDecisions": debug_plan
+                .get("sideEffectDecisions")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!({})),
+        });
         let created = self
             .repository
             .create_execution(CreateExecution {
                 tenant_id: uuid(&request.tenant_id, "tenant_id")?,
-                workflow_version_id: uuid(&request.workflow_version_id, "workflow_version_id")?,
+                source,
                 invocation_id: optional_uuid(request.invocation_id, "invocation_id")?,
                 session_id: optional_uuid(request.session_id, "session_id")?,
                 requested_by: optional_uuid(request.requested_by, "requested_by")?,
@@ -57,7 +81,14 @@ impl RuntimeCoordinator for CoordinatorService {
                 parent_execution_id: None,
                 fork_checkpoint_id: None,
                 fork_mode: None,
-                runtime_settings: serde_json::json!({"mode":"whole"}),
+                runtime_settings,
+                debug_plan,
+                debug_overlay_snapshot: parse_json(
+                    &request.debug_overlay_json,
+                    "debug_overlay_json",
+                )?,
+                draft_resource_snapshots: serde_json::from_str(&request.resource_snapshots_json)
+                    .map_err(|_| Status::invalid_argument("resource_snapshots_json is invalid"))?,
                 initial_machine: None,
             })
             .await

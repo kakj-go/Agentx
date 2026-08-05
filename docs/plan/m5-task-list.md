@@ -1,6 +1,6 @@
 # M5 Agent 运行实施任务清单
 
-状态：当前 Kubernetes 部署验收 `done`。AGT-001～013、固定协议门禁、资源 Runtime、Agent Ledger/预算/循环、Rust OpenSandbox Adapter、Sandbox Manager、Agent/Code API 与 Workbench、固定版本 LightRAG/Mem0 和全量临时 Kubernetes E2E 均已完成。gVisor/Kata、生产 Vault、镜像签名和生产级跨租户攻击隔离列为后续生产强化，不阻塞 M5。OpenSandbox 选择及本机实测结论见 [可行性评估](opensandbox-feasibility.md)。
+状态：当前 Kubernetes 部署验收 `done`。AGT-001～013、固定协议门禁、资源 Runtime、Agent Ledger/预算/循环、Rust OpenSandbox Adapter、Sandbox Manager、Agent/Code API 与 Workbench、固定版本 LightRAG/Mem0 和临时 Kubernetes Runtime E2E 均已完成。AGT-010 的 Docker+runc 功能基线保持 `done`；gVisor/Kata、CPU/PID/磁盘实际强制、双栈 egress、生产 Vault、镜像签名和生产级跨租户攻击隔离标记为“暂不重试（deferred）”，不在当前环境继续复跑，统一转入 M7 的 INT-006/010/011/014。OpenSandbox 选择及本机实测结论见 [可行性评估](opensandbox-feasibility.md)。
 
 ## 1. 目标和完成边界
 
@@ -100,7 +100,7 @@ M5-0 的固定退出检查：
 `agentx-e2e` Namespace 只承载 Agentx 和测试依赖，OpenSandbox Docker Server 运行在 Docker Desktop 主机或由脚本探测。脚本必须：
 
 1. 检查 OpenSandbox `/health`、固定 Spec/组件兼容矩阵、API Key 和本次测试前 Sandbox 清单。
-2. 创建包含 Agent、MCP Tool、Code 和 Approval 的 Workflow，运行一次成功和一次失败分支。
+2. 使用版本化 Fixture 创建包含 Agent、MCP Tool、Code 和 Approval 的 Workflow，运行一次成功和一次失败分支；只通过 Studio UI 创建和配置该 Workflow 的验收归入 M6 STU-002/005/008～011/016。
 3. 证明 Python/JavaScript/Shell 只在 Sandbox 执行，并验证文件 Artifact、stdout/stderr 和退出码。
 4. 证明默认拒绝网络、允许域名、资源超限、TTL、取消、Worker 强退和 Sandbox Manager 重启后的回收。
 5. 断言每个测试 Sandbox 已销毁，保存 OpenSandbox 和 Kubernetes 日志，最后删除 Namespace；失败时也执行清理，`KeepNamespace` 只保留调试资源。
@@ -122,7 +122,7 @@ Kubernetes E2E 之前必须先运行不依赖集群的协议测试：固定 Open
 7. Agent/Code 节点、Trace 页面和 API 使用生成契约，中文/英文、浅色/深色、加载/错误/空状态和权限状态完整。
 8. `docs/plan/99-feature-traceability.md`、路线图、阶段文档和验收证据同步标记，且 M6/M7 只消费冻结后的 Node/Runtime/Trace 契约。
 
-按当前验收范围，阶段 10 已在 Docker Desktop Kubernetes+runc 基线下完成。gVisor/Kata 或等价 RuntimeClass、CPU/PID/磁盘强制、IPv4/IPv6 egress、生产 Vault、镜像签名/供应链和跨租户攻击隔离作为后续生产强化，不重新打开 AGT-001～013，也不计入当前 M6/M7 之前的剩余原子任务。
+按当前验收范围，阶段 10 已在 Docker Desktop Kubernetes+runc 基线下完成。gVisor/Kata 或等价 RuntimeClass、CPU/PID/磁盘强制、IPv4/IPv6 egress、生产 Vault、镜像签名/供应链和跨租户攻击隔离暂不重试，不重新打开 AGT-001～013；这些内容并入现有 M7 INT-006/010/011/014，不增加原子任务数量。
 
 ## 8. 任务完成状态
 
@@ -137,12 +137,28 @@ Kubernetes E2E 之前必须先运行不依赖集群的协议测试：固定 Open
 | AGT-007 | done | 重复指纹、重复错误、A-B-A-B、State Stall、正反例和 `limitAction` 矩阵已覆盖。 |
 | AGT-008 | done | 固定 Spec Hash、官方 Go Oracle、Lifecycle/execd、SSE/Endpoint/Header、协议不兼容、创建结果未知标签对账、Lease/Reaper 和 Manager 重启均有自动化证据。 |
 | AGT-009 | done | Python/JavaScript/Shell/Browser 固定 argv Runner、上传/下载、退出码、取消、输出上限和 partial Artifact/Trace E2E 已覆盖。 |
-| AGT-010 | done | Sandbox Profile/digest/CPU/内存/PID/磁盘契约、Metrics、TTL、网络 deny/allow、租户并发和回收已实现；RuntimeClass 强制隔离效果列为后续生产强化。 |
+| AGT-010 | done | Sandbox Profile/digest/CPU/内存/PID/磁盘契约、Metrics、内存、TTL、网络 deny/allow、租户并发和回收已实现。当前 Docker+runc 功能基线不重开；CPU/PID/磁盘实际强制、双栈 egress、RuntimeClass 和跨租户攻击隔离暂不重试，转入 M7 INT-006/010/011/014。 |
 | AGT-011 | done | Execution/Attempt/Sandbox 绑定 Handle、临时 secret 文件、跨分片脱敏、expiry/replay 和终止撤销已覆盖；生产 Vault 列为后续生产强化。 |
 | AGT-012 | done | ClickHouse M5 Schema、MySQL Ledger、Trace Outbox、成本、partial Artifact、ClickHouse 中断补投和查询脱敏已覆盖。 |
 | AGT-013 | done | Manifest/编译器、API/生成 Client、Runtime Status、Workbench、loading/error/empty/权限组件测试以及桌面/移动/深浅色真实页面验收已完成；画布配置仍按边界属于 M6。 |
 
-## 9. 向 M6/M7 输出
+## 9. 后续补全归属
+
+本节只分配尚未完成的强化和产品闭环，不重新打开 AGT-001～013：
+
+| 待补内容 | 当前处理 | 后续任务 | 完成证据 |
+|---|---|---|---|
+| Agent/Code 节点画布搜索、拖拽和 Manifest 参数表单 | 移交 M6 | STU-002、STU-005、STU-008 | Node Manifest 驱动，不在画布硬编码节点协议 |
+| Model/MCP/Skill/RAG/Memory/Credential/Sandbox Profile 统一资源选择 | 移交 M6 | STU-009 | 用户可见性和 Workflow Grant 同时通过 |
+| 仅通过 UI 创建 Agent、MCP Tool、Code、Approval Workflow 并运行 | 移交 M6 | STU-005、STU-008–011、STU-016 | Playwright 真实拖拽、连线、Manifest 配置、保存和 Draft Revision 运行，不依赖 Fixture 写入被测业务数据 |
+| Agent/Tool/Sandbox Trace 在画布中的定位和调试联动 | 移交 M6 | STU-013 | 从 Trace 定位 iteration、runIndex、Attempt、Artifact 和失败节点 |
+| CPU、PID、磁盘和 TTL 的实际强制及租户配额无相互影响 | 暂不重试，移交 M7 | INT-006、INT-010 | 生产候选集群故障注入、最终 MySQL 状态和残留 Sandbox 断言 |
+| gVisor/Kata RuntimeClass、IPv4/IPv6 egress 和跨租户攻击隔离 | 暂不重试，移交 M7 | INT-010、INT-011 | 实际 Sandbox Pod RuntimeClass、网络策略和两租户安全矩阵 |
+| 生产 Vault、镜像签名、digest 供应链和发布证据 | 暂不重试，移交 M7 | INT-011、INT-014 | Secret/Vault、签名验证、镜像清单和可重复发布证据 |
+
+进入 M6 前还需要修复两个验收工具问题：`scripts/check.ps1` 的生成契约比较必须忽略 CRLF/LF 差异；Playwright/JUnit 输出必须按阶段和运行 ID 隔离，避免有效报告被无环境运行覆盖。这里不要求重跑 AGT-010；完整生产候选复验和 `skipped=0` 的持久化证据由 M7 INT-014 统一生成。这些修正不新增业务任务编号。
+
+## 10. 向 M6/M7 输出
 
 - Model、MCP Tool、Skill、RAG、Memory、Agent 和 Code Node Manifest/Schema。
 - 资源授权解释、预算、循环、Sandbox Profile 和 OpenSandbox Adapter 稳定 API。

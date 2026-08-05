@@ -105,14 +105,14 @@ impl LeaseStore {
             .await?
             .context("SANDBOX_SCOPE_LEASE_INVALID")?;
         let workflow_id: Uuid = row.try_get("workflow_id")?;
-        let workflow_version_id: Uuid = row.try_get("workflow_version_id")?;
+        let workflow_version_id: Option<Uuid> = row.try_get("workflow_version_id")?;
         if !scope.workflow_id.is_empty()
             && parse_uuid(&scope.workflow_id, "workflow_id")? != workflow_id
         {
             anyhow::bail!("SANDBOX_SCOPE_WORKFLOW_MISMATCH");
         }
-        if !scope.workflow_version_id.is_empty()
-            && parse_uuid(&scope.workflow_version_id, "workflow_version_id")? != workflow_version_id
+        if let Some(scope_version) = scope.workflow_version_id.as_deref()
+            && Some(parse_uuid(scope_version, "workflow_version_id")?) != workflow_version_id
         {
             anyhow::bail!("SANDBOX_SCOPE_WORKFLOW_VERSION_MISMATCH");
         }
@@ -129,7 +129,7 @@ impl LeaseStore {
             tenant_id: TenantId::from_uuid(tenant),
             workflow_service_identity_id: WorkflowServiceIdentityId::from_uuid(identity),
             workflow_id: WorkflowId::from_uuid(workflow_id),
-            workflow_version_id: WorkflowVersionId::from_uuid(workflow_version_id),
+            workflow_version_id: workflow_version_id.map(WorkflowVersionId::from_uuid),
             execution_id: ExecutionId::from_uuid(execution),
             node_execution_id: NodeExecutionId::from_uuid(node),
             attempt_id: AttemptId::from_uuid(attempt),
@@ -485,7 +485,7 @@ fn dummy_context() -> RuntimeContext {
         tenant_id: TenantId::from_uuid(Uuid::nil()),
         workflow_service_identity_id: WorkflowServiceIdentityId::from_uuid(Uuid::nil()),
         workflow_id: WorkflowId::from_uuid(Uuid::nil()),
-        workflow_version_id: WorkflowVersionId::from_uuid(Uuid::nil()),
+        workflow_version_id: None,
         execution_id: ExecutionId::from_uuid(Uuid::nil()),
         node_execution_id: NodeExecutionId::from_uuid(Uuid::nil()),
         attempt_id: AttemptId::from_uuid(Uuid::nil()),

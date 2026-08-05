@@ -101,4 +101,4 @@ OpenSandbox 官方本地要求为 Docker 和 Python 3.10+，并明确支持 Wind
 
 当前 Kubernetes 基线已完成 Agent+MCP、循环停止以及真实 OpenSandbox Python、JavaScript、Shell、Browser Command、文件 Artifact、部分 stdout/stderr Artifact/Trace、Credential、网络 deny/allow、内存限制、自然 TTL、取消、租户并发配额和 Manager 重启/Reaper E2E。Browser 固定 `opensandbox/playwright@sha256:09709684c785db3107fc3357e7af5b921f5d5a60e75071601122a473d344b475`，只使用 `/home/playwright` 工作根目录；其他 Runner 使用 `/workspace`。CPU/PID/磁盘强制效果与跨租户攻击面不属于当前 Kubernetes+runc 验收范围，列为后续生产强化。
 
-后续生产发布前另设强隔离门禁：实际 Sandbox Pod 应使用批准的 RuntimeClass，并验证节点隔离、跨租户攻击面、IPv4/IPv6 egress、Credential Vault、镜像供应链和故障回收。该门禁是生产强化，不阻塞当前 Kubernetes+runc 基线，也不改变 M5 功能完成状态。
+后续生产发布前另设强隔离门禁：实际 Sandbox Pod 应使用批准的 RuntimeClass，并验证节点隔离、跨租户攻击面、IPv4/IPv6 egress、Credential Vault、镜像供应链和故障回收。该门禁当前暂不重试，由 M7 INT-006/010/011/014 统一验收；它不阻塞当前 Kubernetes+runc 基线，也不改变 M5 功能完成状态。

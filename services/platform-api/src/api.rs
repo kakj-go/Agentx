@@ -7,9 +7,9 @@ use axum::{
 use utoipa::OpenApi;
 
 use crate::{
-    applications, auth, connection_test, credentials, datasets, external_resources, grants, iam,
-    mcp_control, models::*, models_control, operations, runtime_operations, sandbox_profiles,
-    skills_control, state::AppState, workflows,
+    applications, auth, catalog, connection_test, credentials, datasets, external_resources,
+    grants, iam, mcp_control, models::*, models_control, operations, runtime_operations,
+    sandbox_profiles, skills_control, state::AppState, workflow_studio, workflows,
 };
 
 #[derive(OpenApi)]
@@ -28,6 +28,10 @@ use crate::{
         workflows::delete_member, workflows::list_environments, workflows::create_environment,
         workflows::update_environment, workflows::list_deployments, workflows::publish,
         workflows::rollback, workflows::runtime_unavailable,
+        catalog::list_node_definitions, catalog::get_node_definition,
+        catalog::list_node_provider_options,
+        workflow_studio::validate_draft, workflow_studio::preview_expression, workflow_studio::get_debug_overlay,
+        workflow_studio::save_debug_overlay, workflow_studio::delete_debug_overlay,
         credentials::list_credentials, credentials::create_credential, credentials::get_credential,
         credentials::update_credential, credentials::rotate_credential,
         models_control::list_models, models_control::get_model, models_control::list_providers,
@@ -86,6 +90,7 @@ use crate::{
         operations::execution_trace, operations::execution_artifact, operations::execution_runtime_details, operations::runtime_status,
         operations::dashboard_summary,
         runtime_operations::start_execution, runtime_operations::cancel_execution,
+        runtime_operations::start_debug_execution, runtime_operations::list_execution_events,
         runtime_operations::list_nodes, runtime_operations::get_node,
         runtime_operations::list_checkpoints, runtime_operations::list_waits,
         runtime_operations::fork_execution, runtime_operations::confirm_side_effect
@@ -105,6 +110,13 @@ use crate::{
         workflows::CreateEnvironmentRequest, workflows::UpdateEnvironmentRequest,
         workflows::DeploymentResponse,
         workflows::PublishWorkflowRequest, workflows::RollbackWorkflowRequest,
+        catalog::NodeDefinitionQuery, catalog::NodeDefinitionSummary,
+        catalog::NodeDefinitionDetail, catalog::NodeProviderQuery,
+        catalog::NodeProviderOption, catalog::NodeProviderOptionsResponse,
+        workflow_studio::ValidateDraftRequest, workflow_studio::ValidationIssue,
+        workflow_studio::ValidateDraftResponse, workflow_studio::ExpressionPreviewRequest,
+        workflow_studio::ExpressionPreviewResponse, workflow_studio::DebugOverlayResponse,
+        workflow_studio::SaveDebugOverlayRequest,
         credentials::CredentialResponse, credentials::CreateCredentialRequest,
         credentials::UpdateCredentialRequest, credentials::RotateCredentialRequest,
         models_control::ModelResponse, models_control::ModelProviderResponse,
@@ -168,7 +180,9 @@ use crate::{
         runtime_operations::CheckpointResponse, runtime_operations::CheckpointListResponse,
         runtime_operations::WaitResponse, runtime_operations::WaitListResponse,
         runtime_operations::ForkRequest, runtime_operations::SideEffectConfirmationRequest,
-        runtime_operations::IdempotentCommandResponse
+        runtime_operations::IdempotentCommandResponse, runtime_operations::DebugExecutionRequest,
+        runtime_operations::ExecutionEventQuery, runtime_operations::ExecutionEventResponse,
+        runtime_operations::ExecutionEventListResponse
     )),
     tags(
         (name = "Agentx M1", description = "Bootstrap, authentication and IAM control plane"),
@@ -206,6 +220,15 @@ pub(crate) fn build_api_router(state: AppState) -> Router {
         .route("/roles/{id}", patch(iam::update_role))
         .route("/permissions", get(iam::list_permissions));
     let api = api
+        .route("/node-definitions", get(catalog::list_node_definitions))
+        .route(
+            "/node-definitions/{node_type}/versions/{version}",
+            get(catalog::get_node_definition),
+        )
+        .route(
+            "/node-definitions/{node_type}/versions/{version}/providers/{provider}",
+            get(catalog::list_node_provider_options),
+        )
         .route(
             "/sandbox-profiles",
             get(sandbox_profiles::list_profiles).post(sandbox_profiles::create_profile),
@@ -231,6 +254,20 @@ pub(crate) fn build_api_router(state: AppState) -> Router {
         .route(
             "/workflows/{id}/draft",
             get(workflows::get_draft).put(workflows::save_draft),
+        )
+        .route(
+            "/workflows/{id}/draft/validate",
+            post(workflow_studio::validate_draft),
+        )
+        .route(
+            "/workflows/{id}/expressions/preview",
+            post(workflow_studio::preview_expression),
+        )
+        .route(
+            "/workflows/{id}/debug-overlays/{node_id}",
+            get(workflow_studio::get_debug_overlay)
+                .put(workflow_studio::save_debug_overlay)
+                .delete(workflow_studio::delete_debug_overlay),
         )
         .route("/workflows/{id}/revisions", get(workflows::list_revisions))
         .route(
@@ -258,6 +295,10 @@ pub(crate) fn build_api_router(state: AppState) -> Router {
             get(grants::validate_workflow_resources),
         )
         .route("/workflows/{id}/run", post(workflows::runtime_unavailable))
+        .route(
+            "/workflows/{id}/debug-executions",
+            post(runtime_operations::start_debug_execution),
+        )
         .route(
             "/environments",
             get(workflows::list_environments).post(workflows::create_environment),
@@ -546,6 +587,10 @@ pub(crate) fn build_api_router(state: AppState) -> Router {
         .route(
             "/executions/{id}/cancel",
             post(runtime_operations::cancel_execution),
+        )
+        .route(
+            "/executions/{id}/events",
+            get(runtime_operations::list_execution_events),
         )
         .route(
             "/executions/{id}/nodes",

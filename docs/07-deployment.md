@@ -84,7 +84,7 @@ OpenSandbox Server、Controller、RuntimeClass 和计算节点不由主部署脚
 
 remote 模式部署一个逻辑 Sandbox Manager 服务；其多副本共享 MySQL Lease并连接一个 Lifecycle Endpoint。OpenSandbox Kubernetes Runtime 负责为会话创建并调度任意多个 Sandbox Pod。本阶段不实现多个独立 Docker Host Provider 的容量调度和 Sticky Routing。
 
-本地 Docker+runc 和当前 Kubernetes 环境用于功能验收。gVisor/Kata、生产 Vault、镜像签名和攻击隔离属于后续生产强化，不阻塞当前 Kubernetes 部署认证。
+本地 Docker+runc 和当前 Kubernetes 环境用于功能验收。gVisor/Kata、生产 Vault、镜像签名和攻击隔离当前暂不重试，由 M7 INT-006/010/011/014 作为生产发布强化验收，不阻塞当前 Kubernetes 部署认证。
 
 ## 8. 运行健康与扩展
 

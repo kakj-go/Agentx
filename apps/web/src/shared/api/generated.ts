@@ -500,6 +500,17 @@ export interface components {
             /** Format: int64 */
             versionNumber: number;
         };
+        DebugExecutionRequest: {
+            /** Format: int64 */
+            expectedRevision: number;
+            idempotencyKey?: string | null;
+            input?: unknown;
+            inputSource?: unknown;
+            mode: string;
+            overlayIds?: string[];
+            sideEffectDecisions?: unknown;
+            targetNodeId?: string | null;
+        };
         DebugMcpToolRequest: {
             arguments: unknown;
             confirmationText?: string | null;
@@ -513,6 +524,23 @@ export interface components {
             result: unknown;
             /** Format: uuid */
             toolVersionId: string;
+        };
+        DebugOverlayResponse: {
+            /** Format: uuid */
+            artifactId?: string | null;
+            /** Format: uuid */
+            id: string;
+            kind: string;
+            nodeId: string;
+            payload: unknown;
+            schemaHash?: string | null;
+            stale: boolean;
+            /** Format: date-time */
+            updatedAt: string;
+            /** Format: uuid */
+            updatedBy: string;
+            /** Format: uuid */
+            workflowId: string;
         };
         DecideApprovalRequest: {
             input?: unknown;
@@ -559,8 +587,10 @@ export interface components {
             workflowVersionId: string;
         };
         DraftResponse: {
-            contentHash: string;
             definition: unknown;
+            definitionHash: string;
+            editorDocument: unknown;
+            editorHash: string;
             /** Format: uuid */
             id: string;
             /** Format: int64 */
@@ -654,6 +684,26 @@ export interface components {
             replayed: boolean;
             status: string;
         };
+        ExecutionEventListResponse: {
+            items: components["schemas"]["ExecutionEventResponse"][];
+            /** Format: int64 */
+            nextCursor?: number | null;
+        };
+        ExecutionEventQuery: {
+            /** Format: int64 */
+            after?: number | null;
+            /** Format: int32 */
+            limit?: number | null;
+        };
+        ExecutionEventResponse: {
+            eventType: string;
+            /** Format: date-time */
+            occurredAt: string;
+            /** Format: int64 */
+            sequence: number;
+            status: string;
+            summary: unknown;
+        };
         ExecutionResponse: {
             /** Format: uuid */
             callerExecutionId?: string | null;
@@ -690,9 +740,22 @@ export interface components {
             workflowId: string;
             workflowName: string;
             /** Format: uuid */
-            workflowVersionId: string;
+            workflowVersionId?: string | null;
             /** Format: int64 */
-            workflowVersionNumber: number;
+            workflowVersionNumber?: number | null;
+        };
+        ExpressionPreviewRequest: {
+            expression: string;
+            input?: unknown;
+            itemIndex?: number;
+            json?: unknown;
+            linkedNodes?: unknown;
+            /** Format: int32 */
+            runIndex?: number;
+        };
+        ExpressionPreviewResponse: {
+            redacted: boolean;
+            value: unknown;
         };
         FieldError: {
             code: string;
@@ -1006,6 +1069,34 @@ export interface components {
             status: string;
             workerInstanceId?: string | null;
         };
+        NodeDefinitionDetail: {
+            manifest: unknown;
+            manifestHash: string;
+            nodeType: string;
+            /** Format: int32 */
+            version: number;
+        };
+        NodeDefinitionQuery: {
+            category?: string | null;
+            /** Format: int32 */
+            page?: number | null;
+            /** Format: int32 */
+            pageSize?: number | null;
+            search?: string | null;
+        };
+        NodeDefinitionSummary: {
+            capability: string;
+            category: string;
+            description: string;
+            displayName: string;
+            executionStyle: string;
+            iconKey: string;
+            keywords: string[];
+            manifestHash: string;
+            nodeType: string;
+            /** Format: int32 */
+            version: number;
+        };
         NodeExecutionListResponse: {
             items: components["schemas"]["NodeExecutionResponse"][];
         };
@@ -1040,6 +1131,19 @@ export interface components {
             /** Format: date-time */
             startedAt?: string | null;
             status: string;
+        };
+        NodeProviderOption: {
+            description?: string | null;
+            label: string;
+            value: string;
+        };
+        NodeProviderOptionsResponse: {
+            items: components["schemas"]["NodeProviderOption"][];
+        };
+        NodeProviderQuery: {
+            /** Format: int32 */
+            limit?: number | null;
+            search?: string | null;
         };
         NotificationInboxResponse: {
             items: components["schemas"]["NotificationResponse"][];
@@ -1089,11 +1193,12 @@ export interface components {
             valid: boolean;
         };
         RevisionResponse: {
-            contentHash: string;
             /** Format: date-time */
             createdAt: string;
             /** Format: uuid */
             createdBy: string;
+            definitionHash: string;
+            editorHash: string;
             /** Format: uuid */
             id: string;
             /** Format: int64 */
@@ -1270,8 +1375,16 @@ export interface components {
             /** Format: int64 */
             versionNumber: number;
         };
+        SaveDebugOverlayRequest: {
+            /** Format: uuid */
+            artifactId?: string | null;
+            kind: string;
+            payload: unknown;
+            schemaHash?: string | null;
+        };
         SaveDraftRequest: {
             definition: unknown;
+            editorDocument?: unknown;
             /** Format: int64 */
             expectedRevision: number;
         };
@@ -1613,6 +1726,23 @@ export interface components {
             /** Format: int64 */
             version: number;
         };
+        ValidateDraftRequest: {
+            definition: unknown;
+            editorDocument?: unknown;
+        };
+        ValidateDraftResponse: {
+            compilerVersion?: string | null;
+            definitionHash?: string | null;
+            editorHash?: string | null;
+            issues: components["schemas"]["ValidationIssue"][];
+        };
+        ValidationIssue: {
+            code: string;
+            fieldPath?: string | null;
+            message: string;
+            nodeId?: string | null;
+            severity: string;
+        };
         VersionActionRequest: {
             /** Format: int64 */
             version: number;
@@ -1684,6 +1814,7 @@ export interface components {
             /** Format: uuid */
             createdBy: string;
             definition: unknown;
+            editorDocument: unknown;
             /** Format: uuid */
             id: string;
             schemaVersion: string;

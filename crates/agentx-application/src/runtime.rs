@@ -29,7 +29,7 @@ pub struct RuntimeContext {
     pub tenant_id: TenantId,
     pub workflow_service_identity_id: WorkflowServiceIdentityId,
     pub workflow_id: WorkflowId,
-    pub workflow_version_id: WorkflowVersionId,
+    pub workflow_version_id: Option<WorkflowVersionId>,
     pub execution_id: ExecutionId,
     pub node_execution_id: NodeExecutionId,
     pub attempt_id: AttemptId,

@@ -28,6 +28,7 @@
 - Application、Session、Message
 - Approval Task 和 Notification
 - Dataset、Evaluation Profile Version、Evaluation Run
+- Node Catalog、Manifest Version 和动态 Provider
 
 ### Workflow 运行面
 
@@ -122,13 +123,27 @@ Sandbox disabled 时不部署该服务。remote 模式下一个逻辑 Manager �
 - Studio 只能通过 Platform API 和 Trigger Gateway 调用后端。
 - Platform API 不直接执行节点。
 - Worker 不修改 Workflow Draft。
-- Execution 只能运行 Version Snapshot，不能直接运行实时变化的生产草稿。
+- Execution 只能运行不可变 Snapshot：生产入口使用 Version Source，Studio 调试使用精确 Draft Revision Source；任何入口都不能运行实时变化的 Draft Head。
+- Workflow Definition、Editor Document 和 Debug Overlay 分离；Compiler/Worker 只读取 Definition 和 Execution Snapshot。
+- Platform API、Compiler 和 Studio 通过同一 Node Catalog 解析 Manifest；不得分别维护节点类型和参数协议。
 - Scheduler 不依赖进程内状态判断工作流进度。
 - Redis 中的消息不是权威状态，消费前必须校验 MySQL。
 - ClickHouse 丢失或延迟不能影响 Execution 状态正确性。
 - 大型 Payload 通过 Artifact Reference 传递，避免数据库行无限增长。
 
-## 4. 技术栈建议
+## 4. 编辑与执行快照边界
+
+Studio 保存 `Definition + Editor Document`，Pin/Mock 进入独立 Debug Overlay。Platform API 对 Draft Revision 或 Version 做权限与资源校验，Coordinator 随后在同一事务中固化 Execution Snapshot；Worker 从此不再读取 Draft、Version Head 或可变 Resource Head。
+
+```text
+Draft Head --save--> Draft Revision --debug--+
+                                                +--> Execution Snapshot --> Coordinator/Worker
+Version ---------------------------production--+
+```
+
+Draft Debug 和 Version Execution 只在来源解析阶段不同，后续共享调度、Checkpoint、Trace、取消、恢复和 Sandbox。`execution_snapshots` 与 Execution 一对一，Node/Agent/Sandbox 继续以必填 `execution_id` 作为快照和凭证作用域；`workflow_version_id` 只在 Version Source 下存在。
+
+## 5. 技术栈建议
 
 结合当前 Rust 项目：
 
@@ -147,7 +162,7 @@ Sandbox disabled 时不部署该服务。remote 模式下一个逻辑 Manager �
 
 首期不发布 Rust、Python 或 JavaScript Node SDK。节点扩展通过版本化 Node Manifest、Node Action/Lifecycle API、OpenAPI/JSON Schema、接入文档和协议一致性 Fixture 完成；平台内部 Rust `NodeRunner` 只是 builtin Adapter。常规 REST 集成优先使用 declarative_http，复杂外部实现使用 remote_action，Python 与 JavaScript 自定义代码必须放在 OpenSandbox 内执行。Rust 侧基于固定版本的 OpenSandbox OpenAPI 维护内部 DTO 和普通 HTTP 调用，并手写 SSE、Endpoint、安全校验和错误映射；不把供应商 SDK 或 Sidecar 嵌入运行链路。
 
-## 5. 一致性边界
+## 6. 一致性边界
 
 MySQL 事务负责：
 

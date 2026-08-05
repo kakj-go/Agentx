@@ -1,5 +1,10 @@
 import { defineConfig, devices } from '@playwright/test'
 
+const stage = process.env.AGENTX_E2E_STAGE ?? 'local'
+const runId = process.env.AGENTX_E2E_RUN_ID ?? new Date().toISOString().replaceAll(':', '-').replaceAll('.', '-')
+const suite = process.env.AGENTX_E2E_SUITE
+const resultRoot = `test-results/${stage}/${runId}${suite ? `/${suite}` : ''}`
+
 export default defineConfig({
   testDir: './tests',
   fullyParallel: false,
@@ -16,10 +21,10 @@ export default defineConfig({
     video: 'retain-on-failure',
   },
   expect: { timeout: 15_000 },
-  outputDir: 'test-results/artifacts',
+  outputDir: `${resultRoot}/artifacts`,
   reporter: [
     ['list'],
-    ['html', { outputFolder: 'playwright-report', open: 'never' }],
-    ['junit', { outputFile: 'test-results/junit.xml' }],
+    ['html', { outputFolder: `${resultRoot}/playwright-report`, open: 'never' }],
+    ['junit', { outputFile: `${resultRoot}/junit.xml` }],
   ],
 })

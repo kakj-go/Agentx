@@ -129,8 +129,8 @@ pub struct ExecutionResponse {
     pub id: Uuid,
     pub workflow_id: Uuid,
     pub workflow_name: String,
-    pub workflow_version_id: Uuid,
-    pub workflow_version_number: u64,
+    pub workflow_version_id: Option<Uuid>,
+    pub workflow_version_number: Option<u64>,
     pub invocation_id: Option<Uuid>,
     pub session_id: Option<Uuid>,
     pub trace_id: Uuid,
@@ -937,7 +937,7 @@ pub async fn dashboard_summary(
 }
 
 const APPROVAL_SELECT: &str = "SELECT t.id,t.execution_id,t.workflow_id,w.name workflow_name,t.node_id,t.title,t.description,t.request_payload_json,t.status,t.claimed_by,u.display_name claimed_by_name,t.resume_status,t.deadline_at,t.version,t.created_at FROM approval_tasks t JOIN workflows w ON w.id=t.workflow_id LEFT JOIN users u ON u.id=t.claimed_by";
-const EXECUTION_SELECT: &str = "SELECT e.id,e.workflow_id,w.name workflow_name,e.workflow_version_id,wv.version_number workflow_version_number,e.invocation_id,e.session_id,e.trace_id,e.trigger_type,e.execution_type,e.parent_execution_id,e.caller_execution_id,e.fork_checkpoint_id,e.status,e.started_at,e.ended_at,e.duration_ms,e.cost_micros,e.input_tokens,e.output_tokens,e.error_code,e.error_message FROM workflow_executions e JOIN workflows w ON w.id=e.workflow_id JOIN workflow_versions wv ON wv.id=e.workflow_version_id";
+const EXECUTION_SELECT: &str = "SELECT e.id,e.workflow_id,w.name workflow_name,e.workflow_version_id,wv.version_number workflow_version_number,e.invocation_id,e.session_id,e.trace_id,e.trigger_type,e.execution_type,e.parent_execution_id,e.caller_execution_id,e.fork_checkpoint_id,e.status,e.started_at,e.ended_at,e.duration_ms,e.cost_micros,e.input_tokens,e.output_tokens,e.error_code,e.error_message FROM workflow_executions e JOIN workflows w ON w.id=e.workflow_id LEFT JOIN workflow_versions wv ON wv.id=e.workflow_version_id";
 const WORKFLOW_VISIBILITY: &str = "(w.owner_user_id=? OR w.visibility='company' OR EXISTS(SELECT 1 FROM workflow_members wm WHERE wm.workflow_id=w.id AND wm.user_id=?) OR (w.visibility='department' AND EXISTS(SELECT 1 FROM user_roles ur JOIN department_closure dc ON dc.ancestor_id=ur.scope_department_id AND dc.tenant_id=ur.tenant_id WHERE ur.user_id=? AND ur.tenant_id=w.tenant_id AND dc.descendant_id=w.owner_department_id)))";
 
 fn workflow_visibility_sql(actor: &AuthActor) -> &'static str {
@@ -1361,7 +1361,7 @@ fn format_timestamp(value: OffsetDateTime) -> AppResult<String> {
     value.format(&Rfc3339).map_err(AppError::internal)
 }
 async fn load_execution(state: &AppState, tenant: Uuid, id: Uuid) -> AppResult<ExecutionResponse> {
-    let sql = "SELECT e.id,e.workflow_id,w.name workflow_name,e.workflow_version_id,wv.version_number workflow_version_number,e.invocation_id,e.session_id,e.trace_id,e.trigger_type,e.execution_type,e.parent_execution_id,e.caller_execution_id,e.fork_checkpoint_id,e.status,e.started_at,e.ended_at,e.duration_ms,e.cost_micros,e.input_tokens,e.output_tokens,e.error_code,e.error_message FROM workflow_executions e JOIN workflows w ON w.id=e.workflow_id JOIN workflow_versions wv ON wv.id=e.workflow_version_id WHERE e.tenant_id=? AND e.id=?";
+    let sql = "SELECT e.id,e.workflow_id,w.name workflow_name,e.workflow_version_id,wv.version_number workflow_version_number,e.invocation_id,e.session_id,e.trace_id,e.trigger_type,e.execution_type,e.parent_execution_id,e.caller_execution_id,e.fork_checkpoint_id,e.status,e.started_at,e.ended_at,e.duration_ms,e.cost_micros,e.input_tokens,e.output_tokens,e.error_code,e.error_message FROM workflow_executions e JOIN workflows w ON w.id=e.workflow_id LEFT JOIN workflow_versions wv ON wv.id=e.workflow_version_id WHERE e.tenant_id=? AND e.id=?";
     let r = sqlx::query(sql)
         .bind(tenant)
         .bind(id)

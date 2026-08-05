@@ -25,7 +25,7 @@
 - Execution、Node Execution、Attempt 和 Edge Delivery 只能按状态机条件迁移。
 - Edge Delivery 按 source activation 追加，同一 Edge 在循环中可多次交付；未命中分支为对应 activation 产生 `ClosedWithoutData`，Join 不能永久等待已关闭分支。
 - 节点 Ready 判定来自 Node Manifest 的 Readiness Policy，不把多输入规则硬编码到 Merge。
-- 默认 `n8n_v1` 按固化 branchOrder 串行推进分支；显式 parallel 模式才允许并行可观察分支。
+- M4 默认 `n8n_v1` 按固化 branchOrder 串行推进分支；M6 Definition 3.0 将 branchOrder 显式化为 Connection Order，保留相同确定性语义但不再从画布坐标推导。
 - Scheduler 决策来自 MySQL 状态和编译 IR，不依赖 Coordinator 内存。
 
 ## 5. 数据和 Migration

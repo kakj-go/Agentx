@@ -97,4 +97,4 @@ activeTerminalLeases=0
 - RUN-001～014、REC-001～010、阶段 08、阶段 09 和里程碑 M4 均为 `done`。
 - M4 没有接入 AI/MCP/Skill/RAG/Memory/OpenSandbox Runner，没有交付完整 Workflow Studio，也没有提前完成 Application、Evaluation、Schedule/Trigger 的真实运行绑定。
 - 项目仍按 M1～M7 七个里程碑推进；M1～M4 已完成。
-- M5 的 AGT-001～013 已完成；当前剩余 M6～M7 共 28 项：M6 14 项、M7 14 项。
+- M5 的 AGT-001～013 已完成；M6 后续重规划为 STU-001～016 共 16 项，M7 为 INT-001～014 共 14 项。

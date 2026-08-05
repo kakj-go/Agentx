@@ -1,5 +1,29 @@
 {
   "$defs": {
+    "BindingSlot": {
+      "additionalProperties": false,
+      "properties": {
+        "multiple": {
+          "default": false,
+          "type": "boolean"
+        },
+        "name": {
+          "type": "string"
+        },
+        "required": {
+          "default": false,
+          "type": "boolean"
+        },
+        "resourceType": {
+          "$ref": "#/$defs/ResourceType"
+        }
+      },
+      "required": [
+        "name",
+        "resourceType"
+      ],
+      "type": "object"
+    },
     "CredentialRequirement": {
       "additionalProperties": false,
       "properties": {
@@ -125,6 +149,19 @@
       ],
       "type": "string"
     },
+    "ResourceType": {
+      "enum": [
+        "credential",
+        "model",
+        "mcp_server",
+        "mcp_tool",
+        "skill",
+        "rag",
+        "memory",
+        "sandbox_profile"
+      ],
+      "type": "string"
+    },
     "SideEffectLevel": {
       "enum": [
         "none",
@@ -138,8 +175,19 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "properties": {
+    "bindingSlots": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/BindingSlot"
+      },
+      "type": "array"
+    },
     "capability": {
       "$ref": "#/$defs/NodeCapability"
+    },
+    "category": {
+      "default": "",
+      "type": "string"
     },
     "credentials": {
       "default": [],
@@ -156,15 +204,30 @@
         "null"
       ]
     },
+    "description": {
+      "default": "",
+      "type": "string"
+    },
     "displayName": {
       "type": "string"
     },
     "executionStyle": {
       "$ref": "#/$defs/ExecutionStyle"
     },
+    "iconKey": {
+      "default": "",
+      "type": "string"
+    },
     "inputPorts": {
       "items": {
         "$ref": "#/$defs/NodePort"
+      },
+      "type": "array"
+    },
+    "keywords": {
+      "default": [],
+      "items": {
+        "type": "string"
       },
       "type": "array"
     },

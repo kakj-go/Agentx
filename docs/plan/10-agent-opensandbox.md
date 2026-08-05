@@ -6,7 +6,7 @@
 
 ## 2. 当前状态和进入条件
 
-- 状态：当前 Kubernetes 部署验收 `done`。AGT-001～013 已完成；gVisor/Kata、生产 Vault、镜像供应链和生产级跨租户强隔离列为后续生产强化，见 [M5 验收证据](m5-acceptance-evidence.md)。
+- 状态：当前 Kubernetes 部署验收 `done`。AGT-001～013 已完成；AGT-010 的生产强化子项暂不重试，gVisor/Kata、生产 Vault、镜像供应链和生产级跨租户强隔离统一由 M7 INT-006/010/011/014 验收，见 [M5 验收证据](m5-acceptance-evidence.md)。
 - 进入条件：[阶段 04](04-resource-center.md) 提供资源版本和授权，[阶段 08](08-workflow-runtime-core.md) 提供 Node Manifest、Action/Lifecycle Protocol 和运行 Adapter，[阶段 09](09-checkpoint-wait-recovery.md) 提供等待和恢复。
 - OpenSandbox 本地可使用 Docker Runtime，生产使用官方 Kubernetes Runtime；兼容性和隔离边界见 [OpenSandbox 可行性评估](opensandbox-feasibility.md)。
 - M5 的执行顺序、现存缺口和分批门禁见 [M5 任务清单](m5-task-list.md)。
@@ -66,7 +66,7 @@ Redis 保存租户并发配额、短期 Sandbox Lease 和运行事件，但不�
 | AGT-007 | done | AGT-002、AGT-005 | 调用指纹、重复错误和 A-B-A-B 循环检测 | 固定 Fixture 能触发各类循环策略且无误杀基线 |
 | AGT-008 | done | FND-004–005、RUN-012 | 固定 Spec 的 Rust Lifecycle/execd Adapter、SSE/Endpoint 安全层和 Sandbox Manager API | 核心子集与官方 Go SDK/CLI 差分一致；Spec 漂移使 CI 失败；协议不兼容明确失败；Worker 不接触供应商对象 |
 | AGT-009 | done | AGT-008 | Python、JavaScript、Shell、文件和 Command 模式浏览器 Runner | 代码只在 Sandbox 运行，输出统一转换为 Item/Artifact；不依赖延期的 Jupyter/PTY/Pool/Snapshot |
-| AGT-010 | done | AGT-008–009 | CPU、内存、磁盘、Metrics、网络、TTL 和租户并发配额 | Profile/Adapter 契约、内存/TTL/网络/并发/回收已验证；CPU/PID/磁盘的 RuntimeClass 强制效果列为后续生产强化 |
+| AGT-010 | done | AGT-008–009 | CPU、内存、磁盘、Metrics、网络、TTL 和租户并发配额 | Profile/Adapter 契约、内存/TTL/网络/并发/回收已验证；CPU/PID/磁盘的 RuntimeClass 强制效果暂不重试，转入 M7 INT-006/010 |
 | AGT-011 | done | RES-001、AGT-008–010 | 短期 Credential 注入和清理 | Secret 不进入命令行、stdout、Trace 或持久镜像；生产 Vault 列为后续生产强化 |
 | AGT-012 | done | AGT-001–011、OBS-005 | Model/Tool/RAG/Memory/Agent/Sandbox Trace | 一次 Agent 执行可还原每轮调用、成本和错误 |
 | AGT-013 | done | AGT-001–012 | Agent/Code 节点、API 和前端 Trace 展示 | 授权、预算、循环和 Sandbox 错误均有明确 UI |
@@ -93,7 +93,7 @@ AGT-008 的前置协议门禁必须先完成，且不新增原子任务编号：
 - SSE 使用有界缓冲和连接/空闲/总超时；取消必须触发 interrupt 和最终回收，流中断不能把部分输出伪装为完整成功。
 - 清理 RPC 在执行取消、Attempt 终态或 Lease 过期后仍校验原 Tenant/Execution/Node/Attempt/Worker Lease/Sandbox Lease Token 绑定并允许 interrupt/terminate；普通执行、文件和 Metrics RPC 不放宽活跃 Lease 校验。
 - 协议升级只能通过显式更新固定 Spec、生成物、兼容矩阵和差分证据完成；运行时不兼容返回 `SANDBOX_PROTOCOL_UNSUPPORTED`。
-- 当前 M5 验收基线为 Docker Desktop Kubernetes + OpenSandbox Docker Runtime + runc；后续生产部署可切换 Kubernetes Runtime，并按安全基线启用 gVisor/Kata 或等价 RuntimeClass。
+- 当前 M5 验收基线为 Docker Desktop Kubernetes + OpenSandbox Docker Runtime + runc；生产 Kubernetes Runtime、gVisor/Kata 或等价 RuntimeClass 由 M7 INT-010/011 验收，当前暂不重试。
 
 ## 10. 测试
 

@@ -5,8 +5,9 @@ use sqlx::Row;
 use uuid::Uuid;
 
 use crate::runtime_repository::{
-    CreateExecution, CreatedExecution, ForkExecution, ResumeExecution, RuntimeRepository,
-    insert_execution_event, persist_machine, queue_ready_attempts, sync_execution_status,
+    CreateExecution, CreatedExecution, ForkExecution, ResumeExecution, RuntimeExecutionSource,
+    RuntimeRepository, insert_execution_event, persist_machine, queue_ready_attempts,
+    sync_execution_status,
 };
 
 impl RuntimeRepository {
@@ -27,14 +28,24 @@ impl RuntimeRepository {
                 "FORK_NODE_REQUIRED"
             );
         }
-        let row=sqlx::query("SELECT e.workflow_version_id,e.input_json,c.state_hash FROM workflow_executions e JOIN checkpoints c ON c.execution_id=e.id AND c.tenant_id=e.tenant_id WHERE e.tenant_id=? AND e.id=? AND c.id=?")
+        let row=sqlx::query("SELECT e.workflow_version_id,e.source_kind,e.source_id,e.source_revision,e.input_json,c.state_hash,s.resource_snapshot_json,s.debug_overlay_snapshot_json FROM workflow_executions e JOIN checkpoints c ON c.execution_id=e.id AND c.tenant_id=e.tenant_id JOIN execution_snapshots s ON s.execution_id=e.id AND s.tenant_id=e.tenant_id WHERE e.tenant_id=? AND e.id=? AND c.id=?")
             .bind(command.tenant_id).bind(command.source_execution_id).bind(command.checkpoint_id)
             .fetch_optional(&self.pool).await?.context("Fork checkpoint was not found")?;
         let mut input: Value = row
             .try_get::<Option<Value>, _>("input_json")?
             .unwrap_or_else(|| json!({}));
         merge_json(&mut input, &command.input_overrides);
-        let workflow_version_id: Uuid = row.try_get("workflow_version_id")?;
+        let source_kind: String = row.try_get("source_kind")?;
+        let source = match source_kind.as_str() {
+            "version" => RuntimeExecutionSource::Version(row.try_get("source_id")?),
+            "draft_revision" => RuntimeExecutionSource::DraftRevision {
+                workflow_id: row.try_get("source_id")?,
+                revision: row
+                    .try_get::<Option<u64>, _>("source_revision")?
+                    .context("Draft revision is missing")?,
+            },
+            value => anyhow::bail!("Unsupported execution source {value}"),
+        };
         let source_machine = self
             .load_checkpoint_machine(command.tenant_id, command.checkpoint_id)
             .await
@@ -53,6 +64,19 @@ impl RuntimeRepository {
             &command.input_overrides,
         )?;
         let source_state_hash: String = row.try_get("state_hash")?;
+        let draft_resource_snapshots = if source_kind == "draft_revision" {
+            row.try_get::<Value, _>("resource_snapshot_json")?
+                .get("resources")
+                .and_then(Value::as_array)
+                .context("Draft execution resource snapshot is invalid")?
+                .iter()
+                .cloned()
+                .map(serde_json::from_value)
+                .collect::<Result<Vec<_>, _>>()?
+        } else {
+            Vec::new()
+        };
+        let debug_overlay_snapshot: Value = row.try_get("debug_overlay_snapshot_json")?;
         let key = command
             .idempotency_key
             .as_ref()
@@ -60,7 +84,7 @@ impl RuntimeRepository {
         let created = self
             .create_execution(CreateExecution {
                 tenant_id: command.tenant_id,
-                workflow_version_id,
+                source,
                 invocation_id: None,
                 session_id: None,
                 requested_by: Some(command.actor_user_id),
@@ -73,6 +97,9 @@ impl RuntimeRepository {
                 fork_checkpoint_id: Some(command.checkpoint_id),
                 fork_mode: Some(command.mode.clone()),
                 runtime_settings: json!({"mode":command.mode,"nodeId":command.node_id,"sourceExecutionId":command.source_execution_id,"checkpointId":command.checkpoint_id,"sourceStateHash":source_state_hash,"sideEffectDecisions":command.side_effect_decisions}),
+                debug_plan: json!({"mode":command.mode,"nodeId":command.node_id,"sourceExecutionId":command.source_execution_id}),
+                debug_overlay_snapshot,
+                draft_resource_snapshots,
                 initial_machine: Some(initial_machine),
             })
             .await?;

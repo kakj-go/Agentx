@@ -1218,7 +1218,7 @@ mod tests {
             tenant_id: TenantId::new(),
             workflow_service_identity_id: WorkflowServiceIdentityId::new(),
             workflow_id: WorkflowId::new(),
-            workflow_version_id: WorkflowVersionId::new(),
+            workflow_version_id: Some(WorkflowVersionId::new()),
             execution_id: ExecutionId::new(),
             node_execution_id: NodeExecutionId::new(),
             attempt_id: AttemptId::new(),

@@ -1,7 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use agentx_domain::{
-    ExecutionOrder, NodeSettings, WorkflowDefinition, canonical_content_hash, validate_definition,
+    ExecutionOrder, NodeSettings, WorkflowDefinition, WorkflowNode, canonical_content_hash,
+    validate_definition,
 };
 use agentx_node_protocol::{
     ExecutionStyle, NodeCapability, NodeManifestVersion, ReadinessPolicy, SideEffectLevel,
@@ -13,7 +14,7 @@ use thiserror::Error;
 
 use crate::{ExpressionEngine, NodeRegistry};
 
-pub const COMPILER_VERSION: &str = "agentx-workflow-2.0.0";
+pub const COMPILER_VERSION: &str = "agentx-workflow-3.0.0";
 
 #[derive(Clone, Debug, Default)]
 pub struct CompileContext {
@@ -150,6 +151,10 @@ impl<'a> WorkflowCompiler<'a> {
                     ),
                 });
             }
+            if let Some(manifest) = &manifest {
+                validate_binding_slots(*definition_index, node, manifest, &mut issues);
+                validate_parameters(*definition_index, node, manifest, &mut issues);
+            }
             validate_expressions(
                 &self.expressions,
                 &node.parameters,
@@ -185,7 +190,6 @@ impl<'a> WorkflowCompiler<'a> {
         }
 
         let mut raw_connections = Vec::new();
-        let mut branch_counts = BTreeMap::<usize, u32>::new();
         for (definition_index, connection) in definition.connections.iter().enumerate() {
             let (Some(&source), Some(&target)) = (
                 indexes.get(connection.source_node_id.as_str()),
@@ -217,9 +221,7 @@ impl<'a> WorkflowCompiler<'a> {
                     ),
                 });
             }
-            let branch_order = branch_counts.entry(source).or_default();
-            raw_connections.push((connection, source, target, *branch_order));
-            *branch_order += 1;
+            raw_connections.push((connection, source, target, connection.order));
         }
 
         validate_reachability(&enabled, &raw_connections, &mut issues);
@@ -333,6 +335,117 @@ impl<'a> WorkflowCompiler<'a> {
             strongly_connected_components: components,
             subworkflow_version_ids: subworkflows.into_iter().collect(),
         })
+    }
+}
+
+fn validate_binding_slots(
+    definition_index: usize,
+    node: &agentx_domain::WorkflowNode,
+    manifest: &NodeManifestVersion,
+    issues: &mut Vec<CompileIssue>,
+) {
+    for slot in &manifest.binding_slots {
+        let count = node
+            .resource_references
+            .iter()
+            .filter(|reference| {
+                reference.binding_role.as_deref() == Some(slot.name.as_str())
+                    && reference.resource_type == slot.resource_type
+            })
+            .count();
+        if slot.required && count == 0 {
+            issues.push(CompileIssue {
+                code: "BINDING_REQUIRED".into(),
+                path: format!("nodes[{definition_index}].resourceReferences"),
+                message: format!("Binding slot '{}' is required", slot.name),
+            });
+        }
+        if !slot.multiple && count > 1 {
+            issues.push(CompileIssue {
+                code: "BINDING_MULTIPLE_NOT_ALLOWED".into(),
+                path: format!("nodes[{definition_index}].resourceReferences"),
+                message: format!("Binding slot '{}' accepts only one resource", slot.name),
+            });
+        }
+    }
+    for (reference_index, reference) in node.resource_references.iter().enumerate() {
+        let Some(role) = reference.binding_role.as_deref() else {
+            continue;
+        };
+        if !manifest
+            .binding_slots
+            .iter()
+            .any(|slot| slot.name == role && slot.resource_type == reference.resource_type)
+        {
+            issues.push(CompileIssue {
+                code: "INVALID_BINDING_SLOT".into(),
+                path: format!(
+                    "nodes[{definition_index}].resourceReferences[{reference_index}].bindingRole"
+                ),
+                message: format!("Binding role '{role}' does not accept this resource type"),
+            });
+        }
+    }
+}
+
+fn validate_parameters(
+    definition_index: usize,
+    node: &WorkflowNode,
+    manifest: &NodeManifestVersion,
+    issues: &mut Vec<CompileIssue>,
+) {
+    let schema = expression_aware_schema(&manifest.parameter_schema, true);
+    let validator = match jsonschema::validator_for(&schema) {
+        Ok(validator) => validator,
+        Err(error) => {
+            issues.push(CompileIssue {
+                code: "INVALID_PARAMETER_SCHEMA".into(),
+                path: format!("nodes[{definition_index}].typeVersion"),
+                message: format!("Node Manifest parameter schema is invalid: {error}"),
+            });
+            return;
+        }
+    };
+    let empty = serde_json::json!({});
+    let parameters = if node.parameters.is_null() {
+        &empty
+    } else {
+        &node.parameters
+    };
+    for error in validator.iter_errors(parameters) {
+        let suffix = error.instance_path.to_string();
+        issues.push(CompileIssue {
+            code: "INVALID_NODE_PARAMETERS".into(),
+            path: format!(
+                "nodes[{definition_index}].parameters{}",
+                suffix.replace('/', ".")
+            ),
+            message: error.to_string(),
+        });
+    }
+}
+
+fn expression_aware_schema(schema: &Value, root: bool) -> Value {
+    let mut schema = schema.clone();
+    if let Some(object) = schema.as_object_mut() {
+        if let Some(properties) = object.get_mut("properties").and_then(Value::as_object_mut) {
+            for property in properties.values_mut() {
+                *property = expression_aware_schema(property, false);
+            }
+        }
+        if let Some(items) = object.get_mut("items") {
+            *items = expression_aware_schema(items, false);
+        }
+        if let Some(additional) = object.get_mut("additionalProperties")
+            && additional.is_object()
+        {
+            *additional = expression_aware_schema(additional, false);
+        }
+    }
+    if root {
+        schema
+    } else {
+        serde_json::json!({"anyOf":[schema,{"type":"string","pattern":"^="}]})
     }
 }
 
@@ -471,20 +584,20 @@ mod tests {
 
     fn fixture() -> WorkflowDefinition {
         serde_json::from_value(serde_json::json!({
-            "schemaVersion":"2.0",
-            "settings":{"activationBudget":20,"executionOrder":"n8n_v1"},
+            "schemaVersion":"3.0",
+            "settings":{"activationBudget":20,"executionOrder":"deterministic"},
             "nodes":[
-                {"id":"trigger","type":"manual_trigger","typeVersion":1,"name":"Trigger","position":{"x":0,"y":0}},
-                {"id":"if","type":"if","typeVersion":1,"name":"IF","position":{"x":100,"y":0},"parameters":{"condition":"=$json.ok"}},
-                {"id":"merge","type":"merge","typeVersion":1,"name":"Merge","position":{"x":200,"y":0}},
-                {"id":"loop","type":"loop_over_items","typeVersion":1,"name":"Loop","position":{"x":300,"y":0}}
+                {"id":"trigger","type":"manual_trigger","typeVersion":1,"name":"Trigger",},
+                {"id":"if","type":"if","typeVersion":1,"name":"IF","parameters":{"condition":"=$json.ok"}},
+                {"id":"merge","type":"merge","typeVersion":1,"name":"Merge",},
+                {"id":"loop","type":"loop_over_items","typeVersion":1,"name":"Loop",}
             ],
             "connections":[
-                {"id":"a","sourceNodeId":"trigger","sourceHandle":"main","targetNodeId":"if","targetHandle":"main"},
-                {"id":"b","sourceNodeId":"if","sourceHandle":"true","targetNodeId":"merge","targetHandle":"main:0"},
-                {"id":"c","sourceNodeId":"if","sourceHandle":"false","targetNodeId":"merge","targetHandle":"main:1"},
-                {"id":"d","sourceNodeId":"merge","sourceHandle":"main","targetNodeId":"loop","targetHandle":"main"},
-                {"id":"e","sourceNodeId":"loop","sourceHandle":"loop","targetNodeId":"merge","targetHandle":"main:2"}
+                {"id":"a","sourceNodeId":"trigger","sourceHandle":"main","targetNodeId":"if","targetHandle":"main","order":0},
+                {"id":"b","sourceNodeId":"if","sourceHandle":"true","targetNodeId":"merge","targetHandle":"main:0","order":0},
+                {"id":"c","sourceNodeId":"if","sourceHandle":"false","targetNodeId":"merge","targetHandle":"main:1","order":1},
+                {"id":"d","sourceNodeId":"merge","sourceHandle":"main","targetNodeId":"loop","targetHandle":"main","order":0},
+                {"id":"e","sourceNodeId":"loop","sourceHandle":"loop","targetNodeId":"merge","targetHandle":"main:2","order":0}
             ]
         })).unwrap()
     }
@@ -517,11 +630,10 @@ mod tests {
         let mut definition = fixture();
         definition.connections[0].source_handle = "missing".into();
         definition.nodes.push(serde_json::from_value(serde_json::json!({
-            "id":"sub","type":"sub_workflow","typeVersion":1,"name":"Sub","position":{"x":400,"y":0},
-            "parameters":{"workflowVersionId":"version-a"}
+            "id":"sub","type":"sub_workflow","typeVersion":1,"name":"Sub","parameters":{"workflowVersionId":"version-a"}
         })).unwrap());
         definition.connections.push(serde_json::from_value(serde_json::json!({
-            "id":"sub-edge","sourceNodeId":"loop","sourceHandle":"done","targetNodeId":"sub","targetHandle":"main"
+            "id":"sub-edge","sourceNodeId":"loop","sourceHandle":"done","targetNodeId":"sub","targetHandle":"main","order":1
         })).unwrap());
         let error = compiler
             .compile(
@@ -539,5 +651,30 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(codes.contains(&"UNKNOWN_SOURCE_PORT"));
         assert!(codes.contains(&"RECURSIVE_SUBWORKFLOW"));
+    }
+
+    #[test]
+    fn validates_literal_parameters_and_accepts_deferred_expressions() {
+        let registry = NodeRegistry::m5_defaults();
+        let compiler = WorkflowCompiler::new(&registry);
+        let mut definition = fixture();
+        definition.nodes[3].parameters = serde_json::json!({"batchSize":0});
+        let error = compiler
+            .compile(&definition, &CompileContext::default())
+            .unwrap_err();
+        assert!(
+            error
+                .issues
+                .iter()
+                .any(|issue| issue.code == "INVALID_NODE_PARAMETERS"
+                    && issue.path == "nodes[3].parameters.batchSize")
+        );
+
+        definition.nodes[3].parameters = serde_json::json!({"batchSize":"=$json.batch"});
+        assert!(
+            compiler
+                .compile(&definition, &CompileContext::default())
+                .is_ok()
+        );
     }
 }

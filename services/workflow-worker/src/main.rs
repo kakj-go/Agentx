@@ -587,7 +587,7 @@ async fn execute_remote(
         node_type: task.node_type.clone(),
         node_version: task.node_version,
         tenant_id: TenantId::from_uuid(task.tenant_id),
-        workflow_version_id: WorkflowVersionId::from_uuid(task.workflow_version_id),
+        workflow_version_id: task.workflow_version_id.map(WorkflowVersionId::from_uuid),
         execution_id: ExecutionId::from_uuid(task.execution_id),
         node_execution_id: NodeExecutionId::from_uuid(task.node_execution_id),
         attempt_id: task.attempt_id,
@@ -720,7 +720,13 @@ async fn execute_subworkflow(
         .clone()
         .request_execution(RequestExecutionRequest {
             tenant_id: task.tenant_id.to_string(),
-            workflow_version_id: version.into(),
+            source: Some(
+                agentx_runtime_rpc::v1::request_execution_request::Source::Version(
+                    agentx_runtime_rpc::v1::VersionSource {
+                        version_id: version.into(),
+                    },
+                ),
+            ),
             invocation_id: None,
             session_id: None,
             requested_by: None,
@@ -728,6 +734,9 @@ async fn execute_subworkflow(
             input_json: serde_json::to_string(
                 &items.iter().map(|item| &item.json).collect::<Vec<_>>(),
             )?,
+            debug_plan_json: "{}".into(),
+            debug_overlay_json: "{}".into(),
+            resource_snapshots_json: "[]".into(),
             idempotency_key: Some(format!(
                 "sub:{}:{}",
                 task.execution_id, task.node_execution_id
@@ -1088,7 +1097,7 @@ mod tests {
         let task = RuntimeTask {
             tenant_id: Uuid::nil(),
             workflow_id: Uuid::nil(),
-            workflow_version_id: Uuid::nil(),
+            workflow_version_id: None,
             workflow_service_identity_id: Uuid::nil(),
             execution_id: Uuid::nil(),
             node_execution_id: Uuid::nil(),

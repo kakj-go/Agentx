@@ -1,6 +1,7 @@
 mod api;
 mod applications;
 mod auth;
+mod catalog;
 mod config;
 mod connection_test;
 mod control_common;
@@ -19,6 +20,7 @@ mod sandbox_profiles;
 mod security;
 mod skills_control;
 mod state;
+mod workflow_studio;
 mod workflows;
 
 use std::{env, time::Duration};
@@ -50,8 +52,10 @@ async fn main() -> Result<()> {
     let pool = mysql::connect(&infrastructure.mysql).await?;
     if command.as_deref() == Some("migrate") {
         mysql::run_migrations(&pool).await?;
+        catalog::reconcile_builtin_catalog(&pool).await?;
         return Ok(());
     }
+    catalog::reconcile_builtin_catalog(&pool).await?;
     let auth = AuthSettings::from_env()?;
     let credential = CredentialSettings::from_env()?;
     let keyring = CredentialKeyring::from_json(credential.active_key_id, &credential.keys_json)?;
@@ -145,7 +149,7 @@ fn start_health_checks(
         use futures::StreamExt;
         loop {
             let schema_ready = sqlx::query_scalar::<_, bool>(
-                "SELECT COALESCE(MAX(version),0) >= 13 AND COALESCE(MIN(success),0)=1 FROM _sqlx_migrations",
+                "SELECT COALESCE(MAX(version),0) >= 15 AND COALESCE(MIN(success),0)=1 FROM _sqlx_migrations",
             ).fetch_one(&pool).await.unwrap_or(false);
             let mysql_ready = mysql::ping(&pool).await.is_ok() && schema_ready;
             registry
@@ -211,7 +215,8 @@ mod integration_tests {
         credential::CredentialKeyring,
         mysql,
         runtime_repository::{
-            CreateExecution, ForkExecution, ResumeExecution, RuntimeRepository, TaskResult,
+            CreateExecution, ForkExecution, ResumeExecution, RuntimeExecutionSource,
+            RuntimeRepository, TaskResult,
         },
     };
     use agentx_node_protocol::Item;
@@ -870,12 +875,12 @@ mod integration_tests {
             serde_json::from_value(workflow["serviceIdentityId"].clone())
                 .expect("workflow service identity id");
         let definition = json!({
-            "schemaVersion":"2.0",
+            "schemaVersion":"3.0",
             "nodes":[
-                {"id":"trigger","type":"manual_trigger","typeVersion":1,"name":"Manual Trigger","position":{"x":100,"y":160},"disabled":false,"parameters":{},"resourceReferences":[]},
-                {"id":"model","type":"model","typeVersion":1,"name":"Model","position":{"x":420,"y":160},"disabled":false,"parameters":{},"resourceReferences":[{"resourceType":"model","resourceId":model_id,"resourceVersionId":null,"operation":"use"}]}
+                {"id":"trigger","type":"manual_trigger","typeVersion":1,"name":"Manual Trigger","disabled":false,"parameters":{},"resourceReferences":[]},
+                {"id":"model","type":"model","typeVersion":1,"name":"Model","disabled":false,"parameters":{},"resourceReferences":[{"resourceType":"model","resourceId":model_id,"resourceVersionId":null,"operation":"use"}]}
             ],
-            "connections":[{"id":"trigger-model","sourceNodeId":"trigger","sourceHandle":"main","targetNodeId":"model","targetHandle":"main"}],
+            "connections":[{"id":"trigger-model","sourceNodeId":"trigger","sourceHandle":"main","targetNodeId":"model","targetHandle":"main","order":0}],
             "settings":{}
         });
         let saved = router
@@ -888,46 +893,9 @@ mod integration_tests {
                 "m2-draft-1",
             ))
             .await
-            .expect("save M2 draft");
-        assert_eq!(saved.status(), StatusCode::OK);
-        assert_eq!(response_json(saved).await["revision"], 1);
-        let stale = router
-            .clone()
-            .oneshot(json_request(
-                "PUT",
-                &format!("/api/v1/workflows/{workflow_id}/draft"),
-                json!({"expectedRevision":0,"definition":definition}),
-                Some(&access_token),
-            ))
-            .await
-            .expect("reject stale draft");
-        assert_eq!(stale.status(), StatusCode::CONFLICT);
-        assert_eq!(
-            response_json(stale).await["code"],
-            "DRAFT_REVISION_CONFLICT"
-        );
-
-        let validation = router
-            .clone()
-            .oneshot(json_request(
-                "GET",
-                &format!("/api/v1/workflows/{workflow_id}/resource-validation"),
-                json!({}),
-                Some(&access_token),
-            ))
-            .await
-            .expect("validate missing grants");
-        let validation = response_json(validation).await;
-        assert_eq!(validation["valid"], false);
-        let missing = validation["missingGrants"]
-            .as_array()
-            .expect("missing grants");
-        assert!(missing.iter().any(|item| item["resourceType"] == "model"));
-        assert!(
-            missing
-                .iter()
-                .any(|item| item["resourceType"] == "credential")
-        );
+            .expect("reject draft without workflow grants");
+        assert_eq!(saved.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(response_json(saved).await["code"], "RESOURCE_GRANT_MISSING");
 
         let model_grant = router
             .clone()
@@ -956,6 +924,35 @@ mod integration_tests {
         let credential_grant_id: uuid::Uuid =
             serde_json::from_value(response_json(credential_grant).await["id"].clone())
                 .expect("credential grant id");
+
+        let saved = router
+            .clone()
+            .oneshot(idempotent_json_request(
+                "PUT",
+                &format!("/api/v1/workflows/{workflow_id}/draft"),
+                json!({"expectedRevision":0,"definition":definition}),
+                &access_token,
+                "m2-draft-2",
+            ))
+            .await
+            .expect("save M2 draft after grants");
+        assert_eq!(saved.status(), StatusCode::OK);
+        assert_eq!(response_json(saved).await["revision"], 1);
+        let stale = router
+            .clone()
+            .oneshot(json_request(
+                "PUT",
+                &format!("/api/v1/workflows/{workflow_id}/draft"),
+                json!({"expectedRevision":0,"definition":definition}),
+                Some(&access_token),
+            ))
+            .await
+            .expect("reject stale draft");
+        assert_eq!(stale.status(), StatusCode::CONFLICT);
+        assert_eq!(
+            response_json(stale).await["code"],
+            "DRAFT_REVISION_CONFLICT"
+        );
 
         let version_request = json!({"draftRevision":1});
         let version = router
@@ -1459,12 +1456,12 @@ mod integration_tests {
         );
 
         let runtime_definition = json!({
-            "schemaVersion":"2.0",
+            "schemaVersion":"3.0",
             "nodes":[
-                {"id":"trigger","type":"manual_trigger","typeVersion":1,"name":"Manual Trigger","position":{"x":100,"y":160}},
-                {"id":"wait","type":"wait","typeVersion":1,"name":"Wait","position":{"x":420,"y":160},"parameters":{"kind":"webhook"}}
+                {"id":"trigger","type":"manual_trigger","typeVersion":1,"name":"Manual Trigger",},
+                {"id":"wait","type":"wait","typeVersion":1,"name":"Wait","parameters":{"kind":"webhook"}}
             ],
-            "connections":[{"id":"trigger-wait","sourceNodeId":"trigger","sourceHandle":"main","targetNodeId":"wait","targetHandle":"main"}]
+            "connections":[{"id":"trigger-wait","sourceNodeId":"trigger","sourceHandle":"main","targetNodeId":"wait","targetHandle":"main","order":0}]
         });
         let saved = router
             .clone()
@@ -1509,7 +1506,7 @@ mod integration_tests {
         let created = runtime
             .create_execution(CreateExecution {
                 tenant_id: runtime_tenant,
-                workflow_version_id: runtime_version_id,
+                source: RuntimeExecutionSource::Version(runtime_version_id),
                 invocation_id: None,
                 session_id: None,
                 requested_by: Some(runtime_user),
@@ -1522,6 +1519,9 @@ mod integration_tests {
                 fork_checkpoint_id: None,
                 fork_mode: None,
                 runtime_settings: json!({"mode":"whole"}),
+                debug_plan: json!({}),
+                debug_overlay_snapshot: json!({}),
+                draft_resource_snapshots: Vec::new(),
                 initial_machine: None,
             })
             .await
@@ -1646,7 +1646,7 @@ mod integration_tests {
         let timed = runtime
             .create_execution(CreateExecution {
                 tenant_id: runtime_tenant,
-                workflow_version_id: runtime_version_id,
+                source: RuntimeExecutionSource::Version(runtime_version_id),
                 invocation_id: None,
                 session_id: None,
                 requested_by: Some(runtime_user),
@@ -1659,6 +1659,9 @@ mod integration_tests {
                 fork_checkpoint_id: None,
                 fork_mode: None,
                 runtime_settings: json!({"mode":"whole"}),
+                debug_plan: json!({}),
+                debug_overlay_snapshot: json!({}),
+                draft_resource_snapshots: Vec::new(),
                 initial_machine: None,
             })
             .await

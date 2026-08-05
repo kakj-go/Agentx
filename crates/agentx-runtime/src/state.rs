@@ -190,6 +190,36 @@ impl ExecutionMachine {
         Self::new_with_starts(workflow, vec![(indexes[&selected], inputs)])
     }
 
+    pub fn new_partial(
+        workflow: CompiledWorkflow,
+        mode: PartialExecutionMode,
+        node_id: &str,
+        input: Vec<Item>,
+    ) -> Result<Self, MachineError> {
+        if mode == PartialExecutionMode::Whole {
+            return Self::new(workflow, input);
+        }
+        let selected = workflow
+            .nodes
+            .iter()
+            .position(|node| node.id == node_id)
+            .ok_or_else(|| MachineError::PartialNodeNotFound(node_id.into()))?;
+        let included = match mode {
+            PartialExecutionMode::Node => BTreeSet::from([selected]),
+            PartialExecutionMode::ToNode => reachable_nodes(&workflow, selected, true),
+            PartialExecutionMode::FromNode => reachable_nodes(&workflow, selected, false),
+            PartialExecutionMode::Whole => unreachable!(),
+        };
+        let (workflow, indexes) = subgraph(&workflow, &included, mode, selected);
+        if mode == PartialExecutionMode::ToNode {
+            return Self::new(workflow, input);
+        }
+        Self::new_with_starts(
+            workflow,
+            vec![(indexes[&selected], BTreeMap::from([("main".into(), input)]))],
+        )
+    }
+
     fn new_with_starts(
         workflow: CompiledWorkflow,
         starts: Vec<(usize, BTreeMap<String, Vec<Item>>)>,
@@ -238,6 +268,26 @@ impl ExecutionMachine {
 
     pub fn next_ready(&mut self) -> Option<NodeExecutionId> {
         self.ready.pop_front()
+    }
+
+    pub fn replace_ready_inputs(
+        &mut self,
+        id: NodeExecutionId,
+        inputs: BTreeMap<String, Vec<Item>>,
+    ) -> Result<(), MachineError> {
+        let activation = self
+            .activations
+            .get_mut(&id)
+            .ok_or(MachineError::ActivationNotFound(id))?;
+        if activation.status != ActivationStatus::Ready {
+            return Err(MachineError::InvalidTransition {
+                id,
+                from: activation.status,
+                to: ActivationStatus::Ready,
+            });
+        }
+        activation.inputs = inputs;
+        Ok(())
     }
 
     pub fn defer_for_confirmation(&mut self, id: NodeExecutionId) -> Result<(), MachineError> {
@@ -894,16 +944,16 @@ mod tests {
     #[test]
     fn closes_unselected_branch_without_blocking_merge() {
         let workflow = compile(json!({
-            "schemaVersion":"2.0",
+            "schemaVersion":"3.0",
             "nodes":[
-                {"id":"trigger","type":"manual_trigger","typeVersion":1,"name":"Trigger","position":{"x":0,"y":0}},
-                {"id":"if","type":"if","typeVersion":1,"name":"IF","position":{"x":1,"y":0}},
-                {"id":"merge","type":"merge","typeVersion":1,"name":"Merge","position":{"x":2,"y":0}}
+                {"id":"trigger","type":"manual_trigger","typeVersion":1,"name":"Trigger",},
+                {"id":"if","type":"if","typeVersion":1,"name":"IF","parameters":{"condition":true}},
+                {"id":"merge","type":"merge","typeVersion":1,"name":"Merge",}
             ],
             "connections":[
-                {"id":"a","sourceNodeId":"trigger","sourceHandle":"main","targetNodeId":"if","targetHandle":"main"},
-                {"id":"b","sourceNodeId":"if","sourceHandle":"true","targetNodeId":"merge","targetHandle":"main:0"},
-                {"id":"c","sourceNodeId":"if","sourceHandle":"false","targetNodeId":"merge","targetHandle":"main:1"}
+                {"id":"a","sourceNodeId":"trigger","sourceHandle":"main","targetNodeId":"if","targetHandle":"main","order":0},
+                {"id":"b","sourceNodeId":"if","sourceHandle":"true","targetNodeId":"merge","targetHandle":"main:0","order":0},
+                {"id":"c","sourceNodeId":"if","sourceHandle":"false","targetNodeId":"merge","targetHandle":"main:1","order":1}
             ]
         }));
         let mut machine = ExecutionMachine::new(workflow, vec![item(1)]).unwrap();
@@ -924,8 +974,8 @@ mod tests {
     #[test]
     fn retry_adds_attempt_to_same_activation_and_late_transitions_fail() {
         let workflow = compile(json!({
-            "schemaVersion":"2.0",
-            "nodes":[{"id":"trigger","type":"manual_trigger","typeVersion":1,"name":"Trigger","position":{"x":0,"y":0},"settings":{"retryOnFail":true,"maxTries":2}}],
+            "schemaVersion":"3.0",
+            "nodes":[{"id":"trigger","type":"manual_trigger","typeVersion":1,"name":"Trigger","settings":{"retryOnFail":true,"maxTries":2}}],
             "connections":[]
         }));
         let mut machine = ExecutionMachine::new(workflow, vec![]).unwrap();
@@ -946,12 +996,12 @@ mod tests {
     #[test]
     fn wait_releases_execution_and_resumes_once() {
         let workflow = compile(json!({
-            "schemaVersion":"2.0",
+            "schemaVersion":"3.0",
             "nodes":[
-                {"id":"trigger","type":"manual_trigger","typeVersion":1,"name":"Trigger","position":{"x":0,"y":0}},
-                {"id":"wait","type":"wait","typeVersion":1,"name":"Wait","position":{"x":1,"y":0}}
+                {"id":"trigger","type":"manual_trigger","typeVersion":1,"name":"Trigger",},
+                {"id":"wait","type":"wait","typeVersion":1,"name":"Wait",}
             ],
-            "connections":[{"id":"a","sourceNodeId":"trigger","sourceHandle":"main","targetNodeId":"wait","targetHandle":"main"}]
+            "connections":[{"id":"a","sourceNodeId":"trigger","sourceHandle":"main","targetNodeId":"wait","targetHandle":"main","order":0}]
         }));
         let mut machine = ExecutionMachine::new(workflow, vec![item(1)]).unwrap();
         let trigger = machine.next_ready().unwrap();
@@ -974,15 +1024,15 @@ mod tests {
     #[test]
     fn partial_forks_select_the_expected_subgraph_and_inputs() {
         let workflow = compile(json!({
-            "schemaVersion":"2.0",
+            "schemaVersion":"3.0",
             "nodes":[
-                {"id":"trigger","type":"manual_trigger","typeVersion":1,"name":"Trigger","position":{"x":0,"y":0}},
-                {"id":"first","type":"set","typeVersion":1,"name":"First","position":{"x":1,"y":0}},
-                {"id":"last","type":"set","typeVersion":1,"name":"Last","position":{"x":2,"y":0}}
+                {"id":"trigger","type":"manual_trigger","typeVersion":1,"name":"Trigger",},
+                {"id":"first","type":"set","typeVersion":1,"name":"First",},
+                {"id":"last","type":"set","typeVersion":1,"name":"Last",}
             ],
             "connections":[
-                {"id":"a","sourceNodeId":"trigger","sourceHandle":"main","targetNodeId":"first","targetHandle":"main"},
-                {"id":"b","sourceNodeId":"first","sourceHandle":"main","targetNodeId":"last","targetHandle":"main"}
+                {"id":"a","sourceNodeId":"trigger","sourceHandle":"main","targetNodeId":"first","targetHandle":"main","order":0},
+                {"id":"b","sourceNodeId":"first","sourceHandle":"main","targetNodeId":"last","targetHandle":"main","order":0}
             ]
         }));
         let mut source = ExecutionMachine::new(workflow, vec![item(1)]).unwrap();
@@ -1038,13 +1088,27 @@ mod tests {
             .unwrap();
         assert_eq!(node.workflow.nodes.len(), 1);
         assert!(node.workflow.connections.is_empty());
+
+        let direct = ExecutionMachine::new_partial(
+            source.workflow.clone(),
+            PartialExecutionMode::Node,
+            "last",
+            vec![item(7)],
+        )
+        .unwrap();
+        assert_eq!(direct.workflow.nodes.len(), 1);
+        assert_eq!(direct.workflow.nodes[0].id, "last");
+        assert_eq!(
+            direct.activations().next().unwrap().inputs["main"][0].json["value"],
+            7
+        );
     }
 
     #[test]
     fn checkpoint_state_round_trips_through_json() {
         let workflow = compile(json!({
-            "schemaVersion":"2.0",
-            "nodes":[{"id":"trigger","type":"manual_trigger","typeVersion":1,"name":"Trigger","position":{"x":0,"y":0}}],
+            "schemaVersion":"3.0",
+            "nodes":[{"id":"trigger","type":"manual_trigger","typeVersion":1,"name":"Trigger",}],
             "connections":[]
         }));
         let machine = ExecutionMachine::new(workflow, vec![item(1)]).unwrap();
@@ -1057,12 +1121,12 @@ mod tests {
     #[test]
     fn confirmation_wait_is_visible_and_resumes_the_same_activation() {
         let workflow = compile(json!({
-            "schemaVersion":"2.0",
+            "schemaVersion":"3.0",
             "nodes":[
-                {"id":"trigger","type":"manual_trigger","typeVersion":1,"name":"Trigger","position":{"x":0,"y":0}},
-                {"id":"remote","type":"remote_action","typeVersion":1,"name":"Remote","position":{"x":1,"y":0},"parameters":{"endpoint":"http://node"}}
+                {"id":"trigger","type":"manual_trigger","typeVersion":1,"name":"Trigger",},
+                {"id":"remote","type":"remote_action","typeVersion":1,"name":"Remote","parameters":{"endpoint":"http://node"}}
             ],
-            "connections":[{"id":"start","sourceNodeId":"trigger","sourceHandle":"main","targetNodeId":"remote","targetHandle":"main"}]
+            "connections":[{"id":"start","sourceNodeId":"trigger","sourceHandle":"main","targetNodeId":"remote","targetHandle":"main","order":0}]
         }));
         let mut machine = ExecutionMachine::new(workflow, vec![item(1)]).unwrap();
         let trigger = machine.next_ready().unwrap();
@@ -1089,17 +1153,17 @@ mod tests {
     #[test]
     fn ordinary_cycle_stops_at_the_activation_budget() {
         let workflow = compile(json!({
-            "schemaVersion":"2.0",
+            "schemaVersion":"3.0",
             "settings":{"activationBudget":7},
             "nodes":[
-                {"id":"trigger","type":"manual_trigger","typeVersion":1,"name":"Trigger","position":{"x":0,"y":0}},
-                {"id":"step","type":"set","typeVersion":1,"name":"Step","position":{"x":1,"y":0}},
-                {"id":"branch","type":"if","typeVersion":1,"name":"Branch","position":{"x":2,"y":0},"parameters":{"condition":true}}
+                {"id":"trigger","type":"manual_trigger","typeVersion":1,"name":"Trigger",},
+                {"id":"step","type":"set","typeVersion":1,"name":"Step",},
+                {"id":"branch","type":"if","typeVersion":1,"name":"Branch","parameters":{"condition":true}}
             ],
             "connections":[
-                {"id":"start","sourceNodeId":"trigger","sourceHandle":"main","targetNodeId":"step","targetHandle":"main"},
-                {"id":"forward","sourceNodeId":"step","sourceHandle":"main","targetNodeId":"branch","targetHandle":"main"},
-                {"id":"back","sourceNodeId":"branch","sourceHandle":"true","targetNodeId":"step","targetHandle":"main"}
+                {"id":"start","sourceNodeId":"trigger","sourceHandle":"main","targetNodeId":"step","targetHandle":"main","order":0},
+                {"id":"forward","sourceNodeId":"step","sourceHandle":"main","targetNodeId":"branch","targetHandle":"main","order":0},
+                {"id":"back","sourceNodeId":"branch","sourceHandle":"true","targetNodeId":"step","targetHandle":"main","order":0}
             ]
         }));
         let mut machine = ExecutionMachine::new(workflow, vec![item(1)]).unwrap();

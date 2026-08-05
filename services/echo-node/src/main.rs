@@ -518,7 +518,7 @@ mod tests {
             node_type: "echo".into(),
             node_version: 1,
             tenant_id: TenantId::new(),
-            workflow_version_id: WorkflowVersionId::new(),
+            workflow_version_id: Some(WorkflowVersionId::new()),
             execution_id: ExecutionId::new(),
             node_execution_id: NodeExecutionId::new(),
             attempt_id: Uuid::now_v7(),
@@ -684,7 +684,7 @@ mod tests {
         let result = schema::<NodeActionResult>();
         assert_eq!(
             definition["$defs"]["WorkflowSchemaVersion"]["enum"][0],
-            "2.0"
+            "3.0"
         );
         assert!(manifest["properties"].get("readiness").is_some());
         assert!(request["properties"].get("credentialHandles").is_some());

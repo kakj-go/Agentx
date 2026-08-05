@@ -36,7 +36,7 @@ struct TracePayload {
     parent_span_id: Option<Uuid>,
     execution_id: Uuid,
     workflow_id: Uuid,
-    workflow_version_id: Uuid,
+    workflow_version_id: Option<Uuid>,
     node_execution_id: Option<Uuid>,
     attempt_id: Option<Uuid>,
     agent_run_id: Option<Uuid>,
@@ -87,8 +87,8 @@ struct TraceRow {
     execution_id: Uuid,
     #[serde(with = "clickhouse::serde::uuid")]
     workflow_id: Uuid,
-    #[serde(with = "clickhouse::serde::uuid")]
-    workflow_version_id: Uuid,
+    #[serde(with = "clickhouse::serde::uuid::option")]
+    workflow_version_id: Option<Uuid>,
     #[serde(with = "clickhouse::serde::uuid::option")]
     node_execution_id: Option<Uuid>,
     #[serde(with = "clickhouse::serde::uuid::option")]
@@ -206,6 +206,7 @@ async fn run_clickhouse_migrations(client: &clickhouse::Client) -> Result<()> {
     let migrations = [
         include_str!("../../../migrations/clickhouse/0001_workflow_trace_events.sql"),
         include_str!("../../../migrations/clickhouse/0002_m5_agent_trace.sql"),
+        include_str!("../../../migrations/clickhouse/0003_m6_draft_trace.sql"),
     ];
     for statement in migrations.into_iter().flat_map(|migration| {
         migration
@@ -416,7 +417,7 @@ mod tests {
             parent_span_id: None,
             execution_id: id,
             workflow_id: id,
-            workflow_version_id: id,
+            workflow_version_id: Some(id),
             node_execution_id: None,
             attempt_id: None,
             agent_run_id: None,
@@ -445,8 +446,13 @@ mod tests {
             attributes: json!({"safe":true}),
             content_ref: None,
         };
+        let mut draft_payload = payload.clone();
+        draft_payload.workflow_version_id = None;
+        let draft_row = TraceRow::from(draft_payload);
+        assert_eq!(draft_row.workflow_version_id, None);
         let row = TraceRow::from(payload);
         assert_eq!(row.event_id, id);
+        assert_eq!(row.workflow_version_id, Some(id));
         assert!(row.attributes_json.contains("safe"));
     }
 }

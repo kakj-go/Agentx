@@ -15,7 +15,7 @@ service SandboxManager {
 message SandboxScope {
   string tenant_id = 1;
   string workflow_id = 2;
-  string workflow_version_id = 3;
+  optional string workflow_version_id = 3;
   string execution_id = 4;
   string node_execution_id = 5;
   string attempt_id = 6;

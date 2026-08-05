@@ -12,7 +12,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use sqlx::Row;
+use sqlx::{MySql, MySqlConnection, Row, Transaction};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
@@ -443,13 +443,32 @@ pub async fn validate_version_grants(
     Ok(missing)
 }
 
-async fn missing_for_definition(
+pub(crate) async fn missing_for_definition(
     state: &AppState,
     actor: &AuthActor,
     workflow_id: Uuid,
     definition: &WorkflowDefinition,
 ) -> AppResult<Vec<MissingGrant>> {
-    let identity:Uuid=sqlx::query_scalar("SELECT id FROM workflow_service_identities WHERE tenant_id=? AND workflow_id=? AND status='active'").bind(actor.tenant_id).bind(workflow_id).fetch_optional(&state.pool).await?.ok_or_else(||AppError::not_found("Workflow service identity"))?;
+    let mut connection = state.pool.acquire().await?;
+    missing_for_definition_on(&mut connection, actor.tenant_id, workflow_id, definition).await
+}
+
+pub(crate) async fn missing_for_definition_in_transaction(
+    transaction: &mut Transaction<'_, MySql>,
+    tenant_id: Uuid,
+    workflow_id: Uuid,
+    definition: &WorkflowDefinition,
+) -> AppResult<Vec<MissingGrant>> {
+    missing_for_definition_on(&mut *transaction, tenant_id, workflow_id, definition).await
+}
+
+async fn missing_for_definition_on(
+    connection: &mut MySqlConnection,
+    tenant_id: Uuid,
+    workflow_id: Uuid,
+    definition: &WorkflowDefinition,
+) -> AppResult<Vec<MissingGrant>> {
+    let identity:Uuid=sqlx::query_scalar("SELECT id FROM workflow_service_identities WHERE tenant_id=? AND workflow_id=? AND status='active'").bind(tenant_id).bind(workflow_id).fetch_optional(&mut *connection).await?.ok_or_else(||AppError::not_found("Workflow service identity"))?;
     let mut required = VecDeque::new();
     for node in &definition.nodes {
         for reference in &node.resource_references {
@@ -468,9 +487,9 @@ async fn missing_for_definition(
         if !seen.insert(key) {
             continue;
         }
-        if !resource_active(
-            &state.pool,
-            actor.tenant_id,
+        if !resource_active_on(
+            &mut *connection,
+            tenant_id,
             reference.resource_type,
             reference.resource_id,
             reference.resource_version_id,
@@ -487,9 +506,9 @@ async fn missing_for_definition(
             });
             continue;
         }
-        if !has_grant(
-            &state.pool,
-            actor.tenant_id,
+        if !has_grant_on(
+            &mut *connection,
+            tenant_id,
             identity,
             reference.resource_type.as_str(),
             reference.resource_id,
@@ -507,21 +526,23 @@ async fn missing_for_definition(
             });
         }
         if reference.resource_type == ResourceType::Skill {
-            let version_id = resolve_version_id(
-                &state.pool,
-                actor.tenant_id,
+            let version_id = resolve_version_id_on(
+                &mut *connection,
+                tenant_id,
                 ResourceType::Skill,
                 reference.resource_id,
                 reference.resource_version_id,
             )
             .await?;
-            let rows=sqlx::query("SELECT resource_type,resource_id,resource_version_id,operation_key FROM skill_dependencies WHERE tenant_id=? AND skill_version_id=?").bind(actor.tenant_id).bind(version_id).fetch_all(&state.pool).await?;
+            let rows=sqlx::query("SELECT resource_type,resource_id,resource_version_id,operation_key FROM skill_dependencies WHERE tenant_id=? AND skill_version_id=?").bind(tenant_id).bind(version_id).fetch_all(&mut *connection).await?;
             for row in rows {
                 let resource_type: String = row.try_get("resource_type")?;
                 let operation: String = row.try_get("operation_key")?;
                 required.push_back((
                     node_id.clone(),
                     ResourceReference {
+                        binding_id: None,
+                        binding_role: None,
                         resource_type: parse_resource_type(&resource_type)?,
                         resource_id: row.try_get("resource_id")?,
                         resource_version_id: row.try_get("resource_version_id")?,
@@ -532,11 +553,13 @@ async fn missing_for_definition(
             }
         }
         if let Some(server_id) =
-            mcp_server_dependency(&state.pool, actor.tenant_id, &reference).await?
+            mcp_server_dependency_on(&mut *connection, tenant_id, &reference).await?
         {
             required.push_back((
                 node_id.clone(),
                 ResourceReference {
+                    binding_id: None,
+                    binding_role: None,
                     resource_type: ResourceType::McpServer,
                     resource_id: server_id,
                     resource_version_id: None,
@@ -546,11 +569,13 @@ async fn missing_for_definition(
             ));
         }
         for credential_id in
-            credential_dependencies(&state.pool, actor.tenant_id, &reference).await?
+            credential_dependencies_on(&mut *connection, tenant_id, &reference).await?
         {
             required.push_back((
                 node_id.clone(),
                 ResourceReference {
+                    binding_id: None,
+                    binding_role: None,
                     resource_type: ResourceType::Credential,
                     resource_id: credential_id,
                     resource_version_id: None,
@@ -561,6 +586,38 @@ async fn missing_for_definition(
         }
     }
     Ok(missing)
+}
+
+pub(crate) async fn require_definition_resources_visible_in_transaction(
+    transaction: &mut Transaction<'_, MySql>,
+    actor: &AuthActor,
+    definition: &WorkflowDefinition,
+) -> AppResult<()> {
+    require_definition_resources_visible_on(&mut *transaction, actor, definition).await
+}
+
+async fn require_definition_resources_visible_on(
+    connection: &mut MySqlConnection,
+    actor: &AuthActor,
+    definition: &WorkflowDefinition,
+) -> AppResult<()> {
+    let mut seen = HashSet::new();
+    for reference in definition
+        .nodes
+        .iter()
+        .flat_map(|node| &node.resource_references)
+    {
+        if seen.insert((reference.resource_type, reference.resource_id)) {
+            require_resource_visible_on(
+                &mut *connection,
+                actor,
+                reference.resource_type.as_str(),
+                reference.resource_id,
+            )
+            .await?;
+        }
+    }
+    Ok(())
 }
 
 async fn build_snapshots(
@@ -598,6 +655,8 @@ async fn build_snapshots(
                 queue.push_back((
                     node_id.clone(),
                     ResourceReference {
+                        binding_id: None,
+                        binding_role: None,
                         resource_type: parse_resource_type(&resource_type)?,
                         resource_id: row.try_get("resource_id")?,
                         resource_version_id: row.try_get("resource_version_id")?,
@@ -610,6 +669,8 @@ async fn build_snapshots(
             queue.push_back((
                 node_id.clone(),
                 ResourceReference {
+                    binding_id: None,
+                    binding_role: None,
                     resource_type: ResourceType::McpServer,
                     resource_id: server_id,
                     resource_version_id: None,
@@ -621,6 +682,8 @@ async fn build_snapshots(
             queue.push_back((
                 node_id.clone(),
                 ResourceReference {
+                    binding_id: None,
+                    binding_role: None,
                     resource_type: ResourceType::Credential,
                     resource_id: credential_id,
                     resource_version_id: None,
@@ -643,14 +706,23 @@ async fn credential_dependencies(
     tenant: Uuid,
     reference: &ResourceReference,
 ) -> AppResult<Vec<Uuid>> {
+    let mut connection = pool.acquire().await?;
+    credential_dependencies_on(&mut connection, tenant, reference).await
+}
+
+async fn credential_dependencies_on(
+    connection: &mut MySqlConnection,
+    tenant: Uuid,
+    reference: &ResourceReference,
+) -> AppResult<Vec<Uuid>> {
     let ids = match reference.resource_type {
         ResourceType::Model => sqlx::query_scalar("SELECT credential_id FROM (SELECT d.credential_id FROM model_aliases a JOIN model_deployments d ON d.id=a.deployment_id WHERE a.tenant_id=? AND a.id=? UNION SELECT p.credential_id FROM model_aliases a JOIN model_deployments d ON d.id=a.deployment_id JOIN model_providers p ON p.id=d.provider_id WHERE a.tenant_id=? AND a.id=?) credential_refs WHERE credential_id IS NOT NULL")
-            .bind(tenant).bind(reference.resource_id).bind(tenant).bind(reference.resource_id).fetch_all(pool).await?,
+            .bind(tenant).bind(reference.resource_id).bind(tenant).bind(reference.resource_id).fetch_all(&mut *connection).await?,
         ResourceType::McpServer => {
-            sqlx::query_scalar("SELECT sv.credential_id FROM mcp_servers s JOIN mcp_server_versions sv ON sv.server_id=s.id AND sv.version_number=s.current_version_number WHERE s.tenant_id=? AND s.id=? AND sv.credential_id IS NOT NULL").bind(tenant).bind(reference.resource_id).fetch_all(pool).await?
+            sqlx::query_scalar("SELECT sv.credential_id FROM mcp_servers s JOIN mcp_server_versions sv ON sv.server_id=s.id AND sv.version_number=s.current_version_number WHERE s.tenant_id=? AND s.id=? AND sv.credential_id IS NOT NULL").bind(tenant).bind(reference.resource_id).fetch_all(&mut *connection).await?
         }
-        ResourceType::Rag => sqlx::query_scalar("SELECT c.credential_id FROM rag_resources r JOIN rag_connections c ON c.id=r.connection_id WHERE r.tenant_id=? AND r.id=? AND c.credential_id IS NOT NULL").bind(tenant).bind(reference.resource_id).fetch_all(pool).await?,
-        ResourceType::Memory => sqlx::query_scalar("SELECT c.credential_id FROM memory_namespaces n JOIN memory_connections c ON c.id=n.connection_id WHERE n.tenant_id=? AND n.id=? AND c.credential_id IS NOT NULL").bind(tenant).bind(reference.resource_id).fetch_all(pool).await?,
+        ResourceType::Rag => sqlx::query_scalar("SELECT c.credential_id FROM rag_resources r JOIN rag_connections c ON c.id=r.connection_id WHERE r.tenant_id=? AND r.id=? AND c.credential_id IS NOT NULL").bind(tenant).bind(reference.resource_id).fetch_all(&mut *connection).await?,
+        ResourceType::Memory => sqlx::query_scalar("SELECT c.credential_id FROM memory_namespaces n JOIN memory_connections c ON c.id=n.connection_id WHERE n.tenant_id=? AND n.id=? AND c.credential_id IS NOT NULL").bind(tenant).bind(reference.resource_id).fetch_all(&mut *connection).await?,
         ResourceType::Credential | ResourceType::McpTool | ResourceType::Skill | ResourceType::SandboxProfile => Vec::new(),
     };
     Ok(ids)
@@ -661,6 +733,15 @@ async fn mcp_server_dependency(
     tenant: Uuid,
     reference: &ResourceReference,
 ) -> AppResult<Option<Uuid>> {
+    let mut connection = pool.acquire().await?;
+    mcp_server_dependency_on(&mut connection, tenant, reference).await
+}
+
+async fn mcp_server_dependency_on(
+    connection: &mut MySqlConnection,
+    tenant: Uuid,
+    reference: &ResourceReference,
+) -> AppResult<Option<Uuid>> {
     if reference.resource_type != ResourceType::McpTool {
         return Ok(None);
     }
@@ -668,7 +749,7 @@ async fn mcp_server_dependency(
         sqlx::query_scalar("SELECT server_id FROM mcp_tools WHERE tenant_id=? AND id=?")
             .bind(tenant)
             .bind(reference.resource_id)
-            .fetch_optional(pool)
+            .fetch_optional(&mut *connection)
             .await?,
     )
 }
@@ -765,10 +846,28 @@ async fn resolve_version_id(
     resource_id: Uuid,
     requested: Option<Uuid>,
 ) -> AppResult<Uuid> {
+    let mut connection = pool.acquire().await?;
+    resolve_version_id_on(
+        &mut connection,
+        tenant,
+        resource_type,
+        resource_id,
+        requested,
+    )
+    .await
+}
+
+async fn resolve_version_id_on(
+    connection: &mut MySqlConnection,
+    tenant: Uuid,
+    resource_type: ResourceType,
+    resource_id: Uuid,
+    requested: Option<Uuid>,
+) -> AppResult<Uuid> {
     if let Some(id) = requested {
         return Ok(id);
     }
-    let result=match resource_type{ResourceType::McpTool=>sqlx::query_scalar("SELECT tv.id FROM mcp_tool_versions tv JOIN mcp_tools t ON t.id=tv.tool_id JOIN mcp_tool_policies p ON p.tool_id=t.id AND p.tenant_id=t.tenant_id WHERE tv.tenant_id=? AND tv.tool_id=? AND t.availability='available' AND p.enabled=TRUE ORDER BY tv.version_number DESC LIMIT 1").bind(tenant).bind(resource_id).fetch_optional(pool).await?,ResourceType::Skill=>sqlx::query_scalar("SELECT sv.id FROM skill_versions sv JOIN skills s ON s.id=sv.skill_id WHERE sv.tenant_id=? AND sv.skill_id=? AND s.status='active' ORDER BY sv.version_number DESC LIMIT 1").bind(tenant).bind(resource_id).fetch_optional(pool).await?,_=>None};
+    let result=match resource_type{ResourceType::McpTool=>sqlx::query_scalar("SELECT tv.id FROM mcp_tool_versions tv JOIN mcp_tools t ON t.id=tv.tool_id JOIN mcp_tool_policies p ON p.tool_id=t.id AND p.tenant_id=t.tenant_id WHERE tv.tenant_id=? AND tv.tool_id=? AND t.availability='available' AND p.enabled=TRUE ORDER BY tv.version_number DESC LIMIT 1").bind(tenant).bind(resource_id).fetch_optional(&mut *connection).await?,ResourceType::Skill=>sqlx::query_scalar("SELECT sv.id FROM skill_versions sv JOIN skills s ON s.id=sv.skill_id WHERE sv.tenant_id=? AND sv.skill_id=? AND s.status='active' ORDER BY sv.version_number DESC LIMIT 1").bind(tenant).bind(resource_id).fetch_optional(&mut *connection).await?,_=>None};
     result.ok_or_else(|| {
         AppError::unprocessable(
             "RESOURCE_VERSION_MISSING",
@@ -784,27 +883,38 @@ async fn resource_active(
     id: Uuid,
     version: Option<Uuid>,
 ) -> AppResult<bool> {
+    let mut connection = pool.acquire().await?;
+    resource_active_on(&mut connection, tenant, kind, id, version).await
+}
+
+async fn resource_active_on(
+    connection: &mut MySqlConnection,
+    tenant: Uuid,
+    kind: ResourceType,
+    id: Uuid,
+    version: Option<Uuid>,
+) -> AppResult<bool> {
     let active = match kind {
-        ResourceType::Credential => sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM credentials WHERE tenant_id=? AND id=? AND status='active')").bind(tenant).bind(id).fetch_one(pool).await?,
+        ResourceType::Credential => sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM credentials WHERE tenant_id=? AND id=? AND status='active')").bind(tenant).bind(id).fetch_one(&mut *connection).await?,
         ResourceType::Model => if let Some(v) = version {
-            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM model_aliases a JOIN model_deployments d ON d.tenant_id=a.tenant_id JOIN model_providers p ON p.id=d.provider_id WHERE a.tenant_id=? AND a.id=? AND a.status='active' AND d.id=? AND d.status='active' AND p.status='active')").bind(tenant).bind(id).bind(v).fetch_one(pool).await?
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM model_aliases a JOIN model_deployments d ON d.tenant_id=a.tenant_id JOIN model_providers p ON p.id=d.provider_id WHERE a.tenant_id=? AND a.id=? AND a.status='active' AND d.id=? AND d.status='active' AND p.status='active')").bind(tenant).bind(id).bind(v).fetch_one(&mut *connection).await?
         } else {
-            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM model_aliases a JOIN model_deployments d ON d.id=a.deployment_id JOIN model_providers p ON p.id=d.provider_id WHERE a.tenant_id=? AND a.id=? AND a.status='active' AND d.status='active' AND p.status='active')").bind(tenant).bind(id).fetch_one(pool).await?
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM model_aliases a JOIN model_deployments d ON d.id=a.deployment_id JOIN model_providers p ON p.id=d.provider_id WHERE a.tenant_id=? AND a.id=? AND a.status='active' AND d.status='active' AND p.status='active')").bind(tenant).bind(id).fetch_one(&mut *connection).await?
         },
-        ResourceType::McpServer => sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mcp_servers WHERE tenant_id=? AND id=? AND status='active')").bind(tenant).bind(id).fetch_one(pool).await?,
+        ResourceType::McpServer => sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mcp_servers WHERE tenant_id=? AND id=? AND status='active')").bind(tenant).bind(id).fetch_one(&mut *connection).await?,
         ResourceType::McpTool => if let Some(v) = version {
-            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mcp_tool_versions tv JOIN mcp_tools t ON t.id=tv.tool_id JOIN mcp_servers s ON s.id=t.server_id JOIN mcp_tool_policies p ON p.tool_id=t.id AND p.tenant_id=t.tenant_id WHERE tv.tenant_id=? AND tv.id=? AND tv.tool_id=? AND t.availability='available' AND s.status='active' AND p.enabled=TRUE)").bind(tenant).bind(v).bind(id).fetch_one(pool).await?
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mcp_tool_versions tv JOIN mcp_tools t ON t.id=tv.tool_id JOIN mcp_servers s ON s.id=t.server_id JOIN mcp_tool_policies p ON p.tool_id=t.id AND p.tenant_id=t.tenant_id WHERE tv.tenant_id=? AND tv.id=? AND tv.tool_id=? AND t.availability='available' AND s.status='active' AND p.enabled=TRUE)").bind(tenant).bind(v).bind(id).fetch_one(&mut *connection).await?
         } else {
-            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mcp_tools t JOIN mcp_servers s ON s.id=t.server_id JOIN mcp_tool_policies p ON p.tool_id=t.id AND p.tenant_id=t.tenant_id WHERE t.tenant_id=? AND t.id=? AND t.availability='available' AND s.status='active' AND p.enabled=TRUE)").bind(tenant).bind(id).fetch_one(pool).await?
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mcp_tools t JOIN mcp_servers s ON s.id=t.server_id JOIN mcp_tool_policies p ON p.tool_id=t.id AND p.tenant_id=t.tenant_id WHERE t.tenant_id=? AND t.id=? AND t.availability='available' AND s.status='active' AND p.enabled=TRUE)").bind(tenant).bind(id).fetch_one(&mut *connection).await?
         },
         ResourceType::Skill => if let Some(v) = version {
-            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM skill_versions sv JOIN skills s ON s.id=sv.skill_id WHERE sv.tenant_id=? AND sv.id=? AND sv.skill_id=? AND s.status='active')").bind(tenant).bind(v).bind(id).fetch_one(pool).await?
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM skill_versions sv JOIN skills s ON s.id=sv.skill_id WHERE sv.tenant_id=? AND sv.id=? AND sv.skill_id=? AND s.status='active')").bind(tenant).bind(v).bind(id).fetch_one(&mut *connection).await?
         } else {
-            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM skills s JOIN skill_versions sv ON sv.skill_id=s.id WHERE s.tenant_id=? AND s.id=? AND s.status='active')").bind(tenant).bind(id).fetch_one(pool).await?
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM skills s JOIN skill_versions sv ON sv.skill_id=s.id WHERE s.tenant_id=? AND s.id=? AND s.status='active')").bind(tenant).bind(id).fetch_one(&mut *connection).await?
         },
-        ResourceType::Rag => sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM rag_resources r JOIN rag_connections c ON c.id=r.connection_id WHERE r.tenant_id=? AND r.id=? AND r.status='active' AND c.status='active')").bind(tenant).bind(id).fetch_one(pool).await?,
-        ResourceType::Memory => sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM memory_namespaces n JOIN memory_connections c ON c.id=n.connection_id WHERE n.tenant_id=? AND n.id=? AND n.status='active' AND c.status='active')").bind(tenant).bind(id).fetch_one(pool).await?,
-        ResourceType::SandboxProfile => if let Some(v)=version { sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sandbox_profile_versions v JOIN sandbox_profiles p ON p.id=v.profile_id WHERE v.tenant_id=? AND v.id=? AND v.profile_id=? AND p.status='active')").bind(tenant).bind(v).bind(id).fetch_one(pool).await? } else { sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sandbox_profiles WHERE tenant_id=? AND id=? AND status='active')").bind(tenant).bind(id).fetch_one(pool).await? },
+        ResourceType::Rag => sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM rag_resources r JOIN rag_connections c ON c.id=r.connection_id WHERE r.tenant_id=? AND r.id=? AND r.status='active' AND c.status='active')").bind(tenant).bind(id).fetch_one(&mut *connection).await?,
+        ResourceType::Memory => sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM memory_namespaces n JOIN memory_connections c ON c.id=n.connection_id WHERE n.tenant_id=? AND n.id=? AND n.status='active' AND c.status='active')").bind(tenant).bind(id).fetch_one(&mut *connection).await?,
+        ResourceType::SandboxProfile => if let Some(v)=version { sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sandbox_profile_versions v JOIN sandbox_profiles p ON p.id=v.profile_id WHERE v.tenant_id=? AND v.id=? AND v.profile_id=? AND p.status='active')").bind(tenant).bind(v).bind(id).fetch_one(&mut *connection).await? } else { sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sandbox_profiles WHERE tenant_id=? AND id=? AND status='active')").bind(tenant).bind(id).fetch_one(&mut *connection).await? },
     };
     Ok(active)
 }
@@ -816,7 +926,19 @@ async fn has_grant(
     id: Uuid,
     operation: &str,
 ) -> AppResult<bool> {
-    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM resource_grants WHERE tenant_id=? AND subject_type='workflow_service_identity' AND subject_id=? AND resource_type=? AND resource_id=? AND (operation_key=? OR operation_key='manage'))").bind(tenant).bind(identity).bind(kind).bind(id).bind(operation).fetch_one(pool).await?)
+    let mut connection = pool.acquire().await?;
+    has_grant_on(&mut connection, tenant, identity, kind, id, operation).await
+}
+
+async fn has_grant_on(
+    connection: &mut MySqlConnection,
+    tenant: Uuid,
+    identity: Uuid,
+    kind: &str,
+    id: Uuid,
+    operation: &str,
+) -> AppResult<bool> {
+    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM resource_grants WHERE tenant_id=? AND subject_type='workflow_service_identity' AND subject_id=? AND resource_type=? AND resource_id=? AND (operation_key=? OR operation_key='manage'))").bind(tenant).bind(identity).bind(kind).bind(id).bind(operation).fetch_one(&mut *connection).await?)
 }
 
 pub async fn require_resource_visible(
@@ -825,29 +947,39 @@ pub async fn require_resource_visible(
     kind: &str,
     id: Uuid,
 ) -> AppResult<()> {
-    let department = resource_department(&state.pool, actor.tenant_id, kind, id)
+    let mut connection = state.pool.acquire().await?;
+    require_resource_visible_on(&mut connection, actor, kind, id).await
+}
+
+async fn require_resource_visible_on(
+    connection: &mut MySqlConnection,
+    actor: &AuthActor,
+    kind: &str,
+    id: Uuid,
+) -> AppResult<()> {
+    let department = resource_department_on(&mut *connection, actor.tenant_id, kind, id)
         .await?
         .ok_or_else(|| AppError::not_found("Resource"))?;
     if actor.company_admin {
         return Ok(());
     }
     let in_scope: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM user_roles ur JOIN department_closure dc ON dc.ancestor_id=ur.scope_department_id AND dc.tenant_id=ur.tenant_id WHERE ur.tenant_id=? AND ur.user_id=? AND dc.descendant_id=?)")
-        .bind(actor.tenant_id).bind(actor.user_id).bind(department).fetch_one(&state.pool).await?;
+        .bind(actor.tenant_id).bind(actor.user_id).bind(department).fetch_one(&mut *connection).await?;
     let granted: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM resource_grants rg JOIN department_closure dc ON dc.tenant_id=rg.tenant_id AND dc.ancestor_id=rg.subject_id WHERE rg.tenant_id=? AND rg.subject_type='department' AND rg.resource_type=? AND rg.resource_id=? AND rg.operation_key IN ('view','manage') AND dc.descendant_id=?)")
-        .bind(actor.tenant_id).bind(kind).bind(id).bind(actor.department_id).fetch_one(&state.pool).await?;
+        .bind(actor.tenant_id).bind(kind).bind(id).bind(actor.department_id).fetch_one(&mut *connection).await?;
     if in_scope || granted {
         Ok(())
     } else {
         Err(AppError::not_found("Resource"))
     }
 }
-async fn resource_department(
-    pool: &sqlx::MySqlPool,
+async fn resource_department_on(
+    connection: &mut MySqlConnection,
     tenant: Uuid,
     kind: &str,
     id: Uuid,
 ) -> AppResult<Option<Uuid>> {
-    let result=match kind{"credential"=>sqlx::query_scalar("SELECT owner_department_id FROM credentials WHERE tenant_id=? AND id=?").bind(tenant).bind(id).fetch_optional(pool).await?,"model"=>sqlx::query_scalar("SELECT p.owner_department_id FROM model_aliases a JOIN model_deployments d ON d.id=a.deployment_id JOIN model_providers p ON p.id=d.provider_id WHERE a.tenant_id=? AND a.id=?").bind(tenant).bind(id).fetch_optional(pool).await?,"mcp_server"=>sqlx::query_scalar("SELECT owner_department_id FROM mcp_servers WHERE tenant_id=? AND id=?").bind(tenant).bind(id).fetch_optional(pool).await?,"mcp_tool"=>sqlx::query_scalar("SELECT s.owner_department_id FROM mcp_tools t JOIN mcp_servers s ON s.id=t.server_id WHERE t.tenant_id=? AND t.id=?").bind(tenant).bind(id).fetch_optional(pool).await?,"skill"=>sqlx::query_scalar("SELECT owner_department_id FROM skills WHERE tenant_id=? AND id=?").bind(tenant).bind(id).fetch_optional(pool).await?,"rag"=>sqlx::query_scalar("SELECT owner_department_id FROM rag_resources WHERE tenant_id=? AND id=?").bind(tenant).bind(id).fetch_optional(pool).await?,"memory"=>sqlx::query_scalar("SELECT owner_department_id FROM memory_namespaces WHERE tenant_id=? AND id=?").bind(tenant).bind(id).fetch_optional(pool).await?,"sandbox_profile"=>sqlx::query_scalar("SELECT owner_department_id FROM sandbox_profiles WHERE tenant_id=? AND id=?").bind(tenant).bind(id).fetch_optional(pool).await?,_=>return Err(AppError::bad_request("INVALID_RESOURCE_TYPE","Resource type is invalid"))};
+    let result=match kind{"credential"=>sqlx::query_scalar("SELECT owner_department_id FROM credentials WHERE tenant_id=? AND id=?").bind(tenant).bind(id).fetch_optional(&mut *connection).await?,"model"=>sqlx::query_scalar("SELECT p.owner_department_id FROM model_aliases a JOIN model_deployments d ON d.id=a.deployment_id JOIN model_providers p ON p.id=d.provider_id WHERE a.tenant_id=? AND a.id=?").bind(tenant).bind(id).fetch_optional(&mut *connection).await?,"mcp_server"=>sqlx::query_scalar("SELECT owner_department_id FROM mcp_servers WHERE tenant_id=? AND id=?").bind(tenant).bind(id).fetch_optional(&mut *connection).await?,"mcp_tool"=>sqlx::query_scalar("SELECT s.owner_department_id FROM mcp_tools t JOIN mcp_servers s ON s.id=t.server_id WHERE t.tenant_id=? AND t.id=?").bind(tenant).bind(id).fetch_optional(&mut *connection).await?,"skill"=>sqlx::query_scalar("SELECT owner_department_id FROM skills WHERE tenant_id=? AND id=?").bind(tenant).bind(id).fetch_optional(&mut *connection).await?,"rag"=>sqlx::query_scalar("SELECT owner_department_id FROM rag_resources WHERE tenant_id=? AND id=?").bind(tenant).bind(id).fetch_optional(&mut *connection).await?,"memory"=>sqlx::query_scalar("SELECT owner_department_id FROM memory_namespaces WHERE tenant_id=? AND id=?").bind(tenant).bind(id).fetch_optional(&mut *connection).await?,"sandbox_profile"=>sqlx::query_scalar("SELECT owner_department_id FROM sandbox_profiles WHERE tenant_id=? AND id=?").bind(tenant).bind(id).fetch_optional(&mut *connection).await?,_=>return Err(AppError::bad_request("INVALID_RESOURCE_TYPE","Resource type is invalid"))};
     Ok(result)
 }
 
@@ -944,6 +1076,8 @@ fn permission_for(kind: &str, manage: bool) -> AppResult<&'static str> {
         ("rag", true) => Ok("knowledge:manage"),
         ("memory", false) => Ok("memory:view"),
         ("memory", true) => Ok("memory:manage"),
+        ("sandbox_profile", false) => Ok("sandbox:view"),
+        ("sandbox_profile", true) => Ok("sandbox:manage"),
         _ => Err(AppError::bad_request(
             "INVALID_RESOURCE_TYPE",
             "Resource type is invalid",
@@ -961,4 +1095,21 @@ fn grant_from_row(r: sqlx::mysql::MySqlRow) -> Result<GrantResponse, sqlx::Error
         operation: r.try_get("operation_key")?,
         created_at: r.try_get("created_at")?,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::permission_for;
+
+    #[test]
+    fn sandbox_profile_grants_use_sandbox_permissions() {
+        assert_eq!(
+            permission_for("sandbox_profile", false).unwrap(),
+            "sandbox:view"
+        );
+        assert_eq!(
+            permission_for("sandbox_profile", true).unwrap(),
+            "sandbox:manage"
+        );
+    }
 }

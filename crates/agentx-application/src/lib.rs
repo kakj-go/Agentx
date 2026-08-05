@@ -2,10 +2,10 @@ use std::time::Duration;
 
 use agentx_domain::{
     ApprovalTaskId, ArtifactId, DatasetVersionId, EvaluationProfileVersionId, EvaluationRunId,
-    ExecutionId, ExecutionStatus, InvocationId, MissingGrant, NotificationId, ResourceOperation,
-    ResourceReference, ResourceType, ResourceVersionSnapshot, SessionId, TenantId, TraceEvent,
-    UserId, WorkflowDefinition, WorkflowId, WorkflowServiceIdentity, WorkflowSummary,
-    WorkflowVersionId,
+    ExecutionId, ExecutionSource, ExecutionStatus, InvocationId, MissingGrant, NotificationId,
+    ResourceOperation, ResourceReference, ResourceType, ResourceVersionSnapshot, SessionId,
+    TenantId, TraceEvent, UserId, WorkflowDefinition, WorkflowId, WorkflowServiceIdentity,
+    WorkflowSummary, WorkflowVersionId,
 };
 use anyhow::Result;
 use async_trait::async_trait;
@@ -237,10 +237,13 @@ pub struct RequestExecution {
     pub tenant_id: TenantId,
     pub invocation_id: Option<InvocationId>,
     pub session_id: Option<SessionId>,
-    pub workflow_version_id: WorkflowVersionId,
+    pub source: ExecutionSource,
     pub requested_by: Option<UserId>,
     pub trigger_type: String,
     pub input: Value,
+    pub debug_plan: Value,
+    pub debug_overlay: Value,
+    pub resource_snapshots: Vec<RuntimeResourceSnapshot>,
     pub idempotency_key: Option<String>,
 }
 

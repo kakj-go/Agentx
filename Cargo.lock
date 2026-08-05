@@ -152,6 +152,7 @@ dependencies = [
  "agentx-domain",
  "agentx-node-protocol",
  "cel-interpreter",
+ "jsonschema",
  "serde",
  "serde_json",
  "sha2",

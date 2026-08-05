@@ -4,7 +4,7 @@
 
 Agentx 是企业级 Workflow 开发、运行、发布和评测平台。
 
-它在开发体验上接近 n8n：
+它在画布交互和开发流程上接近 n8n，但使用 Agentx 自有协议：
 
 - 拖拽节点和连接线构建 Workflow
 - 手动运行整个 Workflow
@@ -114,6 +114,8 @@ Agentx 是企业级 Workflow 开发、运行、发布和评测平台。
 - 完整商业计费平台
 - 跨区域多活
 - 与 n8n 全部社区节点二进制兼容
+- n8n Workflow JSON、Credential Definition 和 JavaScript 表达式兼容
+- n8n 插件市场或社区节点运行时
 
 ## 5. 产品原则
 
@@ -123,4 +125,5 @@ Agentx 是企业级 Workflow 开发、运行、发布和评测平台。
 - 状态可恢复：Worker 销毁后不影响等待或继续执行。
 - 权限随 Workflow：模型、MCP Tool、Skill、知识和记忆分别授权给运行身份。
 - 调试不污染生产：Pin Data、Mock 和参数覆盖只作用于测试运行。
+- 交互借鉴而非协议兼容：画布体验可参考 n8n，运行定义和节点生态保持 Agentx 原生。
 - 历史不被改写：重新执行创建派生记录。

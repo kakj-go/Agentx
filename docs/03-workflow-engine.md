@@ -1,6 +1,6 @@
 # Workflow 运行引擎
 
-## 1. 与 n8n 一致的核心语义
+## 1. Agentx 原生 Workflow 语义
 
 平台遵循以下运行方式：
 
@@ -14,9 +14,11 @@
 - Trigger 创建一次独立 Execution。
 - Wait、审批和外部事件可以挂起并恢复 Execution。
 
-这里的一致性指 Workflow 行为和用户可实现能力一致，不要求 n8n Workflow JSON、npm 社区节点或插件二进制直接兼容。n8n JSON 后续通过 Import Adapter 转换为 Agentx `WorkflowDefinition`；Agentx 可以在版本固定、权限、循环预算和副作用保护上提供更严格的扩展。
+这些是 Agentx 自己冻结的运行语义。Studio 可以采用 n8n 式拖拽、配置和调试交互，但不以 n8n Workflow JSON、表达式、npm 社区节点或插件协议作为兼容目标。
 
 ## 2. Workflow Definition
+
+M6 将运行定义升级为 `WorkflowDefinition 3.0`。项目尚未发布，不保留 2.0 双读；开发数据、Fixture、Schema 和编译测试一次性迁移。
 
 Workflow Definition 包含：
 
@@ -37,7 +39,6 @@ Node Instance 包含：
 - 显示名称
 - Node Type
 - Node Type Version
-- 画布位置
 - Parameters
 - Credential References
 - Retry Policy
@@ -46,7 +47,6 @@ Node Instance 包含：
 - Always Output Data
 - On Error
 - Disabled
-- Notes
 
 Connection 包含：
 
@@ -55,6 +55,7 @@ Connection 包含：
 - Target Node
 - Target Port
 - Connection Type
+- 同一 Source Port 下的稳定 Order
 
 连接类型分为：
 
@@ -66,6 +67,8 @@ Connection 包含：
 - ai_output_parser：Agent 结果解析器
 
 资源连接声明能力，不等同于主执行顺序。
+
+纯编辑信息保存在独立 Editor Document，包括 Node Position、Viewport、Notes、Group 和折叠状态。Pin/Mock 和临时输入保存在 Debug Overlay；两者都不属于 Workflow Definition，也不能被 Compiler 或 Worker 读取。
 
 ## 3. Item 数据模型
 
@@ -187,7 +190,7 @@ Sandbox Python、JavaScript、Shell 和 Agent 是运行适配或内置节点能�
 
 ## 7. Workflow 编译
 
-Draft 保存为 Version 前编译为内部 IR。
+Draft Revision 调试或保存为 Version 前编译为内部 IR。两种来源都从 Node Catalog 按精确类型/版本加载 Manifest，并将 Manifest Hash 固化到 Execution/Version Snapshot。
 
 编译过程检查：
 
@@ -304,7 +307,7 @@ Sub-workflow：
 
 ## 10. Scheduler
 
-Workflow 默认采用 `n8n_v1` 执行顺序：同一分叉下先完成画布位置靠上、再靠左的分支，然后执行后续分支。Draft 保存 Version 时将位置推导为显式 branchOrder 并固化到 IR，Scheduler 不在运行时读取 React Flow 状态。平台可以提供显式 `parallel` 扩展，但不能在 `n8n_v1` 下隐式并行具有可观察副作用的分支。
+Workflow 默认采用 `deterministic` 执行顺序：同一 Source Port 的分支按 Definition 中稳定 Connection Order 推进，不从节点画布坐标推导行为。平台提供显式 `parallel` 扩展，但不能在 `deterministic` 下隐式并行具有可观察副作用的分支。
 
 节点 Ready 判定基于 Node Definition 的 Readiness Policy、当前 run/generation 的输入 Delivery 以及前驱分支完成状态，不能只对 Merge 编写特殊逻辑。
 
@@ -366,13 +369,15 @@ Studio 支持：
 - Retry Failed Node
 - Fork From Checkpoint
 
-Pin Data 只属于 Draft 和手动调试。发布时必须移除或阻止带 Pin Data 的草稿发布。
+Pin Data、Mock 和临时输入只属于独立 Debug Overlay。发布只读取 Definition 和资源/Manifest 快照，因此 Overlay 可以保留供后续调试，但永远不会进入 Workflow Version 或生产 Execution。
+
+手动调试必须指定一个不可变 Draft Revision。Coordinator 将该 Revision、Manifest、资源、授权和 Debug Plan 固化为 Execution Snapshot 后，再复用正式 Execution Machine；不得创建隐藏 Version，也不得在 Worker 运行期间读取 Draft Head。
 
 ## 13. 控制面 Definition 与运行协议边界
 
-M2.1 的最小画布只保存 `manual_trigger`、`model`、`mcp_tool`、`skill`、`rag` 和 `memory` 节点。资源节点通过 `resourceReferences` 引用控制面资源；MCP Tool 使用 `resourceType=mcp_tool`，不接受旧 `tool` 类型。
+资源节点通过 `resourceReferences` 引用控制面资源；MCP Tool 使用 `resourceType=mcp_tool`，不接受旧 `tool` 类型。M6 后可用节点全部来自 Node Catalog，不在前端维护 Node Type 白名单。
 
-React Flow 的节点和连线状态必须经过 Serializer 生成独立 Workflow Definition。阶段 08 编译器再把 Definition 转换为运行 IR，因此画布数据、控制面 Definition 和运行状态不能共用一个对象模型。
+React Flow 状态必须经过 Serializer 分别生成 Workflow Definition 和 Editor Document。Compiler 再把 Definition 转换为运行 IR；Debug Overlay 和运行高亮使用第三套独立模型，因此画布、运行定义、调试数据和 Execution State 不能共用一个对象。
 
 阶段 08 固化四类契约：
 

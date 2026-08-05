@@ -34,8 +34,11 @@ Redis 和 ClickHouse 都不能代替 MySQL 中的权威 Execution 状态。
 - workflow_versions
 - workflow_deployments
 - workflow_triggers
+- workflow_debug_overlays
 - node_definitions
 - node_definition_versions
+
+`workflow_drafts`、`workflow_draft_revisions` 和 `workflow_versions` 分别保存 `definition_json/definition_hash` 与 `editor_json/editor_hash`。Definition 是可编译运行图；Editor Document 只保存坐标、视口、注释、分组等 UI 信息。Version 可保留 Editor 快照用于只读查看，但 Worker 不读取它。
 
 workflow_versions 保存：
 
@@ -46,6 +49,10 @@ workflow_versions 保存：
 - asset_reference_snapshot
 - created_by
 - created_at
+
+`workflow_debug_overlays` 独立保存 node_id、Pin/Mock 类型、Schema Hash、Artifact Reference 和更新人。Overlay 不进入 Definition、Version 或 IR；节点删除时解除引用，资源/输出 Schema 变化时标记为 stale。
+
+`node_definition_versions.manifest_json` 是 Studio、Compiler 和运行快照共同使用的 Node Manifest 权威版本。内置 Manifest 由部署 Reconcile 幂等写入；编译和执行固化实际 Manifest Hash，不能依赖进程内硬编码白名单。
 
 ## 4. Execution 表
 
@@ -67,6 +74,8 @@ workflow_executions 主要字段：
 - tenant_id
 - workflow_id
 - workflow_version_id
+- source_kind（version 或 draft_revision）
+- source_id/source_revision
 - deployment_id
 - application_id
 - session_id
@@ -81,6 +90,8 @@ workflow_executions 主要字段：
 - total_tokens
 - total_cost
 - error_summary
+
+生产、Application 和 Evaluation Execution 的 workflow_version_id 必填；Studio Draft Debug 可空，但必须指向精确 Draft Revision。两种来源都在创建时生成不可变 Execution Snapshot，后续不读取可变 Draft 或 Resource Head。
 
 parent_execution_id 同时用于 Fork 和 Sub-workflow 父子关联，由 execution_type 区分关系；Sub-workflow 额外保存 caller_node_execution_id，不能把子 Workflow 的节点记录混入父 Execution。
 
@@ -132,6 +143,8 @@ node_attempts 主要字段：
 - error_message
 
 node_invocation_handles 保存远程节点调用期 Credential、Artifact 和 Cancellation Handle 的 SHA-256 Token Hash，不保存明文 Token 或 Secret。记录绑定 tenant_id、execution_id、node_execution_id、attempt_id、lease_token、resource_id/version、expires_at 和 consumed_at；Credential/Artifact Handle 一次性消费，只有仍在运行的 Attempt 和有效 Lease 可以解析。
+
+execution_snapshots 与 Execution 一对一，以 execution_id 为唯一身份，并保存来源、Definition、Compiled IR、Manifest Snapshot、Resource/Grant Snapshot、Runtime Settings、Debug Plan 和 Debug Overlay Snapshot。Node/Agent/Sandbox 上下文以 execution_id 作为快照和短期凭证范围；workflow_version_id 在 Version Source 下保存，Draft Debug 下为空。
 
 Checkpoint 小载荷保存在 `checkpoints.payload_json`。超过配置阈值的载荷先以内联权威状态提交，再上传对象存储，并在同一 MySQL 事务中写入 Artifact 元数据、`checkpoint_artifacts` 引用和 `payload_artifact_id`，同时清空 `payload_json`；切换失败必须补偿删除对象和 Artifact 元数据。恢复和 Fork 通过 Repository 透明读取两种存储形式，State Hash 不因外置而变化。
 

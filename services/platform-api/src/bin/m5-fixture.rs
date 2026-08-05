@@ -593,12 +593,12 @@ async fn create_agent_workflow(
         "Call the echo tool once and finish"
     };
     let definition = json!({
-        "schemaVersion":"2.0",
+        "schemaVersion":"3.0",
         "nodes":[
             node("trigger","manual_trigger","Manual Trigger",80,160,json!({})),
             node_with_resources("agent","agent","M5 Agent",360,160,json!({"systemPrompt":"Use the authorized tools only.","messages":[{"role":"user","content":prompt}],"maxIterations":6,"maxModelCalls":6,"maxToolCalls":8,"maxTotalTokens":4096,"maxOutputTokens":512,"maxCostMicros":1000000,"maxDurationMs":120000,"limitAction":"error_output"}),vec![
-                reference("model",resources.model,Some(resources.model_version),"use"),
-                reference("mcp_tool",resources.mcp_tool,Some(resources.mcp_tool_version),"use")
+                binding_reference("agent-model","ai_model","model",resources.model,Some(resources.model_version),"use"),
+                binding_reference("agent-tool","ai_tool","mcp_tool",resources.mcp_tool,Some(resources.mcp_tool_version),"use")
             ])
         ],
         "connections":[edge("agent-start","trigger","main","agent","main")]
@@ -615,7 +615,7 @@ async fn create_knowledge_workflows(
     resources: &Resources,
 ) -> Result<()> {
     let rag_query = json!({
-        "schemaVersion":"2.0",
+        "schemaVersion":"3.0",
         "nodes":[
             node("trigger","manual_trigger","Manual Trigger",80,160,json!({})),
             node_with_resources("rag","rag","M5 RAG Query",360,160,json!({
@@ -637,7 +637,7 @@ async fn create_knowledge_workflows(
     .await?;
 
     let memory_search = json!({
-        "schemaVersion":"2.0",
+        "schemaVersion":"3.0",
         "nodes":[
             node("trigger","manual_trigger","Manual Trigger",80,160,json!({})),
             node_with_resources("memory","memory","M5 Memory Search",360,160,json!({
@@ -659,7 +659,7 @@ async fn create_knowledge_workflows(
     .await?;
 
     let denied_write = json!({
-        "schemaVersion":"2.0",
+        "schemaVersion":"3.0",
         "nodes":[
             node("trigger","manual_trigger","Manual Trigger",80,160,json!({})),
             node_with_resources("rag","rag","M5 RAG Read Scope",360,160,json!({
@@ -805,7 +805,7 @@ async fn create_code_fixture(
         references.push(reference("credential", resources.credential, None, "use"));
     }
     let definition = json!({
-        "schemaVersion":"2.0",
+        "schemaVersion":"3.0",
         "nodes":[
             node("trigger","manual_trigger","Manual Trigger",80,160,json!({})),
             node_with_resources("code","code",fixture.node_name,360,160,parameters,references)
@@ -972,8 +972,8 @@ async fn create_workflow(
         .execute(&mut *tx)
         .await?;
     sqlx::query("INSERT INTO workflow_members(tenant_id,workflow_id,user_id,member_role,created_by) VALUES(?,?,?,'manager',?)").bind(tenant).bind(workflow).bind(user).bind(user).execute(&mut *tx).await?;
-    sqlx::query("INSERT INTO workflow_drafts(id,tenant_id,workflow_id,schema_version,revision,definition_json,content_hash,updated_by) VALUES(?,?,?,'2.0',1,?,?,?)").bind(draft).bind(tenant).bind(workflow).bind(&definition).bind(&content_hash).bind(user).execute(&mut *tx).await?;
-    sqlx::query("INSERT INTO workflow_versions(id,tenant_id,workflow_id,version_number,source_revision,schema_version,definition_json,content_hash,compiled_ir_json,compiled_ir_hash,compiler_version,compiled_at,created_by) VALUES(?,?,?,1,1,'2.0',?,?,?,?,?,CURRENT_TIMESTAMP(6),?)").bind(version).bind(tenant).bind(workflow).bind(&definition).bind(&content_hash).bind(serde_json::to_value(&compiled)?).bind(&compiled.canonical_hash).bind(&compiled.compiler_version).bind(user).execute(&mut *tx).await?;
+    sqlx::query("INSERT INTO workflow_drafts(id,tenant_id,workflow_id,schema_version,revision,definition_json,content_hash,updated_by) VALUES(?,?,?,'3.0',1,?,?,?)").bind(draft).bind(tenant).bind(workflow).bind(&definition).bind(&content_hash).bind(user).execute(&mut *tx).await?;
+    sqlx::query("INSERT INTO workflow_versions(id,tenant_id,workflow_id,version_number,source_revision,schema_version,definition_json,content_hash,compiled_ir_json,compiled_ir_hash,compiler_version,compiled_at,created_by) VALUES(?,?,?,1,1,'3.0',?,?,?,?,?,CURRENT_TIMESTAMP(6),?)").bind(version).bind(tenant).bind(workflow).bind(&definition).bind(&content_hash).bind(serde_json::to_value(&compiled)?).bind(&compiled.canonical_hash).bind(&compiled.compiler_version).bind(user).execute(&mut *tx).await?;
     for snapshot in snapshots {
         insert_snapshot_and_grant(&mut tx, tenant, user, identity, version, snapshot).await?;
     }
@@ -1005,22 +1005,32 @@ fn reference(
 ) -> Value {
     json!({"resourceType":resource_type,"resourceId":resource_id,"resourceVersionId":resource_version_id,"operation":operation})
 }
-fn node(id: &str, node_type: &str, name: &str, x: i32, y: i32, parameters: Value) -> Value {
-    json!({"id":id,"type":node_type,"typeVersion":1,"name":name,"position":{"x":x,"y":y},"parameters":parameters})
+fn binding_reference(
+    binding_id: &str,
+    binding_role: &str,
+    resource_type: &str,
+    resource_id: Uuid,
+    resource_version_id: Option<Uuid>,
+    operation: &str,
+) -> Value {
+    json!({"bindingId":binding_id,"bindingRole":binding_role,"resourceType":resource_type,"resourceId":resource_id,"resourceVersionId":resource_version_id,"operation":operation})
+}
+fn node(id: &str, node_type: &str, name: &str, _x: i32, _y: i32, parameters: Value) -> Value {
+    json!({"id":id,"type":node_type,"typeVersion":1,"name":name,"parameters":parameters})
 }
 fn node_with_resources(
     id: &str,
     node_type: &str,
     name: &str,
-    x: i32,
-    y: i32,
+    _x: i32,
+    _y: i32,
     parameters: Value,
     resources: Vec<Value>,
 ) -> Value {
-    json!({"id":id,"type":node_type,"typeVersion":1,"name":name,"position":{"x":x,"y":y},"parameters":parameters,"resourceReferences":resources})
+    json!({"id":id,"type":node_type,"typeVersion":1,"name":name,"parameters":parameters,"resourceReferences":resources})
 }
 fn edge(id: &str, source: &str, source_handle: &str, target: &str, target_handle: &str) -> Value {
-    json!({"id":id,"sourceNodeId":source,"sourceHandle":source_handle,"targetNodeId":target,"targetHandle":target_handle})
+    json!({"id":id,"sourceNodeId":source,"sourceHandle":source_handle,"targetNodeId":target,"targetHandle":target_handle,"order":0})
 }
 fn hash(value: &str) -> String {
     format!("{:x}", Sha256::digest(value.as_bytes()))

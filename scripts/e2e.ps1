@@ -12,7 +12,10 @@ $ErrorActionPreference = "Stop"
 $PSNativeCommandUseErrorActionPreference = $true
 $root = Split-Path -Parent $PSScriptRoot
 $namespace = "agentx-e2e"
-$results = Join-Path $root "apps/e2e/test-results/kubernetes"
+$e2eRunId = [DateTimeOffset]::UtcNow.ToString("yyyyMMddTHHmmssfffZ")
+$env:AGENTX_E2E_STAGE = "kubernetes"
+$env:AGENTX_E2E_RUN_ID = $e2eRunId
+$results = Join-Path $root "apps/e2e/test-results/kubernetes/$e2eRunId"
 $forwardOut = Join-Path $results "port-forward.out.log"
 $forwardError = Join-Path $results "port-forward.err.log"
 $addonEvidence = Join-Path $results "m5-addons-contract.json"
@@ -86,15 +89,21 @@ function Wait-TcpPort([int]$TargetPort) {
     throw "Timed out waiting for local port $TargetPort."
 }
 
-function Invoke-Playwright([string[]]$Tests) {
+function Invoke-Playwright([string]$Suite, [string[]]$Tests) {
     $arguments = @("--filter", "@agentx/e2e", "exec", "playwright", "test")
     if ($Headed) {
         $arguments += "--headed"
     }
     $arguments += $Tests
-    & pnpm @arguments
-    if ($LASTEXITCODE -ne 0) {
-        throw "Playwright failed for: $($Tests -join ', ')"
+    $env:AGENTX_E2E_SUITE = $Suite
+    try {
+        & pnpm @arguments
+        if ($LASTEXITCODE -ne 0) {
+            throw "Playwright failed for suite ${Suite}: $($Tests -join ', ')"
+        }
+    }
+    finally {
+        Remove-Item Env:AGENTX_E2E_SUITE -ErrorAction SilentlyContinue
     }
 }
 
@@ -375,7 +384,7 @@ try {
     $forward = Start-Process kubectl -ArgumentList @("-n", $namespace, "port-forward", "service/web", "${Port}:80") -PassThru -WindowStyle Hidden -RedirectStandardOutput $forwardOut -RedirectStandardError $forwardError
     Wait-TcpPort $Port
     $env:AGENTX_E2E_BASE_URL = "http://127.0.0.1:$Port"
-    Invoke-Playwright @("tests/m2.1-control-plane.spec.ts", "tests/m3-control-plane.spec.ts")
+    Invoke-Playwright -Suite "m2-m3-control-plane" -Tests @("tests/m2.1-control-plane.spec.ts", "tests/m3-control-plane.spec.ts")
     Assert-MySqlScalar "SELECT COUNT(*) FROM application_invocations i JOIN applications a ON a.id=i.application_id WHERE a.slug='m3-e2e'" 0 "Runtime-unavailable invocation created a fake Invocation"
     Assert-MySqlScalar "SELECT COUNT(*) FROM application_messages m JOIN application_sessions s ON s.id=m.session_id JOIN applications a ON a.id=s.application_id WHERE a.slug='m3-e2e'" 0 "Runtime-unavailable message created a fake Message"
     Assert-MySqlScalar "SELECT COUNT(*) FROM evaluation_case_results r JOIN evaluation_runs e ON e.id=r.evaluation_run_id WHERE e.name='M3 Runtime Boundary'" 0 "Runtime-unavailable evaluation created fake Case Results"
@@ -383,17 +392,18 @@ try {
     kubectl apply -f "$root/deploy/k8s/stacks/e2e/m3-fixture-job.yaml"
     kubectl -n $namespace wait --for=condition=complete job/m3-fixture --timeout=180s
     Wait-MySqlScalar "SELECT COUNT(*) FROM trace_delivery_outbox WHERE status<>'delivered'" 0 "Trace delivery outbox before UI verification"
-    Invoke-Playwright @("tests/m3-observability.spec.ts")
+    Invoke-Playwright -Suite "m3-observability" -Tests @("tests/m3-observability.spec.ts")
     Wait-MySqlScalar "SELECT COUNT(*) FROM trace_delivery_outbox WHERE status<>'delivered'" 0 "Trace delivery outbox"
     kubectl -n $namespace delete job/m4-fixture --ignore-not-found --wait=true
     kubectl apply -f "$root/deploy/k8s/stacks/e2e/m4-fixture-job.yaml"
     kubectl -n $namespace wait --for=condition=complete job/m4-fixture --timeout=180s
-    Invoke-Playwright @("tests/m4-runtime.spec.ts", "tests/m4-recovery.spec.ts")
+    Invoke-Playwright -Suite "m4-runtime-recovery" -Tests @("tests/m4-runtime.spec.ts", "tests/m4-recovery.spec.ts")
     Invoke-M4FaultSuite
     kubectl -n $namespace delete job/m5-fixture --ignore-not-found --wait=true
     kubectl apply -f "$root/deploy/k8s/stacks/e2e/m5-fixture-job.yaml"
     kubectl -n $namespace wait --for=condition=complete job/m5-fixture --timeout=180s
-    Invoke-Playwright @("tests/m5-agent-sandbox.spec.ts")
+    Invoke-Playwright -Suite "m5-agent-sandbox" -Tests @("tests/m5-agent-sandbox.spec.ts")
+    Invoke-Playwright -Suite "m6-workflow-studio" -Tests @("tests/m6-workflow-studio.spec.ts")
     Invoke-M5SandboxFaultSuite
     Assert-MySqlScalar "SELECT COUNT(*) FROM sandbox_leases WHERE status<>'terminated'" 0 "M5 terminal Sandbox leases"
     Assert-MySqlScalar "SELECT COUNT(*) FROM node_invocation_handles WHERE sandbox_lease_id IS NOT NULL AND revoked_at IS NULL" 0 "M5 Sandbox Credential Handles were not revoked"
@@ -405,6 +415,9 @@ finally {
     Remove-Item Env:AGENTX_E2E_BASE_URL -ErrorAction SilentlyContinue
     Remove-Item Env:AGENTX_E2E_WAIT_SIGNING_SECRET -ErrorAction SilentlyContinue
     Remove-Item Env:AGENTX_DEPLOY_OPENSANDBOX_API_KEY -ErrorAction SilentlyContinue
+    Remove-Item Env:AGENTX_E2E_STAGE -ErrorAction SilentlyContinue
+    Remove-Item Env:AGENTX_E2E_RUN_ID -ErrorAction SilentlyContinue
+    Remove-Item Env:AGENTX_E2E_SUITE -ErrorAction SilentlyContinue
     if (-not $KeepNamespace -and (Test-Path -LiteralPath $deploymentProfile)) {
         try {
             & "$PSScriptRoot/deploy.ps1" -Action Uninstall -ConfigFile $deploymentProfile -Target ingress -NonInteractive | Out-Null

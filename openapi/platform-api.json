@@ -1214,6 +1214,63 @@
         }
       }
     },
+    "/api/v1/executions/{id}/events": {
+      "get": {
+        "tags": [
+          "runtime_operations"
+        ],
+        "operationId": "list_execution_events",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "after",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "limit",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecutionEventListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/executions/{id}/fork": {
       "post": {
         "tags": [
@@ -2066,6 +2123,155 @@
           },
           "required": true
         },
+        "responses": {}
+      }
+    },
+    "/api/v1/node-definitions": {
+      "get": {
+        "tags": [
+          "catalog"
+        ],
+        "operationId": "list_node_definitions",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "pageSize",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "search",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "category",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {}
+      }
+    },
+    "/api/v1/node-definitions/{node_type}/versions/{version}": {
+      "get": {
+        "tags": [
+          "catalog"
+        ],
+        "operationId": "get_node_definition",
+        "parameters": [
+          {
+            "name": "node_type",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "version",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {}
+      }
+    },
+    "/api/v1/node-definitions/{node_type}/versions/{version}/providers/{provider}": {
+      "get": {
+        "tags": [
+          "catalog"
+        ],
+        "operationId": "list_node_provider_options",
+        "parameters": [
+          {
+            "name": "node_type",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "version",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "provider",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "search",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
         "responses": {}
       }
     },
@@ -2978,6 +3184,137 @@
         "responses": {}
       }
     },
+    "/api/v1/workflows/{id}/debug-executions": {
+      "post": {
+        "tags": [
+          "runtime_operations"
+        ],
+        "operationId": "start_debug_execution",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DebugExecutionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecutionCommandResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workflows/{id}/debug-overlays/{node_id}": {
+      "get": {
+        "tags": [
+          "workflow_studio"
+        ],
+        "operationId": "get_debug_overlay",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "node_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {}
+      },
+      "put": {
+        "tags": [
+          "workflow_studio"
+        ],
+        "operationId": "save_debug_overlay",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "node_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SaveDebugOverlayRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {}
+      },
+      "delete": {
+        "tags": [
+          "workflow_studio"
+        ],
+        "operationId": "delete_debug_overlay",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "node_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {}
+      }
+    },
     "/api/v1/workflows/{id}/deployments": {
       "get": {
         "tags": [
@@ -3105,6 +3442,66 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/SaveDraftRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {}
+      }
+    },
+    "/api/v1/workflows/{id}/draft/validate": {
+      "post": {
+        "tags": [
+          "workflow_studio"
+        ],
+        "operationId": "validate_draft",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ValidateDraftRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {}
+      }
+    },
+    "/api/v1/workflows/{id}/expressions/preview": {
+      "post": {
+        "tags": [
+          "workflow_studio"
+        ],
+        "operationId": "preview_expression",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExpressionPreviewRequest"
               }
             }
           },
@@ -4991,6 +5388,45 @@
           }
         }
       },
+      "DebugExecutionRequest": {
+        "type": "object",
+        "required": [
+          "expectedRevision",
+          "mode"
+        ],
+        "properties": {
+          "expectedRevision": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "idempotencyKey": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "input": {},
+          "inputSource": {},
+          "mode": {
+            "type": "string"
+          },
+          "overlayIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "sideEffectDecisions": {},
+          "targetNodeId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "DebugMcpToolRequest": {
         "type": "object",
         "required": [
@@ -5030,6 +5466,60 @@
           },
           "result": {},
           "toolVersionId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "DebugOverlayResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "workflowId",
+          "nodeId",
+          "kind",
+          "payload",
+          "stale",
+          "updatedBy",
+          "updatedAt"
+        ],
+        "properties": {
+          "artifactId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "nodeId": {
+            "type": "string"
+          },
+          "payload": {},
+          "schemaHash": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "stale": {
+            "type": "boolean"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedBy": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "workflowId": {
             "type": "string",
             "format": "uuid"
           }
@@ -5182,14 +5672,20 @@
           "schemaVersion",
           "revision",
           "definition",
-          "contentHash",
+          "editorDocument",
+          "definitionHash",
+          "editorHash",
           "updatedAt"
         ],
         "properties": {
-          "contentHash": {
+          "definition": {},
+          "definitionHash": {
             "type": "string"
           },
-          "definition": {},
+          "editorDocument": {},
+          "editorHash": {
+            "type": "string"
+          },
           "id": {
             "type": "string",
             "format": "uuid"
@@ -5490,14 +5986,83 @@
           }
         }
       },
+      "ExecutionEventListResponse": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExecutionEventResponse"
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "ExecutionEventQuery": {
+        "type": "object",
+        "properties": {
+          "after": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "limit": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "ExecutionEventResponse": {
+        "type": "object",
+        "required": [
+          "sequence",
+          "eventType",
+          "status",
+          "summary",
+          "occurredAt"
+        ],
+        "properties": {
+          "eventType": {
+            "type": "string"
+          },
+          "occurredAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "sequence": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "status": {
+            "type": "string"
+          },
+          "summary": {}
+        }
+      },
       "ExecutionResponse": {
         "type": "object",
         "required": [
           "id",
           "workflowId",
           "workflowName",
-          "workflowVersionId",
-          "workflowVersionNumber",
           "traceId",
           "triggerType",
           "executionType",
@@ -5614,14 +6179,56 @@
             "type": "string"
           },
           "workflowVersionId": {
-            "type": "string",
+            "type": [
+              "string",
+              "null"
+            ],
             "format": "uuid"
           },
           "workflowVersionNumber": {
-            "type": "integer",
+            "type": [
+              "integer",
+              "null"
+            ],
             "format": "int64",
             "minimum": 0
           }
+        }
+      },
+      "ExpressionPreviewRequest": {
+        "type": "object",
+        "required": [
+          "expression"
+        ],
+        "properties": {
+          "expression": {
+            "type": "string"
+          },
+          "input": {},
+          "itemIndex": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "json": {},
+          "linkedNodes": {},
+          "runIndex": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "ExpressionPreviewResponse": {
+        "type": "object",
+        "required": [
+          "value",
+          "redacted"
+        ],
+        "properties": {
+          "redacted": {
+            "type": "boolean"
+          },
+          "value": {}
         }
       },
       "FieldError": {
@@ -6662,6 +7269,114 @@
           }
         }
       },
+      "NodeDefinitionDetail": {
+        "type": "object",
+        "required": [
+          "nodeType",
+          "version",
+          "manifestHash",
+          "manifest"
+        ],
+        "properties": {
+          "manifest": {},
+          "manifestHash": {
+            "type": "string"
+          },
+          "nodeType": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "NodeDefinitionQuery": {
+        "type": "object",
+        "properties": {
+          "category": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "page": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "pageSize": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "search": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "NodeDefinitionSummary": {
+        "type": "object",
+        "required": [
+          "nodeType",
+          "version",
+          "displayName",
+          "description",
+          "category",
+          "keywords",
+          "iconKey",
+          "capability",
+          "executionStyle",
+          "manifestHash"
+        ],
+        "properties": {
+          "capability": {
+            "type": "string"
+          },
+          "category": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "displayName": {
+            "type": "string"
+          },
+          "executionStyle": {
+            "type": "string"
+          },
+          "iconKey": {
+            "type": "string"
+          },
+          "keywords": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "manifestHash": {
+            "type": "string"
+          },
+          "nodeType": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
       "NodeExecutionListResponse": {
         "type": "object",
         "required": [
@@ -6786,6 +7501,60 @@
           },
           "status": {
             "type": "string"
+          }
+        }
+      },
+      "NodeProviderOption": {
+        "type": "object",
+        "required": [
+          "value",
+          "label"
+        ],
+        "properties": {
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "label": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
+          }
+        }
+      },
+      "NodeProviderOptionsResponse": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NodeProviderOption"
+            }
+          }
+        }
+      },
+      "NodeProviderQuery": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "search": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },
@@ -6960,14 +7729,12 @@
           "id",
           "revision",
           "schemaVersion",
-          "contentHash",
+          "definitionHash",
+          "editorHash",
           "createdBy",
           "createdAt"
         ],
         "properties": {
-          "contentHash": {
-            "type": "string"
-          },
           "createdAt": {
             "type": "string",
             "format": "date-time"
@@ -6975,6 +7742,12 @@
           "createdBy": {
             "type": "string",
             "format": "uuid"
+          },
+          "definitionHash": {
+            "type": "string"
+          },
+          "editorHash": {
+            "type": "string"
           },
           "id": {
             "type": "string",
@@ -7583,6 +8356,32 @@
           }
         }
       },
+      "SaveDebugOverlayRequest": {
+        "type": "object",
+        "required": [
+          "kind",
+          "payload"
+        ],
+        "properties": {
+          "artifactId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "payload": {},
+          "schemaHash": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "SaveDraftRequest": {
         "type": "object",
         "required": [
@@ -7591,6 +8390,7 @@
         ],
         "properties": {
           "definition": {},
+          "editorDocument": {},
           "expectedRevision": {
             "type": "integer",
             "format": "int64",
@@ -8822,6 +9622,79 @@
           }
         }
       },
+      "ValidateDraftRequest": {
+        "type": "object",
+        "required": [
+          "definition"
+        ],
+        "properties": {
+          "definition": {},
+          "editorDocument": {}
+        }
+      },
+      "ValidateDraftResponse": {
+        "type": "object",
+        "required": [
+          "issues"
+        ],
+        "properties": {
+          "compilerVersion": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "definitionHash": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "editorHash": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "issues": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ValidationIssue"
+            }
+          }
+        }
+      },
+      "ValidationIssue": {
+        "type": "object",
+        "required": [
+          "code",
+          "severity",
+          "message"
+        ],
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "fieldPath": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "message": {
+            "type": "string"
+          },
+          "nodeId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "severity": {
+            "type": "string"
+          }
+        }
+      },
       "VersionActionRequest": {
         "type": "object",
         "required": [
@@ -9051,6 +9924,7 @@
           "schemaVersion",
           "contentHash",
           "definition",
+          "editorDocument",
           "createdBy",
           "createdAt"
         ],
@@ -9067,6 +9941,7 @@
             "format": "uuid"
           },
           "definition": {},
+          "editorDocument": {},
           "id": {
             "type": "string",
             "format": "uuid"

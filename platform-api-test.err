@@ -1,0 +1,13 @@
+    Blocking waiting for file lock on build directory
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 19.17s
+     Running unittests src\bin\m3-fixture.rs (target\debug\deps\m3_fixture-7424ae13471f0fdd.exe)
+     Running unittests src\bin\m4-fixture.rs (target\debug\deps\m4_fixture-4fe534847dadc08d.exe)
+     Running unittests src\bin\m5-fixture.rs (target\debug\deps\m5_fixture-91a6a151e29a0f0f.exe)
+     Running unittests src\main.rs (target\debug\deps\platform_api-b93b49b444898309.exe)
+
+thread 'integration_tests::mysql_migrations_are_idempotent_on_an_empty_database' (1604) panicked at services\platform-api\src\main.rs:897:9:
+assertion `left == right` failed
+  left: 422
+ right: 200
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+error: test failed, to rerun pass `-p platform-api --bin platform-api`

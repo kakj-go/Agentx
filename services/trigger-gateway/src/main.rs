@@ -566,10 +566,15 @@ async fn request_invocation(
             tenant_id: TenantId::from_uuid(caller.tenant_id()),
             invocation_id: Some(invocation_id),
             session_id: session_id.map(SessionId::from_uuid),
-            workflow_version_id: WorkflowVersionId::from_uuid(workflow_version_id),
+            source: agentx_domain::ExecutionSource::Version {
+                version_id: WorkflowVersionId::from_uuid(workflow_version_id),
+            },
             requested_by: caller.user_id().map(agentx_domain::UserId::from_uuid),
             trigger_type: "application".into(),
             input,
+            debug_plan: serde_json::json!({}),
+            debug_overlay: serde_json::json!({}),
+            resource_snapshots: Vec::new(),
             idempotency_key: Some(idempotency_key.into()),
         })
         .await

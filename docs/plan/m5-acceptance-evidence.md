@@ -1,6 +1,6 @@
 # M5 验收证据
 
-状态：当前 Kubernetes 部署验收 `done`；生产强隔离为后续强化。当前复核日期：2026-08-05。
+状态：当前 Kubernetes 部署验收 `done`；AGT-010 的生产强化子项暂不重试并转入 M7。当前复核日期：2026-08-05。
 
 M5 已交付 Runtime Port 与快照、资源 Adapter、Agent Ledger/预算/循环、Rust `OpenSandboxAdapter`、`sandbox-manager`、Agent/Code API 和 Execution Runtime Workbench。固定 Commit/Spec Hash 的官方 Go SDK Oracle，Agent+MCP、重复 Tool 停止，Skill 递归授权，固定版本 LightRAG/Mem0，Python/JavaScript/Shell/Browser Code，部分输出 Artifact/Trace、Credential 临时文件、网络 deny/allow、内存限制、自然 TTL、租户 Sandbox 并发配额、取消、Manager 重启/Reaper 和 ClickHouse 中断补投均已通过，AGT-001～013 标记为 `done`。当前 Docker Desktop Kubernetes+runc 部署基线验收已完成；生产 RuntimeClass、Vault、镜像签名和生产级跨租户攻击隔离列为后续生产强化。
 
@@ -48,7 +48,7 @@ git diff --check
 .\scripts\e2e.ps1 -SkipBuild
 ```
 
-结果：2026-08-05 最终复跑通过并返回 0。套件先回归 M2.1、M3、M4 及 Worker/Coordinator/Redis/ClickHouse 故障恢复，再执行 7 个 M5 Playwright 场景和 M5 Sandbox 故障套件；当前 M5 JUnit 为 7 tests、0 failures、0 skipped，总耗时 76.298 秒。
+结果：2026-08-05 当次最终复跑通过并返回 0。套件先回归 M2.1、M3、M4 及 Worker/Coordinator/Redis/ClickHouse 故障恢复，再执行 7 个 M5 Playwright 场景和 M5 Sandbox 故障套件；当次 M5 JUnit 为 7 tests、0 failures、0 skipped，总耗时 76.298 秒。
 
 | 场景 | 自动化断言 | 结果 |
 |---|---|---|
@@ -127,4 +127,10 @@ git diff --check
 
 ## 5. 后续生产强隔离强化
 
-当前机器仅有 Docker+runc；它已证明 Rust Adapter、OpenSandbox Docker Runtime、资源/网络配置链路和当前 Kubernetes 功能 E2E 可运行，但不代表生产多租户强隔离。后续生产发布前可在具备 gVisor、Kata 或经安全评审等价 RuntimeClass 的集群补充真实 Sandbox Pod、CPU/PID/磁盘强制效果、IPv4/IPv6 egress、Credential Vault、镜像签名与 digest 供应链、节点隔离、跨租户攻击面和故障回收证据。该强化不阻塞当前 M5，也不重新打开已经完成的 AGT-001～013。
+当前机器仅有 Docker+runc；它已证明 Rust Adapter、OpenSandbox Docker Runtime、资源/网络配置链路和当前 Kubernetes 功能 E2E 可运行，但不代表生产多租户强隔离。AGT-010 的生产强化子项标记为“暂不重试（deferred）”，当前环境不再复跑。生产发布前由 M7 INT-006/010/011/014 在具备 gVisor、Kata 或经安全评审等价 RuntimeClass 的集群补充真实 Sandbox Pod、CPU/PID/磁盘强制效果、IPv4/IPv6 egress、Credential Vault、镜像签名与 digest 供应链、节点隔离、跨租户攻击面和故障回收证据。该强化不阻塞当前 M5，也不重新打开已经完成的 AGT-001～013。
+
+## 6. 复核后证据债务
+
+- 当前本地 `apps/e2e/test-results/junit.xml` 已被一次无完整环境的运行覆盖，内容为全量 skipped，不能替代上文记录的当次 M5 验收结果。M6 开始前应先按阶段和运行 ID 隔离报告路径，避免再次覆盖；当前不因此重跑 AGT-010。
+- Windows checkout 下 `scripts/check.ps1` 会因 CRLF/LF 原始字符串差异误报 Platform OpenAPI 漂移；规范化换行后契约一致。M6 开始前应改为结构化 JSON 比较或统一换行后比较。
+- 上述两项只影响当前证据可复核性，不否定已经保存的 M5 Runtime、数据库、Go Oracle、Addon 和 Sandbox 故障证据。报告隔离和 CRLF 修正不能留到 M7；完整生产候选 E2E 与 `failures=0`、`skipped=0` 的持久化证据由 M7 INT-014 生成。

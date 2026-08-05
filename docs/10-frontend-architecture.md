@@ -126,6 +126,8 @@ Agentx 自己实现：
 - 运行状态高亮
 - Pin Data
 - Checkpoint 和部分执行入口
+- Node Catalog/Manifest 表单渲染
+- Draft Revision 调试快照入口
 
 推荐目录：
 
@@ -134,30 +136,34 @@ Agentx 自己实现：
     ├── nodes/
     ├── edges/
     ├── panels/
+    ├── forms/
+    ├── api/
     ├── store/
     ├── model/
     └── utils/
 
+Studio 采用左侧 Node Palette、中央 Canvas、右侧 Node Inspector 和底部 Input/Output/Trace Panel 的稳定桌面布局。节点类型、端口、参数和能力全部来自 Node Manifest；业务组件不得维护 Agent/Code 等 Node Type 白名单。Feature 内任何文件不得超过 2000 行。
+
 ## 8. 画布状态转换
 
-React Flow 的 Node 和 Edge 结构只属于前端编辑状态，不能直接成为后端运行协议。
+React Flow 的 Node 和 Edge 结构只属于前端编辑状态，不能直接成为后端运行协议。Serializer 同时产出运行 Definition 和纯 UI Editor Document，Debug Overlay/运行高亮走独立模型。
 
     React Flow State
-          ↓ serialize
-    Workflow Draft DTO
-          ↓ backend compile
-    Workflow IR
-          ↓ execute
-    Execution State
+          ├── serialize definition ──> Workflow Definition 3.0 ──> IR
+          └── serialize editor ──────> Editor Document
+
+    Pin / Mock / Runtime Highlight ──> Debug Overlay / Execution State
 
 转换层负责：
 
 - 删除纯 UI 字段
 - 固化 Node Type Version
 - 将 Handle 映射为端口
-- 将 Edge 映射为连接类型
+- 将 Edge 映射为连接类型和稳定 Connection Order
 - 校验资源连接
-- 保留画布位置用于再次编辑
+- 将位置、视口、注释和分组只写入 Editor Document
+
+服务端 Draft Revision 原子保存 Definition 和 Editor Document。TanStack Query 保存服务端权威数据，Zustand Editor Store 保存规范化编辑状态，History Store 只保存可逆 Command/Patch，Runtime Overlay Store 按 executionId 隔离运行高亮和结果；四者不得互相复制成为第二权威。
 
 ## 9. 画布扩展
 
@@ -166,6 +172,8 @@ React Flow 的 Node 和 Edge 结构只属于前端编辑状态，不能直接成
 - 独立 History Store 管理 Undo 和 Redo。
 - Monaco Editor 用于 Expression、Prompt 和 JSON。
 - 大型 Workflow 后续通过按需渲染、结果引用和面板虚拟化控制性能。
+- 自动保存使用 Server Revision；Undo/Redo 只改变本地 Editor State，不能回退服务端 Revision。
+- Execution Event 使用 Cursor 重连，断线后通过 Execution Query 校准；完整 Trace 和大型输出不进入 Zustand。
 
 ## 10. 路由
 

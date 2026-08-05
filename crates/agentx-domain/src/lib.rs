@@ -13,9 +13,10 @@ pub use resource::{
     ResourceVersionSnapshot,
 };
 pub use workflow::{
-    DefinitionIssue, ExecutionOrder, NodeErrorPolicy, NodeSettings, WorkflowConnection,
-    WorkflowDefinition, WorkflowNode, WorkflowPosition, WorkflowSettings, canonical_content_hash,
-    validate_definition,
+    BindingEdge, BindingLayout, DebugPlan, DefinitionIssue, EditorAnnotation, EditorDocument,
+    EditorEdge, EditorGroup, EditorViewport, ExecutionOrder, ExecutionSource, NodeErrorPolicy,
+    NodeLayout, NodeSettings, WorkflowConnection, WorkflowDefinition, WorkflowNode,
+    WorkflowSettings, canonical_content_hash, validate_definition, validate_editor_document,
 };
 
 macro_rules! domain_id {
@@ -217,7 +218,7 @@ pub struct ExecutionSummary {
     pub id: ExecutionId,
     pub tenant_id: TenantId,
     pub workflow_id: WorkflowId,
-    pub workflow_version_id: WorkflowVersionId,
+    pub workflow_version_id: Option<WorkflowVersionId>,
     pub invocation_id: Option<InvocationId>,
     pub session_id: Option<SessionId>,
     pub trace_id: TraceId,
@@ -243,7 +244,7 @@ pub struct TraceEvent {
     pub parent_span_id: Option<Uuid>,
     pub execution_id: ExecutionId,
     pub workflow_id: WorkflowId,
-    pub workflow_version_id: WorkflowVersionId,
+    pub workflow_version_id: Option<WorkflowVersionId>,
     pub node_execution_id: Option<NodeExecutionId>,
     #[serde(default)]
     pub attempt_id: Option<AttemptId>,

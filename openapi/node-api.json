@@ -352,7 +352,10 @@
           },
           "workflowVersionId": {
             "format": "uuid",
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -360,7 +363,6 @@
           "nodeType",
           "nodeVersion",
           "tenantId",
-          "workflowVersionId",
           "executionId",
           "nodeExecutionId",
           "attemptId",

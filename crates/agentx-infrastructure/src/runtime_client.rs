@@ -4,8 +4,8 @@ use agentx_application::{
 };
 use agentx_domain::{ExecutionId, ExecutionStatus, TenantId};
 use agentx_runtime_rpc::v1::{
-    CancelExecutionRequest, ConfirmSideEffectRequest, ForkExecutionRequest,
-    RequestExecutionRequest, ResumeExecutionRequest,
+    CancelExecutionRequest, ConfirmSideEffectRequest, DraftRevisionSource, ForkExecutionRequest,
+    RequestExecutionRequest, ResumeExecutionRequest, VersionSource, request_execution_request,
     runtime_coordinator_client::RuntimeCoordinatorClient,
 };
 use anyhow::{Context, Result};
@@ -34,17 +34,34 @@ impl GrpcExecutionRuntime {
 #[async_trait]
 impl ExecutionRuntime for GrpcExecutionRuntime {
     async fn request_execution(&self, request: RequestExecution) -> Result<AcceptedExecution> {
+        let source = match request.source {
+            agentx_domain::ExecutionSource::Version { version_id } => {
+                request_execution_request::Source::Version(VersionSource {
+                    version_id: version_id.to_string(),
+                })
+            }
+            agentx_domain::ExecutionSource::DraftRevision {
+                workflow_id,
+                revision,
+            } => request_execution_request::Source::DraftRevision(DraftRevisionSource {
+                workflow_id: workflow_id.to_string(),
+                revision,
+            }),
+        };
         let response = self
             .client
             .clone()
             .request_execution(RequestExecutionRequest {
                 tenant_id: request.tenant_id.to_string(),
-                workflow_version_id: request.workflow_version_id.to_string(),
+                source: Some(source),
                 invocation_id: request.invocation_id.map(|value| value.to_string()),
                 session_id: request.session_id.map(|value| value.to_string()),
                 requested_by: request.requested_by.map(|value| value.to_string()),
                 trigger_type: request.trigger_type,
                 input_json: serde_json::to_string(&request.input)?,
+                debug_plan_json: serde_json::to_string(&request.debug_plan)?,
+                debug_overlay_json: serde_json::to_string(&request.debug_overlay)?,
+                resource_snapshots_json: serde_json::to_string(&request.resource_snapshots)?,
                 idempotency_key: request.idempotency_key,
                 caller_execution_id: None,
             })

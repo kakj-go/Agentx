@@ -16,6 +16,15 @@ function Invoke-Native {
     }
 }
 
+function Get-NormalizedText {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    return (Get-Content -Raw -LiteralPath $Path).Replace("`r`n", "`n").Replace("`r", "`n")
+}
+
 Push-Location $root
 try {
     $openSandboxSpecs = @{
@@ -44,31 +53,31 @@ try {
     Invoke-Native "cargo test" { cargo test --workspace }
     $openApiTemp = Join-Path ([System.IO.Path]::GetTempPath()) "agentx-platform-api-$PID.json"
     Invoke-Native "platform OpenAPI generation" { cargo run --quiet -p platform-api -- openapi $openApiTemp }
-    if ((Get-Content -Raw -LiteralPath $openApiTemp) -cne (Get-Content -Raw -LiteralPath "$root/openapi/platform-api.json")) {
+    if ((Get-NormalizedText $openApiTemp) -cne (Get-NormalizedText "$root/openapi/platform-api.json")) {
         throw "OpenAPI schema drift detected. Run: cargo run -p platform-api -- openapi openapi/platform-api.json"
     }
     Remove-Item -LiteralPath $openApiTemp -Force
     $typeScriptTemp = Join-Path ([System.IO.Path]::GetTempPath()) "agentx-platform-api-$PID.ts"
     Invoke-Native "platform TypeScript generation" { pnpm --filter @agentx/web exec node scripts/generate-api-types.mjs $typeScriptTemp }
-    if ((Get-Content -Raw -LiteralPath $typeScriptTemp) -cne (Get-Content -Raw -LiteralPath "$root/apps/web/src/shared/api/generated.ts")) {
+    if ((Get-NormalizedText $typeScriptTemp) -cne (Get-NormalizedText "$root/apps/web/src/shared/api/generated.ts")) {
         throw "Generated TypeScript API contract drift detected. Run: pnpm --filter @agentx/web generate:api"
     }
     Remove-Item -LiteralPath $typeScriptTemp -Force
     $gatewayOpenApiTemp = Join-Path ([System.IO.Path]::GetTempPath()) "agentx-trigger-gateway-$PID.json"
     Invoke-Native "gateway OpenAPI generation" { cargo run --quiet -p trigger-gateway -- openapi $gatewayOpenApiTemp }
-    if ((Get-Content -Raw -LiteralPath $gatewayOpenApiTemp) -cne (Get-Content -Raw -LiteralPath "$root/openapi/trigger-gateway.json")) {
+    if ((Get-NormalizedText $gatewayOpenApiTemp) -cne (Get-NormalizedText "$root/openapi/trigger-gateway.json")) {
         throw "Gateway OpenAPI schema drift detected. Run: cargo run -p trigger-gateway -- openapi openapi/trigger-gateway.json"
     }
     Remove-Item -LiteralPath $gatewayOpenApiTemp -Force
     $gatewayTypeScriptTemp = Join-Path ([System.IO.Path]::GetTempPath()) "agentx-trigger-gateway-$PID.ts"
     Invoke-Native "gateway TypeScript generation" { pnpm --filter @agentx/web exec node scripts/generate-gateway-types.mjs $gatewayTypeScriptTemp }
-    if ((Get-Content -Raw -LiteralPath $gatewayTypeScriptTemp) -cne (Get-Content -Raw -LiteralPath "$root/apps/web/src/shared/api/generated-gateway.ts")) {
+    if ((Get-NormalizedText $gatewayTypeScriptTemp) -cne (Get-NormalizedText "$root/apps/web/src/shared/api/generated-gateway.ts")) {
         throw "Generated Gateway TypeScript contract drift detected. Run: pnpm --filter @agentx/web generate:gateway"
     }
     Remove-Item -LiteralPath $gatewayTypeScriptTemp -Force
     $nodeOpenApiTemp = Join-Path ([System.IO.Path]::GetTempPath()) "agentx-node-api-$PID.json"
     Invoke-Native "node OpenAPI generation" { cargo run --quiet -p echo-node -- openapi $nodeOpenApiTemp }
-    if ((Get-Content -Raw -LiteralPath $nodeOpenApiTemp) -cne (Get-Content -Raw -LiteralPath "$root/openapi/node-api.json")) {
+    if ((Get-NormalizedText $nodeOpenApiTemp) -cne (Get-NormalizedText "$root/openapi/node-api.json")) {
         throw "Node API OpenAPI drift detected. Run: cargo run -p echo-node -- openapi openapi/node-api.json"
     }
     Remove-Item -LiteralPath $nodeOpenApiTemp -Force
@@ -84,7 +93,7 @@ try {
     foreach ($schema in $nodeSchemas) {
         $generated = Join-Path $nodeSchemaTemp $schema
         $committed = Join-Path "$root/schemas" $schema
-        if ((Get-Content -Raw -LiteralPath $generated) -cne (Get-Content -Raw -LiteralPath $committed)) {
+        if ((Get-NormalizedText $generated) -cne (Get-NormalizedText $committed)) {
             throw "Node protocol JSON Schema drift detected for $schema. Run: cargo run -p echo-node -- schemas schemas"
         }
         Remove-Item -LiteralPath $generated -Force

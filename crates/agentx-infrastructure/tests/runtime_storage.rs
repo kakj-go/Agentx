@@ -119,6 +119,8 @@ async fn invocation_handles_and_checkpoint_artifacts_enforce_runtime_boundaries(
         .issue(
             &scope,
             &[ResourceReference {
+                binding_id: None,
+                binding_role: None,
                 resource_type: ResourceType::Credential,
                 resource_id: ids.credential,
                 resource_version_id: None,
@@ -127,6 +129,8 @@ async fn invocation_handles_and_checkpoint_artifacts_enforce_runtime_boundaries(
             &[agentx_application::RuntimeResourceSnapshot {
                 node_id: "remote".into(),
                 reference: ResourceReference {
+                    binding_id: None,
+                    binding_role: None,
                     resource_type: ResourceType::Credential,
                     resource_id: ids.credential,
                     resource_version_id: None,
@@ -263,6 +267,8 @@ async fn skill_runtime_rechecks_revoked_grants_and_rejects_cross_tenant_contexts
         .await
         .expect("seed skill artifact");
     let reference = ResourceReference {
+        binding_id: None,
+        binding_role: None,
         resource_type: ResourceType::Skill,
         resource_id: Uuid::now_v7(),
         resource_version_id: Some(Uuid::now_v7()),
@@ -330,7 +336,7 @@ fn skill_context(
         tenant_id,
         workflow_service_identity_id: WorkflowServiceIdentityId::from_uuid(ids.identity),
         workflow_id: WorkflowId::from_uuid(ids.workflow),
-        workflow_version_id: WorkflowVersionId::from_uuid(ids.workflow_version),
+        workflow_version_id: Some(WorkflowVersionId::from_uuid(ids.workflow_version)),
         execution_id: ExecutionId::from_uuid(ids.execution),
         node_execution_id: NodeExecutionId::from_uuid(ids.node_execution),
         attempt_id: AttemptId::from_uuid(ids.attempt),
@@ -350,8 +356,8 @@ async fn verify_checkpoint_externalization(
     ids: &RuntimeIds,
 ) {
     let definition: WorkflowDefinition = serde_json::from_value(json!({
-        "schemaVersion":"2.0",
-        "nodes":[{"id":"trigger","type":"manual_trigger","typeVersion":1,"name":"Trigger","position":{"x":0,"y":0},"parameters":{}}],
+        "schemaVersion":"3.0",
+        "nodes":[{"id":"trigger","type":"manual_trigger","typeVersion":1,"name":"Trigger","parameters":{}}],
         "connections":[]
     }))
     .expect("workflow definition");

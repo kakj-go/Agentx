@@ -2,7 +2,7 @@
   "$defs": {
     "ExecutionOrder": {
       "enum": [
-        "n8n_v1",
+        "deterministic",
         "parallel"
       ],
       "type": "string"
@@ -71,6 +71,18 @@
     },
     "ResourceReference": {
       "properties": {
+        "bindingId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "bindingRole": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "operation": {
           "$ref": "#/$defs/ResourceOperation"
         },
@@ -115,6 +127,11 @@
         "id": {
           "type": "string"
         },
+        "order": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
         "sourceHandle": {
           "type": "string"
         },
@@ -133,7 +150,8 @@
         "sourceNodeId",
         "sourceHandle",
         "targetNodeId",
-        "targetHandle"
+        "targetHandle",
+        "order"
       ],
       "type": "object"
     },
@@ -152,9 +170,6 @@
         },
         "parameters": {
           "default": null
-        },
-        "position": {
-          "$ref": "#/$defs/WorkflowPosition"
         },
         "resourceReferences": {
           "default": [],
@@ -188,32 +203,13 @@
         "id",
         "type",
         "typeVersion",
-        "name",
-        "position"
-      ],
-      "type": "object"
-    },
-    "WorkflowPosition": {
-      "additionalProperties": false,
-      "properties": {
-        "x": {
-          "format": "double",
-          "type": "number"
-        },
-        "y": {
-          "format": "double",
-          "type": "number"
-        }
-      },
-      "required": [
-        "x",
-        "y"
+        "name"
       ],
       "type": "object"
     },
     "WorkflowSchemaVersion": {
       "enum": [
-        "2.0"
+        "3.0"
       ],
       "type": "string"
     },
@@ -228,7 +224,7 @@
         },
         "executionOrder": {
           "$ref": "#/$defs/ExecutionOrder",
-          "default": "n8n_v1"
+          "default": "deterministic"
         },
         "timeoutMs": {
           "default": null,
@@ -265,7 +261,7 @@
       "$ref": "#/$defs/WorkflowSettings",
       "default": {
         "activationBudget": 10000,
-        "executionOrder": "n8n_v1",
+        "executionOrder": "deterministic",
         "timeoutMs": null
       }
     }

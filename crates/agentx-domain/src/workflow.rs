@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-use crate::{ResourceOperation, ResourceReference, ResourceType};
+use crate::{ResourceOperation, ResourceReference, ResourceType, WorkflowId, WorkflowVersionId};
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -18,24 +18,150 @@ pub struct WorkflowDefinition {
     pub settings: WorkflowSettings,
 }
 
+#[derive(Clone, Debug, Default, Deserialize, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct EditorDocument {
+    #[serde(default)]
+    pub node_layouts: Vec<NodeLayout>,
+    #[serde(default)]
+    pub binding_layouts: Vec<BindingLayout>,
+    #[serde(default)]
+    pub edges: Vec<EditorEdge>,
+    #[serde(default)]
+    pub binding_edges: Vec<BindingEdge>,
+    #[serde(default)]
+    pub annotations: Vec<EditorAnnotation>,
+    #[serde(default)]
+    pub groups: Vec<EditorGroup>,
+    #[serde(default)]
+    pub viewport: EditorViewport,
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct NodeLayout {
+    pub node_id: String,
+    pub x: f64,
+    pub y: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub height: Option<f64>,
+    #[serde(default)]
+    pub collapsed: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BindingLayout {
+    pub binding_id: String,
+    pub x: f64,
+    pub y: f64,
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct EditorEdge {
+    pub edge_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label_position: Option<f64>,
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BindingEdge {
+    pub edge_id: String,
+    pub source_binding_id: String,
+    pub target_node_id: String,
+    pub target_slot: String,
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct EditorAnnotation {
+    pub id: String,
+    pub text: String,
+    pub x: f64,
+    pub y: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct EditorGroup {
+    pub id: String,
+    pub label: String,
+    pub node_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct EditorViewport {
+    pub x: f64,
+    pub y: f64,
+    pub zoom: f64,
+}
+
+impl Default for EditorViewport {
+    fn default() -> Self {
+        Self {
+            x: 0.0,
+            y: 0.0,
+            zoom: 1.0,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub enum ExecutionSource {
+    Version {
+        version_id: WorkflowVersionId,
+    },
+    DraftRevision {
+        workflow_id: WorkflowId,
+        revision: u64,
+    },
+}
+
+#[derive(Clone, Debug, Default, Deserialize, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DebugPlan {
+    pub mode: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_node_id: Option<String>,
+    #[serde(default)]
+    pub included_node_ids: Vec<String>,
+    #[serde(default)]
+    pub skipped_node_ids: Vec<String>,
+    #[serde(default)]
+    pub input_source: Option<Value>,
+    #[serde(default)]
+    pub side_effect_decisions: Value,
+    #[serde(default)]
+    pub overlay_hash: Option<String>,
+}
+
 #[derive(JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum WorkflowSchemaVersion {
-    #[serde(rename = "2.0")]
-    V2,
+    #[serde(rename = "3.0")]
+    V3,
 }
 
 impl WorkflowDefinition {
     #[must_use]
     pub fn empty() -> Self {
         Self {
-            schema_version: "2.0".to_owned(),
+            schema_version: "3.0".to_owned(),
             nodes: vec![WorkflowNode {
                 id: "manual-trigger".to_owned(),
                 node_type: "manual_trigger".to_owned(),
                 type_version: 1,
                 name: "Manual Trigger".to_owned(),
-                position: WorkflowPosition { x: 120.0, y: 180.0 },
                 disabled: false,
                 parameters: Value::Object(Default::default()),
                 resource_references: Vec::new(),
@@ -51,7 +177,7 @@ impl WorkflowDefinition {
 #[serde(rename_all = "snake_case")]
 pub enum ExecutionOrder {
     #[default]
-    N8nV1,
+    Deterministic,
     Parallel,
 }
 
@@ -70,7 +196,7 @@ pub struct WorkflowSettings {
 impl Default for WorkflowSettings {
     fn default() -> Self {
         Self {
-            execution_order: ExecutionOrder::N8nV1,
+            execution_order: ExecutionOrder::Deterministic,
             activation_budget: default_activation_budget(),
             timeout_ms: None,
         }
@@ -136,7 +262,6 @@ pub struct WorkflowNode {
     #[schemars(range(min = 1))]
     pub type_version: u32,
     pub name: String,
-    pub position: WorkflowPosition,
     #[serde(default)]
     pub disabled: bool,
     #[serde(default)]
@@ -147,13 +272,6 @@ pub struct WorkflowNode {
     pub settings: NodeSettings,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, JsonSchema, Serialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct WorkflowPosition {
-    pub x: f64,
-    pub y: f64,
-}
-
 #[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WorkflowConnection {
@@ -162,6 +280,8 @@ pub struct WorkflowConnection {
     pub source_handle: String,
     pub target_node_id: String,
     pub target_handle: String,
+    #[schemars(range(min = 0))]
+    pub order: u32,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -175,12 +295,12 @@ pub struct DefinitionIssue {
 #[must_use]
 pub fn validate_definition(definition: &WorkflowDefinition) -> Vec<DefinitionIssue> {
     let mut issues = Vec::new();
-    if definition.schema_version != "2.0" {
+    if definition.schema_version != "3.0" {
         issue(
             &mut issues,
             "UNSUPPORTED_SCHEMA",
             "schemaVersion",
-            "Only schema version 2.0 is supported",
+            "Only schema version 3.0 is supported",
         );
     }
     if definition.settings.activation_budget == 0 {
@@ -240,14 +360,6 @@ pub fn validate_definition(definition: &WorkflowDefinition) -> Vec<DefinitionIss
                 "Node type version must be greater than zero",
             );
         }
-        if !node.position.x.is_finite() || !node.position.y.is_finite() {
-            issue(
-                &mut issues,
-                "INVALID_NODE_POSITION",
-                &format!("nodes[{index}].position"),
-                "Node position must be finite",
-            );
-        }
         if node.node_type == "manual_trigger" && !node.disabled {
             triggers.push(node.id.clone());
         }
@@ -291,6 +403,7 @@ pub fn validate_definition(definition: &WorkflowDefinition) -> Vec<DefinitionIss
 
     let mut graph: HashMap<&str, Vec<&str>> = HashMap::new();
     let mut connection_ids = HashSet::new();
+    let mut connection_orders = HashSet::new();
     for (index, connection) in definition.connections.iter().enumerate() {
         if connection.id.is_empty() || !connection_ids.insert(connection.id.as_str()) {
             issue(
@@ -306,6 +419,14 @@ pub fn validate_definition(definition: &WorkflowDefinition) -> Vec<DefinitionIss
                 "INVALID_CONNECTION_HANDLE",
                 &format!("connections[{index}]"),
                 "Connection handles are required",
+            );
+        }
+        if !connection_orders.insert((connection.source_node_id.as_str(), connection.order)) {
+            issue(
+                &mut issues,
+                "DUPLICATE_CONNECTION_ORDER",
+                &format!("connections[{index}].order"),
+                "Connection order must be unique for each source node",
             );
         }
         if !ids.contains(&connection.source_node_id) || !ids.contains(&connection.target_node_id) {
@@ -339,6 +460,110 @@ pub fn validate_definition(definition: &WorkflowDefinition) -> Vec<DefinitionIss
                 "Enabled node must be reachable from a Manual Trigger",
             );
         }
+    }
+    issues
+}
+
+#[must_use]
+pub fn validate_editor_document(
+    definition: &WorkflowDefinition,
+    document: &EditorDocument,
+) -> Vec<DefinitionIssue> {
+    let mut issues = Vec::new();
+    let node_ids = definition
+        .nodes
+        .iter()
+        .map(|node| node.id.as_str())
+        .collect::<HashSet<_>>();
+    let binding_ids = definition
+        .nodes
+        .iter()
+        .flat_map(|node| node.resource_references.iter())
+        .filter_map(|reference| reference.binding_id.as_deref())
+        .collect::<HashSet<_>>();
+    let mut layout_nodes = HashSet::new();
+    for (index, layout) in document.node_layouts.iter().enumerate() {
+        if !node_ids.contains(layout.node_id.as_str()) {
+            issue(
+                &mut issues,
+                "DANGLING_EDITOR_NODE",
+                &format!("nodeLayouts[{index}].nodeId"),
+                "Node layout references a missing workflow node",
+            );
+        }
+        if !layout_nodes.insert(layout.node_id.as_str()) {
+            issue(
+                &mut issues,
+                "DUPLICATE_NODE_LAYOUT",
+                &format!("nodeLayouts[{index}].nodeId"),
+                "Each workflow node may have only one layout",
+            );
+        }
+        if !layout.x.is_finite()
+            || !layout.y.is_finite()
+            || layout
+                .width
+                .is_some_and(|value| !value.is_finite() || value <= 0.0)
+            || layout
+                .height
+                .is_some_and(|value| !value.is_finite() || value <= 0.0)
+        {
+            issue(
+                &mut issues,
+                "INVALID_NODE_LAYOUT",
+                &format!("nodeLayouts[{index}]"),
+                "Node layout coordinates and dimensions must be finite and positive",
+            );
+        }
+    }
+    let mut layout_bindings = HashSet::new();
+    for (index, layout) in document.binding_layouts.iter().enumerate() {
+        if !binding_ids.contains(layout.binding_id.as_str()) {
+            issue(
+                &mut issues,
+                "DANGLING_BINDING_LAYOUT",
+                &format!("bindingLayouts[{index}].bindingId"),
+                "Binding layout references a missing resource binding",
+            );
+        }
+        if !layout_bindings.insert(layout.binding_id.as_str()) {
+            issue(
+                &mut issues,
+                "DUPLICATE_BINDING_LAYOUT",
+                &format!("bindingLayouts[{index}].bindingId"),
+                "Each resource binding may have only one layout",
+            );
+        }
+    }
+    for (index, edge) in document.binding_edges.iter().enumerate() {
+        if !binding_ids.contains(edge.source_binding_id.as_str()) {
+            issue(
+                &mut issues,
+                "DANGLING_BINDING_EDGE",
+                &format!("bindingEdges[{index}].sourceBindingId"),
+                "Binding edge references a missing resource binding",
+            );
+        }
+        if !node_ids.contains(edge.target_node_id.as_str()) {
+            issue(
+                &mut issues,
+                "DANGLING_BINDING_TARGET",
+                &format!("bindingEdges[{index}].targetNodeId"),
+                "Binding edge references a missing workflow node",
+            );
+        }
+    }
+    if !document.viewport.x.is_finite()
+        || !document.viewport.y.is_finite()
+        || !document.viewport.zoom.is_finite()
+        || document.viewport.zoom <= 0.0
+    {
+        issue(
+            &mut issues,
+            "INVALID_VIEWPORT",
+            "viewport",
+            "Viewport coordinates must be finite and zoom must be positive",
+        );
     }
     issues
 }
@@ -452,15 +677,15 @@ mod tests {
     #[test]
     fn rejects_dangling_cycles_and_mismatched_resources() {
         let definition: WorkflowDefinition = serde_json::from_value(json!({
-            "schemaVersion":"2.0",
+            "schemaVersion":"3.0",
             "nodes":[
-                {"id":"trigger","type":"manual_trigger","typeVersion":1,"name":"Trigger","position":{"x":0,"y":0},"resourceReferences":[]},
-                {"id":"model","type":"model","typeVersion":1,"name":"Model","position":{"x":100,"y":0},"resourceReferences":[{"resourceType":"mcp_tool","resourceId":"018f47a0-7e9c-7000-8000-000000000001","operation":"use"}]}
+                {"id":"trigger","type":"manual_trigger","typeVersion":1,"name":"Trigger","resourceReferences":[]},
+                {"id":"model","type":"model","typeVersion":1,"name":"Model","resourceReferences":[{"resourceType":"mcp_tool","resourceId":"018f47a0-7e9c-7000-8000-000000000001","operation":"use"}]}
             ],
             "connections":[
-                {"id":"edge","sourceNodeId":"trigger","sourceHandle":"main","targetNodeId":"model","targetHandle":"main"},
-                {"id":"edge","sourceNodeId":"model","sourceHandle":"main","targetNodeId":"trigger","targetHandle":"main"},
-                {"id":"missing","sourceNodeId":"model","sourceHandle":"main","targetNodeId":"absent","targetHandle":"main"}
+                {"id":"edge","sourceNodeId":"trigger","sourceHandle":"main","targetNodeId":"model","targetHandle":"main","order":0},
+                {"id":"edge","sourceNodeId":"model","sourceHandle":"main","targetNodeId":"trigger","targetHandle":"main","order":0},
+                {"id":"missing","sourceNodeId":"model","sourceHandle":"main","targetNodeId":"absent","targetHandle":"main","order":1}
             ],
             "settings":{}
         })).unwrap();
@@ -477,14 +702,14 @@ mod tests {
     #[test]
     fn accepts_controlled_cycles() {
         let definition: WorkflowDefinition = serde_json::from_value(json!({
-            "schemaVersion":"2.0",
+            "schemaVersion":"3.0",
             "nodes":[
-                {"id":"trigger","type":"manual_trigger","typeVersion":1,"name":"Trigger","position":{"x":0,"y":0}},
-                {"id":"loop","type":"set","typeVersion":1,"name":"Loop","position":{"x":100,"y":0}}
+                {"id":"trigger","type":"manual_trigger","typeVersion":1,"name":"Trigger",},
+                {"id":"loop","type":"set","typeVersion":1,"name":"Loop",}
             ],
             "connections":[
-                {"id":"start","sourceNodeId":"trigger","sourceHandle":"main","targetNodeId":"loop","targetHandle":"main"},
-                {"id":"back","sourceNodeId":"loop","sourceHandle":"loop","targetNodeId":"loop","targetHandle":"main"}
+                {"id":"start","sourceNodeId":"trigger","sourceHandle":"main","targetNodeId":"loop","targetHandle":"main","order":0},
+                {"id":"back","sourceNodeId":"loop","sourceHandle":"loop","targetNodeId":"loop","targetHandle":"main","order":0}
             ]
         })).unwrap();
         assert!(validate_definition(&definition).is_empty());

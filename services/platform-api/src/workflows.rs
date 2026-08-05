@@ -1,6 +1,9 @@
 use agentx_api_types::{FieldError, PageResponse};
-use agentx_domain::{WorkflowDefinition, canonical_content_hash, validate_definition};
-use agentx_runtime::{CompileContext, NodeRegistry, WorkflowCompiler};
+use agentx_domain::{
+    EditorDocument, WorkflowDefinition, canonical_content_hash, validate_definition,
+    validate_editor_document,
+};
+use agentx_runtime::{CompileContext, WorkflowCompiler};
 use axum::{
     Json,
     extract::{Path, Query, State},
@@ -79,7 +82,9 @@ pub struct DraftResponse {
     pub schema_version: String,
     pub revision: u64,
     pub definition: Value,
-    pub content_hash: String,
+    pub editor_document: Value,
+    pub definition_hash: String,
+    pub editor_hash: String,
     #[serde(with = "time::serde::rfc3339")]
     pub updated_at: OffsetDateTime,
 }
@@ -89,6 +94,8 @@ pub struct DraftResponse {
 pub struct SaveDraftRequest {
     pub expected_revision: u64,
     pub definition: Value,
+    #[serde(default)]
+    pub editor_document: Value,
 }
 
 #[derive(Clone, Deserialize, Serialize, ToSchema)]
@@ -97,7 +104,8 @@ pub struct RevisionResponse {
     pub id: Uuid,
     pub revision: u64,
     pub schema_version: String,
-    pub content_hash: String,
+    pub definition_hash: String,
+    pub editor_hash: String,
     pub created_by: Uuid,
     #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
@@ -113,6 +121,7 @@ pub struct WorkflowVersionResponse {
     pub schema_version: String,
     pub content_hash: String,
     pub definition: Value,
+    pub editor_document: Value,
     pub created_by: Uuid,
     #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
@@ -272,7 +281,9 @@ pub async fn create_workflow(
     let draft_id = Uuid::now_v7();
     let definition =
         serde_json::to_value(WorkflowDefinition::empty()).map_err(AppError::internal)?;
+    let editor = serde_json::to_value(EditorDocument::default()).map_err(AppError::internal)?;
     let hash = canonical_content_hash(&definition).map_err(AppError::internal)?;
+    let editor_hash = canonical_content_hash(&editor).map_err(AppError::internal)?;
     let mut tx = state.pool.begin().await?;
     sqlx::query("INSERT INTO workflows(id,tenant_id,name,description,visibility,owner_user_id,owner_department_id) VALUES(?,?,?,?,?,?,?)")
         .bind(workflow_id).bind(actor.tenant_id).bind(&name).bind(&input.description).bind(&input.visibility).bind(actor.user_id).bind(actor.department_id).execute(&mut *tx).await?;
@@ -283,7 +294,7 @@ pub async fn create_workflow(
         .execute(&mut *tx)
         .await?;
     sqlx::query("INSERT INTO workflow_members(tenant_id,workflow_id,user_id,member_role,created_by) VALUES(?,?,?,'manager',?)").bind(actor.tenant_id).bind(workflow_id).bind(actor.user_id).bind(actor.user_id).execute(&mut *tx).await?;
-    sqlx::query("INSERT INTO workflow_drafts(id,tenant_id,workflow_id,schema_version,revision,definition_json,content_hash,updated_by) VALUES(?,?,?,'2.0',0,?,?,?)").bind(draft_id).bind(actor.tenant_id).bind(workflow_id).bind(&definition).bind(&hash).bind(actor.user_id).execute(&mut *tx).await?;
+    sqlx::query("INSERT INTO workflow_drafts(id,tenant_id,workflow_id,schema_version,revision,definition_json,editor_json,content_hash,editor_hash,updated_by) VALUES(?,?,?,'3.0',0,?,?,?,?,?)").bind(draft_id).bind(actor.tenant_id).bind(workflow_id).bind(&definition).bind(&editor).bind(&hash).bind(&editor_hash).bind(actor.user_id).execute(&mut *tx).await?;
     audit(
         &mut tx,
         &actor,
@@ -420,8 +431,22 @@ pub async fn save_draft(
     if !issues.is_empty() {
         return Err(definition_error(issues));
     }
+    let editor_document: EditorDocument =
+        serde_json::from_value(if input.editor_document.is_null() {
+            serde_json::to_value(EditorDocument::default()).map_err(AppError::internal)?
+        } else {
+            input.editor_document.clone()
+        })
+        .map_err(|error| AppError::unprocessable("INVALID_EDITOR_DOCUMENT", error.to_string()))?;
+    let editor_issues = validate_editor_document(&definition, &editor_document);
+    if !editor_issues.is_empty() {
+        return Err(definition_error(editor_issues));
+    }
+    let validated_definition = definition.clone();
     let definition = serde_json::to_value(&definition).map_err(AppError::internal)?;
+    let editor_document = serde_json::to_value(&editor_document).map_err(AppError::internal)?;
     let hash = canonical_content_hash(&definition).map_err(AppError::internal)?;
+    let editor_hash = canonical_content_hash(&editor_document).map_err(AppError::internal)?;
     let key = idempotency_key(&headers)?;
     let operation = format!("workflow.draft:{id}");
     let mut tx = state.pool.begin().await?;
@@ -451,10 +476,11 @@ pub async fn save_draft(
             "Archived workflows cannot be edited",
         ));
     }
-    let row=sqlx::query("SELECT id,revision,content_hash FROM workflow_drafts WHERE workflow_id=? AND tenant_id=? FOR UPDATE").bind(id).bind(actor.tenant_id).fetch_optional(&mut *tx).await?.ok_or_else(||AppError::not_found("Workflow draft"))?;
+    let row=sqlx::query("SELECT id,revision,definition_json,content_hash,editor_hash FROM workflow_drafts WHERE workflow_id=? AND tenant_id=? FOR UPDATE").bind(id).bind(actor.tenant_id).fetch_optional(&mut *tx).await?.ok_or_else(||AppError::not_found("Workflow draft"))?;
     let draft_id: Uuid = row.try_get("id")?;
     let current: u64 = row.try_get("revision")?;
     let current_hash: String = row.try_get("content_hash")?;
+    let current_editor_hash: Option<String> = row.try_get("editor_hash")?;
     if current != input.expected_revision {
         return Err(AppError::conflict(
             "DRAFT_REVISION_CONFLICT",
@@ -462,7 +488,31 @@ pub async fn save_draft(
         )
         .with_field("expectedRevision", "CURRENT_REVISION", current.to_string()));
     }
-    if current_hash == hash {
+    grants::require_definition_resources_visible_in_transaction(
+        &mut tx,
+        &actor,
+        &validated_definition,
+    )
+    .await?;
+    let missing = grants::missing_for_definition_in_transaction(
+        &mut tx,
+        actor.tenant_id,
+        id,
+        &validated_definition,
+    )
+    .await?;
+    if let Some(first) = missing.first() {
+        return Err(AppError::unprocessable(
+            "RESOURCE_GRANT_MISSING",
+            format!(
+                "{} {} requires {} grant",
+                first.resource_type.as_str(),
+                first.resource_id,
+                first.operation.as_str()
+            ),
+        ));
+    }
+    if current_hash == hash && current_editor_hash.as_deref() == Some(editor_hash.as_str()) {
         let response = load_draft(&state, actor.tenant_id, id).await?;
         complete_idempotency(
             &mut tx,
@@ -478,15 +528,52 @@ pub async fn save_draft(
     }
     let next = current + 1;
     let revision_id = Uuid::now_v7();
-    sqlx::query("UPDATE workflow_drafts SET revision=?,schema_version='2.0',definition_json=?,content_hash=?,updated_by=? WHERE id=?").bind(next).bind(&definition).bind(&hash).bind(actor.user_id).bind(draft_id).execute(&mut *tx).await?;
-    sqlx::query("INSERT INTO workflow_draft_revisions(id,tenant_id,workflow_id,draft_id,revision,schema_version,definition_json,content_hash,created_by) VALUES(?,?,?,?,?,'2.0',?,?,?)").bind(revision_id).bind(actor.tenant_id).bind(id).bind(draft_id).bind(next).bind(&definition).bind(&hash).bind(actor.user_id).execute(&mut *tx).await?;
+    let previous: WorkflowDefinition =
+        serde_json::from_value(row.try_get("definition_json")?).map_err(AppError::internal)?;
+    let current_nodes = definition
+        .get("nodes")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let previous_nodes = previous
+        .nodes
+        .into_iter()
+        .map(|node| (node.id, (node.node_type, node.type_version)))
+        .collect::<std::collections::HashMap<_, _>>();
+    let next_nodes = current_nodes
+        .iter()
+        .filter_map(|node| {
+            Some((
+                node.get("id")?.as_str()?.to_owned(),
+                (
+                    node.get("type")?.as_str()?.to_owned(),
+                    node.get("typeVersion")?.as_u64()? as u32,
+                ),
+            ))
+        })
+        .collect::<std::collections::HashMap<_, _>>();
+    let overlays = sqlx::query("SELECT node_id FROM workflow_debug_overlays WHERE tenant_id=? AND workflow_id=? FOR UPDATE").bind(actor.tenant_id).bind(id).fetch_all(&mut *tx).await?;
+    for overlay in overlays {
+        let node_id: String = overlay.try_get("node_id")?;
+        match (previous_nodes.get(&node_id), next_nodes.get(&node_id)) {
+            (_, None) => {
+                sqlx::query("DELETE FROM workflow_debug_overlays WHERE tenant_id=? AND workflow_id=? AND node_id=?").bind(actor.tenant_id).bind(id).bind(&node_id).execute(&mut *tx).await?;
+            }
+            (Some(before), Some(after)) if before != after => {
+                sqlx::query("UPDATE workflow_debug_overlays SET stale=TRUE WHERE tenant_id=? AND workflow_id=? AND node_id=?").bind(actor.tenant_id).bind(id).bind(&node_id).execute(&mut *tx).await?;
+            }
+            _ => {}
+        }
+    }
+    sqlx::query("UPDATE workflow_drafts SET revision=?,schema_version='3.0',definition_json=?,editor_json=?,content_hash=?,editor_hash=?,updated_by=? WHERE id=?").bind(next).bind(&definition).bind(&editor_document).bind(&hash).bind(&editor_hash).bind(actor.user_id).bind(draft_id).execute(&mut *tx).await?;
+    sqlx::query("INSERT INTO workflow_draft_revisions(id,tenant_id,workflow_id,draft_id,revision,schema_version,definition_json,editor_json,content_hash,editor_hash,created_by) VALUES(?,?,?,?,?,'3.0',?,?,?,?,?)").bind(revision_id).bind(actor.tenant_id).bind(id).bind(draft_id).bind(next).bind(&definition).bind(&editor_document).bind(&hash).bind(&editor_hash).bind(actor.user_id).execute(&mut *tx).await?;
     audit(
         &mut tx,
         &actor,
         "workflow.draft_revised",
         "workflow",
         id,
-        json!({"revision":next,"contentHash":&hash}),
+        json!({"revision":next,"definitionHash":&hash,"editorHash":&editor_hash}),
     )
     .await?;
     outbox(
@@ -498,7 +585,7 @@ pub async fn save_draft(
         json!({"workflowId":id,"revision":next}),
     )
     .await?;
-    let stored = sqlx::query("SELECT id,workflow_id,schema_version,revision,definition_json,content_hash,updated_at FROM workflow_drafts WHERE id=?")
+    let stored = sqlx::query("SELECT id,workflow_id,schema_version,revision,definition_json,editor_json,content_hash,editor_hash,updated_at FROM workflow_drafts WHERE id=?")
         .bind(draft_id)
         .fetch_one(&mut *tx)
         .await?;
@@ -508,7 +595,13 @@ pub async fn save_draft(
         schema_version: stored.try_get("schema_version")?,
         revision: stored.try_get("revision")?,
         definition: stored.try_get("definition_json")?,
-        content_hash: stored.try_get("content_hash")?,
+        editor_document: stored
+            .try_get::<Option<Value>, _>("editor_json")?
+            .unwrap_or_else(|| json!({})),
+        definition_hash: stored.try_get("content_hash")?,
+        editor_hash: stored
+            .try_get::<Option<String>, _>("editor_hash")?
+            .unwrap_or_default(),
         updated_at: stored.try_get("updated_at")?,
     };
     complete_idempotency(
@@ -532,7 +625,7 @@ pub async fn list_revisions(
 ) -> AppResult<Json<Vec<RevisionResponse>>> {
     actor.require("workflow:view")?;
     require_workflow_access(&state.pool, &actor, id, false).await?;
-    let rows=sqlx::query("SELECT id,revision,schema_version,content_hash,created_by,created_at FROM workflow_draft_revisions WHERE tenant_id=? AND workflow_id=? ORDER BY revision DESC").bind(actor.tenant_id).bind(id).fetch_all(&state.pool).await?;
+    let rows=sqlx::query("SELECT id,revision,schema_version,content_hash,editor_hash,created_by,created_at FROM workflow_draft_revisions WHERE tenant_id=? AND workflow_id=? ORDER BY revision DESC").bind(actor.tenant_id).bind(id).fetch_all(&state.pool).await?;
     Ok(Json(
         rows.into_iter()
             .map(|r| {
@@ -540,7 +633,10 @@ pub async fn list_revisions(
                     id: r.try_get("id")?,
                     revision: r.try_get("revision")?,
                     schema_version: r.try_get("schema_version")?,
-                    content_hash: r.try_get("content_hash")?,
+                    definition_hash: r.try_get("content_hash")?,
+                    editor_hash: r
+                        .try_get::<Option<String>, _>("editor_hash")?
+                        .unwrap_or_default(),
                     created_by: r.try_get("created_by")?,
                     created_at: r.try_get("created_at")?,
                 })
@@ -599,7 +695,7 @@ pub async fn create_version(
     let definition: WorkflowDefinition =
         serde_json::from_value(draft.definition.clone()).map_err(AppError::internal)?;
     let snapshots = grants::validate_and_snapshot(&state, &actor, id, &definition).await?;
-    if let Some(row)=sqlx::query("SELECT id,workflow_id,version_number,source_revision,schema_version,content_hash,definition_json,created_by,created_at FROM workflow_versions WHERE tenant_id=? AND workflow_id=? AND source_revision=? AND content_hash=?").bind(actor.tenant_id).bind(id).bind(draft.revision).bind(&draft.content_hash).fetch_optional(&mut *tx).await? {
+    if let Some(row)=sqlx::query("SELECT id,workflow_id,version_number,source_revision,schema_version,content_hash,definition_json,editor_json,created_by,created_at FROM workflow_versions WHERE tenant_id=? AND workflow_id=? AND source_revision=? AND content_hash=?").bind(actor.tenant_id).bind(id).bind(draft.revision).bind(&draft.definition_hash).fetch_optional(&mut *tx).await? {
         let response = version_from_row(row)?;
         complete_idempotency(&mut tx,actor.tenant_id,&operation,key.as_deref(),response.id,&response).await?;
         tx.commit().await?;
@@ -607,7 +703,7 @@ pub async fn create_version(
     }
     let version_number:u64=sqlx::query_scalar("SELECT CAST(COALESCE(MAX(version_number),0)+1 AS UNSIGNED) FROM workflow_versions WHERE tenant_id=? AND workflow_id=? FOR UPDATE").bind(actor.tenant_id).bind(id).fetch_one(&mut *tx).await?;
     let version_id = Uuid::now_v7();
-    let registry = NodeRegistry::m5_defaults();
+    let registry = crate::catalog::registry_for_tenant(&state.pool, actor.tenant_id).await?;
     let compiled = match WorkflowCompiler::new(&registry).compile(
         &definition,
         &CompileContext {
@@ -633,9 +729,9 @@ pub async fn create_version(
         .as_ref()
         .map(|value| value.compiler_version.as_str());
     let compiled_at = compiled.as_ref().map(|_| OffsetDateTime::now_utc());
-    sqlx::query("INSERT INTO workflow_versions(id,tenant_id,workflow_id,version_number,source_revision,schema_version,definition_json,content_hash,compiled_ir_json,compiled_ir_hash,compiler_version,compiled_at,created_by) VALUES(?,?,?,?,?,'2.0',?,?,?,?,?,?,?)").bind(version_id).bind(actor.tenant_id).bind(id).bind(version_number).bind(draft.revision).bind(&draft.definition).bind(&draft.content_hash).bind(compiled_json).bind(compiled_hash).bind(compiler_version).bind(compiled_at).bind(actor.user_id).execute(&mut *tx).await?;
+    sqlx::query("INSERT INTO workflow_versions(id,tenant_id,workflow_id,version_number,source_revision,schema_version,definition_json,editor_json,content_hash,editor_hash,compiled_ir_json,compiled_ir_hash,compiler_version,compiled_at,created_by) VALUES(?,?,?,?,?,'3.0',?,?,?,?,?,?,?,?,?)").bind(version_id).bind(actor.tenant_id).bind(id).bind(version_number).bind(draft.revision).bind(&draft.definition).bind(&draft.editor_document).bind(&draft.definition_hash).bind(&draft.editor_hash).bind(compiled_json).bind(compiled_hash).bind(compiler_version).bind(compiled_at).bind(actor.user_id).execute(&mut *tx).await?;
     for snapshot in snapshots {
-        sqlx::query("INSERT INTO workflow_version_resources(id,tenant_id,workflow_version_id,node_id,resource_type,resource_id,resource_version_id,operation_key,snapshot_json,snapshot_hash) VALUES(?,?,?,?,?,?,?,?,?,?)").bind(Uuid::now_v7()).bind(actor.tenant_id).bind(version_id).bind(snapshot.node_id).bind(snapshot.reference.resource_type.as_str()).bind(snapshot.reference.resource_id).bind(snapshot.reference.resource_version_id).bind(snapshot.reference.operation.as_str()).bind(snapshot.snapshot).bind(snapshot.snapshot_hash).execute(&mut *tx).await?;
+        sqlx::query("INSERT INTO workflow_version_resources(id,tenant_id,workflow_version_id,node_id,binding_id,binding_role,resource_type,resource_id,resource_version_id,operation_key,snapshot_json,snapshot_hash) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)").bind(Uuid::now_v7()).bind(actor.tenant_id).bind(version_id).bind(snapshot.node_id).bind(snapshot.reference.binding_id).bind(snapshot.reference.binding_role).bind(snapshot.reference.resource_type.as_str()).bind(snapshot.reference.resource_id).bind(snapshot.reference.resource_version_id).bind(snapshot.reference.operation.as_str()).bind(snapshot.snapshot).bind(snapshot.snapshot_hash).execute(&mut *tx).await?;
     }
     audit(
         &mut tx,
@@ -655,7 +751,7 @@ pub async fn create_version(
         json!({"workflowId":id,"workflowVersionId":version_id}),
     )
     .await?;
-    let row=sqlx::query("SELECT id,workflow_id,version_number,source_revision,schema_version,content_hash,definition_json,created_by,created_at FROM workflow_versions WHERE id=?").bind(version_id).fetch_one(&mut *tx).await?;
+    let row=sqlx::query("SELECT id,workflow_id,version_number,source_revision,schema_version,content_hash,definition_json,editor_json,created_by,created_at FROM workflow_versions WHERE id=?").bind(version_id).fetch_one(&mut *tx).await?;
     let response = version_from_row(row)?;
     complete_idempotency(
         &mut tx,
@@ -678,7 +774,7 @@ pub async fn list_versions(
 ) -> AppResult<Json<Vec<WorkflowVersionResponse>>> {
     actor.require("workflow:view")?;
     require_workflow_access(&state.pool, &actor, id, false).await?;
-    let rows=sqlx::query("SELECT id,workflow_id,version_number,source_revision,schema_version,content_hash,definition_json,created_by,created_at FROM workflow_versions WHERE tenant_id=? AND workflow_id=? ORDER BY version_number DESC").bind(actor.tenant_id).bind(id).fetch_all(&state.pool).await?;
+    let rows=sqlx::query("SELECT id,workflow_id,version_number,source_revision,schema_version,content_hash,definition_json,editor_json,created_by,created_at FROM workflow_versions WHERE tenant_id=? AND workflow_id=? ORDER BY version_number DESC").bind(actor.tenant_id).bind(id).fetch_all(&state.pool).await?;
     Ok(Json(
         rows.into_iter()
             .map(version_from_row)
@@ -1122,14 +1218,20 @@ async fn load_workflow(
     workflow_from_row(row).map_err(Into::into)
 }
 async fn load_draft(state: &AppState, tenant: Uuid, id: Uuid) -> AppResult<DraftResponse> {
-    let r=sqlx::query("SELECT id,workflow_id,schema_version,revision,definition_json,content_hash,updated_at FROM workflow_drafts WHERE tenant_id=? AND workflow_id=?").bind(tenant).bind(id).fetch_optional(&state.pool).await?.ok_or_else(||AppError::not_found("Workflow draft"))?;
+    let r=sqlx::query("SELECT id,workflow_id,schema_version,revision,definition_json,editor_json,content_hash,editor_hash,updated_at FROM workflow_drafts WHERE tenant_id=? AND workflow_id=?").bind(tenant).bind(id).fetch_optional(&state.pool).await?.ok_or_else(||AppError::not_found("Workflow draft"))?;
     Ok(DraftResponse {
         id: r.try_get("id")?,
         workflow_id: r.try_get("workflow_id")?,
         schema_version: r.try_get("schema_version")?,
         revision: r.try_get("revision")?,
         definition: r.try_get("definition_json")?,
-        content_hash: r.try_get("content_hash")?,
+        editor_document: r
+            .try_get::<Option<Value>, _>("editor_json")?
+            .unwrap_or_else(|| json!({})),
+        definition_hash: r.try_get("content_hash")?,
+        editor_hash: r
+            .try_get::<Option<String>, _>("editor_hash")?
+            .unwrap_or_default(),
         updated_at: r.try_get("updated_at")?,
     })
 }
@@ -1159,6 +1261,9 @@ fn version_from_row(r: sqlx::mysql::MySqlRow) -> Result<WorkflowVersionResponse,
         schema_version: r.try_get("schema_version")?,
         content_hash: r.try_get("content_hash")?,
         definition: r.try_get("definition_json")?,
+        editor_document: r
+            .try_get::<Option<Value>, _>("editor_json")?
+            .unwrap_or_else(|| json!({})),
         created_by: r.try_get("created_by")?,
         created_at: r.try_get("created_at")?,
     })

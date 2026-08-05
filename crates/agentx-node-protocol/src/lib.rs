@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use agentx_domain::{ExecutionId, NodeExecutionId, TenantId, WorkflowVersionId};
+use agentx_domain::{ExecutionId, NodeExecutionId, ResourceType, TenantId, WorkflowVersionId};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -162,6 +162,17 @@ pub struct NodePort {
     pub variadic: bool,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BindingSlot {
+    pub name: String,
+    pub resource_type: ResourceType,
+    #[serde(default)]
+    pub required: bool,
+    #[serde(default)]
+    pub multiple: bool,
+}
+
 #[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct NodeManifestVersion {
@@ -171,11 +182,21 @@ pub struct NodeManifestVersion {
     #[schemars(range(min = 1))]
     pub version: u32,
     pub display_name: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub category: String,
+    #[serde(default)]
+    pub keywords: Vec<String>,
+    #[serde(default)]
+    pub icon_key: String,
     pub execution_style: ExecutionStyle,
     pub capability: NodeCapability,
     pub readiness: ReadinessPolicy,
     pub input_ports: Vec<NodePort>,
     pub output_ports: Vec<NodePort>,
+    #[serde(default)]
+    pub binding_slots: Vec<BindingSlot>,
     pub parameter_schema: Value,
     #[serde(default)]
     pub ui_schema: Value,
@@ -232,7 +253,7 @@ pub struct NodeActionRequest {
     #[schemars(range(min = 1))]
     pub node_version: u32,
     pub tenant_id: TenantId,
-    pub workflow_version_id: WorkflowVersionId,
+    pub workflow_version_id: Option<WorkflowVersionId>,
     pub execution_id: ExecutionId,
     pub node_execution_id: NodeExecutionId,
     pub attempt_id: Uuid,

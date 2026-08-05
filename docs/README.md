@@ -1,6 +1,6 @@
 # Agentx 产品与架构文档
 
-Agentx 是一个以 n8n 式 Workflow 编辑和运行模型为核心，面向企业 Agent 场景增强的平台。首期采用单公司部署和公司内多部门模型，数据实体继续保留 tenant_id 作为隔离边界。
+Agentx 是一个采用 n8n 式画布交互、但使用 Agentx 原生 Workflow/Node/Expression/Runtime 协议的企业 Agent 平台。首期采用单公司部署和公司内多部门模型，数据实体继续保留 tenant_id 作为隔离边界。
 
 平台的主链路是：
 
@@ -37,6 +37,7 @@ Agentx 是一个以 n8n 式 Workflow 编辑和运行模型为核心，面向企�
 | [plan/composable-deployment.md](plan/composable-deployment.md) | Full/Custom Profile、分散依赖、统一脚本和部署验收门禁 |
 | [plan/m5-task-list.md](plan/m5-task-list.md) | M5 Rust 协议门禁、Agent、资源 Runtime、OpenSandbox、Trace 和 E2E 实施批次 |
 | [plan/m5-acceptance-evidence.md](plan/m5-acceptance-evidence.md) | M5 当前实现、自动化证据、未关闭门禁和生产强隔离边界 |
+| [plan/m6-acceptance-evidence.md](plan/m6-acceptance-evidence.md) | M6 Workflow Studio 契约、实现、静态门禁和 Kubernetes E2E 验收证据 |
 | [plan/e2e-testing-standard.md](plan/e2e-testing-standard.md) | 临时 Kubernetes Playwright 端到端测试规范 |
 | [plan/m2-acceptance-evidence.md](plan/m2-acceptance-evidence.md) | 已被 M2.1 取代的旧 M2 历史证据 |
 
@@ -52,7 +53,7 @@ Agentx 是一个以 n8n 式 Workflow 编辑和运行模型为核心，面向企�
 ## 核心设计结论
 
 1. Workflow 是平台第一核心对象，其他功能都服务于其开发、运行、发布和评测。
-2. Workflow 行为和可实现能力以 n8n 一致为目标，但内部 Definition、IR 和节点 API 使用独立协议；n8n JSON 导入作为适配能力处理，不兼容社区节点二进制。
+2. Workflow Studio 对齐 n8n 的拖拽、配置、调试和发布交互，但 Definition、IR、Manifest、表达式和节点 API 全部使用 Agentx 原生协议；首期及 M6/M7 不实现 n8n JSON、社区节点或 Credential 兼容。
 3. Workflow 草稿可变，Workflow Version 不可变，Deployment 负责将版本发布到环境。
 4. 采用 Item 数据模型传递节点数据，保留 Item 的上下游来源关系。
 5. MySQL 保存权威业务状态；Redis 只负责缓存、租约、限流和任务派发。
@@ -62,7 +63,7 @@ Agentx 是一个以 n8n 式 Workflow 编辑和运行模型为核心，面向企�
 9. 生产 Workflow 使用独立运行身份，不继承设计者个人权限。
 10. 控制面可以模块化单体起步，但 Workflow Worker、Sandbox Manager 和 Trace Writer 必须能够独立扩容。
 11. 前端使用 Tailwind CSS 设计令牌和统一组件层，复杂无障碍交互基于 Radix UI。
-12. Workflow 画布使用 React Flow，画布状态通过转换层生成独立的 Workflow Definition。
+12. Workflow 画布使用 React Flow；Workflow Definition、Editor Document 和 Debug Overlay 分离，运行编译只消费 Definition。
 13. Kubernetes 部署使用统一 Profile 组合 bundled/external 基础设施、可选 Addon 和 registry/local-build 镜像，并通过专用 ingress-nginx 暴露 Web。
 14. Sandbox 采用独立安装的 OpenSandbox；本地 Docker+runc 与当前 Kubernetes 用于功能验收，gVisor/Kata 和生产强隔离作为后续强化。
 

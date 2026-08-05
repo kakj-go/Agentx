@@ -1218,6 +1218,8 @@ mod tests {
 
     fn task_with_model_price(price: Value) -> RuntimeTask {
         let reference = ResourceReference {
+            binding_id: None,
+            binding_role: None,
             resource_type: ResourceType::Model,
             resource_id: Uuid::now_v7(),
             resource_version_id: Some(Uuid::now_v7()),
@@ -1227,7 +1229,7 @@ mod tests {
             tenant_id: Uuid::now_v7(),
             workflow_id: Uuid::now_v7(),
             workflow_service_identity_id: Uuid::now_v7(),
-            workflow_version_id: Uuid::now_v7(),
+            workflow_version_id: Some(Uuid::now_v7()),
             execution_id: Uuid::now_v7(),
             node_execution_id: Uuid::now_v7(),
             attempt_id: Uuid::now_v7(),

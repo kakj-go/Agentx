@@ -1075,7 +1075,7 @@ mod tests {
             scope: agentx_runtime_rpc::sandbox_v1::SandboxScope {
                 tenant_id: tenant.to_string(),
                 workflow_id: workflow.to_string(),
-                workflow_version_id: version.to_string(),
+                workflow_version_id: Some(version.to_string()),
                 execution_id: execution.to_string(),
                 node_execution_id: node.to_string(),
                 attempt_id: attempt.to_string(),
@@ -1089,6 +1089,8 @@ mod tests {
             profile: RuntimeResourceSnapshot {
                 node_id: "code".into(),
                 reference: ResourceReference {
+                    binding_id: None,
+                    binding_role: None,
                     resource_type: ResourceType::SandboxProfile,
                     resource_id: profile_id,
                     resource_version_id: Some(profile_version),

@@ -14,7 +14,10 @@ service RuntimeCoordinator {
 
 message RequestExecutionRequest {
   string tenant_id = 1;
-  string workflow_version_id = 2;
+  oneof source {
+    VersionSource version = 2;
+    DraftRevisionSource draft_revision = 10;
+  }
   optional string invocation_id = 3;
   optional string session_id = 4;
   optional string requested_by = 5;
@@ -22,6 +25,18 @@ message RequestExecutionRequest {
   string input_json = 7;
   optional string idempotency_key = 8;
   optional string caller_execution_id = 9;
+  string debug_plan_json = 11;
+  string debug_overlay_json = 12;
+  string resource_snapshots_json = 13;
+}
+
+message VersionSource {
+  string version_id = 1;
+}
+
+message DraftRevisionSource {
+  string workflow_id = 1;
+  uint64 revision = 2;
 }
 
 message ExecutionAccepted {
