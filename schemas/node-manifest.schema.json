@@ -40,7 +40,14 @@
       "enum": [
         "builtin",
         "declarative_http",
-        "remote_action"
+        "remote_action",
+        "agent",
+        "model",
+        "mcp_tool",
+        "skill",
+        "rag",
+        "memory",
+        "sandbox"
       ],
       "type": "string"
     },

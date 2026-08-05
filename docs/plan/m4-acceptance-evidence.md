@@ -2,7 +2,7 @@
 
 状态：`done`。最终验收复核日期：2026-08-04。
 
-M4 的阶段 08 和 09 共 24 项原子任务已完成实现，并通过最终快速门禁、Kubernetes E2E、故障恢复、数据库断言和浏览器交互验收。交付范围包括 Definition 2.0、Node Protocol/API、确定性编译和运行状态机、Coordinator/Worker、Checkpoint/Fork、Wait/Approval 与 Execution/Recovery Workbench。完整 Workflow Studio、AI/MCP/Skill/RAG/Memory/CubeSandbox Runner 和 Application/Evaluation/Trigger 全链路接线仍分别属于 M5～M7。
+M4 的阶段 08 和 09 共 24 项原子任务已完成实现，并通过最终快速门禁、Kubernetes E2E、故障恢复、数据库断言和浏览器交互验收。交付范围包括 Definition 2.0、Node Protocol/API、确定性编译和运行状态机、Coordinator/Worker、Checkpoint/Fork、Wait/Approval 与 Execution/Recovery Workbench。完整 Workflow Studio、AI/MCP/Skill/RAG/Memory/OpenSandbox Runner 和 Application/Evaluation/Trigger 全链路接线仍分别属于 M5～M7。
 
 ## 1. 已验收能力
 
@@ -95,6 +95,6 @@ activeTerminalLeases=0
 ## 6. 完成边界和剩余量
 
 - RUN-001～014、REC-001～010、阶段 08、阶段 09 和里程碑 M4 均为 `done`。
-- M4 没有接入 AI/MCP/Skill/RAG/Memory/CubeSandbox Runner，没有交付完整 Workflow Studio，也没有提前完成 Application、Evaluation、Schedule/Trigger 的真实运行绑定。
+- M4 没有接入 AI/MCP/Skill/RAG/Memory/OpenSandbox Runner，没有交付完整 Workflow Studio，也没有提前完成 Application、Evaluation、Schedule/Trigger 的真实运行绑定。
 - 项目仍按 M1～M7 七个里程碑推进；M1～M4 已完成。
-- 当前剩余 M5～M7 共 41 项：M5 13 项、M6 14 项、M7 14 项。
+- M5 的 AGT-001～013 已完成；当前剩余 M6～M7 共 28 项：M6 14 项、M7 14 项。

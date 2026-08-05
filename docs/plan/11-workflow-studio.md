@@ -7,7 +7,7 @@
 ## 2. 当前状态和进入条件
 
 - 状态：`planned`。
-- 进入条件：[阶段 08](08-workflow-runtime-core.md) 的 Definition/IR/Execution API、[阶段 09](09-checkpoint-wait-recovery.md) 的调试命令和 [阶段 10](10-agent-cubesandbox.md) 的节点参数稳定。
+- 进入条件：[阶段 08](08-workflow-runtime-core.md) 的 Definition/IR/Execution API、[阶段 09](09-checkpoint-wait-recovery.md) 的调试命令和 [阶段 10](10-agent-opensandbox.md) 的节点参数稳定。
 - 当前 React Flow 已能保存最小资源引用 Draft，但尚未具备运行、表达式、Pin Data、Undo/Redo 和完整 Node Registry。
 
 ## 3. 范围和不做内容

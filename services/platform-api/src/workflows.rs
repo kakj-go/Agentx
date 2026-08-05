@@ -607,7 +607,7 @@ pub async fn create_version(
     }
     let version_number:u64=sqlx::query_scalar("SELECT CAST(COALESCE(MAX(version_number),0)+1 AS UNSIGNED) FROM workflow_versions WHERE tenant_id=? AND workflow_id=? FOR UPDATE").bind(actor.tenant_id).bind(id).fetch_one(&mut *tx).await?;
     let version_id = Uuid::now_v7();
-    let registry = NodeRegistry::m4_defaults();
+    let registry = NodeRegistry::m5_defaults();
     let compiled = match WorkflowCompiler::new(&registry).compile(
         &definition,
         &CompileContext {
@@ -616,14 +616,6 @@ pub async fn create_version(
         },
     ) {
         Ok(compiled) => Some(compiled),
-        Err(error)
-            if error
-                .issues
-                .iter()
-                .all(|issue| issue.code == "NODE_UNSUPPORTED_IN_M4") =>
-        {
-            None
-        }
         Err(error) => {
             return Err(AppError::unprocessable(
                 "WORKFLOW_COMPILE_FAILED",

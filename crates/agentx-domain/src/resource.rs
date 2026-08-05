@@ -12,6 +12,7 @@ pub enum ResourceType {
     Skill,
     Rag,
     Memory,
+    SandboxProfile,
 }
 
 impl ResourceType {
@@ -25,6 +26,7 @@ impl ResourceType {
             Self::Skill => "skill",
             Self::Rag => "rag",
             Self::Memory => "memory",
+            Self::SandboxProfile => "sandbox_profile",
         }
     }
 }

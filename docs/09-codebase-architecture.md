@@ -24,7 +24,10 @@ Agentx 使用单仓库管理 Rust 服务、公共 Crate、前端、容器和 Kub
     │   └── agentx-service-kit/
     ├── deploy/
     │   ├── docker/
-    │   └── k8s/
+    │   ├── profiles/
+    │   ├── ingress-nginx/
+    │   ├── k8s/{services,infrastructure,addons,fixtures,stacks}/
+    │   └── opensandbox/{docker,kubernetes}/
     ├── scripts/
     └── docs/
 
@@ -48,7 +51,7 @@ Agentx 使用单仓库管理 Rust 服务、公共 Crate、前端、容器和 Kub
 
 ### sandbox-manager
 
-隔离 CubeSandbox 的生命周期和协议，为 Worker 提供稳定的沙箱执行接口。
+隔离 OpenSandbox 的生命周期、API Key 和协议，为 Worker 提供稳定的沙箱执行接口；负责 Profile、配额、网络、上传/收集、TTL 和孤儿 Sandbox 回收。它是 Rust 服务并直接使用 `OpenSandboxAdapter`，不部署 Go/Python Sidecar。
 
 ### trace-writer
 
@@ -80,7 +83,20 @@ Workflow 运行内核，包括 Item、图结构、连接类型、编译 IR、状
 
 ### agentx-infrastructure
 
-实现 MySQL、Redis、ClickHouse、MinIO、CubeSandbox、LightRAG 和 Mem0 等 Adapter。
+实现 MySQL、Redis、ClickHouse、MinIO、OpenSandbox、LightRAG 和 Mem0 等 Adapter。`OpenSandboxAdapter` 依据固定版本的官方 Lifecycle/execd OpenAPI 调用 REST/SSE API，不依赖供应商语言 SDK；供应商 DTO 不进入 application/runtime Crate。
+
+OpenSandbox 实现建议拆为：
+
+    agentx-infrastructure/src/opensandbox/
+    ├── mod.rs
+    ├── models.rs       # 固定 Spec 生成或校验的内部 DTO
+    ├── lifecycle.rs    # create/get/kill、就绪轮询和版本检查
+    ├── execd.rs        # command/interrupt/files/metrics 普通请求
+    ├── sse.rs          # 流解析、大小限制、背压、超时和取消
+    ├── endpoint.rs     # URL、Origin、Host/Port、Header 白名单
+    └── error.rs        # 供应商错误到 Agentx 错误码的映射
+
+这些模块先留在 `agentx-infrastructure` 内；只有出现两个以上稳定消费者时才提取公共 Crate。OpenAPI 生成物必须可复现并随 Spec Hash 一起校验，不能把不稳定的生成 Client 直接暴露为应用 Port。
 
 ### agentx-service-kit
 

@@ -1,8 +1,12 @@
 use std::{collections::BTreeMap, sync::Arc, time::Duration as StdDuration};
 
-use agentx_application::{ArtifactStore, ArtifactWrite};
+use agentx_application::{
+    ArtifactStore, ArtifactWrite, RuntimeContext, RuntimeResourceSnapshot, SkillRuntime,
+};
 use agentx_domain::{
-    ResourceOperation, ResourceReference, ResourceType, TenantId, WorkflowDefinition,
+    AttemptId, ExecutionId, NodeExecutionId, ResourceOperation, ResourceReference, ResourceType,
+    TenantId, TraceId, WorkflowDefinition, WorkflowId, WorkflowServiceIdentityId,
+    WorkflowVersionId,
 };
 use agentx_infrastructure::{
     artifact::MySqlObjectArtifactStore,
@@ -11,6 +15,8 @@ use agentx_infrastructure::{
     mysql,
     runtime_broker::{InvocationBroker, InvocationBrokerError, InvocationScope},
     runtime_repository::RuntimeRepository,
+    runtime_resources::MySqlResourceAuthorizer,
+    skill_runtime::SnapshotSkillRuntime,
 };
 use agentx_node_protocol::{BinaryReference, InvocationResourceRequest, Item};
 use agentx_runtime::{CompileContext, ExecutionMachine, NodeRegistry, WorkflowCompiler};
@@ -24,6 +30,7 @@ use testcontainers::{
     runners::AsyncRunner,
 };
 use time::{Duration, OffsetDateTime};
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 #[tokio::test]
@@ -49,6 +56,10 @@ async fn invocation_handles_and_checkpoint_artifacts_enforce_runtime_boundaries(
         username: "agentx".into(),
         password: SecretString::from("agentx-test-password".to_owned()),
         max_connections: 5,
+        tls_mode: agentx_infrastructure::config::MySqlTlsMode::Disabled,
+        tls_ca_path: None,
+        tls_client_cert_path: None,
+        tls_client_key_path: None,
     };
     let pool = connect(&settings).await;
     mysql::run_migrations(&pool).await.expect("run migrations");
@@ -112,6 +123,17 @@ async fn invocation_handles_and_checkpoint_artifacts_enforce_runtime_boundaries(
                 resource_id: ids.credential,
                 resource_version_id: None,
                 operation: ResourceOperation::Use,
+            }],
+            &[agentx_application::RuntimeResourceSnapshot {
+                node_id: "remote".into(),
+                reference: ResourceReference {
+                    resource_type: ResourceType::Credential,
+                    resource_id: ids.credential,
+                    resource_version_id: None,
+                    operation: ResourceOperation::Use,
+                },
+                snapshot_hash: "fixture".into(),
+                snapshot: serde_json::json!({"secretVersion":1}),
             }],
             [&item].into_iter(),
         )
@@ -195,6 +217,131 @@ async fn invocation_handles_and_checkpoint_artifacts_enforce_runtime_boundaries(
     assert!(cancellation.cancellation_requested);
 
     verify_checkpoint_externalization(&pool, artifact_store, &ids).await;
+}
+
+#[tokio::test]
+async fn skill_runtime_rechecks_revoked_grants_and_rejects_cross_tenant_contexts() {
+    let container = GenericImage::new("mysql", "8.4")
+        .with_exposed_port(3306.tcp())
+        .with_wait_for(WaitFor::message_on_stderr("ready for connections"))
+        .with_env_var("MYSQL_DATABASE", "agentx")
+        .with_env_var("MYSQL_USER", "agentx")
+        .with_env_var("MYSQL_PASSWORD", "agentx-test-password")
+        .with_env_var("MYSQL_ROOT_PASSWORD", "agentx-root-password")
+        .start()
+        .await
+        .expect("MySQL container should start");
+    let port = container
+        .get_host_port_ipv4(3306.tcp())
+        .await
+        .expect("mapped MySQL port");
+    let pool = connect(&MySqlSettings {
+        host: "127.0.0.1".into(),
+        port,
+        database: "agentx".into(),
+        username: "agentx".into(),
+        password: SecretString::from("agentx-test-password".to_owned()),
+        max_connections: 5,
+        tls_mode: agentx_infrastructure::config::MySqlTlsMode::Disabled,
+        tls_ca_path: None,
+        tls_client_cert_path: None,
+        tls_client_key_path: None,
+    })
+    .await;
+    mysql::run_migrations(&pool).await.expect("run migrations");
+    let ids = seed_runtime(&pool).await;
+    let artifacts: Arc<dyn ArtifactStore> = Arc::new(MySqlObjectArtifactStore::new(
+        pool.clone(),
+        Arc::new(InMemory::new()),
+    ));
+    let skill_file = artifacts
+        .put(ArtifactWrite {
+            tenant_id: TenantId::from_uuid(ids.tenant),
+            content_type: "text/markdown".into(),
+            content: b"Use the published fixture.".to_vec(),
+        })
+        .await
+        .expect("seed skill artifact");
+    let reference = ResourceReference {
+        resource_type: ResourceType::Skill,
+        resource_id: Uuid::now_v7(),
+        resource_version_id: Some(Uuid::now_v7()),
+        operation: ResourceOperation::Use,
+    };
+    sqlx::query("INSERT INTO resource_grants(id,tenant_id,subject_type,subject_id,resource_type,resource_id,resource_version_id,operation_key,created_by) VALUES(?,?,'workflow_service_identity',?,'skill',?,?, 'use',?)")
+        .bind(Uuid::now_v7())
+        .bind(ids.tenant)
+        .bind(ids.identity)
+        .bind(reference.resource_id)
+        .bind(reference.resource_version_id)
+        .bind(ids.user)
+        .execute(&pool)
+        .await
+        .expect("grant skill");
+    let snapshot = RuntimeResourceSnapshot {
+        node_id: "skill".into(),
+        reference: reference.clone(),
+        snapshot_hash: "skill-fixture".into(),
+        snapshot: json!({
+            "manifest":{"instructions":"Use the published fixture."},
+            "files":[{
+                "artifactId":skill_file.id,
+                "contentHash":format!("sha256:{}", skill_file.sha256),
+                "path":"SKILL.md",
+                "mimeType":"text/markdown"
+            }]
+        }),
+    };
+    let runtime = SnapshotSkillRuntime::new(MySqlResourceAuthorizer::new(pool.clone()), artifacts);
+    let context = skill_context(&ids, TenantId::from_uuid(ids.tenant), snapshot.clone());
+    runtime
+        .load(&context, reference.clone())
+        .await
+        .expect("authorized skill should load");
+
+    let cross_tenant = skill_context(&ids, TenantId::new(), snapshot);
+    let denied = runtime
+        .load(&cross_tenant, reference.clone())
+        .await
+        .expect_err("cross-tenant context must not use the original grant");
+    assert_eq!(denied.code, "RESOURCE_GRANT_MISSING");
+
+    sqlx::query(
+        "DELETE FROM resource_grants WHERE tenant_id=? AND resource_type='skill' AND resource_id=?",
+    )
+    .bind(ids.tenant)
+    .bind(reference.resource_id)
+    .execute(&pool)
+    .await
+    .expect("revoke skill");
+    let revoked = runtime
+        .load(&context, reference.clone())
+        .await
+        .expect_err("revoked skill must fail before loading artifacts");
+    assert_eq!(revoked.code, "RESOURCE_GRANT_MISSING");
+}
+
+fn skill_context(
+    ids: &RuntimeIds,
+    tenant_id: TenantId,
+    snapshot: RuntimeResourceSnapshot,
+) -> RuntimeContext {
+    RuntimeContext {
+        tenant_id,
+        workflow_service_identity_id: WorkflowServiceIdentityId::from_uuid(ids.identity),
+        workflow_id: WorkflowId::from_uuid(ids.workflow),
+        workflow_version_id: WorkflowVersionId::from_uuid(ids.workflow_version),
+        execution_id: ExecutionId::from_uuid(ids.execution),
+        node_execution_id: NodeExecutionId::from_uuid(ids.node_execution),
+        attempt_id: AttemptId::from_uuid(ids.attempt),
+        lease_token: ids.lease,
+        trace_id: TraceId::new(),
+        span_id: Uuid::now_v7(),
+        deadline: OffsetDateTime::now_utc() + Duration::minutes(5),
+        cancellation: CancellationToken::new(),
+        idempotency_key: "skill-runtime-fixture".into(),
+        resources: vec![snapshot],
+    }
 }
 
 async fn verify_checkpoint_externalization(
@@ -281,6 +428,7 @@ struct RuntimeIds {
     user: Uuid,
     department: Uuid,
     workflow: Uuid,
+    identity: Uuid,
     workflow_version: Uuid,
     execution: Uuid,
     node_execution: Uuid,
@@ -295,6 +443,7 @@ async fn seed_runtime(pool: &MySqlPool) -> RuntimeIds {
         user: Uuid::now_v7(),
         department: Uuid::now_v7(),
         workflow: Uuid::now_v7(),
+        identity: Uuid::now_v7(),
         workflow_version: Uuid::now_v7(),
         execution: Uuid::now_v7(),
         node_execution: Uuid::now_v7(),
@@ -315,6 +464,8 @@ async fn seed_runtime(pool: &MySqlPool) -> RuntimeIds {
         .bind(ids.user).bind(ids.tenant).execute(pool).await.unwrap();
     sqlx::query("INSERT INTO workflows(id,tenant_id,name,owner_user_id,owner_department_id) VALUES(?,?,'Runtime',?,?)")
         .bind(ids.workflow).bind(ids.tenant).bind(ids.user).bind(ids.department).execute(pool).await.unwrap();
+    sqlx::query("INSERT INTO workflow_service_identities(id,tenant_id,workflow_id,status) VALUES(?,?,?,'active')")
+        .bind(ids.identity).bind(ids.tenant).bind(ids.workflow).execute(pool).await.unwrap();
     sqlx::query("INSERT INTO workflow_versions(id,tenant_id,workflow_id,version_number,source_revision,schema_version,definition_json,content_hash,created_by) VALUES(?,?,?,1,1,'2.0',JSON_OBJECT(),'fixture',?)")
         .bind(ids.workflow_version).bind(ids.tenant).bind(ids.workflow).bind(ids.user).execute(pool).await.unwrap();
     sqlx::query("INSERT INTO workflow_executions(id,tenant_id,workflow_id,workflow_version_id,trace_id,trigger_type,status,started_at) VALUES(?,?,?,?,?,'manual','running',CURRENT_TIMESTAMP(6))")

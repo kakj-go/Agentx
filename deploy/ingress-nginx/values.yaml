@@ -1,0 +1,11 @@
+controller:
+  ingressClass: agentx-nginx
+  ingressClassResource:
+    name: agentx-nginx
+    enabled: true
+    default: false
+    controllerValue: k8s.io/agentx-ingress-nginx
+  service:
+    type: LoadBalancer
+  admissionWebhooks:
+    enabled: true

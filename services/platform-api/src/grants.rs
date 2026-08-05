@@ -124,6 +124,13 @@ WITH grantable_resources AS (
         CONVERT(CONCAT(c.name,' / ',n.external_namespace) USING utf8mb4) COLLATE utf8mb4_0900_ai_ci,
         CONVERT(CAST(n.status AS CHAR) USING utf8mb4) COLLATE utf8mb4_0900_ai_ci,
         n.owner_department_id,n.updated_at FROM memory_namespaces n JOIN memory_connections c ON c.id=n.connection_id
+    UNION ALL
+    SELECT p.tenant_id,p.id,
+        CONVERT('sandbox_profile' USING utf8mb4) COLLATE utf8mb4_0900_ai_ci,
+        CONVERT(p.name USING utf8mb4) COLLATE utf8mb4_0900_ai_ci,
+        CONVERT(CONCAT(v.runner,' / ',v.image_digest) USING utf8mb4) COLLATE utf8mb4_0900_ai_ci,
+        CONVERT(CAST(p.status AS CHAR) USING utf8mb4) COLLATE utf8mb4_0900_ai_ci,
+        p.owner_department_id,p.updated_at FROM sandbox_profiles p JOIN sandbox_profile_versions v ON v.profile_id=p.id AND v.version_number=p.current_version_number
 )
 "#;
 
@@ -644,7 +651,7 @@ async fn credential_dependencies(
         }
         ResourceType::Rag => sqlx::query_scalar("SELECT c.credential_id FROM rag_resources r JOIN rag_connections c ON c.id=r.connection_id WHERE r.tenant_id=? AND r.id=? AND c.credential_id IS NOT NULL").bind(tenant).bind(reference.resource_id).fetch_all(pool).await?,
         ResourceType::Memory => sqlx::query_scalar("SELECT c.credential_id FROM memory_namespaces n JOIN memory_connections c ON c.id=n.connection_id WHERE n.tenant_id=? AND n.id=? AND c.credential_id IS NOT NULL").bind(tenant).bind(reference.resource_id).fetch_all(pool).await?,
-        ResourceType::Credential | ResourceType::McpTool | ResourceType::Skill => Vec::new(),
+        ResourceType::Credential | ResourceType::McpTool | ResourceType::Skill | ResourceType::SandboxProfile => Vec::new(),
     };
     Ok(ids)
 }
@@ -679,10 +686,10 @@ async fn resource_snapshot(
             )
         }
         ResourceType::Model => {
-            let r=sqlx::query("SELECT a.id alias_id,a.alias,a.version alias_version,d.id deployment_id,d.model_name,d.version deployment_version,p.id provider_id,p.provider_type,p.endpoint,p.version provider_version,d.credential_id,(SELECT id FROM model_price_versions pv WHERE pv.deployment_id=d.id ORDER BY version_number DESC LIMIT 1) price_version_id FROM model_aliases a JOIN model_deployments d ON d.id=a.deployment_id JOIN model_providers p ON p.id=d.provider_id WHERE a.tenant_id=? AND a.id=? AND a.status='active' AND d.status='active' AND p.status='active'").bind(tenant).bind(reference.resource_id).fetch_one(pool).await?;
+            let r=sqlx::query("SELECT a.id alias_id,a.alias,a.version alias_version,d.id deployment_id,d.model_name,d.version deployment_version,d.default_parameters,COALESCE(d.endpoint_override,p.endpoint) endpoint,p.id provider_id,p.provider_type,p.version provider_version,COALESCE(d.credential_id,p.credential_id) credential_id,pv.id price_version_id,pv.version_number price_version_number,pv.currency,CAST(pv.input_per_million AS CHAR) input_per_million,CAST(pv.output_per_million AS CHAR) output_per_million FROM model_aliases a JOIN model_deployments d ON d.id=a.deployment_id JOIN model_providers p ON p.id=d.provider_id LEFT JOIN model_price_versions pv ON pv.id=(SELECT latest.id FROM model_price_versions latest WHERE latest.deployment_id=d.id ORDER BY latest.version_number DESC LIMIT 1) WHERE a.tenant_id=? AND a.id=? AND a.status='active' AND d.status='active' AND p.status='active'").bind(tenant).bind(reference.resource_id).fetch_one(pool).await?;
             reference.resource_version_id = Some(r.try_get("deployment_id")?);
             Ok(
-                json!({"aliasId":r.try_get::<Uuid,_>("alias_id")?,"alias":r.try_get::<String,_>("alias")?,"aliasVersion":r.try_get::<u64,_>("alias_version")?,"deploymentId":r.try_get::<Uuid,_>("deployment_id")?,"deploymentVersion":r.try_get::<u64,_>("deployment_version")?,"modelName":r.try_get::<String,_>("model_name")?,"providerId":r.try_get::<Uuid,_>("provider_id")?,"providerType":r.try_get::<String,_>("provider_type")?,"endpoint":r.try_get::<String,_>("endpoint")?,"providerVersion":r.try_get::<u64,_>("provider_version")?,"credentialId":r.try_get::<Option<Uuid>,_>("credential_id")?,"priceVersionId":r.try_get::<Option<Uuid>,_>("price_version_id")?}),
+                json!({"aliasId":r.try_get::<Uuid,_>("alias_id")?,"alias":r.try_get::<String,_>("alias")?,"aliasVersion":r.try_get::<u64,_>("alias_version")?,"deploymentId":r.try_get::<Uuid,_>("deployment_id")?,"deploymentVersion":r.try_get::<u64,_>("deployment_version")?,"modelName":r.try_get::<String,_>("model_name")?,"defaultParameters":r.try_get::<Value,_>("default_parameters")?,"providerId":r.try_get::<Uuid,_>("provider_id")?,"providerType":r.try_get::<String,_>("provider_type")?,"endpoint":r.try_get::<String,_>("endpoint")?,"providerVersion":r.try_get::<u64,_>("provider_version")?,"credentialId":r.try_get::<Option<Uuid>,_>("credential_id")?,"price":{"versionId":r.try_get::<Option<Uuid>,_>("price_version_id")?,"versionNumber":r.try_get::<Option<u64>,_>("price_version_number")?,"currency":r.try_get::<Option<String>,_>("currency")?,"inputPerMillion":r.try_get::<Option<String>,_>("input_per_million")?,"outputPerMillion":r.try_get::<Option<String>,_>("output_per_million")?}}),
             )
         }
         ResourceType::McpServer => {
@@ -718,20 +725,34 @@ async fn resource_snapshot(
             .await?;
             reference.resource_version_id = Some(version);
             let r=sqlx::query("SELECT sv.id,sv.version_number,sv.source_revision,sv.manifest_json,sv.content_hash FROM skill_versions sv JOIN skills s ON s.id=sv.skill_id WHERE sv.tenant_id=? AND sv.id=? AND s.status='active'").bind(tenant).bind(version).fetch_one(pool).await?;
+            let files=sqlx::query("SELECT path,mime_type,artifact_id,content_hash,size_bytes FROM skill_version_files WHERE tenant_id=? AND skill_version_id=? ORDER BY path")
+                .bind(tenant).bind(version).fetch_all(pool).await?.into_iter().map(|file|Ok(json!({"path":file.try_get::<String,_>("path")?,"mimeType":file.try_get::<String,_>("mime_type")?,"artifactId":file.try_get::<Uuid,_>("artifact_id")?,"contentHash":file.try_get::<String,_>("content_hash")?,"sizeBytes":file.try_get::<u64,_>("size_bytes")?}))).collect::<Result<Vec<_>,sqlx::Error>>()?;
             Ok(
-                json!({"versionId":r.try_get::<Uuid,_>("id")?,"versionNumber":r.try_get::<u64,_>("version_number")?,"sourceRevision":r.try_get::<u64,_>("source_revision")?,"manifest":r.try_get::<Value,_>("manifest_json")?,"contentHash":r.try_get::<String,_>("content_hash")?}),
+                json!({"versionId":r.try_get::<Uuid,_>("id")?,"versionNumber":r.try_get::<u64,_>("version_number")?,"sourceRevision":r.try_get::<u64,_>("source_revision")?,"manifest":r.try_get::<Value,_>("manifest_json")?,"contentHash":r.try_get::<String,_>("content_hash")?,"files":files}),
             )
         }
         ResourceType::Rag => {
-            let r=sqlx::query("SELECT rr.id,rr.external_resource_id,rr.version,c.id connection_id,c.endpoint,c.version connection_version,c.credential_id FROM rag_resources rr JOIN rag_connections c ON c.id=rr.connection_id WHERE rr.tenant_id=? AND rr.id=? AND rr.status='active' AND c.status='active'").bind(tenant).bind(reference.resource_id).fetch_one(pool).await?;
+            let r=sqlx::query("SELECT rr.id,rr.external_resource_id,rr.version,c.id connection_id,c.endpoint,c.version connection_version,c.credential_id,c.configuration_json FROM rag_resources rr JOIN rag_connections c ON c.id=rr.connection_id WHERE rr.tenant_id=? AND rr.id=? AND rr.status='active' AND c.status='active'").bind(tenant).bind(reference.resource_id).fetch_one(pool).await?;
             Ok(
-                json!({"resourceId":r.try_get::<Uuid,_>("id")?,"externalResourceId":r.try_get::<String,_>("external_resource_id")?,"resourceVersion":r.try_get::<u64,_>("version")?,"connectionId":r.try_get::<Uuid,_>("connection_id")?,"endpoint":r.try_get::<String,_>("endpoint")?,"connectionVersion":r.try_get::<u64,_>("connection_version")?,"credentialId":r.try_get::<Option<Uuid>,_>("credential_id")?}),
+                json!({"resourceId":r.try_get::<Uuid,_>("id")?,"externalResourceId":r.try_get::<String,_>("external_resource_id")?,"resourceVersion":r.try_get::<u64,_>("version")?,"connectionId":r.try_get::<Uuid,_>("connection_id")?,"endpoint":r.try_get::<String,_>("endpoint")?,"connectionVersion":r.try_get::<u64,_>("connection_version")?,"credentialId":r.try_get::<Option<Uuid>,_>("credential_id")?,"configuration":r.try_get::<Value,_>("configuration_json")?}),
             )
         }
         ResourceType::Memory => {
-            let r=sqlx::query("SELECT n.id,n.external_namespace,n.access_mode,n.version,c.id connection_id,c.endpoint,c.version connection_version,c.credential_id FROM memory_namespaces n JOIN memory_connections c ON c.id=n.connection_id WHERE n.tenant_id=? AND n.id=? AND n.status='active' AND c.status='active'").bind(tenant).bind(reference.resource_id).fetch_one(pool).await?;
+            let r=sqlx::query("SELECT n.id,n.external_namespace,n.access_mode,n.version,c.id connection_id,c.endpoint,c.version connection_version,c.credential_id,c.configuration_json FROM memory_namespaces n JOIN memory_connections c ON c.id=n.connection_id WHERE n.tenant_id=? AND n.id=? AND n.status='active' AND c.status='active'").bind(tenant).bind(reference.resource_id).fetch_one(pool).await?;
             Ok(
-                json!({"namespaceId":r.try_get::<Uuid,_>("id")?,"externalNamespace":r.try_get::<String,_>("external_namespace")?,"accessMode":r.try_get::<String,_>("access_mode")?,"resourceVersion":r.try_get::<u64,_>("version")?,"connectionId":r.try_get::<Uuid,_>("connection_id")?,"endpoint":r.try_get::<String,_>("endpoint")?,"connectionVersion":r.try_get::<u64,_>("connection_version")?,"credentialId":r.try_get::<Option<Uuid>,_>("credential_id")?}),
+                json!({"namespaceId":r.try_get::<Uuid,_>("id")?,"externalNamespace":r.try_get::<String,_>("external_namespace")?,"accessMode":r.try_get::<String,_>("access_mode")?,"resourceVersion":r.try_get::<u64,_>("version")?,"connectionId":r.try_get::<Uuid,_>("connection_id")?,"endpoint":r.try_get::<String,_>("endpoint")?,"connectionVersion":r.try_get::<u64,_>("connection_version")?,"credentialId":r.try_get::<Option<Uuid>,_>("credential_id")?,"configuration":r.try_get::<Value,_>("configuration_json")?}),
+            )
+        }
+        ResourceType::SandboxProfile => {
+            let version = if let Some(version) = reference.resource_version_id {
+                version
+            } else {
+                sqlx::query_scalar("SELECT v.id FROM sandbox_profile_versions v JOIN sandbox_profiles p ON p.id=v.profile_id WHERE p.tenant_id=? AND p.id=? AND p.status='active' ORDER BY v.version_number DESC LIMIT 1").bind(tenant).bind(reference.resource_id).fetch_optional(pool).await?.ok_or_else(||AppError::unprocessable("RESOURCE_VERSION_MISSING","Sandbox Profile has no available version"))?
+            };
+            reference.resource_version_id = Some(version);
+            let r=sqlx::query("SELECT v.id,v.version_number,v.runner,v.image_digest,v.cpu_millis,v.memory_bytes,v.pids_limit,v.disk_bytes,v.timeout_seconds,v.output_limit_bytes,v.network_policy_json,v.configuration_hash FROM sandbox_profile_versions v JOIN sandbox_profiles p ON p.id=v.profile_id WHERE v.tenant_id=? AND v.id=? AND v.profile_id=? AND p.status='active'").bind(tenant).bind(version).bind(reference.resource_id).fetch_one(pool).await?;
+            Ok(
+                json!({"profileVersionId":r.try_get::<Uuid,_>("id")?,"versionNumber":r.try_get::<u64,_>("version_number")?,"runner":r.try_get::<String,_>("runner")?,"imageDigest":r.try_get::<String,_>("image_digest")?,"cpuMillis":r.try_get::<u32,_>("cpu_millis")?,"memoryBytes":r.try_get::<u64,_>("memory_bytes")?,"pidsLimit":r.try_get::<u32,_>("pids_limit")?,"diskBytes":r.try_get::<u64,_>("disk_bytes")?,"timeoutSeconds":r.try_get::<u32,_>("timeout_seconds")?,"outputLimitBytes":r.try_get::<u64,_>("output_limit_bytes")?,"networkPolicy":r.try_get::<Value,_>("network_policy_json")?,"configurationHash":r.try_get::<String,_>("configuration_hash")?}),
             )
         }
     }
@@ -783,6 +804,7 @@ async fn resource_active(
         },
         ResourceType::Rag => sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM rag_resources r JOIN rag_connections c ON c.id=r.connection_id WHERE r.tenant_id=? AND r.id=? AND r.status='active' AND c.status='active')").bind(tenant).bind(id).fetch_one(pool).await?,
         ResourceType::Memory => sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM memory_namespaces n JOIN memory_connections c ON c.id=n.connection_id WHERE n.tenant_id=? AND n.id=? AND n.status='active' AND c.status='active')").bind(tenant).bind(id).fetch_one(pool).await?,
+        ResourceType::SandboxProfile => if let Some(v)=version { sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sandbox_profile_versions v JOIN sandbox_profiles p ON p.id=v.profile_id WHERE v.tenant_id=? AND v.id=? AND v.profile_id=? AND p.status='active')").bind(tenant).bind(v).bind(id).fetch_one(pool).await? } else { sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sandbox_profiles WHERE tenant_id=? AND id=? AND status='active')").bind(tenant).bind(id).fetch_one(pool).await? },
     };
     Ok(active)
 }
@@ -825,7 +847,7 @@ async fn resource_department(
     kind: &str,
     id: Uuid,
 ) -> AppResult<Option<Uuid>> {
-    let result=match kind{"credential"=>sqlx::query_scalar("SELECT owner_department_id FROM credentials WHERE tenant_id=? AND id=?").bind(tenant).bind(id).fetch_optional(pool).await?,"model"=>sqlx::query_scalar("SELECT p.owner_department_id FROM model_aliases a JOIN model_deployments d ON d.id=a.deployment_id JOIN model_providers p ON p.id=d.provider_id WHERE a.tenant_id=? AND a.id=?").bind(tenant).bind(id).fetch_optional(pool).await?,"mcp_server"=>sqlx::query_scalar("SELECT owner_department_id FROM mcp_servers WHERE tenant_id=? AND id=?").bind(tenant).bind(id).fetch_optional(pool).await?,"mcp_tool"=>sqlx::query_scalar("SELECT s.owner_department_id FROM mcp_tools t JOIN mcp_servers s ON s.id=t.server_id WHERE t.tenant_id=? AND t.id=?").bind(tenant).bind(id).fetch_optional(pool).await?,"skill"=>sqlx::query_scalar("SELECT owner_department_id FROM skills WHERE tenant_id=? AND id=?").bind(tenant).bind(id).fetch_optional(pool).await?,"rag"=>sqlx::query_scalar("SELECT owner_department_id FROM rag_resources WHERE tenant_id=? AND id=?").bind(tenant).bind(id).fetch_optional(pool).await?,"memory"=>sqlx::query_scalar("SELECT owner_department_id FROM memory_namespaces WHERE tenant_id=? AND id=?").bind(tenant).bind(id).fetch_optional(pool).await?,_=>return Err(AppError::bad_request("INVALID_RESOURCE_TYPE","Resource type is invalid"))};
+    let result=match kind{"credential"=>sqlx::query_scalar("SELECT owner_department_id FROM credentials WHERE tenant_id=? AND id=?").bind(tenant).bind(id).fetch_optional(pool).await?,"model"=>sqlx::query_scalar("SELECT p.owner_department_id FROM model_aliases a JOIN model_deployments d ON d.id=a.deployment_id JOIN model_providers p ON p.id=d.provider_id WHERE a.tenant_id=? AND a.id=?").bind(tenant).bind(id).fetch_optional(pool).await?,"mcp_server"=>sqlx::query_scalar("SELECT owner_department_id FROM mcp_servers WHERE tenant_id=? AND id=?").bind(tenant).bind(id).fetch_optional(pool).await?,"mcp_tool"=>sqlx::query_scalar("SELECT s.owner_department_id FROM mcp_tools t JOIN mcp_servers s ON s.id=t.server_id WHERE t.tenant_id=? AND t.id=?").bind(tenant).bind(id).fetch_optional(pool).await?,"skill"=>sqlx::query_scalar("SELECT owner_department_id FROM skills WHERE tenant_id=? AND id=?").bind(tenant).bind(id).fetch_optional(pool).await?,"rag"=>sqlx::query_scalar("SELECT owner_department_id FROM rag_resources WHERE tenant_id=? AND id=?").bind(tenant).bind(id).fetch_optional(pool).await?,"memory"=>sqlx::query_scalar("SELECT owner_department_id FROM memory_namespaces WHERE tenant_id=? AND id=?").bind(tenant).bind(id).fetch_optional(pool).await?,"sandbox_profile"=>sqlx::query_scalar("SELECT owner_department_id FROM sandbox_profiles WHERE tenant_id=? AND id=?").bind(tenant).bind(id).fetch_optional(pool).await?,_=>return Err(AppError::bad_request("INVALID_RESOURCE_TYPE","Resource type is invalid"))};
     Ok(result)
 }
 
@@ -865,6 +887,7 @@ async fn validate_grant_version(
         .bind(resource_id)
         .fetch_one(pool)
         .await?,
+        "sandbox_profile" => sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sandbox_profile_versions WHERE tenant_id=? AND id=? AND profile_id=?)").bind(tenant).bind(version_id).bind(resource_id).fetch_one(pool).await?,
         "credential" | "mcp_server" | "rag" | "memory" => false,
         _ => false,
     };
@@ -887,6 +910,7 @@ fn parse_resource_type(value: &str) -> AppResult<ResourceType> {
         "skill" => Ok(ResourceType::Skill),
         "rag" => Ok(ResourceType::Rag),
         "memory" => Ok(ResourceType::Memory),
+        "sandbox_profile" => Ok(ResourceType::SandboxProfile),
         _ => Err(AppError::bad_request(
             "INVALID_RESOURCE_TYPE",
             "Resource type is invalid",

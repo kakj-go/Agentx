@@ -104,7 +104,7 @@ M2.1 支持 Streamable HTTP 和 Legacy SSE，不支持 stdio。MCP Server 固化
 
 调试调用需要 `mcp:debug`、资源可见性、参数 Schema 校验和危险操作确认。审计只保存参数 Hash、状态和耗时，不保存请求参数、响应正文或 Secret。Workflow Service Identity 必须分别获得 MCP Server、MCP Tool 和 Credential 的 Grant；Server 可见性不能替代 Tool 使用权限。
 
-Sandbox 与 MCP 完全分离。Python、JavaScript、Shell 和其他动态代码由阶段 10 的 CubeSandbox Profile 和 Adapter 处理，不是 MCP Server 或 Tool Runner 类型。
+Sandbox 与 MCP 完全分离。Python、JavaScript、Shell 和其他动态代码由阶段 10 的 Sandbox Profile 与 `OpenSandboxAdapter` 处理，不是 MCP Server 或 Tool Runner 类型。Sandbox 网络和 Credential 权限独立校验，MCP Grant 不隐式授予 Sandbox 外网访问。
 
 ## 5. Skill 管理
 
@@ -116,7 +116,7 @@ Markdown 使用开源 MDXEditor/Lexical 富文本界面编辑，用户通过标�
 
 Workflow Draft 可以选择 Skill Definition 和目标版本；发布时必须固化 Skill Version，并检查所有直接和递归依赖对 Workflow Service Identity 均已授权。Skill Grant 不能隐式授予其 MCP Tool、Model 或 Credential 权限，任一依赖授权被撤销后，新执行不得继续加载该 Skill。
 
-仅包含 Prompt 和静态资产的 Skill 可由 Agent Runtime 直接加载；包含 Python、JavaScript、Shell 或其他不可信代码的能力必须通过 CubeSandbox 执行，并沿用平台的超时、资源配额、网络和凭证注入策略。
+仅包含 Prompt 和静态资产的 Skill 可由 Agent Runtime 直接加载；包含 Python、JavaScript、Shell 或其他不可信代码的能力必须通过 OpenSandbox 执行，并沿用平台的超时、资源配额、默认拒绝网络和短期凭证注入策略。
 
 ## 6. RAG
 

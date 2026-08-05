@@ -6,6 +6,48 @@
 
 export interface components {
     schemas: {
+        AgentIterationDetail: {
+            /** Format: uuid */
+            agentRunId: string;
+            endedAt?: string | null;
+            /** Format: uuid */
+            id: string;
+            /** Format: int32 */
+            iterationIndex: number;
+            startedAt: string;
+            stateAfterHash?: string | null;
+            /** Format: uuid */
+            stateArtifactId?: string | null;
+            stateBeforeHash: string;
+            status: string;
+            stopReason?: string | null;
+        };
+        AgentRunDetail: {
+            budget: unknown;
+            /** Format: int64 */
+            costMicros: number;
+            endedAt?: string | null;
+            /** Format: uuid */
+            id: string;
+            /** Format: int64 */
+            inputTokens: number;
+            /** Format: int32 */
+            iterationCount: number;
+            /** Format: int32 */
+            modelCallCount: number;
+            /** Format: uuid */
+            nodeExecutionId: string;
+            /** Format: int64 */
+            outputTokens: number;
+            startedAt: string;
+            /** Format: uuid */
+            stateArtifactId?: string | null;
+            stateHash?: string | null;
+            status: string;
+            stopReason?: string | null;
+            /** Format: int32 */
+            toolCallCount: number;
+        };
         ApiErrorResponse: {
             code: string;
             fieldErrors?: components["schemas"]["FieldError"][];
@@ -352,6 +394,12 @@ export interface components {
             name: string;
             permissions: string[];
         };
+        CreateSandboxProfileRequest: components["schemas"]["SandboxProfileVersionInput"] & {
+            description?: string | null;
+            name: string;
+            /** Format: uuid */
+            ownerDepartmentId: string;
+        };
         CreateScheduleRequest: {
             cronExpression: string;
             input: unknown;
@@ -622,8 +670,12 @@ export interface components {
             forkCheckpointId?: string | null;
             /** Format: uuid */
             id: string;
+            /** Format: int64 */
+            inputTokens: number;
             /** Format: uuid */
             invocationId?: string | null;
+            /** Format: int64 */
+            outputTokens: number;
             /** Format: uuid */
             parentExecutionId?: string | null;
             /** Format: uuid */
@@ -1072,6 +1124,40 @@ export interface components {
             /** Format: int64 */
             version: number;
         };
+        RuntimeCallDetail: {
+            /** Format: uuid */
+            agentRunId?: string | null;
+            /** Format: uuid */
+            attemptId: string;
+            /** Format: int32 */
+            callIndex: number;
+            callKind: string;
+            /** Format: int64 */
+            costMicros: number;
+            endedAt?: string | null;
+            errorCode?: string | null;
+            errorMessage?: string | null;
+            /** Format: uuid */
+            id: string;
+            /** Format: int64 */
+            inputTokens: number;
+            /** Format: int32 */
+            iterationIndex: number;
+            /** Format: int64 */
+            outputTokens: number;
+            requestFingerprint: string;
+            /** Format: uuid */
+            resourceId?: string | null;
+            resourceType?: string | null;
+            /** Format: uuid */
+            resourceVersionId?: string | null;
+            /** Format: uuid */
+            responseArtifactId?: string | null;
+            sideEffect: string;
+            startedAt: string;
+            status: string;
+            usageEstimated: boolean;
+        };
         RuntimeComponentStatus: {
             component: string;
             /** Format: int64 */
@@ -1081,14 +1167,108 @@ export interface components {
             queueDepth?: number | null;
             status: string;
         };
+        RuntimeDetailsResponse: {
+            agentRuns: components["schemas"]["AgentRunDetail"][];
+            calls: components["schemas"]["RuntimeCallDetail"][];
+            /** Format: int64 */
+            costMicros: number;
+            /** Format: uuid */
+            executionId: string;
+            /** Format: int64 */
+            inputTokens: number;
+            iterations: components["schemas"]["AgentIterationDetail"][];
+            /** Format: int64 */
+            outputTokens: number;
+            sandboxes: components["schemas"]["SandboxLeaseDetail"][];
+        };
         RuntimeStatusResponse: {
+            /** Format: int64 */
+            activeSandboxes: number;
             components: components["schemas"]["RuntimeComponentStatus"][];
             /** Format: int64 */
             failedToday: number;
             /** Format: int64 */
             running: number;
+            sandboxCompatibility?: unknown;
             /** Format: int64 */
             waiting: number;
+        };
+        SandboxLeaseDetail: {
+            /** Format: uuid */
+            attemptId: string;
+            createdAt: string;
+            expiresAt: string;
+            heartbeatAt: string;
+            /** Format: uuid */
+            id: string;
+            lastError?: string | null;
+            /** Format: uuid */
+            nodeExecutionId: string;
+            /** Format: uuid */
+            profileVersionId: string;
+            sandboxId?: string | null;
+            status: string;
+            terminatedAt?: string | null;
+            /** Format: int32 */
+            terminationAttempts: number;
+        };
+        SandboxProfileResponse: {
+            current: components["schemas"]["SandboxProfileVersionResponse"];
+            /** Format: int64 */
+            currentVersionNumber: number;
+            description?: string | null;
+            /** Format: uuid */
+            id: string;
+            name: string;
+            /** Format: uuid */
+            ownerDepartmentId: string;
+            status: string;
+            /** Format: date-time */
+            updatedAt: string;
+            /** Format: int64 */
+            version: number;
+            versions: components["schemas"]["SandboxProfileVersionResponse"][];
+        };
+        SandboxProfileVersionInput: {
+            /** Format: int32 */
+            cpuMillis: number;
+            /** Format: int64 */
+            diskBytes: number;
+            imageDigest: string;
+            /** Format: int64 */
+            memoryBytes: number;
+            networkPolicy: unknown;
+            /** Format: int64 */
+            outputLimitBytes: number;
+            /** Format: int32 */
+            pidsLimit: number;
+            runner: string;
+            /** Format: int32 */
+            timeoutSeconds: number;
+        };
+        SandboxProfileVersionResponse: {
+            configurationHash: string;
+            /** Format: int32 */
+            cpuMillis: number;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: int64 */
+            diskBytes: number;
+            /** Format: uuid */
+            id: string;
+            imageDigest: string;
+            /** Format: int64 */
+            memoryBytes: number;
+            networkPolicy: unknown;
+            /** Format: int64 */
+            outputLimitBytes: number;
+            /** Format: int32 */
+            pidsLimit: number;
+            runner: string;
+            /** Format: int32 */
+            timeoutSeconds: number;
+            /** Format: int64 */
+            versionNumber: number;
         };
         SaveDraftRequest: {
             definition: unknown;
@@ -1219,6 +1399,8 @@ export interface components {
             version: number;
         };
         TraceEventResponse: {
+            agentRunId?: string | null;
+            attemptId?: string | null;
             attributes: unknown;
             contentRef?: string | null;
             /** Format: int64 */
@@ -1242,11 +1424,18 @@ export interface components {
             /** Format: int64 */
             outputTokens?: number | null;
             parentSpanId?: string | null;
+            partial: boolean;
             providerName?: string | null;
+            resourceId?: string | null;
+            resourceType?: string | null;
+            resourceVersionId?: string | null;
             /** Format: int32 */
             runIndex: number;
+            runtimeCallId?: string | null;
+            sandboxId?: string | null;
             spanId: string;
             status: string;
+            stopReason?: string | null;
             traceId: string;
         };
         TraceResponse: {
@@ -1351,6 +1540,13 @@ export interface components {
             description?: string | null;
             name: string;
             permissions: string[];
+            /** Format: int64 */
+            version: number;
+        };
+        UpdateSandboxProfileRequest: {
+            description?: string | null;
+            name: string;
+            status: string;
             /** Format: int64 */
             version: number;
         };

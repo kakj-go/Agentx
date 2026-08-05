@@ -1,222 +1,114 @@
 # Kubernetes 部署与扩展
 
-## 1. 首期部署拓扑
+## 1. 可组合部署契约
 
-工作负载：
+Agentx 通过 `scripts/deploy.ps1` 和版本化 `agentx.io/deployment/v1alpha1` Profile 部署。四项状态型依赖是完整运行模式的必需依赖，只能使用 bundled 或 external：
 
-- web-console
-- platform-api
-- trigger-gateway
-- workflow-coordinator
-- workflow-worker
-- echo-node
-- sandbox-manager
-- trace-writer
+| 组件 | 模式 |
+|---|---|
+| MySQL | `bundled` / `external` |
+| Redis | `bundled` / `external` |
+| ClickHouse | `bundled` / `external` |
+| Object Storage | `bundled-minio` / `external-s3` |
+| LightRAG、Mem0 | `bundled` / `external` / `disabled` |
+| Sandbox | `disabled` / `remote` |
+| Agentx Image | `local-build` / `registry` |
 
-中间件：
+Profile 只保存非敏感配置和固定 Secret 引用。密码、API Key、Session Token 和加密 Key 只进入 Kubernetes Secret；CA、客户端证书和私钥由部署主机的绝对路径复制到只读 Trust Bundle。
 
-- MySQL
-- Redis
-- ClickHouse
-- MinIO 或兼容 S3
-- CubeSandbox
+Full 将四项 bundled 基础设施、两个 Addon 和全部核心服务部署在同一 Namespace。Custom 可以让每项依赖位于其他 Namespace、其他 Kubernetes 集群或独立机器，只要 Agentx Pod 能解析地址、完成 TLS 验证并通过 Doctor。
 
-本地 Docker Desktop Kubernetes 默认由一套 Kustomize Overlay 启动全部 Agentx 服务以及 MySQL、Redis、ClickHouse 和 MinIO。CubeSandbox 需要满足虚拟化、内核和计算节点要求，不能用普通占位 Pod 代替；本地集群通过 Sandbox Manager 连接单独安装的 CubeSandbox。
+## 2. 目录边界
 
-## 2. 水平扩展
+```text
+deploy/
+├── profiles/
+├── ingress-nginx/
+├── k8s/
+│   ├── services/{core,migrations,sandbox-manager}/
+│   ├── infrastructure/{mysql,redis,clickhouse,minio}/
+│   ├── addons/{lightrag,mem0}/
+│   ├── fixtures/{echo-mcp,echo-node}/
+│   └── stacks/{full,e2e}/
+└── opensandbox/{docker,kubernetes}/
+```
 
-### platform-api
+Component Kustomization 不固定 Namespace。统一脚本负责 Namespace、动态 ConfigMap/Secret、镜像重写、Pull Policy 和应用顺序。Echo MCP/Node 只用于 local/E2E，不属于基础生产服务。
 
-无状态部署，可直接增加副本。Session 状态不保存在进程内。
+## 3. 安装流程
 
-### trigger-gateway
+```powershell
+.\scripts\deploy.ps1 -Action Doctor -Profile Full
+.\scripts\deploy.ps1 -Action Install -Profile Full
+.\scripts\deploy.ps1 -Action Install -Profile Custom -ConfigFile .\agentx.deploy.json -NonInteractive
+```
 
-无状态部署。SSE 需要通过 executionId 或 streamId 从 Redis 获取事件，避免只能连接到创建请求的实例。
+顺序固定为：
 
-### workflow-coordinator
+1. 校验 Profile、PowerShell、kubectl、Docker/镜像模式、权限和 Kustomize/Helm 渲染。单独执行 `-Action Doctor` 到此结束，不创建资源。
+2. 创建或复用 Namespace，创建/验证 Secret 和 CA Trust Bundle。
+3. 安装专用 ingress-nginx。
+4. 安装 selected bundled 基础设施并等待 StatefulSet/Bucket Job。
+5. 运行 `doctor-infrastructure`，实际执行 MySQL `SELECT 1`、Redis `PING`、ClickHouse `SELECT 1` 和 S3 临时对象写入、读取、内容校验及删除。
+6. 运行 MySQL/ClickHouse Migration。
+7. 部署核心服务，并让 Readiness 反映周期依赖探测。
+8. remote Sandbox 模式部署 Manager 并运行 `doctor-opensandbox`。
+9. 部署 bundled Addon，或对 external Addon 做集群内 Endpoint 连通性检查。
+10. 创建 Web Ingress，等待全部 Rollout，将 Profile、Hash 和最后 Target 保存到 `agentx-deployment-state`。
 
-多个实例通过 MySQL 行锁、状态条件和租约协作。任何 Execution 都不绑定固定 Coordinator。
+`-DryRun` 执行同样的 Profile、Chart 和 Kustomize 检查，但不修改 Kubernetes 资源。
 
-### workflow-worker
+## 4. 外部依赖与 TLS
 
-按以下指标扩容：
+MySQL 支持 TLS Mode、私有 CA 和 mTLS；Redis 使用 Rustls 并支持 `rediss://`、私有 CA、mTLS 和独立密码；ClickHouse 使用 HTTPS/Rustls 并合并系统 CA 与私有 CA Bundle；S3 支持 Access/Secret Key、Session Token、Path/Virtual-host Style 和私有 CA Bundle。
 
-- Redis Pending 数量
-- 最老任务等待时间
-- 活跃 Node Execution 数量
-- Worker 可用并发
+不能关闭证书校验。生产 Object Storage 禁止 HTTP。外部 S3 Bucket 必须预创建，部署脚本不会创建、清空或删除外部 Bucket。新环境变量使用 `AGENTX_S3_ACCESS_KEY/SECRET_KEY`，运行时代码短期兼容旧 MinIO 变量。
 
-可以使用 Kubernetes HPA 或 KEDA 读取队列指标，不要求搭建 Grafana。
+Sandbox Manager 只解析 MySQL 和 OpenSandbox Settings；Worker/Coordinator 只解析 MySQL、Redis 和 Object Storage；Trace Writer 只解析 MySQL、Redis 和 ClickHouse；Trigger Gateway 只解析 MySQL。服务不会因无关依赖配置缺失而拒绝启动。
 
-Worker 可按能力拆分池：
+## 5. 专用 Ingress
 
-- general-worker
-- ai-worker
-- connector-worker
-- sandbox-worker
-- evaluation-worker
+脚本管理固定 ingress-nginx Chart `4.15.1`、Controller `1.15.1`、Release `agentx-ingress-nginx` 和 `IngressClass=agentx-nginx`。它安装在 `agentx-ingress`，不是默认 IngressClass，不接管已有 Controller。
 
-### sandbox-manager
+Profile 必须提供 Host，可选择已有 TLS Secret 和 `LoadBalancer/NodePort`。卸载前会扫描其他 Namespace；仍有 Ingress 使用 `agentx-nginx` 时保留 Controller。
 
-无状态控制层。实际 Sandbox 资源由 CubeSandbox 管理，可设置租户级并发和预热池。
+## 6. Addon 边界
 
-### trace-writer
+LightRAG/Mem0 是可选业务 Addon，不是 Agentx 权威状态存储。bundled 模式由 Profile 提供 Provider Base URL、模型和 Embedding 配置，由独立 Secret 提供 API Key；local Full 可以使用 Echo MCP，test/production 必须使用真实 Provider。
 
-按 Trace Queue 积压扩容，批量写 ClickHouse。
+external 模式不把 Endpoint 或 Credential 作为全局租户资源。Bootstrap 后，管理员在 UI/API 创建 Credential、Connection、测试连接并向 Workflow Service Identity 创建 Grant。切换 Addon 模式时 Workload 可删除，但 PVC 默认保留。
 
-## 3. Worker 标签和节点路由
+## 7. OpenSandbox 边界
 
-Node Definition 可以声明 capability：
+OpenSandbox Server、Controller、RuntimeClass 和计算节点不由主部署脚本安装。Sandbox disabled 时不部署 Manager，也不注入 Manager URL/Token；Worker 仍订阅 Sandbox capability，Code 节点会明确返回 `RUNTIME_UNAVAILABLE`，不会永久留在队列。
 
-- network-public
-- network-internal
-- python
-- javascript
-- browser
-- gpu
-- high-memory
+remote 模式部署一个逻辑 Sandbox Manager 服务；其多副本共享 MySQL Lease并连接一个 Lifecycle Endpoint。OpenSandbox Kubernetes Runtime 负责为会话创建并调度任意多个 Sandbox Pod。本阶段不实现多个独立 Docker Host Provider 的容量调度和 Sticky Routing。
 
-Scheduler 根据 capability 将任务投递到不同队列，避免普通 Worker 接收无法执行的节点。
+本地 Docker+runc 和当前 Kubernetes 环境用于功能验收。gVisor/Kata、生产 Vault、镜像签名和攻击隔离属于后续生产强化，不阻塞当前 Kubernetes 部署认证。
 
-## 4. 配置
+## 8. 运行健康与扩展
 
-配置类型：
+- Platform API：无状态，可水平扩展；MySQL 为必需依赖，Redis/ClickHouse/Object Storage 故障显示 degraded。
+- Trigger Gateway：无状态，只依赖 MySQL；SSE 状态通过 Redis/Execution Runtime 获取。
+- Coordinator：多副本通过 MySQL 状态条件和 Lease 协作，周期探测 MySQL、Redis、Object Storage。
+- Worker：按 capability/队列扩展，周期探测 MySQL、Redis、Object Storage 和 Coordinator。
+- Sandbox Manager：共享 MySQL Lease，周期验证 MySQL、OpenSandbox `/health` 和认证列表接口，Heartbeat 使用真实状态。
+- Trace Writer：周期探测 MySQL、Redis、ClickHouse；ClickHouse 故障不影响 Execution 提交。
 
-- 数据库和 Redis 连接
-- ClickHouse 连接
-- 对象存储
-- CubeSandbox
-- 加密主密钥
-- API 域名
-- 默认租户配额
-- Trace 保存策略
+Readiness 表示必需依赖可用，Liveness 只表示进程存活。所有外部调用仍需要重试、幂等键、Lease 和 Outbox，不能把 Kubernetes 重启当作一致性机制。
 
-敏感配置通过 Kubernetes Secret 注入，普通配置通过 ConfigMap。
+## 9. 升级与卸载
 
-本地 Overlay 中的 Secret 仅用于开发环境，不得复用到测试或生产环境。
+普通 Upgrade 禁止改变四项状态型依赖的 bundled/external 模式。此类迁移必须停写、备份、恢复到目标服务并重新 Install。Addon 可以切换；Sandbox remote 关闭前必须由 `doctor-drain` 确认无活跃 Lease。
 
-## 5. 第一次启动
+Uninstall 只删除脚本所有权标签匹配的资源，外部依赖永不修改。PVC 默认保留；`-DeleteData` 只删除明确列出的 owned PVC。`-DeleteNamespace` 只删除脚本创建且带所有权 Annotation 的 Namespace。
 
-系统检测是否完成 Bootstrap：
+非敏感 Profile 和 Hash 保存在 ConfigMap；Secret 不进入状态 ConfigMap。`-RotateSecrets` 只能用于 managed Secret 的全量 Target，并保留 Credential Keyring、bundled 持久化服务密码和需要外部协同的 Token；外部 Provider 凭据先在 Provider 轮换，remote Sandbox 还必须先 drain。
 
-1. 输入企业名称。
-2. 创建首个 Tenant。
-3. 创建 Admin 用户。
-4. 设置密码。
-5. 设置语言和时区。
-6. 可选接入首个模型。
-7. 标记 Bootstrap 完成。
+## 10. E2E
 
-完成后初始化接口拒绝再次创建管理员。
+`scripts/deploy-tests.ps1` 覆盖 Profile 模式组合、Schema、Secret 明文、稳定 Hash、非法状态型依赖切换和所有权。`scripts/deploy-distributed-e2e.ps1` 使用 `agentx-e2e-deps` 与 `agentx-e2e` 验证依赖分散、升级数据保留和外部资源不被卸载。
 
-## 6. 可靠运行
+`scripts/tls-integration.ps1` 验证系统 CA Store；ClickHouse/S3 HTTPS 私有 CA、错误 CA、认证失败和 S3 Session Token；以及真实 MySQL/Redis TLS 容器的私有 CA、mTLS、错误 CA 和认证失败。`-NoDocker` 只运行系统 CA、ClickHouse 和 S3 合同。
 
-必要机制：
-
-- MySQL Migration Job
-- Readiness 和 Liveness Probe
-- 优雅停止 Worker
-- Worker 停止前不再领取新任务
-- Lease 和 Heartbeat
-- 过期任务 Reaper
-- Outbox Dispatcher
-- Trace Queue 重试
-- ClickHouse 写入失败不影响 Execution 完成
-- Sandbox 超时强制回收
-
-## 7. 租户运行配额
-
-首期只实现和 Workflow 直接相关的配额：
-
-- 并发 Execution
-- 并发 Node Execution
-- 并发 Sandbox
-- 单次 Execution 最大时间
-- Agent 最大迭代
-- 单次和每日 Token
-- 单次和每日成本
-- Artifact 大小
-- Trace 保留时间
-
-Scheduler 在任务入队和执行前检查配额。
-
-## 8. 环境
-
-至少区分：
-
-- development
-- test
-- production
-
-Deployment 指向特定环境和 Workflow Version。环境之间不共享 Credential 明文，资源映射通过 Alias 完成。
-
-## 9. 不依赖通用监控产品的产品能力
-
-平台内部仍需要提供基本运行状态页面：
-
-- Worker 在线数量
-- Queue 积压
-- 当前 Running、Waiting、Failed Execution
-- Sandbox 使用数量
-- Trace 写入积压
-
-这些数据可由 MySQL、Redis、ClickHouse 和各服务健康接口直接提供。它们属于平台运行管理页面，不要求 Prometheus 或 Grafana。
-
-## 10. 本地 Kubernetes 目录
-
-本地部署使用以下层级：
-
-    deploy/k8s/
-    ├── base/
-    │   ├── applications/
-    │   ├── middleware/
-    │   └── namespace.yaml
-    ├── overlays/
-    │   └── local/
-    └── cubesandbox/
-
-Base 保存可复用的应用和中间件清单，local Overlay 生成本地 ConfigMap、Secret 和镜像标签。
-
-Base 中的 Web Service 保持 `ClusterIP`，不把本地暴露策略带入生产环境。Docker Desktop 的 local Overlay 将 Web 单独改为 `LoadBalancer` 并暴露端口 `8080`，由内置的 Cloud Provider 映射到 `http://127.0.0.1:8080`；Platform API 继续仅在集群内部暴露，由 Web Nginx 统一代理 `/api/`。首期本地部署不引入 Ingress Controller。需要正式域名、TLS、多个 Host 或统一入口策略时，再在环境 Overlay 中安装 nginx-ingress 并增加 Ingress 资源。没有 LoadBalancer 实现的本地集群可使用 `kubectl port-forward service/web 18080:8080`。
-
-应用工作负载：
-
-- web
-- platform-api
-- trigger-gateway
-- workflow-coordinator
-- workflow-worker
-- echo-node
-- sandbox-manager
-- trace-writer
-
-本地中间件：
-
-- MySQL StatefulSet 和 PVC
-- Redis StatefulSet 和 PVC
-- ClickHouse StatefulSet 和 PVC
-- MinIO StatefulSet、PVC 和 Bucket 初始化 Job
-- Echo MCP Deployment，仅存在于 local 和 e2e Overlay
-
-应用进程必须自行重试外部依赖。Liveness 只表示进程存活，Readiness 在后续接入基础设施适配器后负责确认必要依赖可用。
-
-## 11. CubeSandbox 部署边界
-
-CubeSandbox 官方标准 Kubernetes 部署目前仍处于预览阶段，计算节点需要额外的虚拟化和运行时条件。Agentx 仓库不维护一份简化但不可工作的 CubeSandbox 清单。
-
-本地开发有两种方式：
-
-1. 在符合要求的 Linux 主机或独立 Kubernetes 集群安装 CubeSandbox。
-2. 将 AGENTX_CUBESANDBOX_ENDPOINT 指向该 Cube API。
-
-生产环境必须使用 CubeSandbox 官方部署包和经过验证的计算节点。
-
-## 12. 可选业务 Addon
-
-LightRAG 和 Mem0 不进入生产 Base，也不随默认 Agentx 控制面强制启动。deploy/k8s/addons 提供固定镜像版本、独立 PVC、ConfigMap 和 Secret；scripts/k8s-addons-up.ps1、k8s-addons-status.ps1 和 k8s-addons-down.ps1 负责本地一键启停。
-
-模型与 Embedding 密钥必须通过环境变量或 Kubernetes Secret 注入。未配置模型时只验收 Pod、Service 和健康接口，不伪造 RAG 查询或 Memory 写入成功。
-
-## 13. 临时 Kubernetes E2E
-
-scripts/e2e.ps1 创建 agentx-e2e Namespace，从空 PVC 部署 MySQL、Redis、ClickHouse、MinIO、Migration Job、应用和 Echo MCP，并自动建立 Web port-forward。Playwright 完成后保存 HTML、JUnit、Trace、失败 Screenshot/Video、Kubernetes 资源、事件和服务日志；默认删除 Namespace，KeepNamespace 仅用于本地排障。
+完整 `scripts/e2e.ps1` 使用临时 Agentx Namespace、真实 OpenSandbox Adapter、固定 LightRAG/Mem0 和 M2.1-M5 Playwright。测试前可缩容开发 Namespace；结束时清理本次 Sandbox、删除临时 Namespace并恢复开发副本数。

@@ -15,7 +15,7 @@ Agentx 是一个以 n8n 式 Workflow 编辑和运行模型为核心，面向企�
 | [01-product-scope.md](01-product-scope.md) | 产品定位、边界、核心概念和业务闭环 |
 | [02-system-architecture.md](02-system-architecture.md) | 系统分层、模块职责、部署单元和存储分工 |
 | [03-workflow-engine.md](03-workflow-engine.md) | n8n 式数据模型、节点协议、表达式、调度和故障恢复 |
-| [04-runtime-governance.md](04-runtime-governance.md) | Trace、Checkpoint、Agent 循环、CubeSandbox 和审批 |
+| [04-runtime-governance.md](04-runtime-governance.md) | Trace、Checkpoint、Agent 循环、OpenSandbox 和审批 |
 | [05-platform-business.md](05-platform-business.md) | 多租户权限、模型与工具资源、应用会话和测试评测 |
 | [06-data-model.md](06-data-model.md) | MySQL、ClickHouse、Redis、对象存储的数据设计 |
 | [07-deployment.md](07-deployment.md) | Kubernetes 部署、水平扩容和运行可靠性 |
@@ -33,6 +33,10 @@ Agentx 是一个以 n8n 式 Workflow 编辑和运行模型为核心，面向企�
 | [plan/m3.1-acceptance-evidence.md](plan/m3.1-acceptance-evidence.md) | M3.1 契约、前端、Kubernetes E2E 和完成边界证据 |
 | [plan/m4-task-list.md](plan/m4-task-list.md) | M4 可靠运行的实施批次、依赖、门禁、Kubernetes E2E 与剩余任务统计 |
 | [plan/m4-acceptance-evidence.md](plan/m4-acceptance-evidence.md) | M4 Runtime、Recovery、Workbench、Kubernetes 故障注入和数据库断言证据 |
+| [plan/opensandbox-feasibility.md](plan/opensandbox-feasibility.md) | OpenSandbox 当前机器兼容性、Rust SDK 缺口、直接 Adapter 决策和生产隔离边界 |
+| [plan/composable-deployment.md](plan/composable-deployment.md) | Full/Custom Profile、分散依赖、统一脚本和部署验收门禁 |
+| [plan/m5-task-list.md](plan/m5-task-list.md) | M5 Rust 协议门禁、Agent、资源 Runtime、OpenSandbox、Trace 和 E2E 实施批次 |
+| [plan/m5-acceptance-evidence.md](plan/m5-acceptance-evidence.md) | M5 当前实现、自动化证据、未关闭门禁和生产强隔离边界 |
 | [plan/e2e-testing-standard.md](plan/e2e-testing-standard.md) | 临时 Kubernetes Playwright 端到端测试规范 |
 | [plan/m2-acceptance-evidence.md](plan/m2-acceptance-evidence.md) | 已被 M2.1 取代的旧 M2 历史证据 |
 
@@ -59,7 +63,8 @@ Agentx 是一个以 n8n 式 Workflow 编辑和运行模型为核心，面向企�
 10. 控制面可以模块化单体起步，但 Workflow Worker、Sandbox Manager 和 Trace Writer 必须能够独立扩容。
 11. 前端使用 Tailwind CSS 设计令牌和统一组件层，复杂无障碍交互基于 Radix UI。
 12. Workflow 画布使用 React Flow，画布状态通过转换层生成独立的 Workflow Definition。
-13. 本地 Kustomize 同时启动应用、MySQL、Redis、ClickHouse 和 MinIO。
+13. Kubernetes 部署使用统一 Profile 组合 bundled/external 基础设施、可选 Addon 和 registry/local-build 镜像，并通过专用 ingress-nginx 暴露 Web。
+14. Sandbox 采用独立安装的 OpenSandbox；本地 Docker+runc 与当前 Kubernetes 用于功能验收，gVisor/Kata 和生产强隔离作为后续强化。
 
 ## 分阶段详细设计
 
@@ -72,7 +77,7 @@ Agentx 是一个以 n8n 式 Workflow 编辑和运行模型为核心，面向企�
 - Execution 状态机
 - MySQL DDL 与索引
 - 外部 API 和内部 gRPC 协议
-- CubeSandbox Adapter 接口
+- OpenSandbox Adapter、Sandbox Profile 和安全策略
 - Trace Event Schema
 
-这些规范分别在 [阶段 01](plan/01-contracts-and-foundation.md)、[阶段 08](plan/08-workflow-runtime-core.md)、[阶段 09](plan/09-checkpoint-wait-recovery.md) 和 [阶段 10](plan/10-agent-cubesandbox.md) 中完成并通过阶段门禁，不再作为无归属的开放事项保留。
+这些规范分别在 [阶段 01](plan/01-contracts-and-foundation.md)、[阶段 08](plan/08-workflow-runtime-core.md)、[阶段 09](plan/09-checkpoint-wait-recovery.md) 和 [阶段 10](plan/10-agent-opensandbox.md) 中完成并通过阶段门禁，不再作为无归属的开放事项保留。

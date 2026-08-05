@@ -344,7 +344,10 @@ pub fn validate_definition(definition: &WorkflowDefinition) -> Vec<DefinitionIss
 }
 
 fn is_resource_node(node_type: &str) -> bool {
-    matches!(node_type, "model" | "mcp_tool" | "skill" | "rag" | "memory")
+    matches!(
+        node_type,
+        "model" | "mcp_tool" | "skill" | "rag" | "memory" | "agent" | "code"
+    )
 }
 
 fn reference_matches_node(node_type: &str, reference: &ResourceReference) -> bool {
@@ -364,8 +367,25 @@ fn reference_matches_node(node_type: &str, reference: &ResourceReference) -> boo
         }
         "rag" => {
             reference.resource_type == ResourceType::Rag
-                && reference.operation == ResourceOperation::Read
+                && matches!(
+                    reference.operation,
+                    ResourceOperation::Read | ResourceOperation::Write
+                )
         }
+        "agent" => matches!(
+            reference.resource_type,
+            ResourceType::Model
+                | ResourceType::McpTool
+                | ResourceType::Skill
+                | ResourceType::Rag
+                | ResourceType::Memory
+                | ResourceType::Credential
+        ),
+        "code" => matches!(
+            (reference.resource_type, reference.operation),
+            (ResourceType::SandboxProfile, ResourceOperation::Use)
+                | (ResourceType::Credential, ResourceOperation::Use)
+        ),
         "memory" => {
             reference.resource_type == ResourceType::Memory
                 && matches!(

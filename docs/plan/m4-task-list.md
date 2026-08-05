@@ -14,7 +14,7 @@ M4 完成后，平台必须能够：
 6. 让 Wait 和 Approval 节点持久等待且不占用 Worker，通过幂等 Resume 恢复到正确输出端口。
 7. 在 Execution 页面完成 Checkpoint、Fork、等待、审批恢复和副作用确认，并通过临时 Kubernetes E2E 证明完整链路。
 
-M4 不实现 Model、MCP Tool、Skill、RAG、Memory、Agent Tool Loop 或 CubeSandbox 运行，这些属于 M5；不实现完整 Workflow Studio 和动态节点配置界面，这些属于 M6；不在本阶段接通 Application、Evaluation、Trigger Webhook 和 Schedule 到真实 Execution，这些全链路集成仍属于 M7。M4 必须先冻结 Node Lifecycle 和动态 UI Provider 契约，避免后续建立第二套协议。相关入口在接通前继续返回明确的 `RUNTIME_UNAVAILABLE`，不得创建伪运行记录。
+M4 不实现 Model、MCP Tool、Skill、RAG、Memory、Agent Tool Loop 或 OpenSandbox 运行，这些属于 M5；不实现完整 Workflow Studio 和动态节点配置界面，这些属于 M6；不在本阶段接通 Application、Evaluation、Trigger Webhook 和 Schedule 到真实 Execution，这些全链路集成仍属于 M7。M4 必须先冻结 Node Lifecycle 和动态 UI Provider 契约，避免后续建立第二套协议。相关入口在接通前继续返回明确的 `RUNTIME_UNAVAILABLE`，不得创建伪运行记录。
 
 ## 2. 完成交付基线
 
@@ -170,12 +170,12 @@ M4 至少增加两个 Playwright 场景：
 | 范围 | 原子任务数 | 当前状态 |
 |---|---:|---|
 | M4：RUN-001～014、REC-001～010 | 24 | done |
-| M5：AGT-001～013 | 13 | planned |
+| M5：AGT-001～013 | 13 | done |
 | M6：STU-001～014 | 14 | planned |
 | M7：INT-001～014 | 14 | planned |
-| **当前至首期发布剩余** | **41** | M5～M7 |
+| **当前至首期发布剩余** | **28** | M6～M7 |
 
-功能追踪矩阵中的未完成能力行和 MVP 步骤由剩余 41 个原子任务覆盖，不应再相加。实际实施中新增的缺陷修复或破坏性设计修正会作为所在阶段的补充任务单独登记。
+功能追踪矩阵中的未完成能力行和 MVP 步骤由剩余 28 个原子任务覆盖，不应再相加。实际实施中新增的缺陷修复或破坏性设计修正会作为所在阶段的补充任务单独登记。
 
 ## 11. 向 M5 提供的稳定输出
 
@@ -183,4 +183,4 @@ M4 至少增加两个 Playwright 场景：
 - Execution/Activation/Attempt/Delivery 状态机、MySQL Runtime Repository、Coordinator、Worker、Queue 和 Lease。
 - Execution Runtime 命令与事件、Trace/Artifact 接入、完整 Checkpoint 和 Fork。
 - Wait/Resume、Approval Runtime 和 Side Effect Policy。
-- 可供 Agent、MCP Tool、Skill、RAG、Memory 与 CubeSandbox Runner 复用的能力队列、运行上下文和故障恢复边界。
+- 可供 Agent、MCP Tool、Skill、RAG、Memory 与 OpenSandbox Runner 复用的能力队列、运行上下文和故障恢复边界。

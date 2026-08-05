@@ -7,7 +7,7 @@ use agentx_application::{
 use agentx_domain::{
     ExecutionId, ExecutionStatus, InvocationId, SessionId, TenantId, WorkflowVersionId,
 };
-use agentx_infrastructure::{config::InfrastructureSettings, credential::CredentialKeyring, mysql};
+use agentx_infrastructure::{config::MySqlSettings, credential::CredentialKeyring, mysql};
 use anyhow::{Context, Result};
 use axum::{
     Json, Router,
@@ -328,8 +328,7 @@ async fn main() -> Result<()> {
             .with_context(|| format!("failed to write {path}"))?;
         return Ok(());
     }
-    let infrastructure = InfrastructureSettings::from_env()?;
-    let pool = mysql::connect(&infrastructure.mysql).await?;
+    let pool = mysql::connect(&MySqlSettings::from_env()?).await?;
     let key_id = env::var("AGENTX_CREDENTIAL_ACTIVE_KEY_ID")
         .context("AGENTX_CREDENTIAL_ACTIVE_KEY_ID is required")?;
     let keys = SecretString::from(

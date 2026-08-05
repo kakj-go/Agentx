@@ -3,7 +3,7 @@ import { createHmac } from 'node:crypto'
 import { expect, type Page, test } from '@playwright/test'
 
 const password = 'agentx-e2e-admin-password'
-const resumeSecret = 'agentx-local-jwt-signing-secret-change-me'
+const resumeSecret = process.env.AGENTX_E2E_WAIT_SIGNING_SECRET ?? 'agentx-local-jwt-signing-secret-change-me'
 
 async function login(page: Page) {
   await page.goto('/login')

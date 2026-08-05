@@ -1284,6 +1284,15 @@
         }
       }
     },
+    "/api/v1/executions/{id}/runtime-details": {
+      "get": {
+        "tags": [
+          "operations"
+        ],
+        "operationId": "execution_runtime_details",
+        "responses": {}
+      }
+    },
     "/api/v1/executions/{id}/side-effect-confirmations": {
       "post": {
         "tags": [
@@ -2271,6 +2280,110 @@
         "responses": {}
       }
     },
+    "/api/v1/sandbox-profiles": {
+      "get": {
+        "tags": [
+          "sandbox_profiles"
+        ],
+        "operationId": "list_sandbox_profiles",
+        "responses": {}
+      },
+      "post": {
+        "tags": [
+          "sandbox_profiles"
+        ],
+        "operationId": "create_sandbox_profile",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSandboxProfileRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {}
+      }
+    },
+    "/api/v1/sandbox-profiles/{id}": {
+      "get": {
+        "tags": [
+          "sandbox_profiles"
+        ],
+        "operationId": "get_sandbox_profile",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {}
+      },
+      "patch": {
+        "tags": [
+          "sandbox_profiles"
+        ],
+        "operationId": "update_sandbox_profile",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateSandboxProfileRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {}
+      }
+    },
+    "/api/v1/sandbox-profiles/{id}/versions": {
+      "post": {
+        "tags": [
+          "sandbox_profiles"
+        ],
+        "operationId": "create_sandbox_profile_version",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SandboxProfileVersionInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {}
+      }
+    },
     "/api/v1/sessions/{id}/upgrade": {
       "post": {
         "tags": [
@@ -2580,7 +2693,7 @@
         "tags": [
           "skills_control"
         ],
-        "operationId": "create_version",
+        "operationId": "create_skill_version",
         "parameters": [
           {
             "name": "id",
@@ -3188,6 +3301,154 @@
   },
   "components": {
     "schemas": {
+      "AgentIterationDetail": {
+        "type": "object",
+        "required": [
+          "id",
+          "agentRunId",
+          "iterationIndex",
+          "status",
+          "stateBeforeHash",
+          "startedAt"
+        ],
+        "properties": {
+          "agentRunId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "endedAt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "iterationIndex": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "startedAt": {
+            "type": "string"
+          },
+          "stateAfterHash": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "stateArtifactId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "stateBeforeHash": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "stopReason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "AgentRunDetail": {
+        "type": "object",
+        "required": [
+          "id",
+          "nodeExecutionId",
+          "status",
+          "budget",
+          "iterationCount",
+          "modelCallCount",
+          "toolCallCount",
+          "inputTokens",
+          "outputTokens",
+          "costMicros",
+          "startedAt"
+        ],
+        "properties": {
+          "budget": {},
+          "costMicros": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "endedAt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "inputTokens": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "iterationCount": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "modelCallCount": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "nodeExecutionId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "outputTokens": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "startedAt": {
+            "type": "string"
+          },
+          "stateArtifactId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "stateHash": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": "string"
+          },
+          "stopReason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "toolCallCount": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
       "ApiErrorResponse": {
         "type": "object",
         "required": [
@@ -4377,6 +4638,35 @@
           }
         }
       },
+      "CreateSandboxProfileRequest": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/SandboxProfileVersionInput"
+          },
+          {
+            "type": "object",
+            "required": [
+              "name",
+              "ownerDepartmentId"
+            ],
+            "properties": {
+              "description": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "name": {
+                "type": "string"
+              },
+              "ownerDepartmentId": {
+                "type": "string",
+                "format": "uuid"
+              }
+            }
+          }
+        ]
+      },
       "CreateScheduleRequest": {
         "type": "object",
         "required": [
@@ -5213,7 +5503,9 @@
           "executionType",
           "status",
           "startedAt",
-          "costMicros"
+          "costMicros",
+          "inputTokens",
+          "outputTokens"
         ],
         "properties": {
           "callerExecutionId": {
@@ -5269,12 +5561,22 @@
             "type": "string",
             "format": "uuid"
           },
+          "inputTokens": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
           "invocationId": {
             "type": [
               "string",
               "null"
             ],
             "format": "uuid"
+          },
+          "outputTokens": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
           },
           "parentExecutionId": {
             "type": [
@@ -6772,6 +7074,129 @@
           }
         }
       },
+      "RuntimeCallDetail": {
+        "type": "object",
+        "required": [
+          "id",
+          "attemptId",
+          "iterationIndex",
+          "callIndex",
+          "callKind",
+          "requestFingerprint",
+          "sideEffect",
+          "status",
+          "inputTokens",
+          "outputTokens",
+          "costMicros",
+          "usageEstimated",
+          "startedAt"
+        ],
+        "properties": {
+          "agentRunId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "attemptId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "callIndex": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "callKind": {
+            "type": "string"
+          },
+          "costMicros": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "endedAt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "errorCode": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "errorMessage": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "inputTokens": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "iterationIndex": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "outputTokens": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "requestFingerprint": {
+            "type": "string"
+          },
+          "resourceId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "resourceType": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "resourceVersionId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "responseArtifactId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "sideEffect": {
+            "type": "string"
+          },
+          "startedAt": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "usageEstimated": {
+            "type": "boolean"
+          }
+        }
+      },
       "RuntimeComponentStatus": {
         "type": "object",
         "required": [
@@ -6809,15 +7234,79 @@
           }
         }
       },
+      "RuntimeDetailsResponse": {
+        "type": "object",
+        "required": [
+          "executionId",
+          "inputTokens",
+          "outputTokens",
+          "costMicros",
+          "agentRuns",
+          "iterations",
+          "calls",
+          "sandboxes"
+        ],
+        "properties": {
+          "agentRuns": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AgentRunDetail"
+            }
+          },
+          "calls": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RuntimeCallDetail"
+            }
+          },
+          "costMicros": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "executionId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "inputTokens": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "iterations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AgentIterationDetail"
+            }
+          },
+          "outputTokens": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "sandboxes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SandboxLeaseDetail"
+            }
+          }
+        }
+      },
       "RuntimeStatusResponse": {
         "type": "object",
         "required": [
           "components",
           "running",
           "waiting",
-          "failedToday"
+          "failedToday",
+          "activeSandboxes"
         ],
         "properties": {
+          "activeSandboxes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
           "components": {
             "type": "array",
             "items": {
@@ -6834,7 +7323,260 @@
             "format": "int64",
             "minimum": 0
           },
+          "sandboxCompatibility": {},
           "waiting": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "SandboxLeaseDetail": {
+        "type": "object",
+        "required": [
+          "id",
+          "nodeExecutionId",
+          "attemptId",
+          "profileVersionId",
+          "status",
+          "expiresAt",
+          "heartbeatAt",
+          "terminationAttempts",
+          "createdAt"
+        ],
+        "properties": {
+          "attemptId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "expiresAt": {
+            "type": "string"
+          },
+          "heartbeatAt": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "lastError": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "nodeExecutionId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "profileVersionId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "sandboxId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": "string"
+          },
+          "terminatedAt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "terminationAttempts": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "SandboxProfileResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "status",
+          "currentVersionNumber",
+          "ownerDepartmentId",
+          "version",
+          "current",
+          "versions",
+          "updatedAt"
+        ],
+        "properties": {
+          "current": {
+            "$ref": "#/components/schemas/SandboxProfileVersionResponse"
+          },
+          "currentVersionNumber": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "ownerDepartmentId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "versions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SandboxProfileVersionResponse"
+            }
+          }
+        }
+      },
+      "SandboxProfileVersionInput": {
+        "type": "object",
+        "required": [
+          "runner",
+          "imageDigest",
+          "cpuMillis",
+          "memoryBytes",
+          "pidsLimit",
+          "diskBytes",
+          "timeoutSeconds",
+          "outputLimitBytes",
+          "networkPolicy"
+        ],
+        "properties": {
+          "cpuMillis": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "diskBytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "imageDigest": {
+            "type": "string"
+          },
+          "memoryBytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "networkPolicy": {},
+          "outputLimitBytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "pidsLimit": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "runner": {
+            "type": "string"
+          },
+          "timeoutSeconds": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "SandboxProfileVersionResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "versionNumber",
+          "runner",
+          "imageDigest",
+          "cpuMillis",
+          "memoryBytes",
+          "pidsLimit",
+          "diskBytes",
+          "timeoutSeconds",
+          "outputLimitBytes",
+          "networkPolicy",
+          "configurationHash",
+          "createdAt"
+        ],
+        "properties": {
+          "configurationHash": {
+            "type": "string"
+          },
+          "cpuMillis": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "diskBytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "imageDigest": {
+            "type": "string"
+          },
+          "memoryBytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "networkPolicy": {},
+          "outputLimitBytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "pidsLimit": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "runner": {
+            "type": "string"
+          },
+          "timeoutSeconds": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "versionNumber": {
             "type": "integer",
             "format": "int64",
             "minimum": 0
@@ -7275,9 +8017,22 @@
           "runIndex",
           "iterationIndex",
           "costMicros",
+          "partial",
           "attributes"
         ],
         "properties": {
+          "agentRunId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "attemptId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "attributes": {},
           "contentRef": {
             "type": [
@@ -7373,7 +8128,28 @@
               "null"
             ]
           },
+          "partial": {
+            "type": "boolean"
+          },
           "providerName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "resourceId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "resourceType": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "resourceVersionId": {
             "type": [
               "string",
               "null"
@@ -7384,11 +8160,29 @@
             "format": "int32",
             "minimum": 0
           },
+          "runtimeCallId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sandboxId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "spanId": {
             "type": "string"
           },
           "status": {
             "type": "string"
+          },
+          "stopReason": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "traceId": {
             "type": "string"
@@ -7776,6 +8570,33 @@
             "items": {
               "type": "string"
             }
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "UpdateSandboxProfileRequest": {
+        "type": "object",
+        "required": [
+          "name",
+          "status",
+          "version"
+        ],
+        "properties": {
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
           },
           "version": {
             "type": "integer",

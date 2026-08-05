@@ -6,7 +6,28 @@ rust-version.workspace = true
 version.workspace = true
 
 [dependencies]
+agentx-application.workspace = true
+agentx-domain.workspace = true
+agentx-infrastructure.workspace = true
+agentx-runtime-rpc.workspace = true
 agentx-service-kit.workspace = true
 anyhow.workspace = true
+axum.workspace = true
+base64.workspace = true
+futures.workspace = true
+hmac.workspace = true
+secrecy.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+sqlx.workspace = true
+time.workspace = true
 tokio.workspace = true
+tokio-stream.workspace = true
+tokio-util.workspace = true
+tonic.workspace = true
+tracing.workspace = true
+url.workspace = true
+uuid.workspace = true
 
+[dev-dependencies]
+testcontainers = "0.25"

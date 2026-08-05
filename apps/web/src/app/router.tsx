@@ -42,6 +42,8 @@ const WorkflowCanvas = lazy(() => import('../features/workflow-designer/workflow
 const CredentialsPage = lazy(() => import('../features/credentials/credentials-page').then((module) => ({ default: module.CredentialsPage })))
 const CredentialDetailPage = lazy(() => import('../features/credentials/credential-detail-page').then((module) => ({ default: module.CredentialDetailPage })))
 const ResourceGrantsPage = lazy(() => import('../features/resource-grants/resource-grants-page').then((module) => ({ default: module.ResourceGrantsPage })))
+const SandboxProfilesPage = lazy(() => import('../features/sandbox-profiles/sandbox-profiles-page').then((module) => ({ default: module.SandboxProfilesPage })))
+const SandboxProfileDetailPage = lazy(() => import('../features/sandbox-profiles/sandbox-profile-detail-page').then((module) => ({ default: module.SandboxProfileDetailPage })))
 
 function deferred(element: ReactNode) {
   return <Suspense fallback={<div className="grid h-full min-h-72 place-items-center text-sm text-muted-foreground">Agentx…</div>}>{element}</Suspense>
@@ -84,6 +86,8 @@ export const router = createBrowserRouter([
       { path: 'knowledge/:id', element: deferred(<RequirePermission permission="knowledge:view"><KnowledgeDetailPage /></RequirePermission>) },
       { path: 'memory', element: deferred(<RequirePermission permission="memory:view"><MemoryPage /></RequirePermission>) },
       { path: 'memory/:id', element: deferred(<RequirePermission permission="memory:view"><MemoryDetailPage /></RequirePermission>) },
+      { path: 'sandbox-profiles', element: deferred(<RequirePermission permission="sandbox:view"><SandboxProfilesPage /></RequirePermission>) },
+      { path: 'sandbox-profiles/:id', element: deferred(<RequirePermission permission="sandbox:view"><SandboxProfileDetailPage /></RequirePermission>) },
       { path: 'resource-grants', element: deferred(<RequirePermission permission="resource:grant"><ResourceGrantsPage /></RequirePermission>) },
       { path: 'organization', element: deferred(<RequirePermission permission="user:view"><OrganizationPage /></RequirePermission>) },
       { path: 'roles', element: deferred(<RequirePermission permission="role:view"><RolesPage /></RequirePermission>) },

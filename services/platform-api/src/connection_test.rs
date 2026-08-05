@@ -208,13 +208,14 @@ pub(crate) async fn validate_target(state: &AppState, value: &str) -> AppResult<
             AppError::bad_request("ENDPOINT_DNS_FAILED", "Endpoint host cannot be resolved")
         })?;
     for address in addresses {
-        if blocked(address.ip())
-            && !state.connections.allow_private_networks
-            && !state
-                .connections
-                .allowed_cidrs
-                .iter()
-                .any(|network| network.contains(&address.ip()))
+        let ip = address.ip();
+        let explicitly_allowed = state
+            .connections
+            .allowed_cidrs
+            .iter()
+            .any(|network| network.contains(&ip));
+        if !explicitly_allowed
+            && (always_blocked(ip) || (blocked(ip) && !state.connections.allow_private_networks))
         {
             return Err(AppError::forbidden(
                 "Endpoint resolves to a blocked network address",
@@ -222,6 +223,14 @@ pub(crate) async fn validate_target(state: &AppState, value: &str) -> AppResult<
         }
     }
     Ok(url)
+}
+fn always_blocked(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(ip) => {
+            ip.is_link_local() || ip.is_unspecified() || ip.is_broadcast() || ip.is_multicast()
+        }
+        IpAddr::V6(ip) => ip.is_unicast_link_local() || ip.is_unspecified() || ip.is_multicast(),
+    }
 }
 fn blocked(ip: IpAddr) -> bool {
     match ip {
@@ -297,7 +306,7 @@ fn secret_string(value: &Value) -> AppResult<&str> {
 mod tests {
     use axum::{Router, response::IntoResponse, routing::get};
 
-    use super::{blocked, read_openapi_document};
+    use super::{always_blocked, blocked, read_openapi_document};
 
     async fn response(body: &'static str) -> reqwest::Response {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -325,6 +334,10 @@ mod tests {
         assert!(blocked("169.254.169.254".parse().unwrap()));
         assert!(blocked("::1".parse().unwrap()));
         assert!(!blocked("1.1.1.1".parse().unwrap()));
+        assert!(always_blocked("169.254.169.254".parse().unwrap()));
+        assert!(always_blocked("224.0.0.1".parse().unwrap()));
+        assert!(!always_blocked("10.0.0.1".parse().unwrap()));
+        assert!(!always_blocked("127.0.0.1".parse().unwrap()));
     }
 
     #[tokio::test]

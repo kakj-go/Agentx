@@ -1,0 +1,135 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: agentx
+resources:
+  - ../../services/core
+  - ../../services/migrations
+  - ../../services/sandbox-manager
+  - ../../infrastructure/mysql
+  - ../../infrastructure/redis
+  - ../../infrastructure/clickhouse
+  - ../../infrastructure/minio
+  - ../../addons/lightrag
+  - ../../addons/mem0
+  - ../../fixtures/echo-mcp
+  - ../../fixtures/echo-node
+  - ingress.yaml
+generatorOptions:
+  disableNameSuffixHash: true
+configMapGenerator:
+  - name: agentx-config
+    literals:
+      - AGENTX_ENV=local
+      - AGENTX_MYSQL_HOST=mysql
+      - AGENTX_MYSQL_PORT=3306
+      - AGENTX_MYSQL_DATABASE=agentx
+      - AGENTX_MYSQL_USER=agentx
+      - AGENTX_REDIS_URL=redis://redis:6379/
+      - AGENTX_RUNTIME_COORDINATOR_URL=http://workflow-coordinator:9090
+      - AGENTX_SANDBOX_MANAGER_URL=http://sandbox-manager:9091
+      - AGENTX_WORKER_CAPABILITIES=builtin,declarative_http,remote_action,agent,model,mcp_tool,skill,rag,memory,sandbox
+      - AGENTX_NODE_BROKER_URL=http://workflow-worker:8080
+      - AGENTX_NODE_HANDLE_TTL_SECONDS=300
+      - AGENTX_CHECKPOINT_ARTIFACT_THRESHOLD_BYTES=65536
+      - AGENTX_CLICKHOUSE_URL=http://clickhouse:8123
+      - AGENTX_CLICKHOUSE_DATABASE=agentx
+      - AGENTX_CLICKHOUSE_USER=agentx
+      - AGENTX_S3_ENDPOINT=http://minio:9000
+      - AGENTX_S3_BUCKET=agentx-artifacts
+      - AGENTX_S3_REGION=us-east-1
+      - AGENTX_S3_ALLOW_HTTP=true
+      - AGENTX_S3_PATH_STYLE=true
+      - AGENTX_COOKIE_SECURE=false
+      - AGENTX_LOGIN_MAX_FAILURES=5
+      - AGENTX_LOGIN_FAILURE_WINDOW_SECONDS=900
+      - AGENTX_LOGIN_LOCK_SECONDS=900
+      - AGENTX_CREDENTIAL_ACTIVE_KEY_ID=local-v1
+      - AGENTX_CONNECTION_TEST_TIMEOUT_SECONDS=10
+      - AGENTX_CONNECTION_TEST_MAX_CONCURRENCY=4
+      - AGENTX_CONNECTION_ALLOW_PRIVATE_NETWORKS=false
+      - AGENTX_CONNECTION_ALLOWED_HOSTS=echo-mcp,lightrag,mem0
+      - AGENTX_CONNECTION_ALLOWED_CIDRS=
+      - AGENTX_OPENSANDBOX_ENDPOINT=http://host.docker.internal:18080
+      - AGENTX_OPENSANDBOX_SECURE_ACCESS=false
+      - AGENTX_OPENSANDBOX_USE_SERVER_PROXY=true
+      - AGENTX_OPENSANDBOX_ALLOWED_ENDPOINT_HOSTS=host.docker.internal
+      - AGENTX_OPENSANDBOX_ALLOWED_ENDPOINT_CIDRS=
+      - AGENTX_SANDBOX_MAX_ACTIVE_PER_TENANT=16
+      - AGENTX_M5_SANDBOX_IMAGE=opensandbox/code-interpreter@sha256:133a3c1720dd52291a019740c2987e7164ea6de79e23d8198798e58950ae2e6e
+      - AGENTX_M5_BROWSER_IMAGE=opensandbox/playwright@sha256:09709684c785db3107fc3357e7af5b921f5d5a60e75071601122a473d344b475
+      - AGENTX_REMOTE_NODE_ENDPOINT=http://echo-node:8080
+  - name: agentx-lightrag-config
+    literals:
+      - HOST=0.0.0.0
+      - PORT=9621
+      - WORKING_DIR=/app/data/rag_storage
+      - INPUT_DIR=/app/data/inputs
+      - PROMPT_DIR=/app/data/prompts
+      - LLM_BINDING=openai
+      - EMBEDDING_BINDING=openai
+      - LLM_BINDING_HOST=http://echo-mcp:8090/v1
+      - EMBEDDING_BINDING_HOST=http://echo-mcp:8090/v1
+      - LLM_MODEL=echo-model
+      - EMBEDDING_MODEL=echo-embedding-8
+      - EMBEDDING_DIM=8
+      - EMBEDDING_USE_BASE64=false
+  - name: agentx-mem0-config
+    literals:
+      - POSTGRES_HOST=mem0-postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=postgres
+      - POSTGRES_USER=postgres
+      - POSTGRES_COLLECTION_NAME=memories
+      - APP_DB_NAME=mem0_app
+      - AUTH_DISABLED=true
+      - MEM0_TELEMETRY=false
+      - HISTORY_DB_PATH=/app/history/history.db
+      - OPENAI_BASE_URL=http://echo-mcp:8090/v1
+      - MEM0_DEFAULT_LLM_MODEL=echo-model
+      - MEM0_DEFAULT_EMBEDDER_MODEL=echo-embedding-1536
+secretGenerator:
+  - name: agentx-secrets
+    literals:
+      - AGENTX_MYSQL_PASSWORD=agentx-local
+      - AGENTX_MYSQL_ROOT_PASSWORD=agentx-root-local
+      - AGENTX_CLICKHOUSE_PASSWORD=agentx-local
+      - AGENTX_REDIS_PASSWORD=agentx-local-redis
+      - AGENTX_S3_ACCESS_KEY=agentx
+      - AGENTX_S3_SECRET_KEY=agentx-local-secret
+      - AGENTX_MINIO_USER=agentx
+      - AGENTX_MINIO_PASSWORD=agentx-local-secret
+      - AGENTX_JWT_SIGNING_SECRET=agentx-local-jwt-signing-secret-change-me
+      - AGENTX_REMOTE_NODE_AUTH_TOKEN=agentx-local-node-token
+      - AGENTX_OPENSANDBOX_API_KEY=agentx-local-opensandbox-key
+      - AGENTX_SANDBOX_RPC_TOKEN=agentx-local-sandbox-rpc-token
+      - AGENTX_SANDBOX_LEASE_SIGNING_KEY=agentx-local-sandbox-lease-signing-key
+      - 'AGENTX_CREDENTIAL_KEYS_JSON={"keys":{"local-v1":"YWdlbnR4LWxvY2FsLWNyZWRlbnRpYWwta2V5LTAwMDE="}}'
+  - name: agentx-lightrag-secrets
+    literals:
+      - LIGHTRAG_API_KEY=agentx-local-lightrag
+      - LLM_BINDING_API_KEY=m5-model-secret
+      - EMBEDDING_BINDING_API_KEY=m5-model-secret
+  - name: agentx-mem0-secrets
+    literals:
+      - POSTGRES_PASSWORD=agentx-local-mem0
+      - OPENAI_API_KEY=m5-model-secret
+      - JWT_SECRET=agentx-local-mem0-jwt-secret-change-me
+images:
+  - name: agentx/web
+    newTag: dev
+  - name: agentx/echo-mcp
+    newTag: dev
+  - name: agentx/echo-node
+    newTag: dev
+  - name: agentx/platform-api
+    newTag: dev
+  - name: agentx/trigger-gateway
+    newTag: dev
+  - name: agentx/workflow-coordinator
+    newTag: dev
+  - name: agentx/workflow-worker
+    newTag: dev
+  - name: agentx/sandbox-manager
+    newTag: dev
+  - name: agentx/trace-writer
+    newTag: dev

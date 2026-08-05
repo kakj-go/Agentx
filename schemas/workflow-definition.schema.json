@@ -104,7 +104,8 @@
         "mcp_tool",
         "skill",
         "rag",
-        "memory"
+        "memory",
+        "sandbox_profile"
       ],
       "type": "string"
     },

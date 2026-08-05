@@ -1,6 +1,6 @@
 use std::{collections::BTreeSet, sync::Arc};
 
-use agentx_application::ArtifactStore;
+use agentx_application::{ArtifactStore, RuntimeResourceSnapshot};
 use agentx_domain::{ArtifactId, ResourceReference, ResourceType, TenantId};
 use agentx_node_protocol::{
     InvocationCancellationStatus, InvocationHandle, InvocationResourceRequest,
@@ -38,7 +38,15 @@ pub struct InvocationScope {
 pub struct IssuedInvocation {
     pub artifact_handles: Vec<InvocationHandle>,
     pub credential_handles: Vec<InvocationHandle>,
+    pub credential_bindings: Vec<IssuedCredentialHandle>,
     pub cancellation_url: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct IssuedCredentialHandle {
+    pub resource_id: Uuid,
+    pub version: u64,
+    pub invocation: InvocationHandle,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -77,6 +85,7 @@ impl InvocationBroker {
         &self,
         scope: &InvocationScope,
         resource_references: &[ResourceReference],
+        resource_snapshots: &[RuntimeResourceSnapshot],
         inputs: impl Iterator<Item = &'a Item>,
     ) -> Result<IssuedInvocation, InvocationBrokerError> {
         let now = OffsetDateTime::now_utc();
@@ -97,28 +106,38 @@ impl InvocationBroker {
             .collect::<BTreeSet<_>>();
         let mut transaction = self.pool.begin().await.map_err(unavailable)?;
         let mut credential_handles = Vec::with_capacity(credential_ids.len());
+        let mut credential_bindings = Vec::with_capacity(credential_ids.len());
         for resource_id in credential_ids {
-            let version = sqlx::query_scalar::<_, u64>(
-                "SELECT current_secret_version FROM credentials WHERE tenant_id=? AND id=? AND status='active'",
+            let version = resource_snapshots
+                .iter()
+                .find(|snapshot| {
+                    snapshot.reference.resource_type == ResourceType::Credential
+                        && snapshot.reference.resource_id == resource_id
+                })
+                .and_then(|snapshot| snapshot.snapshot.get("secretVersion"))
+                .and_then(Value::as_u64)
+                .ok_or(InvocationBrokerError::Invalid)?;
+            let exists=sqlx::query_scalar::<_,bool>("SELECT EXISTS(SELECT 1 FROM credentials c JOIN credential_secret_versions v ON v.credential_id=c.id AND v.tenant_id=c.tenant_id WHERE c.tenant_id=? AND c.id=? AND c.status='active' AND v.version_number=?)")
+                .bind(scope.tenant_id).bind(resource_id).bind(version).fetch_one(&mut *transaction).await.map_err(unavailable)?;
+            if !exists {
+                return Err(InvocationBrokerError::Invalid);
+            }
+            let invocation = insert_handle(
+                &mut transaction,
+                scope,
+                "credential",
+                Some(resource_id),
+                Some(version),
+                expires_at,
+                &self.base_url,
             )
-            .bind(scope.tenant_id)
-            .bind(resource_id)
-            .fetch_optional(&mut *transaction)
-            .await
-            .map_err(unavailable)?
-            .ok_or(InvocationBrokerError::Invalid)?;
-            credential_handles.push(
-                insert_handle(
-                    &mut transaction,
-                    scope,
-                    "credential",
-                    Some(resource_id),
-                    Some(version),
-                    expires_at,
-                    &self.base_url,
-                )
-                .await?,
-            );
+            .await?;
+            credential_handles.push(invocation.clone());
+            credential_bindings.push(IssuedCredentialHandle {
+                resource_id,
+                version,
+                invocation,
+            });
         }
         let mut artifact_handles = Vec::with_capacity(artifact_ids.len());
         for resource_id in artifact_ids {
@@ -160,6 +179,7 @@ impl InvocationBroker {
         Ok(IssuedInvocation {
             artifact_handles,
             credential_handles,
+            credential_bindings,
             cancellation_url: format!(
                 "{}/agentx/runtime/v1/invocations/cancellation/{}",
                 self.base_url, cancellation.handle
@@ -174,7 +194,7 @@ impl InvocationBroker {
         let handle_hash = token_hash(&request.handle);
         let mut transaction = self.pool.begin().await.map_err(unavailable)?;
         let row = sqlx::query(
-            "SELECT h.handle_kind,h.resource_id,h.resource_version,h.expires_at,h.consumed_at,h.lease_token,a.status attempt_status,l.expires_at lease_expires,l.released_at,e.cancellation_requested_at,e.status execution_status FROM node_invocation_handles h JOIN node_attempts a ON a.id=h.attempt_id AND a.tenant_id=h.tenant_id JOIN workflow_executions e ON e.id=h.execution_id AND e.tenant_id=h.tenant_id LEFT JOIN worker_leases l ON l.node_attempt_id=h.attempt_id AND l.lease_token=h.lease_token WHERE h.token_hash=? AND h.tenant_id=? AND h.node_execution_id=? AND h.attempt_id=? FOR UPDATE",
+            "SELECT h.handle_kind,h.resource_id,h.resource_version,h.expires_at,h.consumed_at,h.revoked_at,h.lease_token,a.status attempt_status,l.expires_at lease_expires,l.released_at,e.cancellation_requested_at,e.status execution_status FROM node_invocation_handles h JOIN node_attempts a ON a.id=h.attempt_id AND a.tenant_id=h.tenant_id JOIN workflow_executions e ON e.id=h.execution_id AND e.tenant_id=h.tenant_id LEFT JOIN worker_leases l ON l.node_attempt_id=h.attempt_id AND l.lease_token=h.lease_token WHERE h.token_hash=? AND h.tenant_id=? AND h.node_execution_id=? AND h.attempt_id=? FOR UPDATE",
         )
         .bind(&handle_hash)
         .bind(request.tenant_id.as_uuid())
@@ -196,6 +216,10 @@ impl InvocationBroker {
             .try_get::<Option<OffsetDateTime>, _>("consumed_at")
             .map_err(unavailable)?
             .is_some()
+            || row
+                .try_get::<Option<OffsetDateTime>, _>("revoked_at")
+                .map_err(unavailable)?
+                .is_some()
         {
             return Err(InvocationBrokerError::Replayed);
         }
@@ -252,7 +276,7 @@ impl InvocationBroker {
             }
             _ => return Err(InvocationBrokerError::Invalid),
         };
-        sqlx::query("UPDATE node_invocation_handles SET consumed_at=CURRENT_TIMESTAMP(6) WHERE token_hash=? AND consumed_at IS NULL")
+        sqlx::query("UPDATE node_invocation_handles SET consumed_at=CURRENT_TIMESTAMP(6) WHERE token_hash=? AND consumed_at IS NULL AND revoked_at IS NULL")
             .bind(handle_hash).execute(&mut *transaction).await.map_err(unavailable)?;
         transaction.commit().await.map_err(unavailable)?;
         Ok(response)
@@ -326,10 +350,10 @@ async fn insert_handle(
     base_url: &str,
 ) -> Result<InvocationHandle, InvocationBrokerError> {
     let token = Uuid::now_v7().to_string();
-    sqlx::query("INSERT INTO node_invocation_handles(id,tenant_id,execution_id,node_execution_id,attempt_id,lease_token,token_hash,handle_kind,resource_id,resource_version,expires_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)")
+    sqlx::query("INSERT INTO node_invocation_handles(id,tenant_id,execution_id,node_execution_id,attempt_id,lease_token,token_hash,handle_kind,resource_id,resource_version,scope_json,expires_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)")
         .bind(Uuid::now_v7()).bind(scope.tenant_id).bind(scope.execution_id).bind(scope.node_execution_id)
         .bind(scope.attempt_id).bind(scope.lease_token).bind(token_hash(&token)).bind(kind)
-        .bind(resource_id).bind(resource_version).bind(expires_at)
+        .bind(resource_id).bind(resource_version).bind(serde_json::json!({"executionId":scope.execution_id,"nodeExecutionId":scope.node_execution_id,"attemptId":scope.attempt_id})).bind(expires_at)
         .execute(&mut **transaction).await.map_err(unavailable)?;
     Ok(InvocationHandle {
         handle: token,

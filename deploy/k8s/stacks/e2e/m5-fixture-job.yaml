@@ -1,0 +1,24 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: m5-fixture
+  namespace: agentx-e2e
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: m5-fixture
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: fixture
+          image: agentx/m5-fixture:dev
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: agentx-config
+            - secretRef:
+                name: agentx-secrets
+            - secretRef:
+                name: agentx-lightrag-secrets

@@ -24,7 +24,7 @@ kubectl -n $namespace scale statefulset/mysql --replicas=0
 kubectl -n $namespace wait --for=delete pod/mysql-0 --timeout=180s
 kubectl -n $namespace delete pvc $claim --ignore-not-found
 kubectl -n $namespace delete job platform-api-migrate --ignore-not-found
-kubectl apply -k "$root/deploy/k8s/overlays/local"
+kubectl -n $namespace apply -k "$root/deploy/k8s/infrastructure/mysql"
 kubectl -n $namespace rollout status statefulset/mysql --timeout=420s
 kubectl -n $namespace wait --for=condition=complete job/platform-api-migrate --timeout=300s
 

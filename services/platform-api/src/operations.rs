@@ -1,7 +1,9 @@
 use agentx_api_types::PageResponse;
 use agentx_application::{ArtifactStore, ResumeExecutionCommand};
 use agentx_domain::{ArtifactId, ExecutionId, NodeExecutionId, TenantId, UserId};
-use agentx_infrastructure::artifact::MySqlObjectArtifactStore;
+use agentx_infrastructure::{
+    artifact::MySqlObjectArtifactStore, operations_projection::redact_trace_attributes,
+};
 use axum::{
     Json,
     body::Body,
@@ -13,7 +15,7 @@ use redis::AsyncCommands;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sqlx::{MySql, Row, Transaction};
-use time::OffsetDateTime;
+use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
@@ -144,6 +146,8 @@ pub struct ExecutionResponse {
     pub ended_at: Option<OffsetDateTime>,
     pub duration_ms: Option<u64>,
     pub cost_micros: u64,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
     pub error_code: Option<String>,
     pub error_message: Option<String>,
 }
@@ -158,6 +162,13 @@ pub struct TraceEventResponse {
     pub parent_span_id: Option<String>,
     pub execution_id: String,
     pub node_execution_id: Option<String>,
+    pub attempt_id: Option<String>,
+    pub agent_run_id: Option<String>,
+    pub runtime_call_id: Option<String>,
+    pub sandbox_id: Option<String>,
+    pub resource_type: Option<String>,
+    pub resource_id: Option<String>,
+    pub resource_version_id: Option<String>,
     pub node_id: Option<String>,
     pub event_type: String,
     pub status: String,
@@ -173,6 +184,8 @@ pub struct TraceEventResponse {
     pub cost_micros: u64,
     pub error_code: Option<String>,
     pub error_message: Option<String>,
+    pub stop_reason: Option<String>,
+    pub partial: bool,
     pub attributes: Value,
     pub content_ref: Option<String>,
 }
@@ -210,6 +223,95 @@ pub struct RuntimeStatusResponse {
     pub running: u64,
     pub waiting: u64,
     pub failed_today: u64,
+    pub active_sandboxes: u64,
+    pub sandbox_compatibility: Option<Value>,
+}
+
+#[derive(Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeDetailsResponse {
+    pub execution_id: Uuid,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cost_micros: u64,
+    pub agent_runs: Vec<AgentRunDetail>,
+    pub iterations: Vec<AgentIterationDetail>,
+    pub calls: Vec<RuntimeCallDetail>,
+    pub sandboxes: Vec<SandboxLeaseDetail>,
+}
+#[derive(Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentRunDetail {
+    pub id: Uuid,
+    pub node_execution_id: Uuid,
+    pub status: String,
+    pub budget: Value,
+    pub iteration_count: u32,
+    pub model_call_count: u32,
+    pub tool_call_count: u32,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cost_micros: u64,
+    pub state_artifact_id: Option<Uuid>,
+    pub state_hash: Option<String>,
+    pub stop_reason: Option<String>,
+    pub started_at: String,
+    pub ended_at: Option<String>,
+}
+#[derive(Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentIterationDetail {
+    pub id: Uuid,
+    pub agent_run_id: Uuid,
+    pub iteration_index: u32,
+    pub status: String,
+    pub state_before_hash: String,
+    pub state_after_hash: Option<String>,
+    pub state_artifact_id: Option<Uuid>,
+    pub stop_reason: Option<String>,
+    pub started_at: String,
+    pub ended_at: Option<String>,
+}
+#[derive(Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeCallDetail {
+    pub id: Uuid,
+    pub attempt_id: Uuid,
+    pub agent_run_id: Option<Uuid>,
+    pub iteration_index: u32,
+    pub call_index: u32,
+    pub call_kind: String,
+    pub request_fingerprint: String,
+    pub resource_type: Option<String>,
+    pub resource_id: Option<Uuid>,
+    pub resource_version_id: Option<Uuid>,
+    pub side_effect: String,
+    pub status: String,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cost_micros: u64,
+    pub usage_estimated: bool,
+    pub response_artifact_id: Option<Uuid>,
+    pub error_code: Option<String>,
+    pub error_message: Option<String>,
+    pub started_at: String,
+    pub ended_at: Option<String>,
+}
+#[derive(Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SandboxLeaseDetail {
+    pub id: Uuid,
+    pub node_execution_id: Uuid,
+    pub attempt_id: Uuid,
+    pub sandbox_id: Option<String>,
+    pub profile_version_id: Uuid,
+    pub status: String,
+    pub expires_at: String,
+    pub heartbeat_at: String,
+    pub termination_attempts: u32,
+    pub last_error: Option<String>,
+    pub created_at: String,
+    pub terminated_at: Option<String>,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -598,6 +700,31 @@ pub async fn get_execution(
     Ok(Json(execution))
 }
 
+#[utoipa::path(get, path = "/api/v1/executions/{id}/runtime-details")]
+pub async fn execution_runtime_details(
+    State(state): State<AppState>,
+    actor: AuthActor,
+    Path(id): Path<Uuid>,
+) -> AppResult<Json<RuntimeDetailsResponse>> {
+    actor.require("trace:view")?;
+    let execution = load_execution(&state, actor.tenant_id, id).await?;
+    require_workflow_access(&state.pool, &actor, execution.workflow_id, false).await?;
+    let runs=sqlx::query("SELECT id,node_execution_id,status,budget_json,iteration_count,model_call_count,tool_call_count,input_tokens,output_tokens,cost_micros,state_artifact_id,state_hash,stop_reason,started_at,ended_at FROM agent_runs WHERE tenant_id=? AND execution_id=? ORDER BY started_at,id").bind(actor.tenant_id).bind(id).fetch_all(&state.pool).await?.into_iter().map(agent_run_detail).collect::<AppResult<Vec<_>>>()?;
+    let iterations=sqlx::query("SELECT i.id,i.agent_run_id,i.iteration_index,i.status,i.state_before_hash,i.state_after_hash,i.state_artifact_id,i.stop_reason,i.started_at,i.ended_at FROM agent_iterations i JOIN agent_runs r ON r.id=i.agent_run_id WHERE i.tenant_id=? AND r.execution_id=? ORDER BY i.started_at,i.iteration_index").bind(actor.tenant_id).bind(id).fetch_all(&state.pool).await?.into_iter().map(agent_iteration_detail).collect::<AppResult<Vec<_>>>()?;
+    let calls=sqlx::query("SELECT id,attempt_id,agent_run_id,iteration_index,call_index,call_kind,request_fingerprint,resource_type,resource_id,resource_version_id,side_effect,status,input_tokens,output_tokens,cost_micros,usage_estimated,response_artifact_id,error_code,error_message,started_at,ended_at FROM runtime_calls WHERE tenant_id=? AND execution_id=? ORDER BY started_at,iteration_index,call_index").bind(actor.tenant_id).bind(id).fetch_all(&state.pool).await?.into_iter().map(runtime_call_detail).collect::<AppResult<Vec<_>>>()?;
+    let sandboxes=sqlx::query("SELECT id,node_execution_id,attempt_id,sandbox_id,profile_version_id,status,expires_at,heartbeat_at,termination_attempts,last_error,created_at,terminated_at FROM sandbox_leases WHERE tenant_id=? AND execution_id=? ORDER BY created_at,id").bind(actor.tenant_id).bind(id).fetch_all(&state.pool).await?.into_iter().map(sandbox_lease_detail).collect::<AppResult<Vec<_>>>()?;
+    Ok(Json(RuntimeDetailsResponse {
+        execution_id: id,
+        input_tokens: execution.input_tokens,
+        output_tokens: execution.output_tokens,
+        cost_micros: execution.cost_micros,
+        agent_runs: runs,
+        iterations,
+        calls,
+        sandboxes,
+    }))
+}
+
 #[utoipa::path(get, path = "/api/v1/executions/{id}/trace")]
 pub async fn execution_trace(
     State(state): State<AppState>,
@@ -613,7 +740,7 @@ pub async fn execution_trace(
     })?;
     let limit = query.limit.unwrap_or(200).clamp(1, 500);
     let cursor = query.cursor.unwrap_or_default();
-    let sql = "SELECT toString(e.event_id) event_id,toString(e.trace_id) trace_id,toString(e.span_id) span_id,toString(e.parent_span_id) parent_span_id,toString(e.execution_id) execution_id,toString(e.node_execution_id) node_execution_id,e.node_id,e.event_type,e.status,toString(e.event_time) event_time,e.duration_ms,e.run_index,e.iteration_index,e.model_name,e.provider_name,e.mcp_tool_name,e.input_tokens,e.output_tokens,e.cost_micros,e.error_code,e.error_message,e.attributes_json,toString(e.content_ref) content_ref FROM workflow_trace_events AS e FINAL WHERE e.tenant_id=toUUID(?) AND e.execution_id=toUUID(?) AND (?='' OR concat(toString(e.event_time),'|',toString(e.event_id))>?) ORDER BY e.event_time,e.event_id LIMIT ?";
+    let sql = "SELECT toString(e.event_id) event_id,toString(e.trace_id) trace_id,toString(e.span_id) span_id,toString(e.parent_span_id) parent_span_id,toString(e.execution_id) execution_id,toString(e.node_execution_id) node_execution_id,toString(e.attempt_id) attempt_id,toString(e.agent_run_id) agent_run_id,toString(e.runtime_call_id) runtime_call_id,e.sandbox_id,e.resource_type,toString(e.resource_id) resource_id,toString(e.resource_version_id) resource_version_id,e.node_id,e.event_type,e.status,toString(e.event_time) event_time,e.duration_ms,e.run_index,e.iteration_index,e.model_name,e.provider_name,e.mcp_tool_name,e.input_tokens,e.output_tokens,e.cost_micros,e.error_code,e.error_message,e.stop_reason,toUInt8(e.partial) partial,e.attributes_json,toString(e.content_ref) content_ref FROM workflow_trace_events AS e FINAL WHERE e.tenant_id=toUUID(?) AND e.execution_id=toUUID(?) AND (?='' OR concat(toString(e.event_time),'|',toString(e.event_id))>?) ORDER BY e.event_time,e.event_id LIMIT ?";
     let rows = clickhouse
         .query(sql)
         .bind(actor.tenant_id.to_string())
@@ -742,11 +869,15 @@ pub async fn runtime_status(
         }
     }
     components.push(queue);
+    let active_sandboxes: i64=sqlx::query_scalar("SELECT COUNT(*) FROM sandbox_leases WHERE tenant_id=? AND status IN ('creating','ready','running','interrupting','terminating','orphaned')").bind(actor.tenant_id).fetch_one(&state.pool).await?;
+    let sandbox_compatibility:Option<Value>=sqlx::query_scalar("SELECT detail_json FROM runtime_service_heartbeats WHERE tenant_id=? AND service_type='sandbox' ORDER BY heartbeat_at DESC LIMIT 1").bind(actor.tenant_id).fetch_optional(&state.pool).await?;
     Ok(Json(RuntimeStatusResponse {
         components,
         running: counts.0,
         waiting: counts.1,
         failed_today: counts.2,
+        active_sandboxes: active_sandboxes as u64,
+        sandbox_compatibility,
     }))
 }
 
@@ -806,7 +937,7 @@ pub async fn dashboard_summary(
 }
 
 const APPROVAL_SELECT: &str = "SELECT t.id,t.execution_id,t.workflow_id,w.name workflow_name,t.node_id,t.title,t.description,t.request_payload_json,t.status,t.claimed_by,u.display_name claimed_by_name,t.resume_status,t.deadline_at,t.version,t.created_at FROM approval_tasks t JOIN workflows w ON w.id=t.workflow_id LEFT JOIN users u ON u.id=t.claimed_by";
-const EXECUTION_SELECT: &str = "SELECT e.id,e.workflow_id,w.name workflow_name,e.workflow_version_id,wv.version_number workflow_version_number,e.invocation_id,e.session_id,e.trace_id,e.trigger_type,e.execution_type,e.parent_execution_id,e.caller_execution_id,e.fork_checkpoint_id,e.status,e.started_at,e.ended_at,e.duration_ms,e.cost_micros,e.error_code,e.error_message FROM workflow_executions e JOIN workflows w ON w.id=e.workflow_id JOIN workflow_versions wv ON wv.id=e.workflow_version_id";
+const EXECUTION_SELECT: &str = "SELECT e.id,e.workflow_id,w.name workflow_name,e.workflow_version_id,wv.version_number workflow_version_number,e.invocation_id,e.session_id,e.trace_id,e.trigger_type,e.execution_type,e.parent_execution_id,e.caller_execution_id,e.fork_checkpoint_id,e.status,e.started_at,e.ended_at,e.duration_ms,e.cost_micros,e.input_tokens,e.output_tokens,e.error_code,e.error_message FROM workflow_executions e JOIN workflows w ON w.id=e.workflow_id JOIN workflow_versions wv ON wv.id=e.workflow_version_id";
 const WORKFLOW_VISIBILITY: &str = "(w.owner_user_id=? OR w.visibility='company' OR EXISTS(SELECT 1 FROM workflow_members wm WHERE wm.workflow_id=w.id AND wm.user_id=?) OR (w.visibility='department' AND EXISTS(SELECT 1 FROM user_roles ur JOIN department_closure dc ON dc.ancestor_id=ur.scope_department_id AND dc.tenant_id=ur.tenant_id WHERE ur.user_id=? AND ur.tenant_id=w.tenant_id AND dc.descendant_id=w.owner_department_id)))";
 
 fn workflow_visibility_sql(actor: &AuthActor) -> &'static str {
@@ -1133,12 +1264,104 @@ fn execution_from_row(r: sqlx::mysql::MySqlRow) -> AppResult<ExecutionResponse> 
         ended_at: r.try_get("ended_at")?,
         duration_ms: r.try_get("duration_ms")?,
         cost_micros: r.try_get("cost_micros")?,
+        input_tokens: r.try_get("input_tokens")?,
+        output_tokens: r.try_get("output_tokens")?,
         error_code: r.try_get("error_code")?,
         error_message: r.try_get("error_message")?,
     })
 }
+fn agent_run_detail(r: sqlx::mysql::MySqlRow) -> AppResult<AgentRunDetail> {
+    Ok(AgentRunDetail {
+        id: r.try_get("id")?,
+        node_execution_id: r.try_get("node_execution_id")?,
+        status: r.try_get("status")?,
+        budget: r.try_get("budget_json")?,
+        iteration_count: r.try_get("iteration_count")?,
+        model_call_count: r.try_get("model_call_count")?,
+        tool_call_count: r.try_get("tool_call_count")?,
+        input_tokens: r.try_get("input_tokens")?,
+        output_tokens: r.try_get("output_tokens")?,
+        cost_micros: r.try_get("cost_micros")?,
+        state_artifact_id: r.try_get("state_artifact_id")?,
+        state_hash: r.try_get("state_hash")?,
+        stop_reason: r.try_get("stop_reason")?,
+        started_at: format_timestamp(r.try_get("started_at")?)?,
+        ended_at: r
+            .try_get::<Option<OffsetDateTime>, _>("ended_at")?
+            .map(format_timestamp)
+            .transpose()?,
+    })
+}
+fn agent_iteration_detail(r: sqlx::mysql::MySqlRow) -> AppResult<AgentIterationDetail> {
+    Ok(AgentIterationDetail {
+        id: r.try_get("id")?,
+        agent_run_id: r.try_get("agent_run_id")?,
+        iteration_index: r.try_get("iteration_index")?,
+        status: r.try_get("status")?,
+        state_before_hash: r.try_get("state_before_hash")?,
+        state_after_hash: r.try_get("state_after_hash")?,
+        state_artifact_id: r.try_get("state_artifact_id")?,
+        stop_reason: r.try_get("stop_reason")?,
+        started_at: format_timestamp(r.try_get("started_at")?)?,
+        ended_at: r
+            .try_get::<Option<OffsetDateTime>, _>("ended_at")?
+            .map(format_timestamp)
+            .transpose()?,
+    })
+}
+fn runtime_call_detail(r: sqlx::mysql::MySqlRow) -> AppResult<RuntimeCallDetail> {
+    Ok(RuntimeCallDetail {
+        id: r.try_get("id")?,
+        attempt_id: r.try_get("attempt_id")?,
+        agent_run_id: r.try_get("agent_run_id")?,
+        iteration_index: r.try_get("iteration_index")?,
+        call_index: r.try_get("call_index")?,
+        call_kind: r.try_get("call_kind")?,
+        request_fingerprint: r.try_get("request_fingerprint")?,
+        resource_type: r.try_get("resource_type")?,
+        resource_id: r.try_get("resource_id")?,
+        resource_version_id: r.try_get("resource_version_id")?,
+        side_effect: r.try_get("side_effect")?,
+        status: r.try_get("status")?,
+        input_tokens: r.try_get("input_tokens")?,
+        output_tokens: r.try_get("output_tokens")?,
+        cost_micros: r.try_get("cost_micros")?,
+        usage_estimated: r.try_get::<i8, _>("usage_estimated")? != 0,
+        response_artifact_id: r.try_get("response_artifact_id")?,
+        error_code: r.try_get("error_code")?,
+        error_message: r.try_get("error_message")?,
+        started_at: format_timestamp(r.try_get("started_at")?)?,
+        ended_at: r
+            .try_get::<Option<OffsetDateTime>, _>("ended_at")?
+            .map(format_timestamp)
+            .transpose()?,
+    })
+}
+fn sandbox_lease_detail(r: sqlx::mysql::MySqlRow) -> AppResult<SandboxLeaseDetail> {
+    Ok(SandboxLeaseDetail {
+        id: r.try_get("id")?,
+        node_execution_id: r.try_get("node_execution_id")?,
+        attempt_id: r.try_get("attempt_id")?,
+        sandbox_id: r.try_get("sandbox_id")?,
+        profile_version_id: r.try_get("profile_version_id")?,
+        status: r.try_get("status")?,
+        expires_at: format_timestamp(r.try_get("expires_at")?)?,
+        heartbeat_at: format_timestamp(r.try_get("heartbeat_at")?)?,
+        termination_attempts: r.try_get("termination_attempts")?,
+        last_error: r.try_get("last_error")?,
+        created_at: format_timestamp(r.try_get("created_at")?)?,
+        terminated_at: r
+            .try_get::<Option<OffsetDateTime>, _>("terminated_at")?
+            .map(format_timestamp)
+            .transpose()?,
+    })
+}
+
+fn format_timestamp(value: OffsetDateTime) -> AppResult<String> {
+    value.format(&Rfc3339).map_err(AppError::internal)
+}
 async fn load_execution(state: &AppState, tenant: Uuid, id: Uuid) -> AppResult<ExecutionResponse> {
-    let sql = "SELECT e.id,e.workflow_id,w.name workflow_name,e.workflow_version_id,wv.version_number workflow_version_number,e.invocation_id,e.session_id,e.trace_id,e.trigger_type,e.execution_type,e.parent_execution_id,e.caller_execution_id,e.fork_checkpoint_id,e.status,e.started_at,e.ended_at,e.duration_ms,e.cost_micros,e.error_code,e.error_message FROM workflow_executions e JOIN workflows w ON w.id=e.workflow_id JOIN workflow_versions wv ON wv.id=e.workflow_version_id WHERE e.tenant_id=? AND e.id=?";
+    let sql = "SELECT e.id,e.workflow_id,w.name workflow_name,e.workflow_version_id,wv.version_number workflow_version_number,e.invocation_id,e.session_id,e.trace_id,e.trigger_type,e.execution_type,e.parent_execution_id,e.caller_execution_id,e.fork_checkpoint_id,e.status,e.started_at,e.ended_at,e.duration_ms,e.cost_micros,e.input_tokens,e.output_tokens,e.error_code,e.error_message FROM workflow_executions e JOIN workflows w ON w.id=e.workflow_id JOIN workflow_versions wv ON wv.id=e.workflow_version_id WHERE e.tenant_id=? AND e.id=?";
     let r = sqlx::query(sql)
         .bind(tenant)
         .bind(id)
@@ -1175,6 +1398,13 @@ struct TraceRow {
     parent_span_id: Option<String>,
     execution_id: String,
     node_execution_id: Option<String>,
+    attempt_id: Option<String>,
+    agent_run_id: Option<String>,
+    runtime_call_id: Option<String>,
+    sandbox_id: Option<String>,
+    resource_type: Option<String>,
+    resource_id: Option<String>,
+    resource_version_id: Option<String>,
     node_id: Option<String>,
     event_type: String,
     status: String,
@@ -1190,6 +1420,8 @@ struct TraceRow {
     cost_micros: u64,
     error_code: Option<String>,
     error_message: Option<String>,
+    stop_reason: Option<String>,
+    partial: u8,
     attributes_json: String,
     content_ref: Option<String>,
 }
@@ -1202,6 +1434,13 @@ impl From<TraceRow> for TraceEventResponse {
             parent_span_id: r.parent_span_id,
             execution_id: r.execution_id,
             node_execution_id: r.node_execution_id,
+            attempt_id: r.attempt_id,
+            agent_run_id: r.agent_run_id,
+            runtime_call_id: r.runtime_call_id,
+            sandbox_id: r.sandbox_id,
+            resource_type: r.resource_type,
+            resource_id: r.resource_id,
+            resource_version_id: r.resource_version_id,
             node_id: r.node_id,
             event_type: r.event_type,
             status: r.status,
@@ -1217,16 +1456,23 @@ impl From<TraceRow> for TraceEventResponse {
             cost_micros: r.cost_micros,
             error_code: r.error_code,
             error_message: r.error_message,
-            attributes: serde_json::from_str(&r.attributes_json).unwrap_or(Value::Null),
+            stop_reason: r.stop_reason,
+            partial: r.partial != 0,
+            attributes: trace_attributes(&r.attributes_json),
             content_ref: r.content_ref,
         }
     }
 }
 
+fn trace_attributes(value: &str) -> Value {
+    redact_trace_attributes(serde_json::from_str(value).unwrap_or(Value::Null))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::approval_visibility_sql;
+    use super::{approval_visibility_sql, format_timestamp, trace_attributes};
     use crate::security::AuthActor;
+    use serde_json::json;
     use uuid::Uuid;
     #[test]
     fn company_admin_visibility_does_not_require_candidate_bindings() {
@@ -1241,5 +1487,25 @@ mod tests {
             company_admin: true,
         };
         assert_eq!(approval_visibility_sql(&actor), "TRUE");
+    }
+
+    #[test]
+    fn trace_query_redacts_secrets_even_for_legacy_rows() {
+        let value = trace_attributes(
+            &json!({
+                "authorization":"Bearer legacy-secret",
+                "nested":{"apiToken":"legacy-token","safe":true}
+            })
+            .to_string(),
+        );
+        assert_eq!(value["authorization"], "[REDACTED]");
+        assert_eq!(value["nested"]["apiToken"], "[REDACTED]");
+        assert_eq!(value["nested"]["safe"], true);
+    }
+
+    #[test]
+    fn runtime_timestamps_use_rfc3339() {
+        let value = time::OffsetDateTime::from_unix_timestamp(1_775_260_800).unwrap();
+        assert_eq!(format_timestamp(value).unwrap(), "2026-04-04T00:00:00Z");
     }
 }

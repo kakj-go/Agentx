@@ -12,7 +12,7 @@
 
 ## 3. 范围和不做内容
 
-实现 Definition、Node Registry/Manifest、Node Action API、Item、表达式、Compiler、IR、固定版本 Sub-workflow、Scheduler、Coordinator、Worker、Redis Stream、Lease、Retry 和基础 Checkpoint。不实现 Agent Tool Loop、CubeSandbox、完整 Wait/Approval 恢复或 Workflow Studio；Trigger/Poll/Webhook Lifecycle 和动态 UI Provider 在本阶段冻结协议，真实 Trigger Gateway 接通属于阶段 12，完整节点配置 UI 属于阶段 11。
+实现 Definition、Node Registry/Manifest、Node Action API、Item、表达式、Compiler、IR、固定版本 Sub-workflow、Scheduler、Coordinator、Worker、Redis Stream、Lease、Retry 和基础 Checkpoint。不实现 Agent Tool Loop、OpenSandbox、完整 Wait/Approval 恢复或 Workflow Studio；Trigger/Poll/Webhook Lifecycle 和动态 UI Provider 在本阶段冻结协议，真实 Trigger Gateway 接通属于阶段 12，完整节点配置 UI 属于阶段 11。
 
 ## 4. 领域对象、状态和不变量
 

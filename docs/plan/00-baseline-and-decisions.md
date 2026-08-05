@@ -43,12 +43,16 @@
 | DEC-014 | Version 不可变 | Workflow、Dataset、Tool、Skill 和价格等历史版本不得原地修改 |
 | DEC-015 | Checkpoint 默认节点级 | 成功 Node Execution 后形成逻辑 Checkpoint，副作用、Wait 和 Approval 节点前后加强 |
 | DEC-016 | 历史执行不改写 | 重试历史节点和 Checkpoint 恢复均创建 Fork Execution |
-| DEC-017 | 高风险代码只在 CubeSandbox 执行 | Python、JavaScript、Shell、浏览器自动化和动态代码不得在 Worker 进程直接执行 |
+| DEC-017 | 高风险代码只在 OpenSandbox 执行 | Python、JavaScript、Shell、浏览器自动化和动态代码不得在 Worker 进程直接执行 |
 | DEC-018 | Playground 使用正式 Application API | 不建立仅供前端测试的第二条运行路径 |
 | DEC-019 | 运行不可用必须显式失败 | 引擎接入前返回 `RUNTIME_UNAVAILABLE`，不得创建伪成功 Execution、Approval 或 Evaluation |
 | DEC-020 | 前端保持统一组件体系 | Tailwind 语义 Token、Radix 行为原语和共享组件是唯一界面基础 |
 | DEC-021 | 首期采用单公司部署 | 保留 tenant_id，但不开放 Tenant CRUD 或切换；Company Admin 管理全公司，Department Admin 管理部门子树 |
 | DEC-022 | 新用户使用临时密码 | 管理员设置临时密码，首次登录必须修改后才签发正常 Refresh Session |
+| DEC-023 | 沙箱实现切换为 OpenSandbox | Agentx 保留通用 `SandboxRuntime` 和独立 `sandbox-manager`；本地使用 Docker Runtime + runc，生产必须使用 Kubernetes Runtime + gVisor/Kata 或经安全评审的等价强隔离 Runtime |
+| DEC-024 | OpenSandbox 使用 Rust 直接 Adapter | `sandbox-manager` 通过 Rust HTTP/SSE Client 直接调用固定版本的 Lifecycle/execd API；OpenAPI 生成物只用于内部 DTO 和普通 HTTP 端点，SSE、Endpoint 校验、重试和错误映射由手写层负责；生产链路不增加 Go/Python Sidecar |
+
+2026-08-04 决策补充：DEC-023/024 取代原沙箱接入方向。影响范围为阶段 10、`sandbox-manager`、`agentx-infrastructure`、本地部署和生产隔离门禁；当前尚无已发布 Sandbox 数据需要迁移。OpenSandbox 协议升级必须显式更新固定的 Spec Commit/Hash、组件版本、生成物和契约证据，不能通过宽松反序列化静默兼容。
 
 ## 5. 稳定公共概念
 
@@ -86,7 +90,7 @@
 |---|---|---|---|---|
 | PLN-001 | done | — | 代码、前端、部署和文档基线盘点 | 当前完成与未完成边界可由仓库内容验证 |
 | PLN-002 | done | PLN-001 | 首期范围、排除项和实施顺序 | 与产品范围一致且没有把暂缓能力纳入门禁 |
-| PLN-003 | done | PLN-002 | DEC-001–020 和稳定公共概念 | 后续阶段均引用相同版本、认证、存储和运行边界 |
+| PLN-003 | done | PLN-002 | DEC-001–024 和稳定公共概念 | 后续阶段均引用相同版本、认证、存储和运行边界 |
 | PLN-004 | done | PLN-003 | 阶段计划、任务规则和追踪矩阵 | 首期能力与 MVP 十二步均有唯一验收归属 |
 
 ## 9. 失败、安全和变更边界

@@ -58,6 +58,11 @@ impl NodeRegistry {
         }
         registry
     }
+
+    #[must_use]
+    pub fn m5_defaults() -> Self {
+        Self::m4_defaults()
+    }
 }
 
 fn port(name: &str, kind: PortKind, required: bool, variadic: bool) -> NodePort {
@@ -99,6 +104,31 @@ fn manifest(
         supports_mock: true,
         side_effect_level,
     }
+}
+
+fn m5_manifest(
+    node_type: &str,
+    capability: NodeCapability,
+    schema: serde_json::Value,
+    side_effect_level: SideEffectLevel,
+) -> NodeManifestVersion {
+    let mut value = manifest(
+        node_type,
+        ExecutionStyle::Action,
+        capability,
+        ReadinessPolicy::Any,
+        vec![port("main", PortKind::Main, true, false)],
+        vec![
+            port("main", PortKind::Main, false, false),
+            port("error", PortKind::Error, false, false),
+        ],
+        side_effect_level,
+    );
+    value.parameter_schema = schema;
+    value.default_timeout_ms = Some(300_000);
+    value.supports_mock = false;
+    value.sandbox_required = node_type == "code";
+    value
 }
 
 fn default_manifests() -> Vec<NodeManifestVersion> {
@@ -228,6 +258,66 @@ fn default_manifests() -> Vec<NodeManifestVersion> {
             ReadinessPolicy::Any,
             main_in(),
             main_out(),
+            SideEffectLevel::Irreversible,
+        ),
+        m5_manifest(
+            "model",
+            NodeCapability::Model,
+            json!({"type":"object","properties":{"messages":{"type":"array"},"prompt":{"type":"string"},"parameters":{"type":"object"}},"additionalProperties":false}),
+            SideEffectLevel::None,
+        ),
+        m5_manifest(
+            "mcp_tool",
+            NodeCapability::McpTool,
+            json!({"type":"object","properties":{"arguments":{"type":"object"}},"additionalProperties":false}),
+            SideEffectLevel::Irreversible,
+        ),
+        m5_manifest(
+            "skill",
+            NodeCapability::Skill,
+            json!({"type":"object","additionalProperties":false}),
+            SideEffectLevel::None,
+        ),
+        m5_manifest(
+            "rag",
+            NodeCapability::Rag,
+            json!({"type":"object","required":["operation"],"properties":{"operation":{"enum":["query","retrieve","insert","delete","health_check"]},"input":{}},"additionalProperties":false}),
+            SideEffectLevel::Reversible,
+        ),
+        m5_manifest(
+            "memory",
+            NodeCapability::Memory,
+            json!({"type":"object","required":["operation"],"properties":{"operation":{"enum":["get","search","add","update","delete"]},"input":{}},"additionalProperties":false}),
+            SideEffectLevel::Reversible,
+        ),
+        m5_manifest(
+            "agent",
+            NodeCapability::Agent,
+            json!({
+                "type":"object",
+                "properties":{
+                    "systemPrompt":{"type":"string"},"messages":{"type":"array"},
+                    "maxIterations":{"type":"integer","minimum":1,"maximum":12,"default":12},
+                    "maxModelCalls":{"type":"integer","minimum":1,"maximum":12,"default":12},
+                    "maxToolCalls":{"type":"integer","minimum":0,"maximum":32,"default":32},
+                    "maxTotalTokens":{"type":"integer","minimum":1,"maximum":64000,"default":64000},
+                    "maxOutputTokens":{"type":"integer","minimum":1,"maximum":64000,"default":4096},
+                    "maxCostMicros":{"type":"integer","minimum":0,"maximum":1000000,"default":1000000},
+                    "maxDurationMs":{"type":"integer","minimum":1000,"maximum":300000,"default":300000},
+                    "limitAction":{"enum":["fail","error_output","partial"],"default":"error_output"}
+                },
+                "additionalProperties":false
+            }),
+            SideEffectLevel::Irreversible,
+        ),
+        m5_manifest(
+            "code",
+            NodeCapability::Sandbox,
+            json!({
+                "type":"object","required":["runner","source"],
+                "properties":{"runner":{"enum":["python","javascript","shell","browser"]},"source":{"type":"string"},"arguments":{"type":"array","items":{"type":"string"}},"networkPolicy":{"type":"object"},"outputPaths":{"type":"array","items":{"type":"string"}},"credentialFiles":{"type":"object","propertyNames":{"pattern":"^[A-Z_][A-Z0-9_]*$"},"additionalProperties":{"type":"string","format":"uuid"}}},
+                "additionalProperties":false
+            }),
             SideEffectLevel::Irreversible,
         ),
     ]

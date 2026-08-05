@@ -203,9 +203,9 @@ Workflow 或 Agent 节点可以配置：
 - 暂停等待人工确认
 - 返回部分结果和警告
 
-## 10. CubeSandbox
+## 10. OpenSandbox
 
-进入 CubeSandbox 的节点：
+进入 OpenSandbox 的节点：
 
 - Python
 - JavaScript
@@ -226,12 +226,46 @@ Sandbox Manager 负责：
 - 短期 Credential 注入
 - stdout、stderr 和 exitCode 收集
 
+Agentx 保留与供应商无关的 `SandboxRuntime` Port，`sandbox-manager` 通过 Rust `OpenSandboxAdapter` 直接调用官方 Lifecycle API 和 execd API。Worker 只调用 Agentx 的稳定内部契约，不加载供应商 SDK 或 DTO，也不持有 OpenSandbox API Key。生产链路不得插入 Go/Python Sidecar 或调用 `osb` CLI；官方 Go SDK/CLI 只作为测试差分基准。
+
+协议和版本边界：
+
+- 构建必须固定 OpenSandbox 源码 Commit、Lifecycle/execd Spec Hash 和 Server/execd/egress/模板镜像版本；升级必须显式更新生成物、Fixture 和兼容矩阵。
+- OpenAPI 只生成或校验内部 DTO 与普通 HTTP 端点，不视为完整 SDK；SSE、取消、背压、Sandbox 就绪轮询、Endpoint 解析、重试和错误标准化由可审查的 Rust 手写层实现。
+- CI 必须校验 vendored Spec Hash 与生成物一致；运行时发现缺失必需字段、未知的不兼容事件或不受支持组件版本时返回 `SANDBOX_PROTOCOL_UNSUPPORTED`，不得猜测字段或降级为成功。
+
+Endpoint 和凭证边界：
+
+- Lifecycle 返回的 Endpoint 必须使用结构化 URL 解析，限定允许的 scheme、host、port 和配置化 CIDR/域名范围；每次刷新都重新校验，禁用跨 Host 重定向，禁止拼接 URL 绕过检查。
+- 只转发固定协议定义的鉴权 Header 白名单。OpenSandbox API Key 只发送到配置的 Lifecycle Origin；execd Token 只发送到已校验的 Sandbox Endpoint，不能进入重定向、日志、Trace、Artifact 或用户可见错误。
+- Endpoint、Header 或 Token 校验失败必须在网络请求前终止，并记录脱敏的审计原因。
+
+SSE、取消和重试边界：
+
+- SSE 解析必须支持分片和多行 `data`，限制单事件、累计输出和缓冲区大小，并设置连接、空闲和总超时；消费端使用有界队列形成背压，大输出转为 Artifact。
+- 取消先停止读取流，再调用 execd interrupt；无论 interrupt 是否成功都进入 Sandbox 终止/回收流程，部分 stdout/stderr 只能标记为部分结果。
+- 自动重试仅允许 health/get、Endpoint 解析等只读请求，以及契约明确幂等的 interrupt/terminate；create、command、upload 等操作只有携带并验证服务端支持的幂等键时才能重试。无法判断请求是否已提交时必须返回明确的不确定错误并由 Reaper 对账。
+
+安全基线：
+
+- 创建请求默认 `networkPolicy.defaultAction=deny`，只允许节点声明且经 Workflow Grant 校验的域名或 CIDR。
+- 基础镜像固定 digest，默认只读；临时写入只进入受限工作目录，输出通过 Artifact 收集。
+- CPU、内存、进程数、磁盘、TTL 和租户并发在 Agentx 与 OpenSandbox 两侧同时限制。
+- Credential 优先通过 OpenSandbox Credential Vault 或 Agentx 短期凭证代理注入，不得进入命令行、stdout、stderr、Trace 或持久镜像。
+- Sandbox 完成、超时、取消、Worker 失联或 Lease 过期时都必须幂等终止；回收失败进入 Reaper，不得把节点标记为虚假成功。
+
+运行环境边界：
+
+- 本地开发和 CI 可使用 OpenSandbox Docker Runtime + runc，用于功能、资源限制和网络策略 E2E。
+- runc 不能作为生产级多租户强隔离结论；生产必须使用 OpenSandbox Kubernetes Runtime，并配置 gVisor、Kata 或经安全评审的等价 RuntimeClass。
+- 生产门禁必须检查实际 Pod RuntimeClass、网络策略、资源限制和残留 Sandbox，不能只检查 OpenSandbox `/health`。
+
 支持两类生命周期：
 
 - Node Sandbox：单次节点执行，用完释放。
 - Session Sandbox：同一 Session 按 TTL 复用。
 
-Worker 只接收标准化结果，不直接依赖 CubeSandbox 内部数据结构。
+Worker 只接收标准化结果，不直接依赖 OpenSandbox 内部数据结构。
 
 ## 11. 审批节点
 

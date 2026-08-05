@@ -65,7 +65,7 @@
 - Readiness 阻止未就绪实例接收流量，Liveness 不依赖短暂外部故障。
 - Worker 优雅停止时停止领取新任务并完成或释放已有 Lease。
 - Coordinator、Worker、Gateway、Sandbox Manager 和 Trace Writer 可独立扩容。
-- Redis、ClickHouse、MinIO 和 CubeSandbox 中断具有明确降级和恢复路径。
+- Redis、ClickHouse、MinIO 和 OpenSandbox 中断具有明确降级和恢复路径；生产 Sandbox 使用已批准的强隔离 RuntimeClass。
 - 不要求 Prometheus/Grafana；产品运行状态页继续查询服务健康和业务队列状态。
 
 ## 10. 实施任务
@@ -108,7 +108,7 @@
 - 负载测试使用脱敏 Fixture，不使用生产 Secret 或客户数据。
 - 数据清理任务以 Tenant 分片并设置删除上限，禁止广泛递归删除。
 - 旧版本 Worker 不能领取需要新 Node Capability 的任务。
-- CubeSandbox、ClickHouse 或 MinIO 降级时仅影响相应能力，不允许产生虚假成功结果。
+- OpenSandbox、ClickHouse 或 MinIO 降级时仅影响相应能力，不允许产生虚假成功结果；本地 runc 测试不替代生产 gVisor/Kata 隔离验收。
 - 发布回滚只回滚应用版本，已执行 Migration 必须保持向后兼容。
 
 ## 13. 测试和验收门禁

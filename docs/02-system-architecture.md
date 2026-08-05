@@ -39,7 +39,7 @@
 - Redis Queue
 - Workflow Worker
 - Node Runner
-- CubeSandbox Manager
+- Sandbox Manager
 - Trace Writer
 
 ### 数据层
@@ -48,7 +48,7 @@
 - Redis：任务派发、缓存、租约、短期状态和限流
 - ClickHouse：Workflow Trace 和分析明细
 - MinIO 或 S3：文件、二进制输出、大型节点结果、Checkpoint Payload
-- CubeSandbox：不可信代码和高风险工具运行环境
+- OpenSandbox：独立安装的不可信代码和高风险工具运行 Provider；本地使用 Docker Runtime，Kubernetes RuntimeClass 强隔离作为后续生产强化
 
 ## 2. 推荐部署单元
 
@@ -105,9 +105,13 @@
 - 创建 Checkpoint
 - 发送 Trace Event
 
-### sandbox-manager
+### sandbox-manager（可选）
 
-负责 CubeSandbox 生命周期、资源配额、输入输出和短期凭证注入。
+通过稳定的 Agentx 内部协议管理 Sandbox 生命周期、资源配额、输入输出和短期凭证注入。它使用 Rust `OpenSandboxAdapter` 直接调用 OpenSandbox Lifecycle REST API 和 execd REST/SSE API；Worker 不直接依赖 OpenSandbox SDK、OpenAPI 生成 DTO 或私有对象。
+
+`sandbox-manager` 是 OpenSandbox API Key 和 execd 短期 Token 的唯一持有者。生产调用链固定为 `workflow-worker -> sandbox-manager -> OpenSandbox`，不增加 Go/Python Sidecar 或 CLI 子进程；官方 Go SDK 和 `osb` CLI 只允许作为测试环境的差分契约基准。这样保留单一 Rust 构建、部署、监控和取消链路，同时把供应商协议变化限制在基础设施 Adapter 内。
+
+Sandbox disabled 时不部署该服务。remote 模式下一个逻辑 Manager 可多副本共享 MySQL Lease并连接一个 OpenSandbox Lifecycle Endpoint；OpenSandbox 再按会话创建任意多个运行实例。本阶段不实现多 Provider 容量调度。
 
 ### trace-writer
 
@@ -138,10 +142,10 @@
 - 队列和短期状态：Redis Streams
 - Trace：ClickHouse
 - 文件和大对象：MinIO 或 S3
-- 沙箱：TencentCloud CubeSandbox
-- 部署：Kubernetes、Kustomize；成熟后再评估 Helm
+- 沙箱：OpenSandbox；本地 Docker Runtime + runc，Kubernetes Runtime；gVisor/Kata 或等价强隔离列为后续生产强化
+- 部署：Kubernetes、Kustomize；固定 Helm 只用于脚本管理的专用 ingress-nginx
 
-首期不发布 Rust、Python 或 JavaScript Node SDK。节点扩展通过版本化 Node Manifest、Node Action/Lifecycle API、OpenAPI/JSON Schema、接入文档和协议一致性 Fixture 完成；平台内部 Rust `NodeRunner` 只是 builtin Adapter。常规 REST 集成优先使用 declarative_http，复杂外部实现使用 remote_action，Python 与 JavaScript 自定义代码优先放在 CubeSandbox 内执行。
+首期不发布 Rust、Python 或 JavaScript Node SDK。节点扩展通过版本化 Node Manifest、Node Action/Lifecycle API、OpenAPI/JSON Schema、接入文档和协议一致性 Fixture 完成；平台内部 Rust `NodeRunner` 只是 builtin Adapter。常规 REST 集成优先使用 declarative_http，复杂外部实现使用 remote_action，Python 与 JavaScript 自定义代码必须放在 OpenSandbox 内执行。Rust 侧基于固定版本的 OpenSandbox OpenAPI 维护内部 DTO 和普通 HTTP 调用，并手写 SSE、Endpoint、安全校验和错误映射；不把供应商 SDK 或 Sidecar 嵌入运行链路。
 
 ## 5. 一致性边界
 

@@ -18,7 +18,7 @@ Agentx 是企业级 Workflow 开发、运行、发布和评测平台。
 
 - LLM、Agent、MCP Tool、RAG、Memory 节点和可版本化在线 Skill
 - Agent 内部工具循环记录和限制
-- CubeSandbox 中的不可信代码执行
+- OpenSandbox 中的不可信代码执行
 - 节点级 Trace、Checkpoint 和重新执行
 - Workflow 中的人工审批
 - 测试集、批量评测和版本对比
@@ -99,7 +99,7 @@ Agentx 是企业级 Workflow 开发、运行、发布和评测平台。
 - Workflow 版本、发布和回滚
 - Trace、成本、工具错误和 Agent 循环记录
 - Checkpoint 和 Fork Execution
-- CubeSandbox 接入
+- OpenSandbox 接入
 - Application、Session、Message、SSE 和 Playground
 - Dataset、评测方案、评分规则和报告
 

@@ -3,7 +3,7 @@ use std::{env, net::SocketAddr, sync::Arc, time::Duration};
 use agentx_infrastructure::{
     artifact::MySqlObjectArtifactStore,
     clients,
-    config::InfrastructureSettings,
+    config::RuntimeInfrastructureSettings,
     mysql,
     runtime_queue::RuntimeQueue,
     runtime_repository::{CreateExecution, ResumeExecution, RuntimeRepository, TaskResult},
@@ -15,6 +15,7 @@ use agentx_runtime_rpc::v1::{
     runtime_coordinator_server::{RuntimeCoordinator, RuntimeCoordinatorServer},
 };
 use anyhow::{Context, Result};
+use futures::StreamExt;
 use serde_json::Value;
 use tonic::{Request, Response, Status, transport::Server};
 use tracing::{error, info, warn};
@@ -234,7 +235,8 @@ impl RuntimeCoordinator for CoordinatorService {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let settings = InfrastructureSettings::from_env()?;
+    let settings = RuntimeInfrastructureSettings::from_env()?;
+    let health_settings = settings.clone();
     let pool = mysql::connect(&settings.mysql).await?;
     let object_store = clients::object_store(&settings.object_storage)?;
     let checkpoint_store: Arc<dyn agentx_application::ArtifactStore> =
@@ -268,13 +270,20 @@ async fn main() -> Result<()> {
     tokio::spawn(outbox_loop(repository.clone(), queue));
     tokio::spawn(reaper_loop(repository.clone()));
     tokio::spawn(checkpoint_artifact_loop(repository.clone()));
-    tokio::spawn(heartbeat_loop(repository.clone(), "coordinator"));
-
     let health = agentx_service_kit::HealthRegistry::default();
     health.register("mysql", true).await;
     health.register("redis", true).await;
-    health.set_status("mysql", "ready").await;
-    health.set_status("redis", "ready").await;
+    health.register("object_storage", true).await;
+    tokio::spawn(heartbeat_loop(
+        repository.clone(),
+        "coordinator",
+        health.clone(),
+    ));
+    tokio::spawn(coordinator_dependency_health_loop(
+        health.clone(),
+        health_settings,
+        pool,
+    ));
     agentx_service_kit::serve("workflow-coordinator", axum::Router::new(), health).await
 }
 
@@ -330,7 +339,51 @@ async fn reaper_loop(repository: RuntimeRepository) {
     }
 }
 
-async fn heartbeat_loop(repository: RuntimeRepository, service_type: &'static str) {
+async fn coordinator_dependency_health_loop(
+    health: agentx_service_kit::HealthRegistry,
+    settings: RuntimeInfrastructureSettings,
+    pool: sqlx::MySqlPool,
+) {
+    loop {
+        health
+            .set_status(
+                "mysql",
+                if mysql::ping(&pool).await.is_ok() {
+                    "ready"
+                } else {
+                    "unavailable"
+                },
+            )
+            .await;
+        health
+            .set_status(
+                "redis",
+                if clients::connect_redis(&settings.redis).await.is_ok() {
+                    "ready"
+                } else {
+                    "unavailable"
+                },
+            )
+            .await;
+        let object_ready = match clients::object_store(&settings.object_storage) {
+            Ok(store) => matches!(store.list(None).next().await, Some(Ok(_)) | None),
+            Err(_) => false,
+        };
+        health
+            .set_status(
+                "object_storage",
+                if object_ready { "ready" } else { "unavailable" },
+            )
+            .await;
+        tokio::time::sleep(Duration::from_secs(10)).await;
+    }
+}
+
+async fn heartbeat_loop(
+    repository: RuntimeRepository,
+    service_type: &'static str,
+    health: agentx_service_kit::HealthRegistry,
+) {
     let instance = format!("{}-{}", service_type, Uuid::now_v7());
     loop {
         match sqlx::query_scalar::<_, Uuid>("SELECT id FROM tenants")
@@ -338,9 +391,10 @@ async fn heartbeat_loop(repository: RuntimeRepository, service_type: &'static st
             .await
         {
             Ok(tenants) => {
+                let status = health.overall_status().await;
                 for tenant in tenants {
-                    let _=sqlx::query("INSERT INTO runtime_service_heartbeats(tenant_id,service_type,instance_id,status,detail_json,heartbeat_at) VALUES(?,?,?,'ready',JSON_OBJECT(),CURRENT_TIMESTAMP(6)) ON DUPLICATE KEY UPDATE status='ready',heartbeat_at=CURRENT_TIMESTAMP(6)")
-                    .bind(tenant).bind(service_type).bind(&instance).execute(repository.pool()).await;
+                    let _=sqlx::query("INSERT INTO runtime_service_heartbeats(tenant_id,service_type,instance_id,status,detail_json,heartbeat_at) VALUES(?,?,?,?,JSON_OBJECT(),CURRENT_TIMESTAMP(6)) ON DUPLICATE KEY UPDATE status=VALUES(status),heartbeat_at=CURRENT_TIMESTAMP(6)")
+                    .bind(tenant).bind(service_type).bind(&instance).bind(status).execute(repository.pool()).await;
                 }
             }
             Err(error) => warn!(%error, "runtime heartbeat tenant query failed"),

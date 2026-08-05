@@ -4,11 +4,16 @@ use aes_gcm::{
     Aes256Gcm, Nonce,
     aead::{Aead, KeyInit, Payload},
 };
+use agentx_application::{CredentialResolver, ResolvedCredential, SecretMaterial};
+use agentx_domain::TenantId;
 use anyhow::{Context, Result, bail};
+use async_trait::async_trait;
 use base64::{Engine, engine::general_purpose::STANDARD};
 use rand::{RngCore, rngs::OsRng};
 use secrecy::{ExposeSecret, SecretString};
 use serde::Deserialize;
+use sqlx::{MySqlPool, Row};
+use uuid::Uuid;
 use zeroize::Zeroize;
 
 pub struct PlainSecret(Vec<u8>);
@@ -125,6 +130,66 @@ impl CredentialKeyring {
             )
             .map_err(|_| anyhow::anyhow!("credential decryption failed"))?;
         Ok(PlainSecret::new(plaintext))
+    }
+}
+
+#[derive(Clone)]
+pub struct MySqlCredentialResolver {
+    pool: MySqlPool,
+    keyring: CredentialKeyring,
+}
+
+impl MySqlCredentialResolver {
+    #[must_use]
+    pub fn new(pool: MySqlPool, keyring: CredentialKeyring) -> Self {
+        Self { pool, keyring }
+    }
+
+    async fn load(
+        &self,
+        tenant_id: TenantId,
+        credential_id: Uuid,
+        version: Option<u64>,
+    ) -> Result<ResolvedCredential> {
+        let row = if let Some(version) = version {
+            sqlx::query("SELECT c.credential_type,v.version_number,v.key_id,v.nonce,v.ciphertext FROM credentials c JOIN credential_secret_versions v ON v.credential_id=c.id AND v.tenant_id=c.tenant_id WHERE c.tenant_id=? AND c.id=? AND c.status='active' AND v.version_number=?")
+                .bind(tenant_id.as_uuid()).bind(credential_id).bind(version).fetch_optional(&self.pool).await?
+        } else {
+            sqlx::query("SELECT c.credential_type,v.version_number,v.key_id,v.nonce,v.ciphertext FROM credentials c JOIN credential_secret_versions v ON v.credential_id=c.id AND v.tenant_id=c.tenant_id AND v.version_number=c.current_secret_version WHERE c.tenant_id=? AND c.id=? AND c.status='active'")
+                .bind(tenant_id.as_uuid()).bind(credential_id).fetch_optional(&self.pool).await?
+        }.context("Credential version is missing or disabled")?;
+        let version_number: u64 = row.try_get("version_number")?;
+        let aad = format!("{}/{credential_id}/{version_number}", tenant_id.as_uuid());
+        let plaintext = self.keyring.decrypt(
+            row.try_get::<String, _>("key_id")?.as_str(),
+            &row.try_get::<Vec<u8>, _>("nonce")?,
+            &row.try_get::<Vec<u8>, _>("ciphertext")?,
+            aad.as_bytes(),
+        )?;
+        Ok(ResolvedCredential {
+            credential_type: row.try_get("credential_type")?,
+            secret: SecretMaterial::new(plaintext.expose().to_vec()),
+        })
+    }
+}
+
+#[async_trait]
+impl CredentialResolver for MySqlCredentialResolver {
+    async fn resolve(
+        &self,
+        tenant_id: TenantId,
+        credential_id: Uuid,
+    ) -> Result<ResolvedCredential> {
+        self.load(tenant_id, credential_id, None).await
+    }
+
+    async fn resolve_version(
+        &self,
+        tenant_id: TenantId,
+        credential_id: Uuid,
+        version: u64,
+    ) -> Result<ResolvedCredential> {
+        self.load(tenant_id, credential_id, Some(version)).await
     }
 }
 

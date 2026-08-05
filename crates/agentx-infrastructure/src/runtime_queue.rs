@@ -32,7 +32,7 @@ impl RuntimeQueue {
 
     pub async fn ensure_groups(&self) -> Result<()> {
         let mut connection = connect_redis(&self.settings).await?;
-        for capability in ["builtin", "declarative_http", "remote_action"] {
+        for capability in agentx_node_protocol::ALL_RUNTIME_CAPABILITIES {
             let stream = stream_name(capability);
             let result = redis::cmd("XGROUP")
                 .arg("CREATE")
@@ -133,6 +133,7 @@ fn decode_items(stream: &str, items: Vec<StreamId>) -> Result<Vec<QueueItem>> {
 
 #[must_use]
 pub fn stream_name(capability: &str) -> String {
+    debug_assert!(agentx_node_protocol::ALL_RUNTIME_CAPABILITIES.contains(&capability));
     format!("agentx:runtime:{capability}")
 }
 

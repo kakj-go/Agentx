@@ -13,6 +13,9 @@ use serde_json::Value;
 use uuid::Uuid;
 use zeroize::Zeroize;
 
+pub mod runtime;
+pub use runtime::*;
+
 #[async_trait]
 pub trait WorkflowRepository: Send + Sync {
     async fn find_summary(&self, id: WorkflowId) -> Result<Option<WorkflowSummary>>;
@@ -97,6 +100,12 @@ pub struct ResolvedCredential {
 pub trait CredentialResolver: Send + Sync {
     async fn resolve(&self, tenant_id: TenantId, credential_id: Uuid)
     -> Result<ResolvedCredential>;
+    async fn resolve_version(
+        &self,
+        tenant_id: TenantId,
+        credential_id: Uuid,
+        version: u64,
+    ) -> Result<ResolvedCredential>;
 }
 
 #[derive(Clone, Debug)]

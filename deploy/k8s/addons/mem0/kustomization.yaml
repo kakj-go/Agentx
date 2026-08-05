@@ -1,28 +1,12 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-namespace: agentx
 resources:
   - resources.yaml
-generatorOptions:
-  disableNameSuffixHash: true
-configMapGenerator:
-  - name: agentx-mem0-config
-    literals:
-      - POSTGRES_HOST=mem0-postgres
-      - POSTGRES_PORT=5432
-      - POSTGRES_DB=postgres
-      - POSTGRES_USER=postgres
-      - POSTGRES_COLLECTION_NAME=memories
-      - APP_DB_NAME=mem0_app
-      - AUTH_DISABLED=true
-      - MEM0_TELEMETRY=false
-      - HISTORY_DB_PATH=/app/history/history.db
-secretGenerator:
-  - name: agentx-mem0-secrets
-    literals:
-      - POSTGRES_PASSWORD=agentx-local-mem0
-      - OPENAI_API_KEY=
-      - JWT_SECRET=agentx-local-mem0-jwt-secret-change-me
 images:
   - name: agentx/mem0-server
     newTag: v2.0.15
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: agentx
+      app.kubernetes.io/managed-by: agentx-deploy
+      agentx.io/component: mem0

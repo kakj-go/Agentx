@@ -1,6 +1,12 @@
 use std::{env, net::SocketAddr};
 
-use axum::{Json as AxumJson, Router, routing::get};
+use axum::{
+    Json as AxumJson, Router,
+    body::Body,
+    http::{HeaderMap, StatusCode, header},
+    response::{IntoResponse, Response},
+    routing::{get, post},
+};
 use rmcp::{
     Json, ServerHandler,
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
@@ -14,6 +20,7 @@ use rmcp::{
     },
 };
 use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -100,6 +107,8 @@ async fn main() -> anyhow::Result<()> {
                 }))
             }),
         )
+        .route("/v1/chat/completions", post(chat_completions))
+        .route("/v1/embeddings", post(embeddings))
         .nest_service("/mcp", service);
     let listener = tokio::net::TcpListener::bind(bind_addr).await?;
     tracing::info!(%bind_addr, "Echo MCP is listening");
@@ -111,4 +120,186 @@ async fn main() -> anyhow::Result<()> {
         })
         .await?;
     Ok(())
+}
+
+async fn embeddings(headers: HeaderMap, AxumJson(request): AxumJson<Value>) -> Response {
+    if headers
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        != Some("Bearer m5-model-secret")
+    {
+        return (
+            StatusCode::UNAUTHORIZED,
+            AxumJson(json!({"error":{"message":"invalid fixture credential"}})),
+        )
+            .into_response();
+    }
+    let inputs = match request.get("input") {
+        Some(Value::Array(values)) => values.clone(),
+        Some(value) => vec![value.clone()],
+        None => Vec::new(),
+    };
+    let default_dimensions =
+        if request.get("model").and_then(Value::as_str) == Some("echo-embedding-1536") {
+            1536
+        } else {
+            8
+        };
+    let dimensions = request
+        .get("dimensions")
+        .and_then(Value::as_u64)
+        .and_then(|value| usize::try_from(value).ok())
+        .filter(|value| (1..=3072).contains(value))
+        .unwrap_or(default_dimensions);
+    let mut token_count = 0_u64;
+    let data = inputs
+        .iter()
+        .enumerate()
+        .map(|(index, input)| {
+            let text = input
+                .as_str()
+                .map(str::to_owned)
+                .unwrap_or_else(|| input.to_string());
+            token_count += text.len().div_ceil(4) as u64;
+            let mut embedding = vec![0_f64; dimensions];
+            for (offset, byte) in text.bytes().enumerate() {
+                embedding[offset % dimensions] += f64::from(byte) / 255.0;
+            }
+            json!({"object":"embedding","embedding":embedding,"index":index})
+        })
+        .collect::<Vec<_>>();
+    AxumJson(json!({
+        "object":"list",
+        "data":data,
+        "model":request.get("model").cloned().unwrap_or_else(||json!("text-embedding-3-small")),
+        "usage":{"prompt_tokens":token_count,"total_tokens":token_count}
+    }))
+    .into_response()
+}
+
+async fn chat_completions(headers: HeaderMap, AxumJson(request): AxumJson<Value>) -> Response {
+    if headers
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        != Some("Bearer m5-model-secret")
+    {
+        return (
+            StatusCode::UNAUTHORIZED,
+            AxumJson(json!({"error":{"message":"invalid fixture credential"}})),
+        )
+            .into_response();
+    }
+    let messages = request
+        .get("messages")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let tool_messages = messages
+        .iter()
+        .filter(|message| message.get("role").and_then(Value::as_str) == Some("tool"))
+        .count();
+    let requested_loop = messages
+        .iter()
+        .filter_map(|message| message.get("content").and_then(Value::as_str))
+        .any(|content| content.contains("m5-loop"));
+    let tool = request
+        .pointer("/tools/0/function/name")
+        .and_then(Value::as_str);
+    let tool_call = tool
+        .filter(|_| requested_loop || tool_messages == 0)
+        .map(|name| {
+            json!({
+                "id": format!("m5-call-{tool_messages}"),
+                "type": "function",
+                "function": {"name": name, "arguments": "{\"text\":\"m5-tool-result\"}"}
+            })
+        });
+    let finish_reason = if tool_call.is_some() {
+        "tool_calls"
+    } else {
+        "stop"
+    };
+    let content = tool_call
+        .is_none()
+        .then_some("M5 Agent completed after the MCP tool result");
+    let usage = json!({"prompt_tokens": 24 + tool_messages, "completion_tokens": if tool_call.is_some() { 12 } else { 9 }, "total_tokens": 45 + tool_messages});
+    if request
+        .get("stream")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        let delta = if let Some(call) = tool_call {
+            json!({"tool_calls":[{"index":0,"id":call["id"],"type":"function","function":{"name":call["function"]["name"],"arguments":call["function"]["arguments"]}}]})
+        } else {
+            json!({"content":content})
+        };
+        let body = format!(
+            "data: {}\n\ndata: {}\n\ndata: [DONE]\n\n",
+            json!({"id":"m5-stream","choices":[{"index":0,"delta":delta,"finish_reason":finish_reason}]}),
+            json!({"id":"m5-stream","choices":[],"usage":usage})
+        );
+        return Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "text/event-stream")
+            .body(Body::from(body))
+            .expect("fixture response");
+    }
+    let mut message = json!({"role":"assistant","content":content});
+    if let Some(call) = tool_call {
+        message["tool_calls"] = json!([call]);
+    }
+    AxumJson(json!({
+        "id":"m5-completion",
+        "object":"chat.completion",
+        "model":request.get("model").cloned().unwrap_or_else(||json!("echo-model")),
+        "choices":[{"index":0,"message":message,"finish_reason":finish_reason}],
+        "usage":usage
+    }))
+    .into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{chat_completions, embeddings};
+    use axum::{
+        Json,
+        http::{HeaderMap, HeaderValue, header},
+        response::IntoResponse,
+    };
+    use serde_json::json;
+
+    #[tokio::test]
+    async fn model_fixture_requires_auth_and_completes_after_tool_output() {
+        let unauthorized = chat_completions(HeaderMap::new(), Json(json!({}))).await;
+        assert_eq!(unauthorized.status(), 401);
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer m5-model-secret"),
+        );
+        let response = chat_completions(headers, Json(json!({"messages":[{"role":"tool","content":"ok"}],"tools":[{"function":{"name":"echo"}}]}))).await.into_response();
+        assert_eq!(response.status(), 200);
+    }
+
+    #[tokio::test]
+    async fn embedding_fixture_is_authenticated_and_deterministic() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer m5-model-secret"),
+        );
+        let request = json!({"model":"text-embedding-3-small","input":["alpha","beta"]});
+        let first = embeddings(headers.clone(), Json(request.clone())).await;
+        let second = embeddings(headers, Json(request)).await;
+        assert_eq!(first.status(), 200);
+        assert_eq!(second.status(), 200);
+        assert_eq!(
+            axum::body::to_bytes(first.into_body(), usize::MAX)
+                .await
+                .unwrap(),
+            axum::body::to_bytes(second.into_body(), usize::MAX)
+                .await
+                .unwrap()
+        );
+    }
 }

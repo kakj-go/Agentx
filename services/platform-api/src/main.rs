@@ -15,6 +15,7 @@ mod models;
 mod models_control;
 mod operations;
 mod runtime_operations;
+mod sandbox_profiles;
 mod security;
 mod skills_control;
 mod state;
@@ -42,6 +43,10 @@ async fn main() -> Result<()> {
     }
 
     let infrastructure = InfrastructureSettings::from_env()?;
+    if command.as_deref() == Some("doctor-infrastructure") {
+        doctor_infrastructure(&infrastructure).await?;
+        return Ok(());
+    }
     let pool = mysql::connect(&infrastructure.mysql).await?;
     if command.as_deref() == Some("migrate") {
         mysql::run_migrations(&pool).await?;
@@ -55,7 +60,7 @@ async fn main() -> Result<()> {
     let state = AppState::new(pool.clone(), auth)
         .with_m2(keyring, object_store, ConnectionSettings::from_env()?)
         .with_m3(
-            agentx_infrastructure::clients::clickhouse(&infrastructure.clickhouse),
+            agentx_infrastructure::clients::clickhouse(&infrastructure.clickhouse)?,
             infrastructure.redis.clone(),
         )
         .with_runtime(
@@ -74,6 +79,60 @@ async fn main() -> Result<()> {
 
     let router = build_api_router(state);
     agentx_service_kit::serve("platform-api", router, health).await
+}
+
+async fn doctor_infrastructure(settings: &InfrastructureSettings) -> Result<()> {
+    use object_store::path::Path;
+    use secrecy::ExposeSecret;
+
+    let pool = mysql::connect(&settings.mysql).await?;
+    mysql::ping(&pool).await?;
+
+    let mut redis = agentx_infrastructure::clients::connect_redis(&settings.redis).await?;
+    let redis_response: String = redis::cmd("PING").query_async(&mut redis).await?;
+    anyhow::ensure!(
+        redis_response == "PONG",
+        "Redis PING returned an unexpected response"
+    );
+
+    agentx_infrastructure::clients::clickhouse(&settings.clickhouse)?
+        .query("SELECT 1")
+        .fetch_one::<u8>()
+        .await
+        .context("ClickHouse SELECT 1 failed")?;
+
+    let objects = agentx_infrastructure::clients::object_store(&settings.object_storage)?;
+    let probe = Path::from(format!("deployment-doctor/{}.txt", uuid::Uuid::now_v7()));
+    objects
+        .put(
+            &probe,
+            bytes::Bytes::from_static(b"agentx-deployment-doctor").into(),
+        )
+        .await
+        .context("S3 write probe failed")?;
+    let read_result = match objects.get(&probe).await {
+        Ok(result) => result.bytes().await.context("S3 read probe body failed"),
+        Err(error) => Err(error).context("S3 read probe failed"),
+    };
+    let delete_result = objects.delete(&probe).await;
+    let content = read_result?;
+    anyhow::ensure!(
+        content.as_ref() == b"agentx-deployment-doctor",
+        "S3 read probe returned unexpected content"
+    );
+    delete_result.context("S3 cleanup probe failed")?;
+
+    println!(
+        "{}",
+        serde_json::json!({
+            "status":"ready",
+            "mysql":{"host":settings.mysql.host,"port":settings.mysql.port,"database":settings.mysql.database},
+            "redis":{"configured":!settings.redis.url.expose_secret().is_empty()},
+            "clickhouse":{"url":settings.clickhouse.url,"database":settings.clickhouse.database},
+            "objectStorage":{"endpoint":settings.object_storage.endpoint,"bucket":settings.object_storage.bucket}
+        })
+    );
+    Ok(())
 }
 
 fn start_health_checks(
@@ -103,11 +162,11 @@ fn start_health_checks(
             registry
                 .set_status("redis", if redis_ready { "ready" } else { "degraded" })
                 .await;
-            let clickhouse_ready = agentx_infrastructure::clients::clickhouse(&settings.clickhouse)
-                .query("SELECT 1")
-                .fetch_one::<u8>()
-                .await
-                .is_ok();
+            let clickhouse_ready =
+                match agentx_infrastructure::clients::clickhouse(&settings.clickhouse) {
+                    Ok(client) => client.query("SELECT 1").fetch_one::<u8>().await.is_ok(),
+                    Err(_) => false,
+                };
             registry
                 .set_status(
                     "clickhouse",
@@ -138,6 +197,9 @@ fn start_health_checks(
 }
 
 #[cfg(test)]
+mod migration_tests;
+
+#[cfg(test)]
 mod integration_tests {
     use agentx_application::{
         ArtifactStore, ArtifactWrite, Outbox, OutboxDispatcher, OutboxMessage,
@@ -157,7 +219,7 @@ mod integration_tests {
     use secrecy::SecretString;
     use serde_json::{Value, json};
     use sqlx::Row;
-    use std::{borrow::Cow, collections::BTreeMap, path::Path, sync::Arc, time::Duration};
+    use std::{collections::BTreeMap, sync::Arc, time::Duration};
     use testcontainers::{
         GenericImage, ImageExt,
         core::{IntoContainerPort, WaitFor},
@@ -253,6 +315,10 @@ mod integration_tests {
             username: "agentx".to_owned(),
             password: SecretString::from("agentx-test-password".to_owned()),
             max_connections: 5,
+            tls_mode: agentx_infrastructure::config::MySqlTlsMode::Disabled,
+            tls_ca_path: None,
+            tls_client_cert_path: None,
+            tls_client_key_path: None,
         };
         let mut pool = None;
         for _ in 0..30 {
@@ -597,11 +663,14 @@ mod integration_tests {
                 .as_array()
                 .expect("permission list")
                 .len(),
-            55
+            57
         );
         let runtime_permissions: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM permissions WHERE permission_key IN ('execution:run','execution:fork','execution:resume')")
             .fetch_one(&pool).await.expect("M4 runtime permissions");
         assert_eq!(runtime_permissions, 3);
+        let sandbox_permissions: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM permissions WHERE permission_key IN ('sandbox:view','sandbox:manage')")
+            .fetch_one(&pool).await.expect("M5 sandbox permissions");
+        assert_eq!(sandbox_permissions, 2);
 
         let environments = router
             .clone()
@@ -1806,6 +1875,10 @@ mod integration_tests {
         for _ in 0..20 {
             if let Ok(mut connection) = clients::connect_redis(&RedisSettings {
                 url: SecretString::from(format!("redis://127.0.0.1:{redis_port}/")),
+                password: None,
+                tls_ca_path: None,
+                tls_client_cert_path: None,
+                tls_client_key_path: None,
             })
             .await
             {
@@ -1831,7 +1904,9 @@ mod integration_tests {
             database: "agentx".to_owned(),
             username: "agentx".to_owned(),
             password: SecretString::from("agentx-test-password".to_owned()),
-        });
+            tls_ca_path: None,
+        })
+        .expect("ClickHouse client");
         let mut clickhouse_ready = false;
         for _ in 0..20 {
             if clickhouse_client
@@ -1863,83 +1938,5 @@ mod integration_tests {
             tokio::time::sleep(Duration::from_millis(250)).await;
         }
         assert!(minio_ready);
-    }
-
-    #[tokio::test]
-    async fn mysql_migrations_upgrade_an_m1_schema_to_mcp_and_skill_workspace() {
-        let container = GenericImage::new("mysql", "8.4")
-            .with_exposed_port(3306.tcp())
-            .with_wait_for(WaitFor::message_on_stderr("ready for connections"))
-            .with_env_var("MYSQL_DATABASE", "agentx")
-            .with_env_var("MYSQL_USER", "agentx")
-            .with_env_var("MYSQL_PASSWORD", "agentx-test-password")
-            .with_env_var("MYSQL_ROOT_PASSWORD", "agentx-root-password")
-            .start()
-            .await
-            .expect("MySQL container should start");
-        let port = container
-            .get_host_port_ipv4(3306.tcp())
-            .await
-            .expect("mapped MySQL port");
-        let settings = MySqlSettings {
-            host: "127.0.0.1".to_owned(),
-            port,
-            database: "agentx".to_owned(),
-            username: "agentx".to_owned(),
-            password: SecretString::from("agentx-test-password".to_owned()),
-            max_connections: 5,
-        };
-        let mut pool = None;
-        for _ in 0..30 {
-            match mysql::connect(&settings).await {
-                Ok(value) => {
-                    pool = Some(value);
-                    break;
-                }
-                Err(_) => tokio::time::sleep(Duration::from_millis(500)).await,
-            }
-        }
-        let pool = pool.expect("connect to test MySQL");
-        let path = Path::new(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../migrations/mysql"
-        ));
-        let all = sqlx::migrate::Migrator::new(path)
-            .await
-            .expect("load migrations");
-        let m1 = sqlx::migrate::Migrator {
-            migrations: Cow::Owned(
-                all.migrations
-                    .iter()
-                    .filter(|migration| migration.version <= 3)
-                    .cloned()
-                    .collect(),
-            ),
-            ..sqlx::migrate::Migrator::DEFAULT
-        };
-        m1.run(&pool).await.expect("apply M1 migrations");
-        let before: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='mcp_servers'",
-        )
-        .fetch_one(&pool)
-        .await
-        .expect("query pre-upgrade schema");
-        assert_eq!(before, 0);
-
-        all.run(&pool).await.expect("append M2.1 migrations");
-        let current_tables: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name IN ('mcp_servers','mcp_tools','skill_workspace_entries')",
-        )
-        .fetch_one(&pool)
-        .await
-        .expect("query M2.1 schema");
-        assert_eq!(current_tables, 3);
-        let removed_tables: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name IN ('tools','tool_versions')",
-        )
-        .fetch_one(&pool)
-        .await
-        .expect("query removed schema");
-        assert_eq!(removed_tables, 0);
     }
 }

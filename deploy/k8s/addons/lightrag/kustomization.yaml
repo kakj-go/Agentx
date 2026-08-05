@@ -1,24 +1,9 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-namespace: agentx
 resources:
   - resources.yaml
-generatorOptions:
-  disableNameSuffixHash: true
-configMapGenerator:
-  - name: agentx-lightrag-config
-    literals:
-      - HOST=0.0.0.0
-      - PORT=9621
-      - WORKING_DIR=/app/data/rag_storage
-      - INPUT_DIR=/app/data/inputs
-      - PROMPT_DIR=/app/data/prompts
-      - LLM_BINDING=openai
-      - EMBEDDING_BINDING=openai
-      - OPENAI_API_BASE=https://api.openai.com/v1
-secretGenerator:
-  - name: agentx-lightrag-secrets
-    literals:
-      - LIGHTRAG_API_KEY=agentx-local-lightrag
-      - LLM_BINDING_API_KEY=
-      - EMBEDDING_BINDING_API_KEY=
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: agentx
+      app.kubernetes.io/managed-by: agentx-deploy
+      agentx.io/component: lightrag

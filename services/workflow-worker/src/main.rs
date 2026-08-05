@@ -1,16 +1,25 @@
 use std::{collections::BTreeMap, env, sync::Arc, time::Duration};
 
-use agentx_application::ArtifactStore;
+mod agent;
+mod resources;
+
+use agentx_application::{ArtifactStore, CredentialResolver, SandboxRuntime};
 use agentx_domain::{ExecutionId, NodeExecutionId, TenantId, WorkflowVersionId};
 use agentx_infrastructure::{
     artifact::MySqlObjectArtifactStore,
     clients,
-    config::InfrastructureSettings,
-    credential::CredentialKeyring,
+    config::RuntimeInfrastructureSettings,
+    credential::{CredentialKeyring, MySqlCredentialResolver},
+    knowledge_runtime::{LightRagRuntime, Mem0Runtime},
+    mcp_runtime::HttpMcpToolRuntime,
+    model_runtime::OpenAiCompatibleRuntime,
     mysql,
     runtime_broker::{InvocationBroker, InvocationBrokerError, InvocationScope},
     runtime_queue::{QueueItem, RuntimeQueue},
     runtime_repository::{ClaimedTask, RuntimeRepository, RuntimeTask, TaskResult},
+    runtime_resources::MySqlResourceAuthorizer,
+    sandbox_runtime::SandboxManagerRuntime,
+    skill_runtime::SnapshotSkillRuntime,
 };
 use agentx_node_protocol::{
     ExecutionMode, GroupedInput, InvocationResourceRequest, InvocationResourceResponse, Item,
@@ -28,15 +37,20 @@ use axum::{
     http::StatusCode,
     routing::{get, post},
 };
+use futures::StreamExt;
 use secrecy::SecretString;
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use sqlx::Row;
 use time::OffsetDateTime;
 use tokio::sync::Semaphore;
+use tokio_util::sync::CancellationToken;
 use tonic::transport::{Channel, Endpoint};
 use tracing::{error, info, warn};
 use uuid::Uuid;
+
+use agent::AgentRunner;
+use resources::{ResourceRuntimes, failed, runtime_context};
 
 #[derive(Clone)]
 struct WorkerState {
@@ -49,11 +63,14 @@ struct WorkerState {
     capabilities: Vec<String>,
     concurrency: Arc<Semaphore>,
     broker: InvocationBroker,
+    runtimes: ResourceRuntimes,
+    agent: AgentRunner,
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let settings = InfrastructureSettings::from_env()?;
+    let settings = RuntimeInfrastructureSettings::from_env()?;
+    let health_settings = settings.clone();
     let pool = mysql::connect(&settings.mysql).await?;
     let objects = clients::object_store(&settings.object_storage)?;
     let artifact_store: Arc<dyn ArtifactStore> =
@@ -68,8 +85,8 @@ async fn main() -> Result<()> {
     )?;
     let broker = InvocationBroker::new(
         pool.clone(),
-        Arc::new(keyring),
-        artifact_store,
+        Arc::new(keyring.clone()),
+        artifact_store.clone(),
         env::var("AGENTX_NODE_BROKER_URL").unwrap_or_else(|_| "http://127.0.0.1:8080".into()),
         env::var("AGENTX_NODE_HANDLE_TTL_SECONDS")
             .ok()
@@ -78,7 +95,7 @@ async fn main() -> Result<()> {
     );
     let endpoint = env::var("AGENTX_RUNTIME_COORDINATOR_URL")
         .unwrap_or_else(|_| "http://127.0.0.1:9090".into());
-    let channel = Endpoint::from_shared(endpoint)?.connect_lazy();
+    let channel = Endpoint::from_shared(endpoint.clone())?.connect_lazy();
     let capabilities = env::var("AGENTX_WORKER_CAPABILITIES")
         .unwrap_or_else(|_| "builtin,declarative_http,remote_action".into())
         .split(',')
@@ -91,8 +108,45 @@ async fn main() -> Result<()> {
         .and_then(|value| value.parse().ok())
         .unwrap_or(16_usize)
         .clamp(1, 256);
+    let credentials: Arc<dyn CredentialResolver> =
+        Arc::new(MySqlCredentialResolver::new(pool.clone(), keyring));
+    let authorizer = MySqlResourceAuthorizer::new(pool.clone());
+    let sandbox: Option<Arc<dyn SandboxRuntime>> = match (
+        env::var("AGENTX_SANDBOX_MANAGER_URL").ok(),
+        env::var("AGENTX_SANDBOX_RPC_TOKEN").ok(),
+    ) {
+        (Some(endpoint), Some(token)) => Some(Arc::new(
+            SandboxManagerRuntime::connect_lazy(&endpoint, &token).map_err(anyhow::Error::new)?,
+        )),
+        _ => None,
+    };
+    let runtimes = ResourceRuntimes {
+        model: Arc::new(
+            OpenAiCompatibleRuntime::new(authorizer.clone(), credentials.clone())
+                .map_err(anyhow::Error::new)?,
+        ),
+        mcp: Arc::new(
+            HttpMcpToolRuntime::new(authorizer.clone(), credentials.clone())
+                .map_err(anyhow::Error::new)?,
+        ),
+        skill: Arc::new(SnapshotSkillRuntime::new(
+            authorizer.clone(),
+            artifact_store.clone(),
+        )),
+        rag: Arc::new(
+            LightRagRuntime::new(authorizer.clone(), credentials.clone())
+                .map_err(anyhow::Error::new)?,
+        ),
+        memory: Arc::new(Mem0Runtime::new(authorizer, credentials).map_err(anyhow::Error::new)?),
+        sandbox,
+        artifacts: artifact_store,
+        trace: agentx_infrastructure::operations_projection::MySqlOperationsProjection::new(
+            pool.clone(),
+        ),
+    };
+    let agent = AgentRunner::new(pool.clone(), runtimes.clone());
     let state = WorkerState {
-        repository: RuntimeRepository::new(pool),
+        repository: RuntimeRepository::new(pool.clone()),
         queue: RuntimeQueue::new(settings.redis),
         coordinator: RuntimeCoordinatorClient::new(channel),
         http: reqwest::Client::builder()
@@ -105,18 +159,24 @@ async fn main() -> Result<()> {
         capabilities,
         concurrency: Arc::new(Semaphore::new(concurrency)),
         broker,
+        runtimes,
+        agent,
     };
     state.queue.ensure_groups().await?;
-    tokio::spawn(consume_loop(state.clone()));
-    tokio::spawn(heartbeat_service_loop(state.clone()));
 
     let health = agentx_service_kit::HealthRegistry::default();
     health.register("mysql", true).await;
     health.register("redis", true).await;
     health.register("coordinator", true).await;
-    health.set_status("mysql", "ready").await;
-    health.set_status("redis", "ready").await;
-    health.set_status("coordinator", "ready").await;
+    health.register("object_storage", true).await;
+    tokio::spawn(consume_loop(state.clone()));
+    tokio::spawn(heartbeat_service_loop(state.clone(), health.clone()));
+    tokio::spawn(worker_dependency_health_loop(
+        health.clone(),
+        health_settings,
+        pool,
+        endpoint,
+    ));
     let router = Router::new()
         .route(
             "/agentx/runtime/v1/invocation-resources/resolve",
@@ -182,7 +242,8 @@ async fn process_queue_item(state: &WorkerState, item: &QueueItem) -> Result<()>
 }
 
 async fn execute_with_heartbeat(state: &WorkerState, claimed: &ClaimedTask) -> TaskResult {
-    let execution = execute_task(state, claimed);
+    let cancellation = CancellationToken::new();
+    let execution = execute_task(state, claimed, cancellation.clone());
     tokio::pin!(execution);
     let timeout = tokio::time::sleep(Duration::from_millis(
         (claimed.task.deadline - OffsetDateTime::now_utc())
@@ -195,7 +256,12 @@ async fn execute_with_heartbeat(state: &WorkerState, claimed: &ClaimedTask) -> T
     loop {
         tokio::select! {
             result = &mut execution => return result.unwrap_or_else(|error| TaskResult::Failed { code:"WORKER_ERROR".into(), message:error.to_string(), retryable:true }),
-            _ = &mut timeout => return TaskResult::Failed{code:"NODE_TIMEOUT".into(),message:"Node execution exceeded its deadline".into(),retryable:true},
+            _ = &mut timeout => {
+                cancellation.cancel();
+                let cleanup=tokio::time::timeout(Duration::from_secs(15),&mut execution).await;
+                if let Ok(Ok(TaskResult::Failed{code,message,retryable}))=cleanup {if code=="SANDBOX_CLEANUP_PENDING"{return TaskResult::Failed{code,message,retryable};}}
+                return TaskResult::Failed{code:"NODE_TIMEOUT".into(),message:"Node execution exceeded its deadline".into(),retryable:true};
+            },
             _ = heartbeat.tick() => {
                 let response=state.coordinator.clone().heartbeat_lease(HeartbeatLeaseRequest{
                     tenant_id:claimed.task.tenant_id.to_string(),attempt_id:claimed.task.attempt_id.to_string(),
@@ -203,7 +269,12 @@ async fn execute_with_heartbeat(state: &WorkerState, claimed: &ClaimedTask) -> T
                 }).await;
                 match response {
                     Ok(response) if response.get_ref().valid && !response.get_ref().cancellation_requested => {}
-                    Ok(_) => return TaskResult::Failed{code:"EXECUTION_CANCELLED".into(),message:"Execution was cancelled or lease was lost".into(),retryable:false},
+                    Ok(_) => {
+                        cancellation.cancel();
+                        let cleanup=tokio::time::timeout(Duration::from_secs(15),&mut execution).await;
+                        if let Ok(Ok(TaskResult::Failed{code,message,retryable}))=cleanup {if code=="SANDBOX_CLEANUP_PENDING"{return TaskResult::Failed{code,message,retryable};}}
+                        return TaskResult::Failed{code:"EXECUTION_CANCELLED".into(),message:"Execution was cancelled or lease was lost".into(),retryable:false};
+                    },
                     Err(error) => warn!(%error,"lease heartbeat failed; current lease deadline remains authoritative"),
                 }
             }
@@ -211,12 +282,76 @@ async fn execute_with_heartbeat(state: &WorkerState, claimed: &ClaimedTask) -> T
     }
 }
 
-async fn execute_task(state: &WorkerState, claimed: &ClaimedTask) -> Result<TaskResult> {
+async fn execute_task(
+    state: &WorkerState,
+    claimed: &ClaimedTask,
+    cancellation: CancellationToken,
+) -> Result<TaskResult> {
     let task = &claimed.task;
     match task.capability.as_str() {
         "builtin" => execute_builtin(state, task).await,
         "declarative_http" => execute_http(state, task).await,
         "remote_action" => execute_remote(state, task, claimed.lease_token).await,
+        "model" | "mcp_tool" | "skill" | "rag" | "memory" | "sandbox" => {
+            let first = flatten_inputs(&task.inputs)
+                .into_iter()
+                .next()
+                .unwrap_or_default();
+            let mut parameters = ExpressionEngine
+                .resolve_parameters(&task.node_parameters, &expression_context(task, &first, 0))?;
+            if task.capability == "sandbox" {
+                let invocation = state
+                    .broker
+                    .issue(
+                        &InvocationScope {
+                            tenant_id: task.tenant_id,
+                            execution_id: task.execution_id,
+                            node_execution_id: task.node_execution_id,
+                            attempt_id: task.attempt_id,
+                            lease_token: claimed.lease_token,
+                            deadline: task.deadline,
+                        },
+                        &task.resource_references,
+                        &task.resource_snapshots,
+                        task.inputs.values().flatten(),
+                    )
+                    .await?;
+                let handles = invocation
+                    .credential_bindings
+                    .into_iter()
+                    .map(|binding| {
+                        json!({
+                            "resourceId": binding.resource_id,
+                            "version": binding.version,
+                            "handle": binding.invocation.handle,
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                parameters
+                    .as_object_mut()
+                    .context("Sandbox node parameters must be an object")?
+                    .insert("_credentialHandles".into(), Value::Array(handles));
+            }
+            Ok(state
+                .runtimes
+                .execute(task, claimed.lease_token, cancellation, parameters)
+                .await
+                .unwrap_or_else(failed))
+        }
+        "agent" => {
+            let first = flatten_inputs(&task.inputs)
+                .into_iter()
+                .next()
+                .unwrap_or_default();
+            let parameters = ExpressionEngine
+                .resolve_parameters(&task.node_parameters, &expression_context(task, &first, 0))?;
+            let context = runtime_context(task, claimed.lease_token, cancellation);
+            Ok(state
+                .agent
+                .execute(task, &context, parameters)
+                .await
+                .unwrap_or_else(failed))
+        }
         other => anyhow::bail!("unsupported worker capability {other}"),
     }
 }
@@ -443,6 +578,7 @@ async fn execute_remote(
                 deadline: task.deadline,
             },
             &task.resource_references,
+            &task.resource_snapshots,
             task.inputs.values().flatten(),
         )
         .await?;
@@ -844,15 +980,71 @@ fn execution_mode(value: &str) -> ExecutionMode {
     }
 }
 
-async fn heartbeat_service_loop(state: WorkerState) {
+async fn worker_dependency_health_loop(
+    health: agentx_service_kit::HealthRegistry,
+    settings: RuntimeInfrastructureSettings,
+    pool: sqlx::MySqlPool,
+    coordinator_endpoint: String,
+) {
+    loop {
+        health
+            .set_status(
+                "mysql",
+                if mysql::ping(&pool).await.is_ok() {
+                    "ready"
+                } else {
+                    "unavailable"
+                },
+            )
+            .await;
+        health
+            .set_status(
+                "redis",
+                if clients::connect_redis(&settings.redis).await.is_ok() {
+                    "ready"
+                } else {
+                    "unavailable"
+                },
+            )
+            .await;
+        let object_ready = match clients::object_store(&settings.object_storage) {
+            Ok(store) => matches!(store.list(None).next().await, Some(Ok(_)) | None),
+            Err(_) => false,
+        };
+        health
+            .set_status(
+                "object_storage",
+                if object_ready { "ready" } else { "unavailable" },
+            )
+            .await;
+        let coordinator_ready = match Endpoint::from_shared(coordinator_endpoint.clone()) {
+            Ok(endpoint) => endpoint.connect().await.is_ok(),
+            Err(_) => false,
+        };
+        health
+            .set_status(
+                "coordinator",
+                if coordinator_ready {
+                    "ready"
+                } else {
+                    "unavailable"
+                },
+            )
+            .await;
+        tokio::time::sleep(Duration::from_secs(10)).await;
+    }
+}
+
+async fn heartbeat_service_loop(state: WorkerState, health: agentx_service_kit::HealthRegistry) {
     loop {
         match sqlx::query_scalar::<_, Uuid>("SELECT id FROM tenants")
             .fetch_all(state.repository.pool())
             .await
         {
             Ok(tenants) => {
+                let status = health.overall_status().await;
                 for tenant in tenants {
-                    let _=sqlx::query("INSERT INTO runtime_service_heartbeats(tenant_id,service_type,instance_id,status,detail_json,heartbeat_at) VALUES(?,'worker',?,'ready',?,CURRENT_TIMESTAMP(6)) ON DUPLICATE KEY UPDATE status='ready',detail_json=VALUES(detail_json),heartbeat_at=CURRENT_TIMESTAMP(6)").bind(tenant).bind(&state.instance_id).bind(json!({"capabilities":state.capabilities})).execute(state.repository.pool()).await;
+                    let _=sqlx::query("INSERT INTO runtime_service_heartbeats(tenant_id,service_type,instance_id,status,detail_json,heartbeat_at) VALUES(?,'worker',?,?,?,CURRENT_TIMESTAMP(6)) ON DUPLICATE KEY UPDATE status=VALUES(status),detail_json=VALUES(detail_json),heartbeat_at=CURRENT_TIMESTAMP(6)").bind(tenant).bind(&state.instance_id).bind(status).bind(json!({"capabilities":state.capabilities})).execute(state.repository.pool()).await;
                 }
             }
             Err(error) => warn!(%error,"worker heartbeat tenant query failed"),
@@ -895,7 +1087,9 @@ mod tests {
     fn loop_processes_every_batch_before_done() {
         let task = RuntimeTask {
             tenant_id: Uuid::nil(),
+            workflow_id: Uuid::nil(),
             workflow_version_id: Uuid::nil(),
+            workflow_service_identity_id: Uuid::nil(),
             execution_id: Uuid::nil(),
             node_execution_id: Uuid::nil(),
             attempt_id: Uuid::nil(),
@@ -913,6 +1107,7 @@ mod tests {
             trace_id: Uuid::nil(),
             linked_nodes: json!({}),
             resource_references: vec![],
+            resource_snapshots: vec![],
         };
         let mut batch = vec![
             Item {

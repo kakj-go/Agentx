@@ -1,0 +1,153 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentx.local/schemas/deployment-profile-v1alpha1.json",
+  "title": "Agentx deployment profile",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["apiVersion", "namespace", "environment", "images", "ingress", "components", "secrets"],
+  "properties": {
+    "apiVersion": { "const": "agentx.io/deployment/v1alpha1" },
+    "namespace": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", "maxLength": 63 },
+    "environment": { "enum": ["local", "test", "production"] },
+    "images": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "registry", "tag", "pullPolicy"],
+      "properties": {
+        "mode": { "enum": ["local-build", "registry"] },
+        "registry": { "type": "string" },
+        "tag": { "type": "string", "minLength": 1 },
+        "pullPolicy": { "enum": ["Always", "IfNotPresent", "Never"] }
+      }
+    },
+    "ingress": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["host", "controllerServiceType"],
+      "properties": {
+        "host": { "type": "string", "minLength": 1 },
+        "controllerServiceType": { "enum": ["LoadBalancer", "NodePort"] },
+        "tlsSecretName": { "type": ["string", "null"] }
+      }
+    },
+    "secrets": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "name", "lightragName", "mem0Name"],
+      "properties": {
+        "mode": { "enum": ["managed", "existing"] },
+        "name": { "const": "agentx-secrets" },
+        "lightragName": { "const": "agentx-lightrag-secrets" },
+        "mem0Name": { "const": "agentx-mem0-secrets" }
+      }
+    },
+    "components": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mysql", "redis", "clickhouse", "objectStorage", "rag", "memory", "sandbox"],
+      "properties": {
+        "mysql": { "$ref": "#/$defs/mysql" },
+        "redis": { "$ref": "#/$defs/redis" },
+        "clickhouse": { "$ref": "#/$defs/clickhouse" },
+        "objectStorage": { "$ref": "#/$defs/objectStorage" },
+        "rag": { "$ref": "#/$defs/addon" },
+        "memory": { "$ref": "#/$defs/addon" },
+        "sandbox": { "$ref": "#/$defs/sandbox" }
+      }
+    }
+  },
+  "$defs": {
+    "tls": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "caFile": { "type": ["string", "null"] },
+        "clientCertFile": { "type": ["string", "null"] },
+        "clientKeyFile": { "type": ["string", "null"] }
+      }
+    },
+    "mysql": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "host", "port", "database", "user", "tlsMode"],
+      "properties": {
+        "mode": { "enum": ["bundled", "external"] },
+        "host": { "type": "string", "minLength": 1 },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "database": { "type": "string", "minLength": 1 },
+        "user": { "type": "string", "minLength": 1 },
+        "tlsMode": { "enum": ["disabled", "preferred", "required", "verify_ca", "verify_identity"] },
+        "tls": { "$ref": "#/$defs/tls" }
+      }
+    },
+    "redis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "url"],
+      "properties": {
+        "mode": { "enum": ["bundled", "external"] },
+        "url": { "type": "string", "pattern": "^rediss?://" },
+        "tls": { "$ref": "#/$defs/tls" }
+      }
+    },
+    "clickhouse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "url", "database", "user"],
+      "properties": {
+        "mode": { "enum": ["bundled", "external"] },
+        "url": { "type": "string", "pattern": "^https?://" },
+        "database": { "type": "string", "minLength": 1 },
+        "user": { "type": "string", "minLength": 1 },
+        "tls": { "$ref": "#/$defs/tls" }
+      }
+    },
+    "objectStorage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "endpoint", "bucket", "region", "allowHttp", "pathStyle"],
+      "properties": {
+        "mode": { "enum": ["bundled-minio", "external-s3"] },
+        "endpoint": { "type": "string", "pattern": "^https?://" },
+        "bucket": { "type": "string", "minLength": 1 },
+        "region": { "type": "string", "minLength": 1 },
+        "allowHttp": { "type": "boolean" },
+        "pathStyle": { "type": "boolean" },
+        "tls": { "$ref": "#/$defs/tls" }
+      }
+    },
+    "addon": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode"],
+      "properties": {
+        "mode": { "enum": ["bundled", "external", "disabled"] },
+        "endpoint": { "type": ["string", "null"] },
+        "provider": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": ["baseUrl", "llmModel", "embeddingModel", "embeddingDimension"],
+          "properties": {
+            "baseUrl": { "type": "string", "pattern": "^https?://" },
+            "llmModel": { "type": "string", "minLength": 1 },
+            "embeddingModel": { "type": "string", "minLength": 1 },
+            "embeddingDimension": { "type": "integer", "minimum": 1, "maximum": 100000 }
+          }
+        }
+      }
+    },
+    "sandbox": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode"],
+      "properties": {
+        "mode": { "enum": ["disabled", "remote"] },
+        "endpoint": { "type": ["string", "null"] },
+        "secureAccess": { "type": "boolean" },
+        "useServerProxy": { "type": "boolean" },
+        "allowedHosts": { "type": "array", "items": { "type": "string" } },
+        "allowedCidrs": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}

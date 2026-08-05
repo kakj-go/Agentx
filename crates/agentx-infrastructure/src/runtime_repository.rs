@@ -1,6 +1,6 @@
 use std::{collections::BTreeMap, sync::Arc};
 
-use agentx_application::{ArtifactStore, ArtifactWrite};
+use agentx_application::{ArtifactStore, ArtifactWrite, RuntimeResourceSnapshot};
 use agentx_domain::{
     ArtifactId, ExecutionOrder, NodeExecutionId, ResourceReference, TenantId, WorkflowDefinition,
 };
@@ -93,6 +93,8 @@ pub struct ClaimedTask {
 #[derive(Clone, Debug)]
 pub struct RuntimeTask {
     pub tenant_id: Uuid,
+    pub workflow_id: Uuid,
+    pub workflow_service_identity_id: Uuid,
     pub workflow_version_id: Uuid,
     pub execution_id: Uuid,
     pub node_execution_id: Uuid,
@@ -111,6 +113,7 @@ pub struct RuntimeTask {
     pub trace_id: Uuid,
     pub linked_nodes: Value,
     pub resource_references: Vec<ResourceReference>,
+    pub resource_snapshots: Vec<RuntimeResourceSnapshot>,
 }
 
 #[derive(Clone, Debug)]
@@ -199,7 +202,7 @@ impl RuntimeRepository {
                 serde_json::from_value(value).context("Compiled Workflow IR is invalid")?
             }
             None => {
-                let registry = NodeRegistry::m4_defaults();
+                let registry = NodeRegistry::m5_defaults();
                 let compiler = WorkflowCompiler::new(&registry);
                 let compiled = compiler
                     .compile(
@@ -224,6 +227,41 @@ impl RuntimeRepository {
             }
         };
 
+        let identity_id: Uuid = sqlx::query_scalar("SELECT id FROM workflow_service_identities WHERE tenant_id=? AND workflow_id=? AND status='active'")
+            .bind(command.tenant_id).bind(workflow_id).fetch_optional(&mut *transaction).await?
+            .context("Workflow Service Identity is missing or disabled")?;
+        let resource_rows = sqlx::query("SELECT node_id,resource_type,resource_id,resource_version_id,operation_key,snapshot_json,snapshot_hash FROM workflow_version_resources WHERE tenant_id=? AND workflow_version_id=? ORDER BY node_id,resource_type,resource_id")
+            .bind(command.tenant_id).bind(command.workflow_version_id).fetch_all(&mut *transaction).await?;
+        let mut execution_resources = Vec::with_capacity(resource_rows.len());
+        for resource in resource_rows {
+            let resource_type: String = resource.try_get("resource_type")?;
+            let resource_id: Uuid = resource.try_get("resource_id")?;
+            let operation: String = resource.try_get("operation_key")?;
+            let grant_id: Option<Uuid> = sqlx::query_scalar("SELECT id FROM resource_grants WHERE tenant_id=? AND subject_type='workflow_service_identity' AND subject_id=? AND resource_type=? AND resource_id=? AND operation_key IN (?, 'manage') ORDER BY created_at LIMIT 1")
+                .bind(command.tenant_id).bind(identity_id).bind(&resource_type).bind(resource_id).bind(&operation)
+                .fetch_optional(&mut *transaction).await?;
+            let grant_id = grant_id.context(format!(
+                "RESOURCE_GRANT_MISSING: {resource_type} {resource_id} {operation}"
+            ))?;
+            execution_resources.push(json!({
+                "nodeId": resource.try_get::<String,_>("node_id")?,
+                "reference": {
+                    "resourceType": resource_type,
+                    "resourceId": resource_id,
+                    "resourceVersionId": resource.try_get::<Option<Uuid>,_>("resource_version_id")?,
+                    "operation": operation,
+                },
+                "snapshotHash": resource.try_get::<String,_>("snapshot_hash")?,
+                "snapshot": resource.try_get::<Value,_>("snapshot_json")?,
+                "grantId": grant_id,
+                "authorizedAt": OffsetDateTime::now_utc(),
+            }));
+        }
+        let resource_snapshot = json!({
+            "schemaVersion": "1.0",
+            "workflowServiceIdentityId": identity_id,
+            "resources": execution_resources,
+        });
         let execution_id = Uuid::now_v7();
         let trace_id = Uuid::now_v7();
         sqlx::query("INSERT INTO workflow_executions(id,tenant_id,workflow_id,workflow_version_id,invocation_id,session_id,parent_execution_id,caller_execution_id,fork_checkpoint_id,trace_id,trigger_type,execution_type,fork_mode,requested_by,input_json,status,started_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'queued',CURRENT_TIMESTAMP(6))")
@@ -240,11 +278,13 @@ impl RuntimeRepository {
             "definition": definition_value,
             "compiledIrHash": machine.workflow().canonical_hash,
             "workflowVersionId": command.workflow_version_id,
+            "resources": resource_snapshot,
+            "runtimeSettings": command.runtime_settings,
         }))?;
         sqlx::query("INSERT INTO execution_snapshots(execution_id,tenant_id,workflow_version_id,definition_json,compiled_ir_json,compiled_ir_hash,compiler_version,resource_snapshot_json,runtime_settings_json,state_hash) VALUES(?,?,?,?,?,?,?,?,?,?)")
             .bind(execution_id).bind(command.tenant_id).bind(command.workflow_version_id).bind(&definition_value)
             .bind(serde_json::to_value(machine.workflow())?).bind(&machine.workflow().canonical_hash).bind(&machine.workflow().compiler_version)
-            .bind(json!({})).bind(&command.runtime_settings).bind(snapshot_hash).execute(&mut *transaction).await?;
+            .bind(&resource_snapshot).bind(&command.runtime_settings).bind(snapshot_hash).execute(&mut *transaction).await?;
         queue_ready_attempts(
             &mut transaction,
             command.tenant_id,
@@ -738,7 +778,7 @@ impl RuntimeRepository {
     }
 
     async fn load_task(&self, message: &DispatchMessage) -> Result<RuntimeTask> {
-        let row=sqlx::query("SELECT n.node_id,n.node_type,n.node_version,n.input_json,n.run_index,n.iteration_index,n.capability,a.attempt_number,a.idempotency_key,a.deadline_at,e.workflow_version_id,e.trace_id,e.execution_type,s.compiled_ir_json,s.definition_json FROM node_attempts a JOIN node_executions n ON n.id=a.node_execution_id JOIN workflow_executions e ON e.id=a.execution_id JOIN execution_snapshots s ON s.execution_id=e.id WHERE a.tenant_id=? AND a.id=?")
+        let row=sqlx::query("SELECT n.node_id,n.node_type,n.node_version,n.input_json,n.run_index,n.iteration_index,n.capability,a.attempt_number,a.idempotency_key,a.deadline_at,e.workflow_id,e.workflow_version_id,e.trace_id,e.execution_type,s.compiled_ir_json,s.definition_json,s.resource_snapshot_json FROM node_attempts a JOIN node_executions n ON n.id=a.node_execution_id JOIN workflow_executions e ON e.id=a.execution_id JOIN execution_snapshots s ON s.execution_id=e.id WHERE a.tenant_id=? AND a.id=?")
             .bind(message.tenant_id).bind(message.attempt_id).fetch_one(&self.pool).await?;
         let compiled: CompiledWorkflow = serde_json::from_value(row.try_get("compiled_ir_json")?)?;
         let node_id: String = row.try_get("node_id")?;
@@ -747,14 +787,25 @@ impl RuntimeRepository {
             .iter()
             .find(|node| node.id == node_id)
             .context("Compiled node is missing")?;
-        let definition: WorkflowDefinition =
-            serde_json::from_value(row.try_get("definition_json")?)?;
-        let resource_references = definition
-            .nodes
+        let resource_snapshot: Value = row.try_get("resource_snapshot_json")?;
+        let workflow_service_identity_id = resource_snapshot
+            .get("workflowServiceIdentityId")
+            .and_then(Value::as_str)
+            .map(Uuid::parse_str)
+            .transpose()?
+            .context("Execution resource snapshot has no service identity")?;
+        let resource_snapshots = resource_snapshot
+            .get("resources")
+            .and_then(Value::as_array)
+            .context("Execution resource snapshot has no resources")?
             .iter()
-            .find(|candidate| candidate.id == node_id)
-            .map(|candidate| candidate.resource_references.clone())
-            .context("Definition node is missing")?;
+            .filter(|value| value.get("nodeId").and_then(Value::as_str) == Some(node_id.as_str()))
+            .map(|value| serde_json::from_value::<RuntimeResourceSnapshot>(value.clone()))
+            .collect::<Result<Vec<_>, _>>()?;
+        let resource_references = resource_snapshots
+            .iter()
+            .map(|value| value.reference.clone())
+            .collect();
         let linked_rows=sqlx::query("SELECT node_name,run_index,output_json FROM node_executions WHERE tenant_id=? AND execution_id=? AND output_json IS NOT NULL ORDER BY run_index,id")
             .bind(message.tenant_id).bind(message.execution_id).fetch_all(&self.pool).await?;
         let mut linked_nodes = serde_json::Map::new();
@@ -775,6 +826,8 @@ impl RuntimeRepository {
         }
         Ok(RuntimeTask {
             tenant_id: message.tenant_id,
+            workflow_id: row.try_get("workflow_id")?,
+            workflow_service_identity_id,
             workflow_version_id: row.try_get("workflow_version_id")?,
             execution_id: message.execution_id,
             node_execution_id: message.node_execution_id,
@@ -798,6 +851,7 @@ impl RuntimeRepository {
             trace_id: row.try_get("trace_id")?,
             linked_nodes: Value::Object(linked_nodes),
             resource_references,
+            resource_snapshots,
         })
     }
 
@@ -1374,11 +1428,7 @@ fn checkpoint_type(result: &TaskResult) -> &'static str {
     }
 }
 fn capability_name(value: &NodeCapability) -> &'static str {
-    match value {
-        NodeCapability::Builtin => "builtin",
-        NodeCapability::DeclarativeHttp => "declarative_http",
-        NodeCapability::RemoteAction => "remote_action",
-    }
+    value.as_str()
 }
 fn side_effect_name(value: &agentx_node_protocol::SideEffectLevel) -> &'static str {
     match value {

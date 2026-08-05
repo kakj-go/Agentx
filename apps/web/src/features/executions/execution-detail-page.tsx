@@ -5,7 +5,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 
 import { useAuth } from '../../app/providers/auth-provider'
 import { apiRequest, apiRequestBlob, jsonBody } from '../../shared/api/client'
-import type { Approval, Checkpoint, Execution, ExecutionWait, ForkExecutionRequest, NodeExecution, PageResponse, SideEffectConfirmationRequest, Trace } from '../../shared/api/types'
+import type { Approval, Checkpoint, Execution, ExecutionWait, ForkExecutionRequest, NodeExecution, PageResponse, RuntimeDetails, SideEffectConfirmationRequest, Trace } from '../../shared/api/types'
 import { ConfirmDialog } from '../../shared/components/confirm-dialog'
 import { EmptyState } from '../../shared/components/empty-state'
 import { StatusBadge } from '../../shared/components/status-badge'
@@ -16,6 +16,7 @@ import { ExecutionForkDialog } from './execution-fork-dialog'
 import { ExecutionNodePanel } from './execution-node-panel'
 import { ExecutionOutline } from './execution-outline'
 import { ExecutionRecoveryRail } from './execution-recovery-rail'
+import { ExecutionRuntimePanel } from './execution-runtime-panel'
 import { SideEffectDialog } from './side-effect-dialog'
 
 type ItemResponse<T> = { items: T[] }
@@ -51,6 +52,7 @@ export function ExecutionDetailPage() {
   const checkpoints = useQuery({ queryKey: ['execution-checkpoints', id], queryFn: () => apiRequest<ItemResponse<Checkpoint>>(`/executions/${id}/checkpoints`), refetchInterval: execution.data && !terminalStatuses.has(execution.data.status) ? 2_000 : false })
   const waits = useQuery({ queryKey: ['execution-waits', id], queryFn: () => apiRequest<ItemResponse<ExecutionWait>>(`/executions/${id}/waits`), refetchInterval: execution.data && !terminalStatuses.has(execution.data.status) ? 2_000 : false })
   const trace = useQuery({ queryKey: ['execution-trace', id], queryFn: () => apiRequest<Trace>(`/executions/${id}/trace?limit=200`), retry: false, refetchInterval: execution.data && !terminalStatuses.has(execution.data.status) ? 3_000 : false })
+  const runtimeDetails = useQuery({ queryKey: ['execution-runtime-details', id], queryFn: () => apiRequest<RuntimeDetails>(`/executions/${id}/runtime-details`), refetchInterval: execution.data && !terminalStatuses.has(execution.data.status) ? 2_000 : false })
   const approvals = useQuery({ enabled: auth.hasPermission('approval:view'), queryKey: ['approvals', 'execution', id], queryFn: () => apiRequest<PageResponse<Approval>>('/approvals?pageSize=100'), refetchInterval: execution.data && !terminalStatuses.has(execution.data.status) ? 2_000 : false })
 
   useEffect(() => {
@@ -65,6 +67,7 @@ export function ExecutionDetailPage() {
       queryClient.invalidateQueries({ queryKey: ['execution-checkpoints', id] }),
       queryClient.invalidateQueries({ queryKey: ['execution-waits', id] }),
       queryClient.invalidateQueries({ queryKey: ['execution-trace', id] }),
+      queryClient.invalidateQueries({ queryKey: ['execution-runtime-details', id] }),
       queryClient.invalidateQueries({ queryKey: ['approvals', 'execution', id] }),
     ])
   }, [execution.data?.status, id, queryClient])
@@ -81,6 +84,7 @@ export function ExecutionDetailPage() {
     queryClient.invalidateQueries({ queryKey: ['execution-checkpoints', id] }),
     queryClient.invalidateQueries({ queryKey: ['execution-waits', id] }),
     queryClient.invalidateQueries({ queryKey: ['execution-trace', id] }),
+    queryClient.invalidateQueries({ queryKey: ['execution-runtime-details', id] }),
     queryClient.invalidateQueries({ queryKey: ['executions'] }),
   ])
   const closeFork = () => {
@@ -141,6 +145,8 @@ export function ExecutionDetailPage() {
       <ExecutionNodePanel node={selectedNode} onDownloadArtifact={(artifactId) => void downloadArtifact(artifactId)} trace={trace.data} />
       <div className="max-xl:col-span-2 max-lg:col-span-1"><ExecutionRecoveryRail approvals={executionApprovals} canConfirm={auth.hasPermission('execution:fork')} checkpoints={checkpoints.data?.items ?? []} nodes={nodeItems} onConfirm={setConfirmationNode} onDownloadArtifact={(artifactId) => void downloadArtifact(artifactId)} trace={trace.data} waits={waits.data?.items ?? []} /></div>
     </div>
+
+    <ExecutionRuntimePanel details={runtimeDetails.data} error={runtimeDetails.error} loading={runtimeDetails.isLoading} onDownloadArtifact={(artifactId) => void downloadArtifact(artifactId)} />
 
     <ExecutionForkDialog checkpoints={checkpoints.data?.items ?? []} initialNodeId={selectedNode?.nodeId} nodes={nodeItems} onClose={closeFork} onSubmit={(request) => fork.mutateAsync(request).then(() => undefined)} open={forkOpen} pending={fork.isPending} />
     <SideEffectDialog checkpointId={value.forkCheckpointId ?? undefined} node={confirmationNode} onClose={() => setConfirmationNode(undefined)} onSubmit={(request) => confirmation.mutateAsync(request).then(() => undefined)} pending={confirmation.isPending} />

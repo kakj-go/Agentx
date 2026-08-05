@@ -245,6 +245,20 @@ pub struct TraceEvent {
     pub workflow_id: WorkflowId,
     pub workflow_version_id: WorkflowVersionId,
     pub node_execution_id: Option<NodeExecutionId>,
+    #[serde(default)]
+    pub attempt_id: Option<AttemptId>,
+    #[serde(default)]
+    pub agent_run_id: Option<Uuid>,
+    #[serde(default)]
+    pub runtime_call_id: Option<Uuid>,
+    #[serde(default)]
+    pub sandbox_id: Option<String>,
+    #[serde(default)]
+    pub resource_type: Option<String>,
+    #[serde(default)]
+    pub resource_id: Option<Uuid>,
+    #[serde(default)]
+    pub resource_version_id: Option<Uuid>,
     pub event_type: String,
     pub status: String,
     #[serde(with = "time::serde::rfc3339")]
@@ -260,6 +274,10 @@ pub struct TraceEvent {
     pub cost_micros: u64,
     pub error_code: Option<String>,
     pub error_message: Option<String>,
+    #[serde(default)]
+    pub stop_reason: Option<String>,
+    #[serde(default)]
+    pub partial: bool,
     pub content_ref: Option<ArtifactId>,
     pub attributes: serde_json::Value,
 }

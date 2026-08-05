@@ -8,8 +8,8 @@ use utoipa::OpenApi;
 
 use crate::{
     applications, auth, connection_test, credentials, datasets, external_resources, grants, iam,
-    mcp_control, models::*, models_control, operations, runtime_operations, skills_control,
-    state::AppState, workflows,
+    mcp_control, models::*, models_control, operations, runtime_operations, sandbox_profiles,
+    skills_control, state::AppState, workflows,
 };
 
 #[derive(OpenApi)]
@@ -53,6 +53,9 @@ use crate::{
         external_resources::test_memory_connection, external_resources::list_memory,
         external_resources::create_memory, external_resources::get_memory,
         external_resources::update_memory,
+        sandbox_profiles::list_profiles, sandbox_profiles::create_profile,
+        sandbox_profiles::get_profile, sandbox_profiles::update_profile,
+        sandbox_profiles::create_version,
         grants::list_grantable_resources, grants::list_grants, grants::create_grant, grants::delete_grant,
         grants::validate_workflow_resources,
         applications::list_applications, applications::create_application,
@@ -80,7 +83,7 @@ use crate::{
         operations::timeout_approval, operations::list_notifications,
         operations::read_notification, operations::read_all_notifications,
         operations::list_executions, operations::get_execution,
-        operations::execution_trace, operations::execution_artifact, operations::runtime_status,
+        operations::execution_trace, operations::execution_artifact, operations::execution_runtime_details, operations::runtime_status,
         operations::dashboard_summary,
         runtime_operations::start_execution, runtime_operations::cancel_execution,
         runtime_operations::list_nodes, runtime_operations::get_node,
@@ -125,6 +128,11 @@ use crate::{
         external_resources::KnowledgeResponse, external_resources::CreateKnowledgeRequest,
         external_resources::MemoryResponse, external_resources::CreateMemoryRequest,
         external_resources::UpdateExternalResourceRequest,
+        sandbox_profiles::SandboxProfileResponse,
+        sandbox_profiles::SandboxProfileVersionResponse,
+        sandbox_profiles::SandboxProfileVersionInput,
+        sandbox_profiles::CreateSandboxProfileRequest,
+        sandbox_profiles::UpdateSandboxProfileRequest,
         connection_test::HealthCheckResponse, grants::GrantableResourceResponse, grants::GrantResponse,
         grants::CreateGrantRequest, grants::ResourceValidationResponse,
         grants::MissingGrantResponse,
@@ -151,6 +159,8 @@ use crate::{
         operations::NotificationInboxResponse, operations::ExecutionResponse,
         operations::TraceEventResponse, operations::TraceResponse,
         operations::RuntimeComponentStatus, operations::RuntimeStatusResponse,
+        operations::RuntimeDetailsResponse, operations::AgentRunDetail,
+        operations::AgentIterationDetail, operations::RuntimeCallDetail, operations::SandboxLeaseDetail,
         operations::DashboardSummaryResponse,
         runtime_operations::StartExecutionRequest, runtime_operations::ExecutionCommandResponse,
         runtime_operations::NodeAttemptResponse, runtime_operations::LineageResponse,
@@ -195,6 +205,19 @@ pub(crate) fn build_api_router(state: AppState) -> Router {
         .route("/roles", get(iam::list_roles).post(iam::create_role))
         .route("/roles/{id}", patch(iam::update_role))
         .route("/permissions", get(iam::list_permissions));
+    let api = api
+        .route(
+            "/sandbox-profiles",
+            get(sandbox_profiles::list_profiles).post(sandbox_profiles::create_profile),
+        )
+        .route(
+            "/sandbox-profiles/{id}",
+            get(sandbox_profiles::get_profile).patch(sandbox_profiles::update_profile),
+        )
+        .route(
+            "/sandbox-profiles/{id}/versions",
+            post(sandbox_profiles::create_version),
+        );
     let api = api
         .route(
             "/workflows",
@@ -512,6 +535,10 @@ pub(crate) fn build_api_router(state: AppState) -> Router {
         )
         .route("/executions", get(operations::list_executions))
         .route("/executions/{id}", get(operations::get_execution))
+        .route(
+            "/executions/{id}/runtime-details",
+            get(operations::execution_runtime_details),
+        )
         .route(
             "/workflow-versions/{version_id}/executions",
             post(runtime_operations::start_execution),

@@ -942,7 +942,7 @@ pub async fn list_versions(
     Ok(Json(values))
 }
 
-#[utoipa::path(post,path="/api/v1/skills/{id}/versions",request_body=PublishSkillVersionRequest,params(("id"=Uuid,Path)))]
+#[utoipa::path(operation_id="create_skill_version",post,path="/api/v1/skills/{id}/versions",request_body=PublishSkillVersionRequest,params(("id"=Uuid,Path)))]
 pub async fn create_version(
     State(state): State<AppState>,
     actor: AuthActor,

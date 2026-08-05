@@ -136,13 +136,13 @@ spec:
               containerPort: 8000
           readinessProbe:
             httpGet:
-              path: /api/health
+              path: /openapi.json
               port: http
             initialDelaySeconds: 5
             periodSeconds: 5
           livenessProbe:
             httpGet:
-              path: /api/health
+              path: /
               port: http
             initialDelaySeconds: 20
             periodSeconds: 10

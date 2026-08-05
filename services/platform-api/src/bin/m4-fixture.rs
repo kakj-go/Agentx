@@ -57,7 +57,7 @@ async fn main() -> Result<()> {
         ]
     })).await?;
 
-    create_workflow(&pool, tenant_id, user_id, department_id, "M4 Broker Fixture", json!({
+    let broker_version = create_workflow(&pool, tenant_id, user_id, department_id, "M4 Broker Fixture", json!({
         "schemaVersion":"2.0",
         "nodes":[
             node("trigger", "manual_trigger", "Manual Trigger", 80, 160, json!({})),
@@ -65,6 +65,7 @@ async fn main() -> Result<()> {
         ],
         "connections":[edge("broker-start", "trigger", "main", "broker", "main")]
     })).await?;
+    ensure_credential_snapshot(&pool, tenant_id, user_id, broker_version, credential_id).await?;
 
     create_workflow(&pool, tenant_id, user_id, department_id, "M4 Fault Fixture", json!({
         "schemaVersion":"2.0",
@@ -213,6 +214,63 @@ async fn ensure_fixture_credential(
         .execute(&mut *transaction).await?;
     transaction.commit().await?;
     Ok(id)
+}
+
+async fn ensure_credential_snapshot(
+    pool: &MySqlPool,
+    tenant_id: Uuid,
+    user_id: Uuid,
+    workflow_version_id: Uuid,
+    credential_id: Uuid,
+) -> Result<()> {
+    let identity_id: Uuid = sqlx::query_scalar("SELECT i.id FROM workflow_service_identities i JOIN workflow_versions v ON v.workflow_id=i.workflow_id AND v.tenant_id=i.tenant_id WHERE v.tenant_id=? AND v.id=?")
+        .bind(tenant_id)
+        .bind(workflow_version_id)
+        .fetch_one(pool)
+        .await?;
+    let snapshot = json!({
+        "id": credential_id,
+        "credentialType": "bearer",
+        "secretVersion": 1,
+        "resourceVersion": 1
+    });
+    let snapshot_hash = canonical_content_hash(&snapshot)?;
+    let mut transaction = pool.begin().await?;
+    let snapshot_exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM workflow_version_resources WHERE tenant_id=? AND workflow_version_id=? AND node_id='broker' AND resource_type='credential' AND resource_id=? AND operation_key='use')")
+        .bind(tenant_id)
+        .bind(workflow_version_id)
+        .bind(credential_id)
+        .fetch_one(&mut *transaction)
+        .await?;
+    if !snapshot_exists {
+        sqlx::query("INSERT INTO workflow_version_resources(id,tenant_id,workflow_version_id,node_id,resource_type,resource_id,resource_version_id,operation_key,snapshot_json,snapshot_hash) VALUES(?,?,?,'broker','credential',?,NULL,'use',?,?)")
+            .bind(Uuid::now_v7())
+            .bind(tenant_id)
+            .bind(workflow_version_id)
+            .bind(credential_id)
+            .bind(snapshot)
+            .bind(snapshot_hash)
+            .execute(&mut *transaction)
+            .await?;
+    }
+    let grant_exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM resource_grants WHERE tenant_id=? AND subject_type='workflow_service_identity' AND subject_id=? AND resource_type='credential' AND resource_id=? AND operation_key='use')")
+        .bind(tenant_id)
+        .bind(identity_id)
+        .bind(credential_id)
+        .fetch_one(&mut *transaction)
+        .await?;
+    if !grant_exists {
+        sqlx::query("INSERT INTO resource_grants(id,tenant_id,subject_type,subject_id,resource_type,resource_id,resource_version_id,operation_key,created_by) VALUES(?,?,'workflow_service_identity',?,'credential',?,NULL,'use',?)")
+            .bind(Uuid::now_v7())
+            .bind(tenant_id)
+            .bind(identity_id)
+            .bind(credential_id)
+            .bind(user_id)
+            .execute(&mut *transaction)
+            .await?;
+    }
+    transaction.commit().await?;
+    Ok(())
 }
 
 async fn create_workflow(

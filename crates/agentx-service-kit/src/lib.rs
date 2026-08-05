@@ -46,6 +46,23 @@ impl HealthRegistry {
     async fn snapshot(&self) -> Vec<DependencyHealth> {
         self.dependencies.read().await.values().cloned().collect()
     }
+
+    pub async fn overall_status(&self) -> &'static str {
+        let dependencies = self.snapshot().await;
+        if dependencies
+            .iter()
+            .any(|dependency| dependency.required && dependency.status != "ready")
+        {
+            "unavailable"
+        } else if dependencies
+            .iter()
+            .any(|dependency| !dependency.required && dependency.status != "ready")
+        {
+            "degraded"
+        } else {
+            "ready"
+        }
+    }
 }
 
 #[derive(Clone)]

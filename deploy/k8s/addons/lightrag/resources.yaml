@@ -36,7 +36,7 @@ spec:
     spec:
       containers:
         - name: lightrag
-          image: ghcr.io/hkuds/lightrag:v1.5.5
+          image: ghcr.io/hkuds/lightrag@sha256:206579ab1a2bc1f2b5f19fe97c01cb801ff409e6ae29a15542f82208a285640a
           imagePullPolicy: IfNotPresent
           envFrom:
             - configMapRef:

@@ -18,6 +18,27 @@ function Invoke-Native {
 
 Push-Location $root
 try {
+    $openSandboxSpecs = @{
+        "vendor/opensandbox/specs/sandbox-lifecycle.yml" = "da84de4d80cdad83c47d771135645fbeb8d7477bc8f908cc4b374397010ed6d2"
+        "vendor/opensandbox/specs/execd-api.yaml" = "0f03effe1dc5f340d13e39d6e8c815b5bdebb880183db05bea7d592696d5f5e0"
+    }
+    foreach ($entry in $openSandboxSpecs.GetEnumerator()) {
+        $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $root $entry.Key)).Hash.ToLowerInvariant()
+        if ($actual -cne $entry.Value) {
+            throw "OpenSandbox spec drift detected for $($entry.Key). Expected $($entry.Value), got $actual."
+        }
+    }
+    $oversized = @()
+    $sourceFiles = @(rg --files crates services apps/web | Where-Object { $_ -match '\.(rs|ts|tsx|js|jsx|mjs|css)$' })
+    foreach ($sourceFile in $sourceFiles) {
+        $lineCount = (Get-Content -LiteralPath $sourceFile).Count
+        if ($lineCount -gt 2000) {
+            $oversized += "$sourceFile ($lineCount lines)"
+        }
+    }
+    if ($oversized.Count -gt 0) {
+        throw "Source files exceed the 2000-line limit: $($oversized -join ', ')"
+    }
     Invoke-Native "cargo fmt" { cargo fmt --all -- --check }
     Invoke-Native "cargo clippy" { cargo clippy --workspace --all-targets -- -D warnings }
     Invoke-Native "cargo test" { cargo test --workspace }
@@ -72,8 +93,9 @@ try {
     Invoke-Native "web lint" { pnpm lint:web }
     Invoke-Native "web tests" { pnpm --filter @agentx/web test }
     Invoke-Native "web build" { pnpm build:web }
-    Invoke-Native "local Kustomize render" { kubectl kustomize deploy/k8s/overlays/local | Out-Null }
-    Invoke-Native "E2E Kustomize render" { kubectl kustomize deploy/k8s/overlays/e2e | Out-Null }
+    Invoke-Native "deployment profile tests" { & scripts/deploy-tests.ps1 | Out-Null }
+    Invoke-Native "Full Kustomize render" { kubectl kustomize deploy/k8s/stacks/full | Out-Null }
+    Invoke-Native "E2E Kustomize render" { kubectl kustomize deploy/k8s/stacks/e2e | Out-Null }
     Invoke-Native "LightRAG Kustomize render" { kubectl kustomize deploy/k8s/addons/lightrag | Out-Null }
     Invoke-Native "Mem0 Kustomize render" { kubectl kustomize deploy/k8s/addons/mem0 | Out-Null }
 }

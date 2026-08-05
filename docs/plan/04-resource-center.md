@@ -82,7 +82,7 @@ Secret 使用版本化密文或 Kubernetes/外部 Secret Reference；本地密�
 - Connection Test 使用短期解析出的 Secret，结果只保存状态、耗时和脱敏错误。
 - 删除被 Version Snapshot 引用的资源时转为停用，不物理删除历史数据。
 - Grant 撤销立即影响新执行；正在运行的节点按阶段 10 的运行策略处理。
-- Skill 代码能力不在 Platform API 执行，Manifest 不得声明绕过 CubeSandbox 的 Runner。
+- Skill 代码能力不在 Platform API 执行，Manifest 不得声明绕过 OpenSandbox 的 Runner。
 
 ## 10. 测试
 

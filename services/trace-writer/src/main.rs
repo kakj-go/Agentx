@@ -1,6 +1,6 @@
 use std::{env, time::Duration};
 
-use agentx_infrastructure::{config::InfrastructureSettings, mysql};
+use agentx_infrastructure::{config::TraceInfrastructureSettings, mysql};
 use anyhow::{Context, Result};
 use redis::{
     AsyncCommands, FromRedisValue,
@@ -38,6 +38,13 @@ struct TracePayload {
     workflow_id: Uuid,
     workflow_version_id: Uuid,
     node_execution_id: Option<Uuid>,
+    attempt_id: Option<Uuid>,
+    agent_run_id: Option<Uuid>,
+    runtime_call_id: Option<Uuid>,
+    sandbox_id: Option<String>,
+    resource_type: Option<String>,
+    resource_id: Option<Uuid>,
+    resource_version_id: Option<Uuid>,
     node_id: Option<String>,
     event_type: String,
     status: String,
@@ -56,6 +63,9 @@ struct TracePayload {
     cost_micros: u64,
     error_code: Option<String>,
     error_message: Option<String>,
+    stop_reason: Option<String>,
+    #[serde(default)]
+    partial: bool,
     #[serde(default)]
     attributes: Value,
     content_ref: Option<Uuid>,
@@ -81,6 +91,18 @@ struct TraceRow {
     workflow_version_id: Uuid,
     #[serde(with = "clickhouse::serde::uuid::option")]
     node_execution_id: Option<Uuid>,
+    #[serde(with = "clickhouse::serde::uuid::option")]
+    attempt_id: Option<Uuid>,
+    #[serde(with = "clickhouse::serde::uuid::option")]
+    agent_run_id: Option<Uuid>,
+    #[serde(with = "clickhouse::serde::uuid::option")]
+    runtime_call_id: Option<Uuid>,
+    sandbox_id: Option<String>,
+    resource_type: Option<String>,
+    #[serde(with = "clickhouse::serde::uuid::option")]
+    resource_id: Option<Uuid>,
+    #[serde(with = "clickhouse::serde::uuid::option")]
+    resource_version_id: Option<Uuid>,
     node_id: Option<String>,
     event_type: String,
     status: String,
@@ -97,6 +119,8 @@ struct TraceRow {
     cost_micros: u64,
     error_code: Option<String>,
     error_message: Option<String>,
+    stop_reason: Option<String>,
+    partial: u8,
     attributes_json: String,
     #[serde(with = "clickhouse::serde::uuid::option")]
     content_ref: Option<Uuid>,
@@ -114,6 +138,13 @@ impl From<TracePayload> for TraceRow {
             workflow_id: v.workflow_id,
             workflow_version_id: v.workflow_version_id,
             node_execution_id: v.node_execution_id,
+            attempt_id: v.attempt_id,
+            agent_run_id: v.agent_run_id,
+            runtime_call_id: v.runtime_call_id,
+            sandbox_id: v.sandbox_id,
+            resource_type: v.resource_type,
+            resource_id: v.resource_id,
+            resource_version_id: v.resource_version_id,
             node_id: v.node_id,
             event_type: v.event_type,
             status: v.status,
@@ -129,6 +160,8 @@ impl From<TracePayload> for TraceRow {
             cost_micros: v.cost_micros,
             error_code: v.error_code,
             error_message: v.error_message,
+            stop_reason: v.stop_reason,
+            partial: u8::from(v.partial),
             attributes_json: v.attributes.to_string(),
             content_ref: v.content_ref,
         }
@@ -137,8 +170,8 @@ impl From<TracePayload> for TraceRow {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let settings = InfrastructureSettings::from_env()?;
-    let clickhouse = agentx_infrastructure::clients::clickhouse(&settings.clickhouse);
+    let settings = TraceInfrastructureSettings::from_env()?;
+    let clickhouse = agentx_infrastructure::clients::clickhouse(&settings.clickhouse)?;
     if env::args().nth(1).as_deref() == Some("migrate-clickhouse") {
         run_clickhouse_migrations(&clickhouse).await?;
         return Ok(());
@@ -160,22 +193,26 @@ async fn main() -> Result<()> {
     health.register("mysql", true).await;
     health.register("redis", true).await;
     health.register("clickhouse", true).await;
-    health.set_status("mysql", "ready").await;
-    health.set_status("redis", "ready").await;
-    health.set_status("clickhouse", "ready").await;
+    let monitor_health = health.clone();
+    let monitor_state = state.clone();
+    tokio::spawn(async move { dependency_health_loop(monitor_state, monitor_health).await });
     tokio::spawn(relay_loop(state.clone()));
     tokio::spawn(consume_loop(state.clone()));
-    tokio::spawn(heartbeat_loop(state));
+    tokio::spawn(heartbeat_loop(state, health.clone()));
     agentx_service_kit::serve("trace-writer", axum::Router::new(), health).await
 }
 
 async fn run_clickhouse_migrations(client: &clickhouse::Client) -> Result<()> {
-    let migration = include_str!("../../../migrations/clickhouse/0001_workflow_trace_events.sql");
-    for statement in migration
-        .split(';')
-        .map(str::trim)
-        .filter(|v| !v.is_empty())
-    {
+    let migrations = [
+        include_str!("../../../migrations/clickhouse/0001_workflow_trace_events.sql"),
+        include_str!("../../../migrations/clickhouse/0002_m5_agent_trace.sql"),
+    ];
+    for statement in migrations.into_iter().flat_map(|migration| {
+        migration
+            .split(';')
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+    }) {
         client
             .query(statement)
             .execute()
@@ -299,15 +336,61 @@ async fn process_items(
     }
     Ok(())
 }
-async fn heartbeat_loop(state: WriterState) {
+async fn dependency_health_loop(state: WriterState, health: agentx_service_kit::HealthRegistry) {
+    loop {
+        health
+            .set_status(
+                "mysql",
+                if mysql::ping(&state.pool).await.is_ok() {
+                    "ready"
+                } else {
+                    "unavailable"
+                },
+            )
+            .await;
+        health
+            .set_status(
+                "redis",
+                if agentx_infrastructure::clients::connect_redis(&state.redis)
+                    .await
+                    .is_ok()
+                {
+                    "ready"
+                } else {
+                    "unavailable"
+                },
+            )
+            .await;
+        health
+            .set_status(
+                "clickhouse",
+                if state
+                    .clickhouse
+                    .query("SELECT 1")
+                    .fetch_one::<u8>()
+                    .await
+                    .is_ok()
+                {
+                    "ready"
+                } else {
+                    "unavailable"
+                },
+            )
+            .await;
+        tokio::time::sleep(Duration::from_secs(10)).await;
+    }
+}
+
+async fn heartbeat_loop(state: WriterState, health: agentx_service_kit::HealthRegistry) {
     loop {
         match sqlx::query_scalar::<_, Uuid>("SELECT id FROM tenants")
             .fetch_all(&state.pool)
             .await
         {
             Ok(tenants) => {
+                let status = health.overall_status().await;
                 for tenant in tenants {
-                    let _=sqlx::query("INSERT INTO runtime_service_heartbeats(tenant_id,service_type,instance_id,status,detail_json,heartbeat_at) VALUES(?,'trace_writer',?,'ready',JSON_OBJECT(),CURRENT_TIMESTAMP(6)) ON DUPLICATE KEY UPDATE status='ready',heartbeat_at=CURRENT_TIMESTAMP(6)").bind(tenant).bind(&state.consumer).execute(&state.pool).await;
+                    let _=sqlx::query("INSERT INTO runtime_service_heartbeats(tenant_id,service_type,instance_id,status,detail_json,heartbeat_at) VALUES(?,'trace_writer',?,?,JSON_OBJECT(),CURRENT_TIMESTAMP(6)) ON DUPLICATE KEY UPDATE status=VALUES(status),heartbeat_at=CURRENT_TIMESTAMP(6)").bind(tenant).bind(&state.consumer).bind(status).execute(&state.pool).await;
                 }
             }
             Err(error) => warn!(%error,"failed to update trace writer heartbeat"),
@@ -335,6 +418,13 @@ mod tests {
             workflow_id: id,
             workflow_version_id: id,
             node_execution_id: None,
+            attempt_id: None,
+            agent_run_id: None,
+            runtime_call_id: None,
+            sandbox_id: None,
+            resource_type: None,
+            resource_id: None,
+            resource_version_id: None,
             node_id: None,
             event_type: "node.started".into(),
             status: "running".into(),
@@ -350,6 +440,8 @@ mod tests {
             cost_micros: 0,
             error_code: None,
             error_message: None,
+            stop_reason: None,
+            partial: false,
             attributes: json!({"safe":true}),
             content_ref: None,
         };

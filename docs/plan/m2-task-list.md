@@ -45,7 +45,7 @@ M2 不产生真实 Execution。运行、测试执行、Agent 调用和节点调�
 ### 3.2 本阶段不做
 
 - Workflow Scheduler、Execution、Node Execution、表达式执行和 Redis 任务调度。
-- 模型推理、Tool 调用、Skill 加载、RAG 查询、Memory 读写和 CubeSandbox。
+- 模型推理、Tool 调用、Skill 加载、RAG 查询、Memory 读写和 OpenSandbox。
 - 完整 React Flow Studio、节点面板、连线校验、Pin Data 和局部执行。
 - n8n JSON 导入、连接器市场、OIDC 登录、通用监控和计费。
 - 物理删除已被历史 Version 引用的 Workflow 或资源。

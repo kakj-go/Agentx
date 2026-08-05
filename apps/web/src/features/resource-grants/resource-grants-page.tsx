@@ -14,7 +14,7 @@ import { Badge } from '../../shared/ui/badge'
 import { Button } from '../../shared/ui/button'
 import { Tabs, TabsList, TabsTrigger } from '../../shared/ui/tabs'
 
-const resourceTypes = ['credential', 'model', 'mcp_server', 'mcp_tool', 'skill', 'rag', 'memory'] as const
+const resourceTypes = ['credential', 'model', 'mcp_server', 'mcp_tool', 'skill', 'rag', 'memory', 'sandbox_profile'] as const
 type ResourceTypeTab = 'all' | (typeof resourceTypes)[number]
 
 export function ResourceGrantsPage() {

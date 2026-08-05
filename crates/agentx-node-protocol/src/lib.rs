@@ -78,6 +78,44 @@ pub enum NodeCapability {
     Builtin,
     DeclarativeHttp,
     RemoteAction,
+    Agent,
+    Model,
+    McpTool,
+    Skill,
+    Rag,
+    Memory,
+    Sandbox,
+}
+
+pub const ALL_RUNTIME_CAPABILITIES: &[&str] = &[
+    "builtin",
+    "declarative_http",
+    "remote_action",
+    "agent",
+    "model",
+    "mcp_tool",
+    "skill",
+    "rag",
+    "memory",
+    "sandbox",
+];
+
+impl NodeCapability {
+    #[must_use]
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Builtin => "builtin",
+            Self::DeclarativeHttp => "declarative_http",
+            Self::RemoteAction => "remote_action",
+            Self::Agent => "agent",
+            Self::Model => "model",
+            Self::McpTool => "mcp_tool",
+            Self::Skill => "skill",
+            Self::Rag => "rag",
+            Self::Memory => "memory",
+            Self::Sandbox => "sandbox",
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]

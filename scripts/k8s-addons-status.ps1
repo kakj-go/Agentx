@@ -1,6 +1,8 @@
+param([string]$Namespace = "agentx")
+
 $ErrorActionPreference = "Stop"
 $PSNativeCommandUseErrorActionPreference = $true
-$namespace = "agentx"
+$namespace = $Namespace
 
 kubectl -n $namespace get deployment lightrag mem0 mem0-postgres --ignore-not-found
 kubectl -n $namespace get service lightrag mem0 mem0-postgres --ignore-not-found

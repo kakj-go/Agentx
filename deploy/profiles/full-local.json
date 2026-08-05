@@ -1,0 +1,26 @@
+{
+  "apiVersion": "agentx.io/deployment/v1alpha1",
+  "namespace": "agentx",
+  "environment": "local",
+  "images": {
+    "mode": "local-build",
+    "registry": "agentx",
+    "tag": "dev",
+    "pullPolicy": "IfNotPresent"
+  },
+  "ingress": {
+    "host": "agentx.localhost",
+    "controllerServiceType": "LoadBalancer",
+    "tlsSecretName": null
+  },
+  "secrets": { "mode": "managed", "name": "agentx-secrets", "lightragName": "agentx-lightrag-secrets", "mem0Name": "agentx-mem0-secrets" },
+  "components": {
+    "mysql": { "mode": "bundled", "host": "mysql", "port": 3306, "database": "agentx", "user": "agentx", "tlsMode": "disabled", "tls": {} },
+    "redis": { "mode": "bundled", "url": "redis://redis:6379/", "tls": {} },
+    "clickhouse": { "mode": "bundled", "url": "http://clickhouse:8123", "database": "agentx", "user": "agentx", "tls": {} },
+    "objectStorage": { "mode": "bundled-minio", "endpoint": "http://minio:9000", "bucket": "agentx-artifacts", "region": "us-east-1", "allowHttp": true, "pathStyle": true, "tls": {} },
+    "rag": { "mode": "bundled", "endpoint": "http://lightrag:9621", "provider": { "baseUrl": "http://echo-mcp:8090/v1", "llmModel": "echo-model", "embeddingModel": "echo-embedding-8", "embeddingDimension": 8 } },
+    "memory": { "mode": "bundled", "endpoint": "http://mem0:8000", "provider": { "baseUrl": "http://echo-mcp:8090/v1", "llmModel": "echo-model", "embeddingModel": "echo-embedding-1536", "embeddingDimension": 1536 } },
+    "sandbox": { "mode": "disabled", "endpoint": null, "secureAccess": false, "useServerProxy": true, "allowedHosts": [], "allowedCidrs": [] }
+  }
+}

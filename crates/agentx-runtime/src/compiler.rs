@@ -142,14 +142,7 @@ impl<'a> WorkflowCompiler<'a> {
                 .cloned();
             if manifest.is_none() {
                 issues.push(CompileIssue {
-                    code: if matches!(
-                        node.node_type.as_str(),
-                        "model" | "mcp_tool" | "skill" | "rag" | "memory"
-                    ) {
-                        "NODE_UNSUPPORTED_IN_M4".into()
-                    } else {
-                        "UNKNOWN_NODE_VERSION".into()
-                    },
+                    code: "UNKNOWN_NODE_VERSION".into(),
                     path: format!("{path}.typeVersion"),
                     message: format!(
                         "Node {}@{} is not registered",

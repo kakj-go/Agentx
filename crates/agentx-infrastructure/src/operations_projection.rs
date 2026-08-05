@@ -45,11 +45,12 @@ impl TraceSink for MySqlOperationsProjection {
         let payload = json!({
             "eventId":value.event_id,"tenantId":value.tenant_id.as_uuid(),"traceId":value.trace_id.as_uuid(),"spanId":value.span_id,
             "parentSpanId":value.parent_span_id,"executionId":value.execution_id.as_uuid(),"workflowId":value.workflow_id.as_uuid(),
-            "workflowVersionId":value.workflow_version_id.as_uuid(),"nodeExecutionId":value.node_execution_id.map(|id|id.as_uuid()),"nodeId":value.attributes.get("nodeId"),
+            "workflowVersionId":value.workflow_version_id.as_uuid(),"nodeExecutionId":value.node_execution_id.map(|id|id.as_uuid()),"attemptId":value.attempt_id.map(|id|id.as_uuid()),
+            "agentRunId":value.agent_run_id,"runtimeCallId":value.runtime_call_id,"sandboxId":value.sandbox_id,"resourceType":value.resource_type,"resourceId":value.resource_id,"resourceVersionId":value.resource_version_id,"nodeId":value.attributes.get("nodeId"),
             "eventType":value.event_type,"status":value.status,"eventTime":value.event_time,"durationMs":value.duration_ms,"runIndex":value.run_index,
             "iterationIndex":value.iteration_index,"modelName":value.model_name,"providerName":value.provider_name,"mcpToolName":value.mcp_tool_name,
             "inputTokens":value.input_tokens,"outputTokens":value.output_tokens,"costMicros":value.cost_micros,"errorCode":value.error_code,
-            "errorMessage":value.error_message,"attributes":redact(value.attributes),"contentRef":value.content_ref.map(|id|id.as_uuid())
+            "errorMessage":value.error_message,"stopReason":value.stop_reason,"partial":value.partial,"attributes":redact_trace_attributes(value.attributes),"contentRef":value.content_ref.map(|id|id.as_uuid())
         });
         sqlx::query("INSERT INTO trace_delivery_outbox(event_id,tenant_id,execution_id,payload_json) VALUES(?,?,?,?) ON DUPLICATE KEY UPDATE event_id=event_id")
             .bind(value.event_id).bind(value.tenant_id.as_uuid()).bind(value.execution_id.as_uuid()).bind(payload).execute(&self.pool).await?;
@@ -222,7 +223,7 @@ fn text<'a>(value: &'a Value, key: &str) -> Result<&'a str> {
         .and_then(Value::as_str)
         .with_context(|| format!("{key} is required"))
 }
-fn redact(value: Value) -> Value {
+pub fn redact_trace_attributes(value: Value) -> Value {
     match value {
         Value::Object(map) => Value::Object(
             map.into_iter()
@@ -234,24 +235,26 @@ fn redact(value: Value) -> Value {
                     {
                         (key, Value::String("[REDACTED]".into()))
                     } else {
-                        (key, redact(value))
+                        (key, redact_trace_attributes(value))
                     }
                 })
                 .collect(),
         ),
-        Value::Array(items) => Value::Array(items.into_iter().map(redact).collect()),
+        Value::Array(items) => {
+            Value::Array(items.into_iter().map(redact_trace_attributes).collect())
+        }
         other => other,
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_status, redact, status_name};
+    use super::{parse_status, redact_trace_attributes, status_name};
     use agentx_domain::ExecutionStatus;
     use serde_json::json;
     #[test]
     fn trace_attributes_are_redacted() {
-        let value = redact(
+        let value = redact_trace_attributes(
             json!({"authorization":"Bearer secret","nested":{"apiToken":"secret","safe":true}}),
         );
         assert_eq!(value["authorization"], "[REDACTED]");

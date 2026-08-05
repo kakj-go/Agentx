@@ -15,6 +15,7 @@ import {
   Sparkles,
   UsersRound,
   ServerCog,
+  Box,
   Bell,
   RadioTower,
 } from 'lucide-react'
@@ -51,6 +52,7 @@ export const navigationGroups: NavigationGroup[] = [
       { labelKey: 'nav.skills', path: '/skills', icon: Sparkles, keywords: ['skill', 'agent', 'capability'], requiredPermission: 'skill:view' },
       { labelKey: 'nav.knowledge', path: '/knowledge', icon: Library, keywords: ['rag', 'lightrag'], requiredPermission: 'knowledge:view' },
       { labelKey: 'nav.memory', path: '/memory', icon: MemoryStick, keywords: ['mem0'], requiredPermission: 'memory:view' },
+      { labelKey: 'nav.sandboxProfiles', path: '/sandbox-profiles', icon: Box, keywords: ['sandbox', 'profile', 'runner'], requiredPermission: 'sandbox:view' },
       { labelKey: 'nav.resourceGrants', path: '/resource-grants', icon: Shield, keywords: ['grant', 'permission', 'resource'], requiredPermission: 'resource:grant' },
     ],
   },
