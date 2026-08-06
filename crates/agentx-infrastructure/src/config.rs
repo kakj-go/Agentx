@@ -3,6 +3,48 @@ use std::{env, path::PathBuf};
 use anyhow::{Context, Result};
 use secrecy::SecretString;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SecretProviderMode {
+    LocalEncrypted,
+    VaultKvV2,
+}
+
+pub fn is_production_environment() -> bool {
+    ["AGENTX_ENV", "AGENTX_ENVIRONMENT"]
+        .into_iter()
+        .any(|name| {
+            env::var(name).is_ok_and(|value| value.trim().eq_ignore_ascii_case("production"))
+        })
+}
+
+pub fn secret_provider_mode() -> Result<SecretProviderMode> {
+    validate_secret_provider(
+        env::var("AGENTX_SECRET_PROVIDER").ok().as_deref(),
+        is_production_environment(),
+    )
+}
+
+fn validate_secret_provider(
+    provider: Option<&str>,
+    production: bool,
+) -> Result<SecretProviderMode> {
+    let provider = match provider.map(str::trim).filter(|value| !value.is_empty()) {
+        Some(provider) => provider,
+        None if production => {
+            anyhow::bail!("AGENTX_SECRET_PROVIDER=vault_kv_v2 is required in production")
+        }
+        None => "local_encrypted",
+    };
+    match provider {
+        "vault_kv_v2" => Ok(SecretProviderMode::VaultKvV2),
+        "local_encrypted" if !production => Ok(SecretProviderMode::LocalEncrypted),
+        "local_encrypted" => {
+            anyhow::bail!("AGENTX_SECRET_PROVIDER=vault_kv_v2 is required in production")
+        }
+        _ => anyhow::bail!("AGENTX_SECRET_PROVIDER must be local_encrypted or vault_kv_v2"),
+    }
+}
+
 #[derive(Clone)]
 pub struct InfrastructureSettings {
     pub mysql: MySqlSettings,
@@ -263,7 +305,7 @@ fn parse_bool(name: &str, default: bool) -> Result<bool> {
 
 #[cfg(test)]
 mod tests {
-    use super::{MySqlTlsMode, validate_pair};
+    use super::{MySqlTlsMode, SecretProviderMode, validate_pair, validate_secret_provider};
 
     #[test]
     fn client_certificates_are_a_pair() {
@@ -275,5 +317,24 @@ mod tests {
     #[test]
     fn mysql_tls_mode_is_comparable() {
         assert_eq!(MySqlTlsMode::VerifyIdentity, MySqlTlsMode::VerifyIdentity);
+    }
+
+    #[test]
+    fn production_requires_vault_secret_provider() {
+        assert!(validate_secret_provider(None, true).is_err());
+        assert!(validate_secret_provider(Some("local_encrypted"), true).is_err());
+        assert_eq!(
+            validate_secret_provider(Some("vault_kv_v2"), true).unwrap(),
+            SecretProviderMode::VaultKvV2
+        );
+    }
+
+    #[test]
+    fn non_production_defaults_to_local_secret_provider() {
+        assert_eq!(
+            validate_secret_provider(None, false).unwrap(),
+            SecretProviderMode::LocalEncrypted
+        );
+        assert!(validate_secret_provider(Some("unknown"), false).is_err());
     }
 }

@@ -80,6 +80,7 @@ export interface components {
             /** Format: uuid */
             id: string;
             inputSchema: unknown;
+            outputExpression?: string | null;
             outputSchema: unknown;
             /** Format: int64 */
             sequenceNumber: number;
@@ -234,6 +235,7 @@ export interface components {
             /** Format: uuid */
             environmentId: string;
             inputSchema: unknown;
+            outputExpression?: string | null;
             outputSchema: unknown;
             sessionVersionPolicy: string;
             /** Format: uuid */
@@ -387,6 +389,17 @@ export interface components {
             ownerDepartmentId: string;
             providerType: string;
         };
+        CreateRetentionRunRequest: {
+            /** Format: int32 */
+            artifactRetentionDays?: number;
+            dryRun?: boolean;
+            /** Format: int32 */
+            evaluationRetentionDays?: number;
+            /** Format: int32 */
+            messageRetentionDays?: number;
+            /** Format: int32 */
+            traceRetentionDays?: number;
+        };
         CreateRoleRequest: {
             code: string;
             dataScope: string;
@@ -403,6 +416,7 @@ export interface components {
         CreateScheduleRequest: {
             cronExpression: string;
             input: unknown;
+            misfirePolicy?: string;
             name: string;
             timezone: string;
         };
@@ -611,6 +625,26 @@ export interface components {
             /** Format: int64 */
             version: number;
         };
+        EvaluationCaseResultResponse: {
+            /** Format: uuid */
+            caseId: string;
+            caseKey: string;
+            /** Format: int64 */
+            costMicros: number;
+            detail?: unknown;
+            /** Format: int64 */
+            durationMs?: number | null;
+            errorCode?: string | null;
+            errorMessage?: string | null;
+            ruleResults: components["schemas"]["EvaluationRuleResultResponse"][];
+            /** Format: double */
+            score?: number | null;
+            /** Format: uuid */
+            sourceCaseId: string;
+            status: string;
+            /** Format: uuid */
+            targetExecutionId?: string | null;
+        };
         EvaluationProfileResponse: {
             aggregation: string;
             description?: string | null;
@@ -633,7 +667,7 @@ export interface components {
         EvaluationReportResponse: {
             metrics: unknown[];
             reportStatus: string;
-            results: unknown[];
+            results: components["schemas"]["EvaluationCaseResultResponse"][];
             run: components["schemas"]["EvaluationRunResponse"];
         };
         EvaluationRuleInput: {
@@ -655,6 +689,24 @@ export interface components {
             /** Format: int32 */
             sortOrder: number;
             weight: string;
+        };
+        EvaluationRuleResultResponse: {
+            /** Format: int64 */
+            costMicros: number;
+            detail: unknown;
+            /** Format: int64 */
+            durationMs?: number | null;
+            /** Format: uuid */
+            evaluatorExecutionId?: string | null;
+            evaluatorType: string;
+            /** Format: uuid */
+            id: string;
+            key: string;
+            name: string;
+            passed?: boolean | null;
+            /** Format: double */
+            score?: number | null;
+            status: string;
         };
         EvaluationRunResponse: {
             /** Format: date-time */
@@ -1182,6 +1234,27 @@ export interface components {
             /** Format: uuid */
             workflowVersionId: string;
         };
+        QueuedWorkflowRunResponse: {
+            /** Format: uuid */
+            commandId: string;
+            status: string;
+        };
+        QuotaPolicyInput: {
+            dimension: string;
+            hardLimit: string;
+            /** Format: int64 */
+            periodSeconds?: number | null;
+        };
+        QuotaPolicyResponse: {
+            activeReserved: string;
+            dimension: string;
+            hardLimit: string;
+            /** Format: int64 */
+            periodSeconds?: number | null;
+            periodUsage: string;
+            /** Format: int64 */
+            version: number;
+        };
         ReassignApprovalRequest: {
             /** Format: uuid */
             targetUserId: string;
@@ -1191,6 +1264,33 @@ export interface components {
         ResourceValidationResponse: {
             missingGrants: components["schemas"]["MissingGrantResponse"][];
             valid: boolean;
+        };
+        RetentionItemResponse: {
+            /** Format: int32 */
+            attemptCount: number;
+            dataType: string;
+            /** Format: uuid */
+            id: string;
+            reason?: string | null;
+            status: string;
+            targetId: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        RetentionRunResponse: {
+            /** Format: int64 */
+            candidateCount: number;
+            /** Format: date-time */
+            completedAt?: string | null;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: int64 */
+            deletedCount: number;
+            dryRun: boolean;
+            errorMessage?: string | null;
+            /** Format: uuid */
+            id: string;
+            status: string;
         };
         RevisionResponse: {
             /** Format: date-time */
@@ -1228,6 +1328,10 @@ export interface components {
             secret: unknown;
             /** Format: int64 */
             version: number;
+        };
+        RunWorkflowRequest: {
+            idempotencyKey?: string | null;
+            input?: unknown;
         };
         RuntimeCallDetail: {
             /** Format: uuid */
@@ -1393,6 +1497,7 @@ export interface components {
             /** Format: uuid */
             id: string;
             input: unknown;
+            misfirePolicy: string;
             name: string;
             status: string;
             timezone: string;
@@ -1648,6 +1753,9 @@ export interface components {
             /** Format: int64 */
             version: number;
         };
+        UpdateQuotaPoliciesRequest: {
+            policies: components["schemas"]["QuotaPolicyInput"][];
+        };
         UpdateRoleRequest: {
             dataScope: string;
             description?: string | null;
@@ -1666,6 +1774,7 @@ export interface components {
         UpdateScheduleRequest: {
             cronExpression: string;
             input: unknown;
+            misfirePolicy?: string;
             name: string;
             status: string;
             timezone: string;
@@ -1776,6 +1885,18 @@ export interface components {
             status: string;
             /** Format: int64 */
             version: number;
+        };
+        WorkerCapabilityResponse: {
+            capability: string;
+            compilerVersionMax: string;
+            compilerVersionMin: string;
+            /** Format: date-time */
+            heartbeatAt: string;
+            instanceId: string;
+            irSchemaVersions: unknown;
+            manifestHashes: unknown;
+            nodeProtocolVersion: string;
+            status: string;
         };
         WorkflowMemberResponse: {
             displayName: string;

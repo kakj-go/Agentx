@@ -1229,6 +1229,7 @@ mod tests {
             cancellation: CancellationToken::new(),
             idempotency_key: "opensandbox-contract-test".into(),
             resources: Vec::new(),
+            credential_handles: Default::default(),
         }
     }
 

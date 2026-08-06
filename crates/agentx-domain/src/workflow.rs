@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashSet};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -312,7 +312,6 @@ pub fn validate_definition(definition: &WorkflowDefinition) -> Vec<DefinitionIss
         );
     }
     let mut ids = HashSet::new();
-    let mut triggers = Vec::new();
     for (index, node) in definition.nodes.iter().enumerate() {
         if node.id.is_empty() || node.id.len() > 128 {
             issue(
@@ -360,9 +359,6 @@ pub fn validate_definition(definition: &WorkflowDefinition) -> Vec<DefinitionIss
                 "Node type version must be greater than zero",
             );
         }
-        if node.node_type == "manual_trigger" && !node.disabled {
-            triggers.push(node.id.clone());
-        }
         if is_resource_node(&node.node_type) && node.resource_references.is_empty() {
             issue(
                 &mut issues,
@@ -392,16 +388,6 @@ pub fn validate_definition(definition: &WorkflowDefinition) -> Vec<DefinitionIss
             }
         }
     }
-    if triggers.is_empty() {
-        issue(
-            &mut issues,
-            "TRIGGER_REQUIRED",
-            "nodes",
-            "At least one enabled Manual Trigger is required",
-        );
-    }
-
-    let mut graph: HashMap<&str, Vec<&str>> = HashMap::new();
     let mut connection_ids = HashSet::new();
     let mut connection_orders = HashSet::new();
     for (index, connection) in definition.connections.iter().enumerate() {
@@ -437,28 +423,6 @@ pub fn validate_definition(definition: &WorkflowDefinition) -> Vec<DefinitionIss
                 "Connection references a missing node",
             );
             continue;
-        }
-        graph
-            .entry(&connection.source_node_id)
-            .or_default()
-            .push(&connection.target_node_id);
-    }
-
-    let mut reachable = HashSet::new();
-    let mut frontier: VecDeque<&str> = triggers.iter().map(String::as_str).collect();
-    while let Some(node) = frontier.pop_front() {
-        if reachable.insert(node) {
-            frontier.extend(graph.get(node).into_iter().flatten().copied());
-        }
-    }
-    for (index, node) in definition.nodes.iter().enumerate() {
-        if !node.disabled && !reachable.contains(node.id.as_str()) {
-            issue(
-                &mut issues,
-                "UNREACHABLE_NODE",
-                &format!("nodes[{index}]"),
-                "Enabled node must be reachable from a Manual Trigger",
-            );
         }
     }
     issues

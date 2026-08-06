@@ -7,6 +7,7 @@ resources:
   - workflow-coordinator.yaml
   - workflow-worker.yaml
   - trace-writer.yaml
+  - network-policies.yaml
 labels:
   - pairs:
       app.kubernetes.io/part-of: agentx
@@ -17,11 +18,16 @@ patches:
       kind: Deployment
     patch: |-
       - op: add
+        path: /spec/template/metadata/labels/agentx.io~1component
+        value: core
+      - op: add
         path: /spec/template/spec/containers/0/volumeMounts
         value:
           - name: agentx-trust-bundle
             mountPath: /etc/agentx/trust
             readOnly: true
+          - name: agentx-tmp
+            mountPath: /tmp
       - op: add
         path: /spec/template/spec/volumes
         value:
@@ -29,3 +35,34 @@ patches:
             secret:
               secretName: agentx-trust-bundle
               optional: true
+          - name: agentx-tmp
+            emptyDir:
+              sizeLimit: 128Mi
+      - op: add
+        path: /spec/template/spec/automountServiceAccountToken
+        value: false
+      - op: add
+        path: /spec/template/spec/securityContext
+        value:
+          runAsNonRoot: true
+          seccompProfile:
+            type: RuntimeDefault
+      - op: add
+        path: /spec/template/spec/containers/0/securityContext
+        value:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+      - op: add
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+            ephemeral-storage: 64Mi
+          limits:
+            cpu: "1"
+            memory: 512Mi
+            ephemeral-storage: 256Mi

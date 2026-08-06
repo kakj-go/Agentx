@@ -3,17 +3,22 @@ use std::{collections::BTreeMap, env, sync::Arc, time::Duration};
 mod agent;
 mod resources;
 
-use agentx_application::{ArtifactStore, CredentialResolver, SandboxRuntime};
-use agentx_domain::{ExecutionId, NodeExecutionId, TenantId, WorkflowVersionId};
+use agentx_application::{
+    ArtifactStore, CredentialResolver, RuntimeCredentialHandle, SandboxRuntime,
+};
+use agentx_domain::{ExecutionId, NodeExecutionId, ResourceType, TenantId, WorkflowVersionId};
 use agentx_infrastructure::{
     artifact::MySqlObjectArtifactStore,
     clients,
-    config::RuntimeInfrastructureSettings,
-    credential::{CredentialKeyring, MySqlCredentialResolver},
+    config::{RuntimeInfrastructureSettings, SecretProviderMode, secret_provider_mode},
+    credential::{
+        CredentialKeyring, CredentialSource, MySqlCredentialResolver, RemoteSecretProvider,
+    },
     knowledge_runtime::{LightRagRuntime, Mem0Runtime},
     mcp_runtime::HttpMcpToolRuntime,
     model_runtime::OpenAiCompatibleRuntime,
     mysql,
+    quota::QuotaAdmission,
     runtime_broker::{InvocationBroker, InvocationBrokerError, InvocationScope},
     runtime_queue::{QueueItem, RuntimeQueue},
     runtime_repository::{ClaimedTask, RuntimeRepository, RuntimeTask, TaskResult},
@@ -25,7 +30,7 @@ use agentx_node_protocol::{
     ExecutionMode, GroupedInput, InvocationResourceRequest, InvocationResourceResponse, Item,
     NODE_PROTOCOL_VERSION, NodeActionRequest, NodeActionResult, ResolvedParameters, TraceContext,
 };
-use agentx_runtime::{ExpressionContext, ExpressionEngine};
+use agentx_runtime::{COMPILER_VERSION, ExpressionContext, ExpressionEngine};
 use agentx_runtime_rpc::v1::{
     HeartbeatLeaseRequest, ReportNodeResultRequest, RequestExecutionRequest,
     runtime_coordinator_client::RuntimeCoordinatorClient,
@@ -62,6 +67,7 @@ struct WorkerState {
     instance_id: String,
     capabilities: Vec<String>,
     concurrency: Arc<Semaphore>,
+    quota_admission: QuotaAdmission,
     broker: InvocationBroker,
     runtimes: ResourceRuntimes,
     agent: AgentRunner,
@@ -72,20 +78,32 @@ async fn main() -> Result<()> {
     let settings = RuntimeInfrastructureSettings::from_env()?;
     let health_settings = settings.clone();
     let pool = mysql::connect(&settings.mysql).await?;
+    let quota_admission = QuotaAdmission::new(settings.redis.clone());
     let objects = clients::object_store(&settings.object_storage)?;
-    let artifact_store: Arc<dyn ArtifactStore> =
-        Arc::new(MySqlObjectArtifactStore::new(pool.clone(), objects));
-    let keyring = CredentialKeyring::from_json(
-        env::var("AGENTX_CREDENTIAL_ACTIVE_KEY_ID")
-            .context("AGENTX_CREDENTIAL_ACTIVE_KEY_ID is required by the invocation broker")?,
-        &SecretString::from(
-            env::var("AGENTX_CREDENTIAL_KEYS_JSON")
-                .context("AGENTX_CREDENTIAL_KEYS_JSON is required by the invocation broker")?,
-        ),
-    )?;
-    let broker = InvocationBroker::new(
+    let artifact_store: Arc<dyn ArtifactStore> = Arc::new(
+        MySqlObjectArtifactStore::new(pool.clone(), objects)
+            .with_quota_admission(quota_admission.clone()),
+    );
+    let credential_source = match secret_provider_mode()? {
+        SecretProviderMode::VaultKvV2 => {
+            CredentialSource::external(Arc::new(RemoteSecretProvider::from_env()?))
+        }
+        SecretProviderMode::LocalEncrypted => {
+            let keyring =
+                CredentialKeyring::from_json(
+                    env::var("AGENTX_CREDENTIAL_ACTIVE_KEY_ID").context(
+                        "AGENTX_CREDENTIAL_ACTIVE_KEY_ID is required by the invocation broker",
+                    )?,
+                    &SecretString::from(env::var("AGENTX_CREDENTIAL_KEYS_JSON").context(
+                        "AGENTX_CREDENTIAL_KEYS_JSON is required by the invocation broker",
+                    )?),
+                )?;
+            CredentialSource::local(Arc::new(keyring))
+        }
+    };
+    let broker = InvocationBroker::new_with_credential_source(
         pool.clone(),
-        Arc::new(keyring.clone()),
+        credential_source.clone(),
         artifact_store.clone(),
         env::var("AGENTX_NODE_BROKER_URL").unwrap_or_else(|_| "http://127.0.0.1:8080".into()),
         env::var("AGENTX_NODE_HANDLE_TTL_SECONDS")
@@ -108,8 +126,9 @@ async fn main() -> Result<()> {
         .and_then(|value| value.parse().ok())
         .unwrap_or(16_usize)
         .clamp(1, 256);
-    let credentials: Arc<dyn CredentialResolver> =
-        Arc::new(MySqlCredentialResolver::new(pool.clone(), keyring));
+    let credentials: Arc<dyn CredentialResolver> = Arc::new(
+        MySqlCredentialResolver::new_with_source(pool.clone(), credential_source),
+    );
     let authorizer = MySqlResourceAuthorizer::new(pool.clone());
     let sandbox: Option<Arc<dyn SandboxRuntime>> = match (
         env::var("AGENTX_SANDBOX_MANAGER_URL").ok(),
@@ -146,7 +165,8 @@ async fn main() -> Result<()> {
     };
     let agent = AgentRunner::new(pool.clone(), runtimes.clone());
     let state = WorkerState {
-        repository: RuntimeRepository::new(pool.clone()),
+        repository: RuntimeRepository::new(pool.clone())
+            .with_quota_admission(quota_admission.clone()),
         queue: RuntimeQueue::new(settings.redis),
         coordinator: RuntimeCoordinatorClient::new(channel),
         http: reqwest::Client::builder()
@@ -158,6 +178,7 @@ async fn main() -> Result<()> {
         instance_id: env::var("HOSTNAME").unwrap_or_else(|_| format!("worker-{}", Uuid::now_v7())),
         capabilities,
         concurrency: Arc::new(Semaphore::new(concurrency)),
+        quota_admission,
         broker,
         runtimes,
         agent,
@@ -223,6 +244,16 @@ async fn consume_loop(state: WorkerState) {
 }
 
 async fn process_queue_item(state: &WorkerState, item: &QueueItem) -> Result<()> {
+    if !supports_dispatch(&item.message) {
+        warn!(
+            stream_id=%item.stream_id,
+            node_protocol=%item.message.node_protocol_version,
+            compiler_version=%item.message.compiler_version,
+            ir_schema_version=%item.message.ir_schema_version,
+            "runtime task requires an incompatible worker"
+        );
+        return Ok(());
+    }
     let Some(claimed) = state
         .repository
         .claim_task(&item.message, &state.instance_id, 30)
@@ -232,13 +263,50 @@ async fn process_queue_item(state: &WorkerState, item: &QueueItem) -> Result<()>
         return Ok(());
     };
     info!(execution_id=%claimed.task.execution_id,node_execution_id=%claimed.task.node_execution_id,"runtime task claimed");
-    let result = execute_with_heartbeat(state, &claimed).await;
+    let result = match agentx_infrastructure::quota::reserve_attempt_with_admission(
+        state.repository.pool(),
+        &claimed.task,
+        Some(&state.quota_admission),
+    )
+    .await
+    {
+        Ok(()) => execute_with_heartbeat(state, &claimed).await,
+        Err(error) => {
+            let message = error.to_string();
+            let admission_unavailable = message.contains("Redis quota admission")
+                || message.contains("QUOTA_ADMISSION_UNAVAILABLE");
+            TaskResult::Failed {
+                code: if admission_unavailable {
+                    "QUOTA_ADMISSION_UNAVAILABLE"
+                } else {
+                    "QUOTA_EXCEEDED"
+                }
+                .into(),
+                message,
+                retryable: admission_unavailable,
+            }
+        }
+    };
     let report = report_result(state, &claimed, result).await;
     match report {
-        Ok(_) => state.queue.ack(item).await?,
+        Ok(_) => {
+            agentx_infrastructure::quota::settle_attempt_with_admission(
+                state.repository.pool(),
+                &claimed.task,
+                Some(&state.quota_admission),
+            )
+            .await?;
+            state.queue.ack(item).await?;
+        }
         Err(error) => return Err(error),
     }
     Ok(())
+}
+
+fn supports_dispatch(message: &agentx_infrastructure::runtime_repository::DispatchMessage) -> bool {
+    message.node_protocol_version == NODE_PROTOCOL_VERSION
+        && message.compiler_version == COMPILER_VERSION
+        && message.ir_schema_version == "3.0"
 }
 
 async fn execute_with_heartbeat(state: &WorkerState, claimed: &ClaimedTask) -> TaskResult {
@@ -293,6 +361,8 @@ async fn execute_task(
         "declarative_http" => execute_http(state, task).await,
         "remote_action" => execute_remote(state, task, claimed.lease_token).await,
         "model" | "mcp_tool" | "skill" | "rag" | "memory" | "sandbox" => {
+            let (credential_handles, sandbox_handles) =
+                issue_runtime_credentials(state, task, claimed.lease_token).await?;
             let first = flatten_inputs(&task.inputs)
                 .into_iter()
                 .next()
@@ -300,52 +370,34 @@ async fn execute_task(
             let mut parameters = ExpressionEngine
                 .resolve_parameters(&task.node_parameters, &expression_context(task, &first, 0))?;
             if task.capability == "sandbox" {
-                let invocation = state
-                    .broker
-                    .issue(
-                        &InvocationScope {
-                            tenant_id: task.tenant_id,
-                            execution_id: task.execution_id,
-                            node_execution_id: task.node_execution_id,
-                            attempt_id: task.attempt_id,
-                            lease_token: claimed.lease_token,
-                            deadline: task.deadline,
-                        },
-                        &task.resource_references,
-                        &task.resource_snapshots,
-                        task.inputs.values().flatten(),
-                    )
-                    .await?;
-                let handles = invocation
-                    .credential_bindings
-                    .into_iter()
-                    .map(|binding| {
-                        json!({
-                            "resourceId": binding.resource_id,
-                            "version": binding.version,
-                            "handle": binding.invocation.handle,
-                        })
-                    })
-                    .collect::<Vec<_>>();
                 parameters
                     .as_object_mut()
                     .context("Sandbox node parameters must be an object")?
-                    .insert("_credentialHandles".into(), Value::Array(handles));
+                    .insert("_credentialHandles".into(), Value::Array(sandbox_handles));
             }
             Ok(state
                 .runtimes
-                .execute(task, claimed.lease_token, cancellation, parameters)
+                .execute(
+                    task,
+                    claimed.lease_token,
+                    credential_handles,
+                    cancellation,
+                    parameters,
+                )
                 .await
                 .unwrap_or_else(failed))
         }
         "agent" => {
+            let (credential_handles, _) =
+                issue_runtime_credentials(state, task, claimed.lease_token).await?;
             let first = flatten_inputs(&task.inputs)
                 .into_iter()
                 .next()
                 .unwrap_or_default();
             let parameters = ExpressionEngine
                 .resolve_parameters(&task.node_parameters, &expression_context(task, &first, 0))?;
-            let context = runtime_context(task, claimed.lease_token, cancellation);
+            let context =
+                runtime_context(task, claimed.lease_token, credential_handles, cancellation);
             Ok(state
                 .agent
                 .execute(task, &context, parameters)
@@ -354,6 +406,54 @@ async fn execute_task(
         }
         other => anyhow::bail!("unsupported worker capability {other}"),
     }
+}
+
+async fn issue_runtime_credentials(
+    state: &WorkerState,
+    task: &RuntimeTask,
+    lease_token: Uuid,
+) -> Result<(BTreeMap<Uuid, RuntimeCredentialHandle>, Vec<Value>)> {
+    if !task
+        .resource_references
+        .iter()
+        .any(|reference| reference.resource_type == ResourceType::Credential)
+    {
+        return Ok((BTreeMap::new(), Vec::new()));
+    }
+    let issued = state
+        .broker
+        .issue(
+            &InvocationScope {
+                tenant_id: task.tenant_id,
+                execution_id: task.execution_id,
+                node_execution_id: task.node_execution_id,
+                attempt_id: task.attempt_id,
+                lease_token,
+                deadline: task.deadline,
+            },
+            &task.resource_references,
+            &task.resource_snapshots,
+            task.inputs.values().flatten(),
+        )
+        .await?;
+    let mut runtime_handles = BTreeMap::new();
+    let mut sandbox_handles = Vec::new();
+    for binding in issued.credential_bindings {
+        sandbox_handles.push(json!({
+            "resourceId": binding.resource_id,
+            "version": binding.version,
+            "handle": binding.invocation.handle,
+        }));
+        runtime_handles.insert(
+            binding.resource_id,
+            RuntimeCredentialHandle {
+                version: binding.version,
+                handle: binding.invocation.handle,
+                expires_at: binding.invocation.expires_at,
+            },
+        );
+    }
+    Ok((runtime_handles, sandbox_handles))
 }
 
 async fn execute_builtin(state: &WorkerState, task: &RuntimeTask) -> Result<TaskResult> {
@@ -1046,12 +1146,37 @@ async fn worker_dependency_health_loop(
 
 async fn heartbeat_service_loop(state: WorkerState, health: agentx_service_kit::HealthRegistry) {
     loop {
+        let overall_status = health.overall_status().await;
+        let capability_status = if overall_status == "ready" {
+            "ready"
+        } else {
+            "unavailable"
+        };
+        let manifest_hashes: Value = sqlx::query_scalar(
+            "SELECT COALESCE(JSON_ARRAYAGG(manifest_hash),JSON_ARRAY()) FROM node_definition_versions",
+        )
+        .fetch_one(state.repository.pool())
+        .await
+        .unwrap_or_else(|_| json!([]));
+        for capability in &state.capabilities {
+            let _ = sqlx::query("INSERT INTO worker_capabilities(instance_id,capability,node_protocol_version,ir_schema_versions_json,compiler_version_min,compiler_version_max,manifest_hashes_json,status,heartbeat_at) VALUES(?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP(6)) ON DUPLICATE KEY UPDATE node_protocol_version=VALUES(node_protocol_version),ir_schema_versions_json=VALUES(ir_schema_versions_json),compiler_version_min=VALUES(compiler_version_min),compiler_version_max=VALUES(compiler_version_max),manifest_hashes_json=VALUES(manifest_hashes_json),status=VALUES(status),heartbeat_at=CURRENT_TIMESTAMP(6)")
+                .bind(&state.instance_id)
+                .bind(capability)
+                .bind(NODE_PROTOCOL_VERSION)
+                .bind(json!(["3.0"]))
+                .bind(COMPILER_VERSION)
+                .bind(COMPILER_VERSION)
+                .bind(&manifest_hashes)
+                .bind(capability_status)
+                .execute(state.repository.pool())
+                .await;
+        }
         match sqlx::query_scalar::<_, Uuid>("SELECT id FROM tenants")
             .fetch_all(state.repository.pool())
             .await
         {
             Ok(tenants) => {
-                let status = health.overall_status().await;
+                let status = &overall_status;
                 for tenant in tenants {
                     let _=sqlx::query("INSERT INTO runtime_service_heartbeats(tenant_id,service_type,instance_id,status,detail_json,heartbeat_at) VALUES(?,'worker',?,?,?,CURRENT_TIMESTAMP(6)) ON DUPLICATE KEY UPDATE status=VALUES(status),detail_json=VALUES(detail_json),heartbeat_at=CURRENT_TIMESTAMP(6)").bind(tenant).bind(&state.instance_id).bind(status).bind(json!({"capabilities":state.capabilities})).execute(state.repository.pool()).await;
                 }

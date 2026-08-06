@@ -1,6 +1,7 @@
 mod api;
 mod applications;
 mod auth;
+mod background;
 mod catalog;
 mod config;
 mod connection_test;
@@ -9,6 +10,7 @@ mod credentials;
 mod datasets;
 mod error;
 mod external_resources;
+mod governance;
 mod grants;
 mod iam;
 mod mcp_control;
@@ -25,9 +27,14 @@ mod workflows;
 
 use std::{env, time::Duration};
 
-use agentx_infrastructure::{config::InfrastructureSettings, credential::CredentialKeyring, mysql};
+use agentx_infrastructure::{
+    config::{InfrastructureSettings, SecretProviderMode, secret_provider_mode},
+    credential::{CredentialKeyring, VaultSecretProvider},
+    mysql,
+};
 use anyhow::{Context, Result};
 use api::build_api_router;
+use background::{start_outbox_relay, start_runtime_projector};
 use config::{AuthSettings, ConnectionSettings, CredentialSettings};
 use state::AppState;
 
@@ -57,23 +64,42 @@ async fn main() -> Result<()> {
     }
     catalog::reconcile_builtin_catalog(&pool).await?;
     let auth = AuthSettings::from_env()?;
-    let credential = CredentialSettings::from_env()?;
-    let keyring = CredentialKeyring::from_json(credential.active_key_id, &credential.keys_json)?;
     let object_store =
         agentx_infrastructure::clients::object_store(&infrastructure.object_storage).ok();
-    let state = AppState::new(pool.clone(), auth)
-        .with_m2(keyring, object_store, ConnectionSettings::from_env()?)
-        .with_m3(
-            agentx_infrastructure::clients::clickhouse(&infrastructure.clickhouse)?,
-            infrastructure.redis.clone(),
-        )
-        .with_runtime(
-            agentx_infrastructure::runtime_client::GrpcExecutionRuntime::connect(
-                &env::var("AGENTX_RUNTIME_COORDINATOR_URL")
-                    .unwrap_or_else(|_| "http://127.0.0.1:9090".into()),
-                pool.clone(),
-            )?,
-        );
+    let clickhouse = agentx_infrastructure::clients::clickhouse(&infrastructure.clickhouse)?;
+    let connections = ConnectionSettings::from_env()?;
+    let state = match secret_provider_mode()? {
+        SecretProviderMode::VaultKvV2 => AppState::new(pool.clone(), auth).with_m2_external(
+            std::sync::Arc::new(VaultSecretProvider::from_env()?),
+            object_store.clone(),
+            connections,
+        ),
+        SecretProviderMode::LocalEncrypted => {
+            let credential = CredentialSettings::from_env()?;
+            let keyring =
+                CredentialKeyring::from_json(credential.active_key_id, &credential.keys_json)?;
+            AppState::new(pool.clone(), auth).with_m2(keyring, object_store.clone(), connections)
+        }
+    }
+    .with_m3(clickhouse.clone(), infrastructure.redis.clone())
+    .with_runtime(
+        agentx_infrastructure::runtime_client::GrpcExecutionRuntime::connect(
+            &env::var("AGENTX_RUNTIME_COORDINATOR_URL")
+                .unwrap_or_else(|_| "http://127.0.0.1:9090".into()),
+            pool.clone(),
+        )?,
+    );
+    start_runtime_projector(
+        pool.clone(),
+        object_store.clone(),
+        infrastructure.redis.clone(),
+    );
+    start_outbox_relay(pool.clone(), infrastructure.redis.clone());
+    tokio::spawn(agentx_infrastructure::retention::run_retention_loop(
+        pool.clone(),
+        object_store,
+        Some(clickhouse),
+    ));
     let health = agentx_service_kit::HealthRegistry::default();
     health.register("mysql", true).await;
     health.register("redis", false).await;
@@ -204,6 +230,9 @@ fn start_health_checks(
 mod migration_tests;
 
 #[cfg(test)]
+static TESTCONTAINER_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+#[cfg(test)]
 mod integration_tests {
     use agentx_application::{
         ArtifactStore, ArtifactWrite, Outbox, OutboxDispatcher, OutboxMessage,
@@ -299,6 +328,7 @@ mod integration_tests {
 
     #[tokio::test]
     async fn mysql_migrations_are_idempotent_on_an_empty_database() {
+        let _container_guard = crate::TESTCONTAINER_LOCK.lock().await;
         let container = GenericImage::new("mysql", "8.4")
             .with_exposed_port(3306.tcp())
             .with_wait_for(WaitFor::message_on_stderr("ready for connections"))
@@ -342,16 +372,16 @@ mod integration_tests {
         mysql::run_migrations(&pool)
             .await
             .expect("second migration run");
-        let runtime_tables: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name IN ('node_definitions','node_definition_versions','execution_snapshots','node_executions','node_attempts','execution_edge_deliveries','item_lineage','execution_outbox','worker_leases','runtime_idempotency_keys','checkpoints','checkpoint_artifacts','execution_resume_tokens','wait_subscriptions','resume_webhook_bindings','side_effect_confirmations','node_invocation_handles')")
+        let runtime_tables: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name IN ('node_definitions','node_definition_versions','execution_snapshots','node_executions','node_attempts','execution_edge_deliveries','item_lineage','execution_outbox','worker_leases','runtime_idempotency_keys','checkpoints','checkpoint_artifacts','execution_resume_tokens','wait_subscriptions','resume_webhook_bindings','side_effect_confirmations','node_invocation_handles','runtime_commands','projection_receipts','worker_capabilities','evaluation_run_cases','evaluation_rule_results','trigger_bindings','quota_policies','quota_reservations','quota_usage_ledger','artifact_references','retention_policies','retention_runs','retention_items','release_schema_contract')")
             .fetch_one(&pool).await.expect("M4 runtime tables");
-        assert_eq!(runtime_tables, 17);
+        assert_eq!(runtime_tables, 31);
         let migration_count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM _sqlx_migrations WHERE success=1 AND version<=13",
+            "SELECT COUNT(*) FROM _sqlx_migrations WHERE success=1 AND version<=17",
         )
         .fetch_one(&pool)
         .await
         .expect("M4 migration versions");
-        assert_eq!(migration_count, 13);
+        assert_eq!(migration_count, 17);
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM bootstrap_state")
             .fetch_one(&pool)
             .await
@@ -1142,9 +1172,9 @@ mod integration_tests {
                 Some(&access_token),
             ))
             .await
-            .expect("runtime remains unavailable");
-        assert_eq!(runtime.status(), StatusCode::SERVICE_UNAVAILABLE);
-        assert_eq!(response_json(runtime).await["code"], "RUNTIME_UNAVAILABLE");
+            .expect("queue workflow run");
+        assert_eq!(runtime.status(), StatusCode::ACCEPTED);
+        assert_eq!(response_json(runtime).await["status"], "queued");
         let snapshot_count: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM workflow_version_resources WHERE workflow_version_id=?",
         )
@@ -1844,6 +1874,7 @@ mod integration_tests {
 
     #[tokio::test]
     async fn optional_infrastructure_containers_are_self_contained() {
+        let _container_guard = crate::TESTCONTAINER_LOCK.lock().await;
         let redis = GenericImage::new("redis", "7.4-alpine")
             .with_exposed_port(6379.tcp())
             .with_wait_for(WaitFor::message_on_stdout("Ready to accept connections"))

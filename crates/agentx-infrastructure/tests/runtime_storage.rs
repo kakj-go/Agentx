@@ -115,30 +115,35 @@ async fn invocation_handles_and_checkpoint_artifacts_enforce_runtime_boundaries(
         lease_token: ids.lease,
         deadline: OffsetDateTime::now_utc() + Duration::minutes(5),
     };
+    let credential_reference = ResourceReference {
+        binding_id: None,
+        binding_role: None,
+        resource_type: ResourceType::Credential,
+        resource_id: ids.credential,
+        resource_version_id: None,
+        operation: ResourceOperation::Use,
+    };
+    let credential_snapshot = RuntimeResourceSnapshot {
+        node_id: "remote".into(),
+        reference: credential_reference.clone(),
+        snapshot_hash: "fixture".into(),
+        snapshot: serde_json::json!({"secretVersion":1}),
+    };
+    let authorizer = MySqlResourceAuthorizer::new(pool.clone());
+    let credential_context = resource_context(
+        &ids,
+        TenantId::from_uuid(ids.tenant),
+        credential_snapshot.clone(),
+    );
+    authorizer
+        .authorize_context(&credential_context, &credential_reference)
+        .await
+        .expect("active grant should authorize the initial attempt");
     let issued = broker
         .issue(
             &scope,
-            &[ResourceReference {
-                binding_id: None,
-                binding_role: None,
-                resource_type: ResourceType::Credential,
-                resource_id: ids.credential,
-                resource_version_id: None,
-                operation: ResourceOperation::Use,
-            }],
-            &[agentx_application::RuntimeResourceSnapshot {
-                node_id: "remote".into(),
-                reference: ResourceReference {
-                    binding_id: None,
-                    binding_role: None,
-                    resource_type: ResourceType::Credential,
-                    resource_id: ids.credential,
-                    resource_version_id: None,
-                    operation: ResourceOperation::Use,
-                },
-                snapshot_hash: "fixture".into(),
-                snapshot: serde_json::json!({"secretVersion":1}),
-            }],
+            std::slice::from_ref(&credential_reference),
+            std::slice::from_ref(&credential_snapshot),
             [&item].into_iter(),
         )
         .await
@@ -173,6 +178,20 @@ async fn invocation_handles_and_checkpoint_artifacts_enforce_runtime_boundaries(
         broker.resolve(&cross_tenant).await,
         Err(InvocationBrokerError::Invalid)
     ));
+    sqlx::query(
+        "DELETE FROM resource_grants WHERE tenant_id=? AND subject_type='workflow_service_identity' AND subject_id=? AND resource_type='credential' AND resource_id=?",
+    )
+    .bind(ids.tenant)
+    .bind(ids.identity)
+    .bind(ids.credential)
+    .execute(&pool)
+    .await
+    .expect("revoke credential grant");
+    let retry_denied = authorizer
+        .authorize_context(&credential_context, &credential_reference)
+        .await
+        .expect_err("a retry must recheck the revoked grant");
+    assert_eq!(retry_denied.code, "RESOURCE_GRANT_MISSING");
     let credential =
         serde_json::to_value(broker.resolve(&request).await.expect("resolve credential"))
             .expect("serialize credential response");
@@ -219,6 +238,17 @@ async fn invocation_handles_and_checkpoint_artifacts_enforce_runtime_boundaries(
         .expect("released cancellation status");
     assert!(!cancellation.lease_valid);
     assert!(cancellation.cancellation_requested);
+    assert!(matches!(
+        broker
+            .issue(
+                &scope,
+                std::slice::from_ref(&credential_reference),
+                std::slice::from_ref(&credential_snapshot),
+                [&item].into_iter(),
+            )
+            .await,
+        Err(InvocationBrokerError::LeaseInvalid)
+    ));
 
     verify_checkpoint_externalization(&pool, artifact_store, &ids).await;
 }
@@ -274,6 +304,22 @@ async fn skill_runtime_rechecks_revoked_grants_and_rejects_cross_tenant_contexts
         resource_version_id: Some(Uuid::now_v7()),
         operation: ResourceOperation::Use,
     };
+    sqlx::query("INSERT INTO skills(id,tenant_id,name,owner_department_id,status,created_by) VALUES(?,?,'Runtime Skill',?,'active',?)")
+        .bind(reference.resource_id)
+        .bind(ids.tenant)
+        .bind(ids.department)
+        .bind(ids.user)
+        .execute(&pool)
+        .await
+        .expect("seed active skill");
+    sqlx::query("INSERT INTO skill_versions(id,tenant_id,skill_id,version_number,source_revision,manifest_json,content_hash,created_by) VALUES(?,?,?,1,1,JSON_OBJECT('instructions','Use the published fixture.'),'skill-fixture',?)")
+        .bind(reference.resource_version_id.expect("fixed skill version"))
+        .bind(ids.tenant)
+        .bind(reference.resource_id)
+        .bind(ids.user)
+        .execute(&pool)
+        .await
+        .expect("seed published skill version");
     sqlx::query("INSERT INTO resource_grants(id,tenant_id,subject_type,subject_id,resource_type,resource_id,resource_version_id,operation_key,created_by) VALUES(?,?,'workflow_service_identity',?,'skill',?,?, 'use',?)")
         .bind(Uuid::now_v7())
         .bind(ids.tenant)
@@ -299,18 +345,36 @@ async fn skill_runtime_rechecks_revoked_grants_and_rejects_cross_tenant_contexts
         }),
     };
     let runtime = SnapshotSkillRuntime::new(MySqlResourceAuthorizer::new(pool.clone()), artifacts);
-    let context = skill_context(&ids, TenantId::from_uuid(ids.tenant), snapshot.clone());
+    let context = resource_context(&ids, TenantId::from_uuid(ids.tenant), snapshot.clone());
     runtime
         .load(&context, reference.clone())
         .await
         .expect("authorized skill should load");
 
-    let cross_tenant = skill_context(&ids, TenantId::new(), snapshot);
+    let cross_tenant = resource_context(&ids, TenantId::new(), snapshot);
     let denied = runtime
         .load(&cross_tenant, reference.clone())
         .await
         .expect_err("cross-tenant context must not use the original grant");
-    assert_eq!(denied.code, "RESOURCE_GRANT_MISSING");
+    assert_eq!(denied.code, "RESOURCE_UNAVAILABLE");
+
+    sqlx::query("UPDATE skills SET status='disabled' WHERE tenant_id=? AND id=?")
+        .bind(ids.tenant)
+        .bind(reference.resource_id)
+        .execute(&pool)
+        .await
+        .expect("disable skill");
+    let disabled = runtime
+        .load(&context, reference.clone())
+        .await
+        .expect_err("disabled skill must fail before loading artifacts");
+    assert_eq!(disabled.code, "RESOURCE_UNAVAILABLE");
+    sqlx::query("UPDATE skills SET status='active' WHERE tenant_id=? AND id=?")
+        .bind(ids.tenant)
+        .bind(reference.resource_id)
+        .execute(&pool)
+        .await
+        .expect("reactivate skill");
 
     sqlx::query(
         "DELETE FROM resource_grants WHERE tenant_id=? AND resource_type='skill' AND resource_id=?",
@@ -327,7 +391,7 @@ async fn skill_runtime_rechecks_revoked_grants_and_rejects_cross_tenant_contexts
     assert_eq!(revoked.code, "RESOURCE_GRANT_MISSING");
 }
 
-fn skill_context(
+fn resource_context(
     ids: &RuntimeIds,
     tenant_id: TenantId,
     snapshot: RuntimeResourceSnapshot,
@@ -347,6 +411,7 @@ fn skill_context(
         cancellation: CancellationToken::new(),
         idempotency_key: "skill-runtime-fixture".into(),
         resources: vec![snapshot],
+        credential_handles: Default::default(),
     }
 }
 
@@ -499,6 +564,8 @@ async fn seed_credential(pool: &MySqlPool, keyring: &CredentialKeyring, ids: &Ru
     sqlx::query("INSERT INTO credential_secret_versions(id,tenant_id,credential_id,version_number,algorithm,key_id,nonce,ciphertext,created_by) VALUES(?,?,?,1,?,?,?,?,?)")
         .bind(Uuid::now_v7()).bind(ids.tenant).bind(ids.credential).bind(encrypted.algorithm).bind(encrypted.key_id)
         .bind(encrypted.nonce.to_vec()).bind(encrypted.ciphertext).bind(ids.user).execute(pool).await.unwrap();
+    sqlx::query("INSERT INTO resource_grants(id,tenant_id,subject_type,subject_id,resource_type,resource_id,resource_version_id,operation_key,created_by) VALUES(?,?,'workflow_service_identity',?,'credential',?,NULL,'use',?)")
+        .bind(Uuid::now_v7()).bind(ids.tenant).bind(ids.identity).bind(ids.credential).bind(ids.user).execute(pool).await.unwrap();
 }
 
 fn test_keyring() -> CredentialKeyring {

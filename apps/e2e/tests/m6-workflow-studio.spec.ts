@@ -28,7 +28,10 @@ async function login(page: Page) {
   const response = page.waitForResponse((value) => value.url().endsWith('/api/v1/auth/login') && value.request().method() === 'POST')
   await page.getByRole('button', { name: '登录' }).click()
   await expect(page).toHaveURL(/\/$/)
-  return ((await (await response).json()) as { accessToken: string }).accessToken
+  const token = ((await (await response).json()) as { accessToken: string }).accessToken
+  const me = await page.request.get('/api/v1/auth/me', { headers: { Authorization: `Bearer ${token}` } })
+  expect(me.ok()).toBeTruthy()
+  return { token, userId: ((await me.json()) as { id: string }).id }
 }
 
 async function api<T>(page: Page, token: string, path: string): Promise<T> {
@@ -175,7 +178,7 @@ async function setTheme(page: Page, theme: 'light' | 'dark') {
 }
 
 test('M6 Studio creates, debugs, versions and publishes a manifest-driven Workflow', async ({ context, page }, testInfo) => {
-  const token = await login(page)
+  const { token, userId } = await login(page)
   const workflowName = `M6 Studio ${Date.now()}`
   const workflowId = await createWorkflow(page, workflowName)
 
@@ -211,6 +214,7 @@ test('M6 Studio creates, debugs, versions and publishes a manifest-driven Workfl
   await approval.click()
   await page.getByTestId('parameter-title').getByRole('textbox').fill('M6 Studio Approval')
   await page.getByTestId('parameter-description').getByRole('textbox').fill('Approve the Workflow created through the Studio UI.')
+  await page.getByTestId('parameter-candidateUserId').getByRole('textbox').fill(userId)
 
   await connect(page, trigger, 'main', agent, 'main')
   await connect(page, agent, 'main', code, 'main')

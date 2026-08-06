@@ -3,8 +3,9 @@ use std::{collections::BTreeMap, sync::Arc};
 use agentx_application::{
     ArtifactStore, ArtifactWrite, McpToolRequest, McpToolRuntime, MemoryOperation, MemoryRequest,
     MemoryRuntime, ModelRequest, ModelRuntime, RagOperation, RagRequest, RagRuntime,
-    RuntimeContext, RuntimeError, RuntimeResult, SandboxCommand, SandboxCreateRequest,
-    SandboxCredentialHandle, SandboxEvent, SandboxRuntime, SkillRuntime, TraceSink,
+    RuntimeContext, RuntimeCredentialHandle, RuntimeError, RuntimeResult, SandboxCommand,
+    SandboxCreateRequest, SandboxCredentialHandle, SandboxEvent, SandboxRuntime, SkillRuntime,
+    TraceSink,
 };
 use agentx_domain::{
     ArtifactId, AttemptId, ExecutionId, NodeExecutionId, ResourceReference, ResourceType, TenantId,
@@ -35,10 +36,11 @@ impl ResourceRuntimes {
         &self,
         task: &RuntimeTask,
         worker_lease: Uuid,
+        credential_handles: BTreeMap<Uuid, RuntimeCredentialHandle>,
         cancellation: CancellationToken,
         parameters: Value,
     ) -> RuntimeResult<TaskResult> {
-        let context = runtime_context(task, worker_lease, cancellation);
+        let context = runtime_context(task, worker_lease, credential_handles, cancellation);
         let result = match task.capability.as_str() {
             "model" => self.execute_model(task, &context, parameters).await,
             "mcp_tool" => self.execute_mcp(task, &context, parameters).await,
@@ -47,8 +49,8 @@ impl ResourceRuntimes {
             "memory" => self.execute_memory(task, &context, parameters).await,
             "sandbox" => self.execute_code(task, &context, parameters).await,
             _ => Err(RuntimeError::new(
-                "RUNTIME_UNAVAILABLE",
-                "Resource runtime capability is unavailable",
+                "WORKER_CAPABILITY_UNSUPPORTED",
+                "This Worker does not support the requested resource capability",
             )),
         };
         self.emit_trace(task, &result).await;
@@ -374,7 +376,7 @@ impl ResourceRuntimes {
     ) -> RuntimeResult<TaskResult> {
         let sandbox = self.sandbox.as_ref().ok_or_else(|| {
             RuntimeError::new(
-                "RUNTIME_UNAVAILABLE",
+                "SANDBOX_RUNTIME_UNAVAILABLE",
                 "Sandbox Manager is not configured for this Worker",
             )
         })?;
@@ -704,6 +706,7 @@ impl ResourceRuntimes {
 pub fn runtime_context(
     task: &RuntimeTask,
     worker_lease: Uuid,
+    credential_handles: BTreeMap<Uuid, RuntimeCredentialHandle>,
     cancellation: CancellationToken,
 ) -> RuntimeContext {
     RuntimeContext {
@@ -723,6 +726,7 @@ pub fn runtime_context(
         cancellation,
         idempotency_key: task.idempotency_key.clone(),
         resources: task.resource_snapshots.clone(),
+        credential_handles,
     }
 }
 pub fn reference(task: &RuntimeTask, kind: ResourceType) -> RuntimeResult<ResourceReference> {

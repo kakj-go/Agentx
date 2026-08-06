@@ -55,7 +55,7 @@
 | 09 | [恢复、等待和审批运行](09-checkpoint-wait-recovery.md) | done | Checkpoint、Fork、Wait 和审批恢复可用 |
 | 10 | [Agent 与 OpenSandbox](10-agent-opensandbox.md) | done | AGT-001～013、当前 Kubernetes 部署、真实 OpenSandbox Runtime 链路和临时 E2E 已通过；AGT-010 生产强化暂不重试并归入 M7；见 [M5 验收证据](m5-acceptance-evidence.md) |
 | 11 | [Workflow Studio](11-workflow-studio.md) | done | Agentx 原生 Definition 3.0、Manifest 驱动画布、Draft Revision 调试、版本和发布真实 Workflow；见 [M6 验收证据](m6-acceptance-evidence.md) |
-| 12 | [集成、加固和发布](12-integration-hardening-release.md) | planned | M6 运行链路被 Application/Trigger/Evaluation/Approval 复用，生产安全、容量、升级和 MVP 十二步全部通过 |
+| 12 | [集成、加固和发布](12-integration-hardening-release.md) | in_progress | 业务 Runtime 闭环已通过；生产安全、容量、升级和最终发布证据仍需完成，见 [M7 验收证据](m7-acceptance-evidence.md) |
 
 功能覆盖和验收证据统一维护在 [功能追踪矩阵](99-feature-traceability.md)。
 
@@ -77,7 +77,7 @@ M3 评测模型和前端依赖引导的破坏性修正见 [M3.1 评测方案与�
 | M6 | n8n-like 交互的 Agentx Workflow Studio：拖拽、Manifest 配置、Draft Revision 调试、Trace、版本和发布（done） | 11；[验收证据](m6-acceptance-evidence.md) |
 | M7 | 复用 M6 Runtime 的应用/Trigger/Approval/Evaluation 集成、配额、生产 Sandbox/Vault/签名、故障容量和首期发布 | 12 |
 
-按阶段原子任务统计，M4 的 24 项、M5 的 13 项和 M6 的 STU-001～016 共 16 项已经完成；M7 有 INT-001～014 共 14 项，当前为 `planned`。M5-0 Rust OpenSandbox 协议 Spike 是 AGT-008 的前置门禁，不另计原子任务；AGT-010 生产强化只归入 M7 INT-006/010/011/014，完成边界见 [M5 任务清单](m5-task-list.md)。
+按阶段原子任务统计，M4 的 24 项、M5 的 13 项和 M6 的 STU-001～016 共 16 项已经完成；M7 有 INT-001～014 共 14 项，当前 INT-001～008、INT-010、INT-013 共 10 项为 `done`，INT-009、INT-011、INT-012、INT-014 共 4 项为 `in_progress`。M5-0 Rust OpenSandbox 协议 Spike 是 AGT-008 的前置门禁，不另计原子任务；AGT-010 生产强化只归入 M7 INT-006/010/011/014，完成边界见 [M5 任务清单](m5-task-list.md)。
 
 ## 5. 任务格式
 

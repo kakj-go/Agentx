@@ -15,6 +15,7 @@ $script:HelmDigests = @{
 }
 $script:CurlImage = "curlimages/curl:8.14.1@sha256:9a1ed35addb45476afa911696297f8e115993df459278ed036182dd2cd22b67b"
 $script:ServiceImages = @("web", "platform-api", "trigger-gateway", "workflow-coordinator", "workflow-worker", "sandbox-manager", "trace-writer", "echo-mcp", "echo-node")
+$script:ReleaseImages = @("web", "platform-api", "trigger-gateway", "workflow-coordinator", "workflow-worker", "trace-writer")
 $script:StatefulModes = @("mysql", "redis", "clickhouse", "objectStorage")
 
 function Invoke-AgentxDeployment {
@@ -76,6 +77,11 @@ function New-InteractiveProfile {
     $base = Get-Content (Join-Path $root "deploy/profiles/full-local.json") -Raw | ConvertFrom-Json -Depth 30
     $base.namespace = $Namespace
     $base.environment = Read-Choice "Environment" @("local", "test", "production") "local"
+    $base.secrets.provider = Read-Choice "Secret provider" @("local_encrypted", "vault_kv_v2") $(if ($base.environment -eq "production") { "vault_kv_v2" } else { $base.secrets.provider })
+    if ($base.secrets.provider -eq "vault_kv_v2") {
+        $base.secrets.vaultAddress = Read-RequiredText "Vault address" ([string]$base.secrets.vaultAddress)
+        $base.secrets.vaultMount = Read-RequiredText "Vault KV v2 mount" $(if ($base.secrets.vaultMount) { [string]$base.secrets.vaultMount } else { "secret" })
+    }
     $base.images.mode = Read-Choice "Image mode" @("local-build", "registry") $base.images.mode
     if ($base.images.mode -eq "registry") { $base.images.registry = Read-RequiredText "Image registry" $base.images.registry }
     foreach ($name in @("mysql", "redis", "clickhouse")) {
@@ -154,6 +160,7 @@ function Read-ManagedSecretInputs {
     if ($Profile.components.sandbox.mode -eq "remote") { Read-SecretToEnvironment "AGENTX_DEPLOY_OPENSANDBOX_API_KEY" "OpenSandbox API key" }
     if ($Profile.components.rag.mode -eq "bundled") { Read-SecretToEnvironment "AGENTX_DEPLOY_LIGHTRAG_OPENAI_API_KEY" "LightRAG provider API key" }
     if ($Profile.components.memory.mode -eq "bundled") { Read-SecretToEnvironment "AGENTX_DEPLOY_MEM0_OPENAI_API_KEY" "Mem0 provider API key" }
+    if ($Profile.secrets.provider -eq "vault_kv_v2") { Read-SecretToEnvironment "AGENTX_DEPLOY_VAULT_TOKEN" "Vault token" }
 }
 
 function Read-RequiredText { param([string]$Label, [string]$Default) $value = Read-Host "$Label [$Default]"; if (-not $value) { $value = $Default }; if (-not $value) { throw "$Label is required." }; return $value }
@@ -167,6 +174,22 @@ function Assert-DeploymentProfile {
     if ($Profile.apiVersion -ne "agentx.io/deployment/v1alpha1") { throw "Unsupported deployment profile apiVersion." }
     if ($Profile.environment -eq "production" -and $Profile.components.objectStorage.allowHttp) { throw "Production object storage cannot enable allowHttp." }
     if ($Profile.images.mode -eq "registry" -and -not $Profile.images.registry) { throw "Registry image mode requires images.registry." }
+    if ($Profile.environment -eq "production") {
+        if ($Profile.images.mode -ne "registry") { throw "Production requires registry image mode." }
+        if ($Profile.secrets.provider -ne "vault_kv_v2") { throw "Production requires secrets.provider=vault_kv_v2." }
+        $requiredImages = @($script:ReleaseImages)
+        if ($Profile.components.sandbox.mode -eq "remote") { $requiredImages += "sandbox-manager" }
+        foreach ($name in $requiredImages) {
+            $digest = Get-PropertyValue $Profile.images.digests $name
+            if (-not $digest -or $digest -notmatch '^sha256:[a-f0-9]{64}$') { throw "Production image $name requires a sha256 digest." }
+        }
+        if (@($Profile.network.allowedEgressCidrs).Count -eq 0) { throw "Production requires at least one controlled IPv4 or IPv6 egress CIDR." }
+    }
+    if ($Profile.secrets.provider -eq "vault_kv_v2" -and (-not $Profile.secrets.vaultAddress -or -not $Profile.secrets.vaultMount)) { throw "Vault Secret provider requires vaultAddress and vaultMount." }
+    $sandbox = $Profile.components.sandbox
+    if ($sandbox.runtimeClass -eq "runc" -and $sandbox.isolationLevel -ne "standard") { throw "runc can only declare isolationLevel=standard." }
+    if ($sandbox.runtimeClass -eq "custom" -and -not $sandbox.runtimeClassName) { throw "custom Sandbox RuntimeClass requires runtimeClassName." }
+    if ($sandbox.isolationLevel -eq "strong") { Assert-IsolationEvidence -Sandbox $sandbox }
     foreach ($name in @("mysql", "redis", "clickhouse", "objectStorage")) {
         $component = $Profile.components.$name
         if ($component.mode -in @("external", "external-s3")) {
@@ -206,6 +229,20 @@ function Assert-DeploymentProfile {
     if (-not (Test-Path (Join-Path $RepoRoot "deploy/k8s/services/core/kustomization.yaml"))) { throw "Agentx deployment manifests are incomplete." }
 }
 
+function Assert-IsolationEvidence {
+    param($Sandbox)
+    if ($Sandbox.runtimeClass -eq "runc") { throw "Strong isolation requires a non-runc RuntimeClass." }
+    $path = [string]$Sandbox.isolationEvidence
+    if (-not $path -or -not [IO.Path]::IsPathRooted($path) -or -not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        throw "Strong isolation requires an absolute isolationEvidence file produced by verify-runtime-isolation.ps1."
+    }
+    $evidence = Get-Content -Raw -LiteralPath $path | ConvertFrom-Json -Depth 20
+    $expected = if ($Sandbox.runtimeClass -eq "custom") { [string]$Sandbox.runtimeClassName } else { [string]$Sandbox.runtimeClass }
+    if ($evidence.status -ne "passed" -or $evidence.isolationLevel -ne "strong" -or $evidence.runtimeClass -ne $expected -or [int]$evidence.podCount -lt 1) {
+        throw "Sandbox isolationEvidence does not prove the selected strong RuntimeClass."
+    }
+}
+
 function Invoke-Doctor {
     param($Profile, [string]$RepoRoot, [switch]$DryRun)
     foreach ($command in @("kubectl")) { if (-not (Get-Command $command -ErrorAction SilentlyContinue)) { throw "$command is required." } }
@@ -238,8 +275,10 @@ function Invoke-Install {
 
     Ensure-Namespace -Namespace $Profile.namespace
     Ensure-Secrets -Profile $Profile -Rotate:$RotateSecrets
+    Ensure-VaultSecret -Profile $Profile -Rotate:$RotateSecrets
     Ensure-TrustBundle -Profile $Profile
     Apply-AgentxConfig -Profile $Profile
+    Apply-ExternalEgressPolicy -Profile $Profile
     if (Test-Target $Target "ingress") { Install-IngressController -Profile $Profile -RepoRoot $RepoRoot }
     if ($Profile.images.mode -eq "local-build") { Build-LocalImages -Profile $Profile -RepoRoot $RepoRoot -Target $Target }
     if (Test-Target $Target "infrastructure") { Apply-BundledInfrastructure -Profile $Profile -RepoRoot $RepoRoot }
@@ -306,22 +345,56 @@ function Ensure-Secrets {
     $data.AGENTX_REDIS_PASSWORD = Get-DeploySecretValue -Namespace $Profile.namespace -SecretName $Profile.secrets.name -Key "AGENTX_REDIS_PASSWORD" -InputName "AGENTX_DEPLOY_REDIS_PASSWORD" -Existing:$hasExistingSecret -PreserveExisting:($Profile.components.redis.mode -eq "bundled") -Required:($Profile.components.redis.mode -eq "external")
     $data.AGENTX_JWT_SIGNING_SECRET = New-RandomSecret 48
     $data.AGENTX_REMOTE_NODE_AUTH_TOKEN = Get-DeploySecretValue -Namespace $Profile.namespace -SecretName $Profile.secrets.name -Key "AGENTX_REMOTE_NODE_AUTH_TOKEN" -InputName "AGENTX_DEPLOY_REMOTE_NODE_AUTH_TOKEN" -Existing:$hasExistingSecret -PreserveExisting:$true
-    $data.AGENTX_CREDENTIAL_ACTIVE_KEY_ID = "deploy-v1"
-    $credentialKey = if ($Rotate -and $existingName) { Get-ExistingSecretValue -Namespace $Profile.namespace -Name $Profile.secrets.name -Key "AGENTX_CREDENTIAL_KEYS_JSON" } else { $null }
-    $data.AGENTX_CREDENTIAL_KEYS_JSON = if ($credentialKey) { $credentialKey } else { (@{ keys = @{ "deploy-v1" = [Convert]::ToBase64String((New-RandomBytes 32)) } } | ConvertTo-Json -Compress) }
+    if ($Profile.secrets.provider -eq "vault_kv_v2") {
+        $data.AGENTX_CREDENTIAL_BROKER_TOKEN = Get-DeploySecretValue -Namespace $Profile.namespace -SecretName $Profile.secrets.name -Key "AGENTX_CREDENTIAL_BROKER_TOKEN" -InputName "AGENTX_DEPLOY_CREDENTIAL_BROKER_TOKEN" -Existing:$hasExistingSecret -PreserveExisting:$true
+    } else {
+        $data.AGENTX_CREDENTIAL_ACTIVE_KEY_ID = "deploy-v1"
+        $credentialKey = if ($Rotate -and $existingName) { Get-ExistingSecretValue -Namespace $Profile.namespace -Name $Profile.secrets.name -Key "AGENTX_CREDENTIAL_KEYS_JSON" } else { $null }
+        $data.AGENTX_CREDENTIAL_KEYS_JSON = if ($credentialKey) { $credentialKey } else { (@{ keys = @{ "deploy-v1" = [Convert]::ToBase64String((New-RandomBytes 32)) } } | ConvertTo-Json -Compress) }
+    }
     if ($Profile.components.sandbox.mode -eq "remote") {
         $data.AGENTX_OPENSANDBOX_API_KEY = Get-DeploySecretValue -Namespace $Profile.namespace -SecretName $Profile.secrets.name -Key "AGENTX_OPENSANDBOX_API_KEY" -InputName "AGENTX_DEPLOY_OPENSANDBOX_API_KEY" -Existing:$hasExistingSecret -Required:$true
         $data.AGENTX_SANDBOX_RPC_TOKEN = New-RandomSecret 32
         $data.AGENTX_SANDBOX_LEASE_SIGNING_KEY = New-RandomSecret 32
+        if ($Profile.secrets.provider -eq "vault_kv_v2") {
+            $data.AGENTX_SANDBOX_ENDPOINT_ACTIVE_KEY_ID = "sandbox-endpoint-v1"
+            $endpointKey = if ($Rotate -and $existingName) { Get-ExistingSecretValue -Namespace $Profile.namespace -Name $Profile.secrets.name -Key "AGENTX_SANDBOX_ENDPOINT_KEYS_JSON" } else { $null }
+            $data.AGENTX_SANDBOX_ENDPOINT_KEYS_JSON = if ($endpointKey) { $endpointKey } else { (@{ keys = @{ "sandbox-endpoint-v1" = [Convert]::ToBase64String((New-RandomBytes 32)) } } | ConvertTo-Json -Compress) }
+        }
     }
     Apply-Secret -Namespace $Profile.namespace -Name $Profile.secrets.name -Data $data -Labels (Managed-Labels)
 }
 
+function Ensure-VaultSecret {
+    param($Profile, [switch]$Rotate)
+    $name = $Profile.secrets.vaultName
+    if ($Profile.secrets.provider -ne "vault_kv_v2") {
+        if ($Profile.secrets.mode -eq "managed") { Remove-ManagedResource -Namespace $Profile.namespace -Kind secret -Name $name }
+        return
+    }
+    $existing = [bool](kubectl -n $Profile.namespace get secret $name --ignore-not-found -o name)
+    if ($Profile.secrets.mode -eq "existing") {
+        if (-not $existing) { throw "Profile requires an existing Secret named $name." }
+        Assert-SecretKeys -Namespace $Profile.namespace -Name $name -Keys @("AGENTX_VAULT_TOKEN")
+        return
+    }
+    if ($existing -and -not $Rotate) {
+        Assert-SecretKeys -Namespace $Profile.namespace -Name $name -Keys @("AGENTX_VAULT_TOKEN")
+        return
+    }
+    $token = Get-DeploySecretValue -Namespace $Profile.namespace -SecretName $name -Key "AGENTX_VAULT_TOKEN" -InputName "AGENTX_DEPLOY_VAULT_TOKEN" -Existing:$existing -PreserveExisting:$false -Required:$true
+    Apply-Secret -Namespace $Profile.namespace -Name $name -Data @{ AGENTX_VAULT_TOKEN = $token } -Labels (Managed-Labels)
+}
+
 function Get-CoreSecretKeys {
     param($Profile)
-    $keys = @("AGENTX_MYSQL_PASSWORD", "AGENTX_REDIS_PASSWORD", "AGENTX_CLICKHOUSE_PASSWORD", "AGENTX_S3_ACCESS_KEY", "AGENTX_S3_SECRET_KEY", "AGENTX_JWT_SIGNING_SECRET", "AGENTX_REMOTE_NODE_AUTH_TOKEN", "AGENTX_CREDENTIAL_ACTIVE_KEY_ID", "AGENTX_CREDENTIAL_KEYS_JSON")
+    $keys = @("AGENTX_MYSQL_PASSWORD", "AGENTX_REDIS_PASSWORD", "AGENTX_CLICKHOUSE_PASSWORD", "AGENTX_S3_ACCESS_KEY", "AGENTX_S3_SECRET_KEY", "AGENTX_JWT_SIGNING_SECRET", "AGENTX_REMOTE_NODE_AUTH_TOKEN")
+    if ($Profile.secrets.provider -eq "vault_kv_v2") { $keys += @("AGENTX_CREDENTIAL_BROKER_TOKEN") } else { $keys += @("AGENTX_CREDENTIAL_ACTIVE_KEY_ID", "AGENTX_CREDENTIAL_KEYS_JSON") }
     if ($Profile.components.mysql.mode -eq "bundled") { $keys += "AGENTX_MYSQL_ROOT_PASSWORD" }
-    if ($Profile.components.sandbox.mode -eq "remote") { $keys += @("AGENTX_OPENSANDBOX_API_KEY", "AGENTX_SANDBOX_RPC_TOKEN", "AGENTX_SANDBOX_LEASE_SIGNING_KEY") }
+    if ($Profile.components.sandbox.mode -eq "remote") {
+        $keys += @("AGENTX_OPENSANDBOX_API_KEY", "AGENTX_SANDBOX_RPC_TOKEN", "AGENTX_SANDBOX_LEASE_SIGNING_KEY")
+        if ($Profile.secrets.provider -eq "vault_kv_v2") { $keys += @("AGENTX_SANDBOX_ENDPOINT_ACTIVE_KEY_ID", "AGENTX_SANDBOX_ENDPOINT_KEYS_JSON") }
+    }
     return $keys
 }
 
@@ -412,8 +485,12 @@ function Apply-AgentxConfig {
         AGENTX_ENV = $Profile.environment; AGENTX_MYSQL_HOST = $Profile.components.mysql.host; AGENTX_MYSQL_PORT = [string]$Profile.components.mysql.port; AGENTX_MYSQL_DATABASE = $Profile.components.mysql.database; AGENTX_MYSQL_USER = $Profile.components.mysql.user; AGENTX_MYSQL_TLS_MODE = $Profile.components.mysql.tlsMode
         AGENTX_REDIS_URL = $Profile.components.redis.url; AGENTX_CLICKHOUSE_URL = $Profile.components.clickhouse.url; AGENTX_CLICKHOUSE_DATABASE = $Profile.components.clickhouse.database; AGENTX_CLICKHOUSE_USER = $Profile.components.clickhouse.user
         AGENTX_S3_ENDPOINT = $Profile.components.objectStorage.endpoint; AGENTX_S3_BUCKET = $Profile.components.objectStorage.bucket; AGENTX_S3_REGION = $Profile.components.objectStorage.region; AGENTX_S3_ALLOW_HTTP = ([string]$Profile.components.objectStorage.allowHttp).ToLowerInvariant(); AGENTX_S3_PATH_STYLE = ([string]$Profile.components.objectStorage.pathStyle).ToLowerInvariant()
-        AGENTX_RUNTIME_COORDINATOR_URL = "http://workflow-coordinator:9090"; AGENTX_NODE_BROKER_URL = "http://workflow-worker:8080"; AGENTX_NODE_HANDLE_TTL_SECONDS = "300"; AGENTX_CHECKPOINT_ARTIFACT_THRESHOLD_BYTES = "65536"; AGENTX_WORKER_CAPABILITIES = "builtin,declarative_http,remote_action,agent,model,mcp_tool,skill,rag,memory,sandbox"
+        AGENTX_RUNTIME_COORDINATOR_URL = "http://workflow-coordinator:9090"; AGENTX_NODE_BROKER_URL = "http://workflow-worker:8080"; AGENTX_CREDENTIAL_BROKER_URL = "http://platform-api:8080"; AGENTX_SECRET_PROVIDER = $Profile.secrets.provider; AGENTX_NODE_HANDLE_TTL_SECONDS = "300"; AGENTX_CHECKPOINT_ARTIFACT_THRESHOLD_BYTES = "65536"; AGENTX_WORKER_CAPABILITIES = "builtin,declarative_http,remote_action,agent,model,mcp_tool,skill,rag,memory,sandbox"
         AGENTX_COOKIE_SECURE = $(if ($Profile.environment -eq "production") { "true" } else { "false" }); AGENTX_CONNECTION_ALLOW_PRIVATE_NETWORKS = $(if ($Profile.environment -eq "local") { "true" } else { "false" }); AGENTX_CONNECTION_ALLOWED_HOSTS = ($hosts -join ","); AGENTX_CONNECTION_ALLOWED_CIDRS = ""
+    }
+    if ($Profile.secrets.provider -eq "vault_kv_v2") {
+        $data.AGENTX_VAULT_ADDR = $Profile.secrets.vaultAddress
+        $data.AGENTX_VAULT_KV_MOUNT = $Profile.secrets.vaultMount
     }
     Add-TlsConfig $data "MYSQL" $Profile.components.mysql.tls "mysql"; Add-TlsConfig $data "REDIS" $Profile.components.redis.tls "redis"; Add-TlsConfig $data "CLICKHOUSE" $Profile.components.clickhouse.tls "clickhouse"; Add-TlsConfig $data "S3" $Profile.components.objectStorage.tls "objectstorage"
     if ($sandbox.mode -eq "remote") {
@@ -510,7 +587,12 @@ function Invoke-ComponentRender {
         $resolvedComponent = (Resolve-Path (Join-Path $RepoRoot "deploy/k8s/$Component")).Path
         $componentPath = [IO.Path]::GetRelativePath($temp, $resolvedComponent).Replace('\', '/')
         $lines = @("apiVersion: kustomize.config.k8s.io/v1beta1", "kind: Kustomization", "namespace: $($Profile.namespace)", "resources:", "  - $componentPath", "images:")
-        foreach ($name in $script:ServiceImages) { $newName = if ($Profile.images.mode -eq "registry") { "$($Profile.images.registry.TrimEnd('/'))/$name" } else { "agentx/$name" }; $lines += @("  - name: agentx/$name", "    newName: $newName", "    newTag: $($Profile.images.tag)") }
+        foreach ($name in $script:ServiceImages) {
+            $newName = if ($Profile.images.mode -eq "registry") { "$($Profile.images.registry.TrimEnd('/'))/$name" } else { "agentx/$name" }
+            $digest = Get-PropertyValue $Profile.images.digests $name
+            $lines += @("  - name: agentx/$name", "    newName: $newName")
+            if ($digest) { $lines += "    digest: $digest" } else { $lines += "    newTag: $($Profile.images.tag)" }
+        }
         if ($Component -eq "addons/mem0") { $newName = if ($Profile.images.mode -eq "registry") { "$($Profile.images.registry.TrimEnd('/'))/mem0-server" } else { "agentx/mem0-server" }; $lines += @("  - name: agentx/mem0-server", "    newName: $newName", "    newTag: v2.0.15") }
         $policy = $Profile.images.pullPolicy
         $workloads = @(Get-ComponentWorkloads -Component $Component)
@@ -550,7 +632,38 @@ function Invoke-ExternalAddonDoctors {
     param($Profile)
     foreach ($name in @("rag", "memory")) { $endpoint = $Profile.components.$name.endpoint; if ($Profile.components.$name.mode -ne "external" -or -not $endpoint) { continue }; Invoke-DoctorJob -Profile $Profile -Name "agentx-$name-connectivity-doctor" -Image $script:CurlImage -Arguments @("--output", "/dev/null", "--write-out", "%{http_code}", "--max-time", "15", $endpoint) -Component "doctor" }
 }
-function Get-AgentxImage { param($Profile, [string]$Name) if ($Profile.images.mode -eq "registry") { return "$($Profile.images.registry.TrimEnd('/'))/$Name`:$($Profile.images.tag)" }; return "agentx/$Name`:$($Profile.images.tag)" }
+function Get-AgentxImage {
+    param($Profile, [string]$Name)
+    $base = if ($Profile.images.mode -eq "registry") { "$($Profile.images.registry.TrimEnd('/'))/$Name" } else { "agentx/$Name" }
+    $digest = Get-PropertyValue $Profile.images.digests $Name
+    if ($digest) { return "$base@$digest" }
+    return "$base`:$($Profile.images.tag)"
+}
+
+function Apply-ExternalEgressPolicy {
+    param($Profile)
+    $name = "agentx-controlled-external-egress"
+    $cidrs = @($Profile.network.allowedEgressCidrs)
+    if ($cidrs.Count -eq 0) {
+        kubectl -n $Profile.namespace delete networkpolicy $name --ignore-not-found | Out-Null
+        return
+    }
+    $egress = @()
+    foreach ($cidr in $cidrs) { $egress += @{ to = @(@{ ipBlock = @{ cidr = $cidr } }) } }
+    $labels = Managed-Labels
+    $labels["agentx.io/component"] = "core"
+    $policy = @{
+        apiVersion = "networking.k8s.io/v1"
+        kind = "NetworkPolicy"
+        metadata = @{ name = $name; namespace = $Profile.namespace; labels = $labels }
+        spec = @{
+            podSelector = @{ matchExpressions = @(@{ key = "agentx.io/component"; operator = "In"; values = @("core", "sandbox-manager") }) }
+            policyTypes = @("Egress")
+            egress = $egress
+        }
+    }
+    $policy | ConvertTo-Json -Depth 20 | kubectl apply -f - | Out-Null
+}
 function Invoke-DoctorJob {
     param($Profile, [string]$Name, [string]$Image, [string[]]$Arguments, [string]$Component)
     kubectl -n $Profile.namespace delete job $Name --ignore-not-found --wait=true | Out-Null
@@ -639,12 +752,12 @@ function Invoke-Uninstall {
     param($Profile, [string]$RepoRoot, [string]$Target, [switch]$DeleteData, [switch]$DeleteNamespace, [switch]$DryRun, [switch]$NonInteractive)
     if ($DryRun) { Write-Output "Would uninstall target '$Target' from namespace '$($Profile.namespace)' without touching external dependencies."; return }
     if (($DeleteData -or $DeleteNamespace) -and -not $NonInteractive) { $answer = Read-Host "Type the namespace name '$($Profile.namespace)' to confirm destructive uninstall"; if ($answer -cne $Profile.namespace) { throw "Uninstall cancelled." } }
-    if ($Target -in @("all", "services")) { kubectl -n $Profile.namespace delete deployment,service -l "agentx.io/component=core,app.kubernetes.io/managed-by=agentx-deploy" --ignore-not-found; kubectl -n $Profile.namespace delete job -l "agentx.io/component=migration,app.kubernetes.io/managed-by=agentx-deploy" --ignore-not-found }
+    if ($Target -in @("all", "services")) { kubectl -n $Profile.namespace delete deployment,service,networkpolicy -l "agentx.io/component=core,app.kubernetes.io/managed-by=agentx-deploy" --ignore-not-found; kubectl -n $Profile.namespace delete job -l "agentx.io/component=migration,app.kubernetes.io/managed-by=agentx-deploy" --ignore-not-found }
     if ($Target -in @("all", "addons")) { foreach ($component in @("lightrag", "mem0")) { kubectl -n $Profile.namespace delete deployment,service -l "agentx.io/component=$component,app.kubernetes.io/managed-by=agentx-deploy" --ignore-not-found; Remove-ManagedResource -Namespace $Profile.namespace -Kind configmap -Name $(if ($component -eq "lightrag") { "agentx-lightrag-config" } else { "agentx-mem0-config" }) -Component $component; Remove-ManagedResource -Namespace $Profile.namespace -Kind secret -Name $(if ($component -eq "lightrag") { $Profile.secrets.lightragName } else { $Profile.secrets.mem0Name }) -Component $component } }
     if ($Target -in @("all", "infrastructure")) { foreach ($component in @("mysql", "redis", "clickhouse", "object-storage")) { kubectl -n $Profile.namespace delete statefulset,service,job -l "agentx.io/component=$component,app.kubernetes.io/managed-by=agentx-deploy" --ignore-not-found } }
-    if ($Target -in @("all", "sandbox")) { $manager = kubectl -n $Profile.namespace get deployment sandbox-manager --ignore-not-found -o name; if ($manager) { kubectl -n $Profile.namespace exec deployment/sandbox-manager -- /usr/local/bin/agentx-service doctor-drain | Out-Null }; kubectl -n $Profile.namespace delete deployment,service -l "agentx.io/component=sandbox-manager,app.kubernetes.io/managed-by=agentx-deploy" --ignore-not-found }
+    if ($Target -in @("all", "sandbox")) { $manager = kubectl -n $Profile.namespace get deployment sandbox-manager --ignore-not-found -o name; if ($manager) { kubectl -n $Profile.namespace exec deployment/sandbox-manager -- /usr/local/bin/agentx-service doctor-drain | Out-Null }; kubectl -n $Profile.namespace delete deployment,service,networkpolicy -l "agentx.io/component=sandbox-manager,app.kubernetes.io/managed-by=agentx-deploy" --ignore-not-found }
     if ($DeleteData) { $claims = @(); if ($Target -in @("all", "infrastructure")) { $claims += @("data-mysql-0", "data-redis-0", "data-clickhouse-0", "data-minio-0") }; if ($Target -in @("all", "addons")) { $claims += @("lightrag-data", "mem0-history-data", "mem0-postgres-data") }; foreach ($claim in $claims) { Remove-ManagedPvc -Namespace $Profile.namespace -Name $claim } }
-    if ($Target -eq "all") { Remove-ManagedResource -Namespace $Profile.namespace -Kind configmap -Name "agentx-config"; Remove-ManagedResource -Namespace $Profile.namespace -Kind configmap -Name "agentx-deployment-state"; Remove-ManagedResource -Namespace $Profile.namespace -Kind secret -Name $Profile.secrets.name; Remove-ManagedResource -Namespace $Profile.namespace -Kind secret -Name "agentx-trust-bundle" }
+    if ($Target -eq "all") { Remove-ManagedResource -Namespace $Profile.namespace -Kind configmap -Name "agentx-config"; Remove-ManagedResource -Namespace $Profile.namespace -Kind configmap -Name "agentx-deployment-state"; Remove-ManagedResource -Namespace $Profile.namespace -Kind secret -Name $Profile.secrets.name; Remove-ManagedResource -Namespace $Profile.namespace -Kind secret -Name $Profile.secrets.vaultName; Remove-ManagedResource -Namespace $Profile.namespace -Kind secret -Name "agentx-trust-bundle" }
     if ($Target -in @("all", "ingress")) {
         Remove-ManagedResource -Namespace $Profile.namespace -Kind ingress -Name "agentx-web" -Component "ingress"
         $other = kubectl get ingress -A -o json | ConvertFrom-Json

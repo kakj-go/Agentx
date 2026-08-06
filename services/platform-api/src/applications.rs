@@ -84,6 +84,7 @@ pub struct ApplicationDeploymentResponse {
     pub sequence_number: u64,
     pub input_schema: Value,
     pub output_schema: Value,
+    pub output_expression: Option<String>,
     pub session_version_policy: String,
     pub status: String,
     #[serde(with = "time::serde::rfc3339")]
@@ -97,6 +98,7 @@ pub struct CreateApplicationDeploymentRequest {
     pub environment_id: Uuid,
     pub input_schema: Value,
     pub output_schema: Value,
+    pub output_expression: Option<String>,
     pub session_version_policy: String,
 }
 
@@ -155,6 +157,7 @@ pub struct ScheduleResponse {
     pub cron_expression: String,
     pub timezone: String,
     pub input: Value,
+    pub misfire_policy: String,
     pub status: String,
     pub version: u64,
 }
@@ -166,6 +169,8 @@ pub struct CreateScheduleRequest {
     pub cron_expression: String,
     pub timezone: String,
     pub input: Value,
+    #[serde(default = "default_misfire_policy")]
+    pub misfire_policy: String,
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -175,6 +180,8 @@ pub struct UpdateScheduleRequest {
     pub cron_expression: String,
     pub timezone: String,
     pub input: Value,
+    #[serde(default = "default_misfire_policy")]
+    pub misfire_policy: String,
     pub status: String,
     pub version: u64,
 }
@@ -343,6 +350,19 @@ pub async fn update_application(
             "Application changed on the server",
         ));
     }
+    if input.status == "active" {
+        sqlx::query("UPDATE trigger_bindings b JOIN application_deployment_heads h ON h.tenant_id=b.tenant_id AND h.application_id=b.application_id AND h.deployment_id=b.application_deployment_id SET b.status=IF(b.trigger_kind='lifecycle','activating','active'),b.next_poll_at=IF(b.trigger_kind IN ('poll','lifecycle'),CURRENT_TIMESTAMP(6),NULL),b.last_error=NULL WHERE b.tenant_id=? AND b.application_id=?")
+            .bind(actor.tenant_id)
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+    } else {
+        sqlx::query("UPDATE trigger_bindings SET status=IF(trigger_kind='lifecycle','deactivating','disabled'),next_poll_at=IF(trigger_kind='lifecycle',CURRENT_TIMESTAMP(6),NULL),locked_by=NULL,locked_until=NULL WHERE tenant_id=? AND application_id=? AND status<>'disabled'")
+            .bind(actor.tenant_id)
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+    }
     audit(
         &mut tx,
         &actor,
@@ -396,6 +416,14 @@ pub async fn create_deployment(
     }
     validate_schema(&input.input_schema)?;
     validate_schema(&input.output_schema)?;
+    if let Some(expression) = input.output_expression.as_deref() {
+        let source = expression.strip_prefix('=').unwrap_or(expression);
+        agentx_runtime::ExpressionEngine
+            .validate(source)
+            .map_err(|error| {
+                AppError::unprocessable("INVALID_OUTPUT_EXPRESSION", error.to_string())
+            })?;
+    }
     let deployment_id = Uuid::now_v7();
     let mut tx = state.pool.begin().await?;
     sqlx::query("SELECT id FROM applications WHERE id=? AND tenant_id=? FOR UPDATE")
@@ -405,9 +433,17 @@ pub async fn create_deployment(
         .await?;
     sqlx::query("UPDATE application_deployments SET status='superseded' WHERE tenant_id=? AND application_id=? AND status='active'").bind(actor.tenant_id).bind(id).execute(&mut *tx).await?;
     let sequence: u64=sqlx::query_scalar("SELECT CAST(COALESCE(MAX(sequence_number),0)+1 AS UNSIGNED) FROM application_deployments WHERE tenant_id=? AND application_id=? FOR UPDATE").bind(actor.tenant_id).bind(id).fetch_one(&mut *tx).await?;
-    sqlx::query("INSERT INTO application_deployments(id,tenant_id,application_id,workflow_version_id,environment_id,sequence_number,input_schema_json,output_schema_json,session_version_policy,created_by) VALUES(?,?,?,?,?,?,?,?,?,?)")
+    sqlx::query("INSERT INTO application_deployments(id,tenant_id,application_id,workflow_version_id,environment_id,sequence_number,input_schema_json,output_schema_json,output_expression,session_version_policy,created_by) VALUES(?,?,?,?,?,?,?,?,?,?,?)")
         .bind(deployment_id).bind(actor.tenant_id).bind(id).bind(input.workflow_version_id).bind(input.environment_id).bind(sequence)
-        .bind(input.input_schema).bind(input.output_schema).bind(input.session_version_policy).bind(actor.user_id).execute(&mut *tx).await?;
+        .bind(input.input_schema).bind(input.output_schema).bind(input.output_expression).bind(input.session_version_policy).bind(actor.user_id).execute(&mut *tx).await?;
+    reconcile_trigger_bindings(
+        &mut tx,
+        actor.tenant_id,
+        id,
+        deployment_id,
+        input.workflow_version_id,
+    )
+    .await?;
     sqlx::query("INSERT INTO application_deployment_heads(tenant_id,application_id,deployment_id) VALUES(?,?,?) ON DUPLICATE KEY UPDATE deployment_id=VALUES(deployment_id),version=version+1")
         .bind(actor.tenant_id).bind(id).bind(deployment_id).execute(&mut *tx).await?;
     sqlx::query(
@@ -440,6 +476,83 @@ pub async fn create_deployment(
         StatusCode::CREATED,
         Json(load_deployment(&state, actor.tenant_id, deployment_id).await?),
     ))
+}
+
+async fn reconcile_trigger_bindings(
+    tx: &mut sqlx::Transaction<'_, sqlx::MySql>,
+    tenant_id: Uuid,
+    application_id: Uuid,
+    deployment_id: Uuid,
+    workflow_version_id: Uuid,
+) -> AppResult<()> {
+    sqlx::query("UPDATE trigger_bindings SET status=IF(trigger_kind='lifecycle','deactivating','disabled'),next_poll_at=CURRENT_TIMESTAMP(6) WHERE tenant_id=? AND application_id=? AND status IN ('active','activating','deactivating')")
+        .bind(tenant_id)
+        .bind(application_id)
+        .execute(&mut **tx)
+        .await?;
+    let definition: Value = sqlx::query_scalar(
+        "SELECT definition_json FROM workflow_versions WHERE tenant_id=? AND id=?",
+    )
+    .bind(tenant_id)
+    .bind(workflow_version_id)
+    .fetch_one(&mut **tx)
+    .await?;
+    let Some(nodes) = definition.get("nodes").and_then(Value::as_array) else {
+        return Ok(());
+    };
+    for node in nodes {
+        let node_id = node.get("id").and_then(Value::as_str).unwrap_or_default();
+        let node_type = node.get("type").and_then(Value::as_str).unwrap_or_default();
+        let node_version = node.get("typeVersion").and_then(Value::as_u64).unwrap_or(1);
+        let manifest: Option<Value> = sqlx::query_scalar("SELECT v.manifest_json FROM node_definitions d JOIN node_definition_versions v ON v.node_definition_id=d.id WHERE d.node_type=? AND v.version_number=? AND d.status='active' AND (d.tenant_id IS NULL OR d.tenant_id=?) ORDER BY d.tenant_id IS NULL LIMIT 1")
+            .bind(node_type)
+            .bind(node_version)
+            .bind(tenant_id)
+            .fetch_optional(&mut **tx)
+            .await?;
+        let Some(operations) = manifest
+            .as_ref()
+            .and_then(|value| value.get("lifecycleOperations"))
+            .and_then(Value::as_array)
+        else {
+            continue;
+        };
+        let has = |operation: &str| {
+            operations
+                .iter()
+                .any(|value| value.as_str() == Some(operation))
+        };
+        let mut trigger_kinds = Vec::new();
+        if has("poll") {
+            trigger_kinds.push("poll");
+        }
+        if has("webhook") {
+            trigger_kinds.push("webhook");
+        }
+        if has("activate") || has("deactivate") {
+            trigger_kinds.push("lifecycle");
+        }
+        for trigger_kind in trigger_kinds {
+            sqlx::query("INSERT INTO trigger_bindings(id,tenant_id,application_id,application_deployment_id,workflow_version_id,node_id,trigger_kind,configuration_json,status,next_poll_at) VALUES(?,?,?,?,?,?,?,?,IF(?='lifecycle','activating','active'),IF(? IN ('poll','lifecycle'),CURRENT_TIMESTAMP(6),NULL)) ON DUPLICATE KEY UPDATE status=VALUES(status),configuration_json=VALUES(configuration_json),workflow_version_id=VALUES(workflow_version_id),next_poll_at=VALUES(next_poll_at),last_error=NULL")
+            .bind(Uuid::now_v7())
+            .bind(tenant_id)
+            .bind(application_id)
+            .bind(deployment_id)
+            .bind(workflow_version_id)
+            .bind(node_id)
+            .bind(trigger_kind)
+            .bind(json!({
+                "nodeType": node_type,
+                "nodeVersion": node_version,
+                "parameters": node.get("parameters").cloned().unwrap_or_else(|| json!({})),
+            }))
+            .bind(trigger_kind)
+            .bind(trigger_kind)
+            .execute(&mut **tx)
+            .await?;
+        }
+    }
+    Ok(())
 }
 
 #[utoipa::path(get, path = "/api/v1/applications/{id}/api-keys", params(("id" = Uuid, Path)))]
@@ -577,39 +690,109 @@ pub async fn create_webhook(
 ) -> AppResult<(StatusCode, Json<WebhookResponse>)> {
     actor.require("application:manage")?;
     require_application_access(&state, &actor, id, true).await?;
+    let name = validate_name(&input.name, 160)?;
+    let webhook_id = Uuid::now_v7();
+    let public_id = random_token(18);
+    let secret = random_token(32);
+    let stored =
+        store_webhook_secret(&state, actor.tenant_id, webhook_id, secret.as_bytes()).await?;
+    let mut tx = state.pool.begin().await?;
+    let persisted: AppResult<()> = async {
+        sqlx::query("INSERT INTO application_webhooks(id,tenant_id,application_id,name,public_id,secret_provider,secret_ref,secret_provider_version,secret_algorithm,secret_key_id,secret_nonce,secret_ciphertext,created_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)")
+            .bind(webhook_id).bind(actor.tenant_id).bind(id).bind(name).bind(&public_id)
+            .bind(&stored.provider).bind(&stored.secret_ref).bind(&stored.provider_version)
+            .bind(&stored.algorithm).bind(&stored.key_id).bind(&stored.nonce).bind(&stored.ciphertext)
+            .bind(actor.user_id).execute(&mut *tx).await?;
+        audit(
+            &mut tx,
+            &actor,
+            "application.webhook.created",
+            "application_webhook",
+            webhook_id,
+            json!({"applicationId":id,"publicId":public_id}),
+        )
+        .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+    .await;
+    if let Err(error) = persisted {
+        cleanup_webhook_secret(&state, &stored).await;
+        return Err(error);
+    }
+    let mut response = load_webhook(&state, actor.tenant_id, webhook_id).await?;
+    response.secret = Some(secret);
+    Ok((StatusCode::CREATED, Json(response)))
+}
+
+struct StoredWebhookSecret {
+    provider: String,
+    secret_ref: Option<String>,
+    provider_version: Option<String>,
+    algorithm: Option<String>,
+    key_id: Option<String>,
+    nonce: Option<Vec<u8>>,
+    ciphertext: Option<Vec<u8>>,
+}
+
+async fn store_webhook_secret(
+    state: &AppState,
+    tenant_id: Uuid,
+    webhook_id: Uuid,
+    value: &[u8],
+) -> AppResult<StoredWebhookSecret> {
+    let plaintext = PlainSecret::new(value.to_vec());
+    if let Some(provider) = &state.secret_provider {
+        let secret_ref = format!("tenants/{tenant_id}/webhooks/{webhook_id}");
+        let version = provider.write(&secret_ref, &plaintext).await.map_err(|_| {
+            AppError::service_unavailable(
+                "WEBHOOK_SECRET_PROVIDER_UNAVAILABLE",
+                "Webhook Secret provider cannot store the secret",
+            )
+        })?;
+        return Ok(StoredWebhookSecret {
+            provider: "vault_kv_v2".into(),
+            secret_ref: Some(secret_ref),
+            provider_version: Some(version.to_string()),
+            algorithm: None,
+            key_id: None,
+            nonce: None,
+            ciphertext: None,
+        });
+    }
     let keyring = state.credential_keyring.as_ref().ok_or_else(|| {
         AppError::service_unavailable(
             "CREDENTIAL_STORE_UNAVAILABLE",
             "Secret encryption is unavailable",
         )
     })?;
-    let name = validate_name(&input.name, 160)?;
-    let webhook_id = Uuid::now_v7();
-    let public_id = random_token(18);
-    let secret = random_token(32);
-    let aad = format!("{}/{}/webhook/1", actor.tenant_id, webhook_id);
+    let aad = format!("{tenant_id}/{webhook_id}/webhook/1");
     let encrypted = keyring
-        .encrypt(
-            &PlainSecret::new(secret.as_bytes().to_vec()),
-            aad.as_bytes(),
-        )
+        .encrypt(&plaintext, aad.as_bytes())
         .map_err(AppError::internal)?;
-    let mut tx = state.pool.begin().await?;
-    sqlx::query("INSERT INTO application_webhooks(id,tenant_id,application_id,name,public_id,secret_algorithm,secret_key_id,secret_nonce,secret_ciphertext,created_by) VALUES(?,?,?,?,?,?,?,?,?,?)")
-        .bind(webhook_id).bind(actor.tenant_id).bind(id).bind(name).bind(&public_id).bind(encrypted.algorithm).bind(encrypted.key_id).bind(encrypted.nonce.as_slice()).bind(encrypted.ciphertext).bind(actor.user_id).execute(&mut *tx).await?;
-    audit(
-        &mut tx,
-        &actor,
-        "application.webhook.created",
-        "application_webhook",
-        webhook_id,
-        json!({"applicationId":id,"publicId":public_id}),
-    )
-    .await?;
-    tx.commit().await?;
-    let mut response = load_webhook(&state, actor.tenant_id, webhook_id).await?;
-    response.secret = Some(secret);
-    Ok((StatusCode::CREATED, Json(response)))
+    Ok(StoredWebhookSecret {
+        provider: "local_encrypted".into(),
+        secret_ref: None,
+        provider_version: None,
+        algorithm: Some(encrypted.algorithm.into()),
+        key_id: Some(encrypted.key_id),
+        nonce: Some(encrypted.nonce.to_vec()),
+        ciphertext: Some(encrypted.ciphertext),
+    })
+}
+
+async fn cleanup_webhook_secret(state: &AppState, stored: &StoredWebhookSecret) {
+    let (Some(provider), Some(secret_ref), Some(version)) = (
+        state.secret_provider.as_ref(),
+        stored.secret_ref.as_deref(),
+        stored
+            .provider_version
+            .as_deref()
+            .and_then(|value| value.parse::<u64>().ok()),
+    ) else {
+        return;
+    };
+    let _ = provider.destroy(secret_ref, version).await;
 }
 
 #[utoipa::path(patch, path = "/api/v1/applications/{id}/webhooks/{webhook_id}", request_body = UpdateWebhookRequest)]
@@ -660,7 +843,7 @@ pub async fn list_schedules(
 ) -> AppResult<Json<Vec<ScheduleResponse>>> {
     actor.require("application:view")?;
     require_application_access(&state, &actor, id, false).await?;
-    let rows=sqlx::query("SELECT id,name,cron_expression,timezone,input_json,status,version FROM application_schedules WHERE tenant_id=? AND application_id=? ORDER BY created_at DESC").bind(actor.tenant_id).bind(id).fetch_all(&state.pool).await?;
+    let rows=sqlx::query("SELECT id,name,cron_expression,timezone,input_json,misfire_policy,status,version FROM application_schedules WHERE tenant_id=? AND application_id=? ORDER BY created_at DESC").bind(actor.tenant_id).bind(id).fetch_all(&state.pool).await?;
     Ok(Json(
         rows.into_iter()
             .map(schedule_from_row)
@@ -678,11 +861,26 @@ pub async fn create_schedule(
     actor.require("application:manage")?;
     require_application_access(&state, &actor, id, true).await?;
     validate_schedule(&input.cron_expression, &input.timezone)?;
+    validate_misfire_policy(&input.misfire_policy)?;
     let schedule_id = Uuid::now_v7();
     let mut tx = state.pool.begin().await?;
-    sqlx::query("INSERT INTO application_schedules(id,tenant_id,application_id,name,cron_expression,timezone,input_json,created_by) VALUES(?,?,?,?,?,?,?,?)")
-        .bind(schedule_id).bind(actor.tenant_id).bind(id).bind(validate_name(&input.name,160)?).bind(&input.cron_expression).bind(&input.timezone).bind(&input.input).bind(actor.user_id).execute(&mut *tx).await?;
-    audit(&mut tx, &actor, "application.schedule.created", "application_schedule", schedule_id, json!({"applicationId":id,"cronExpression":input.cron_expression,"timezone":input.timezone})).await?;
+    let application_status: Option<String> =
+        sqlx::query_scalar("SELECT status FROM applications WHERE id=? AND tenant_id=? FOR UPDATE")
+            .bind(id)
+            .bind(actor.tenant_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+    let Some(application_status) = application_status else {
+        return Err(AppError::not_found("Application"));
+    };
+    let schedule_status = if application_status == "active" {
+        "active"
+    } else {
+        "disabled"
+    };
+    sqlx::query("INSERT INTO application_schedules(id,tenant_id,application_id,name,cron_expression,timezone,input_json,misfire_policy,status,created_by) VALUES(?,?,?,?,?,?,?,?,?,?)")
+        .bind(schedule_id).bind(actor.tenant_id).bind(id).bind(validate_name(&input.name,160)?).bind(&input.cron_expression).bind(&input.timezone).bind(&input.input).bind(&input.misfire_policy).bind(schedule_status).bind(actor.user_id).execute(&mut *tx).await?;
+    audit(&mut tx, &actor, "application.schedule.created", "application_schedule", schedule_id, json!({"applicationId":id,"cronExpression":input.cron_expression,"timezone":input.timezone,"misfirePolicy":input.misfire_policy})).await?;
     tx.commit().await?;
     Ok((
         StatusCode::CREATED,
@@ -700,6 +898,7 @@ pub async fn update_schedule(
     actor.require("application:manage")?;
     require_application_access(&state, &actor, id, true).await?;
     validate_schedule(&input.cron_expression, &input.timezone)?;
+    validate_misfire_policy(&input.misfire_policy)?;
     if !matches!(input.status.as_str(), "active" | "disabled") {
         return Err(AppError::bad_request(
             "INVALID_SCHEDULE_STATUS",
@@ -707,8 +906,8 @@ pub async fn update_schedule(
         ));
     }
     let mut tx = state.pool.begin().await?;
-    let changed=sqlx::query("UPDATE application_schedules SET name=?,cron_expression=?,timezone=?,input_json=?,status=?,version=version+1 WHERE id=? AND application_id=? AND tenant_id=? AND version=?")
-        .bind(validate_name(&input.name,160)?).bind(&input.cron_expression).bind(&input.timezone).bind(&input.input).bind(&input.status).bind(schedule_id).bind(id).bind(actor.tenant_id).bind(input.version).execute(&mut *tx).await?;
+    let changed=sqlx::query("UPDATE application_schedules SET name=?,cron_expression=?,timezone=?,input_json=?,misfire_policy=?,status=?,version=version+1 WHERE id=? AND application_id=? AND tenant_id=? AND version=?")
+        .bind(validate_name(&input.name,160)?).bind(&input.cron_expression).bind(&input.timezone).bind(&input.input).bind(&input.misfire_policy).bind(&input.status).bind(schedule_id).bind(id).bind(actor.tenant_id).bind(input.version).execute(&mut *tx).await?;
     if changed.rows_affected() != 1 {
         return Err(AppError::conflict(
             "SCHEDULE_VERSION_CONFLICT",
@@ -792,7 +991,7 @@ pub async fn upgrade_session(
 
 const APPLICATION_SELECT_LIST: &str = "SELECT a.id,a.workflow_id,w.name workflow_name,a.name,a.slug,a.description,a.visibility,a.status,a.owner_department_id,h.deployment_id active_deployment_id,wv.version_number active_version_number,a.version,a.updated_at FROM applications a JOIN workflows w ON w.id=a.workflow_id LEFT JOIN application_deployment_heads h ON h.application_id=a.id LEFT JOIN application_deployments ad ON ad.id=h.deployment_id LEFT JOIN workflow_versions wv ON wv.id=ad.workflow_version_id WHERE a.tenant_id=? AND (?='' OR a.status=?) AND (?='%%' OR a.name LIKE ?) ORDER BY a.updated_at DESC LIMIT ? OFFSET ?";
 const APPLICATION_SELECT_VISIBLE: &str = "SELECT a.id,a.workflow_id,w.name workflow_name,a.name,a.slug,a.description,a.visibility,a.status,a.owner_department_id,h.deployment_id active_deployment_id,wv.version_number active_version_number,a.version,a.updated_at FROM applications a JOIN workflows w ON w.id=a.workflow_id LEFT JOIN application_deployment_heads h ON h.application_id=a.id LEFT JOIN application_deployments ad ON ad.id=h.deployment_id LEFT JOIN workflow_versions wv ON wv.id=ad.workflow_version_id WHERE a.tenant_id=? AND (a.visibility='company' OR a.owner_user_id=? OR (a.visibility='department' AND EXISTS(SELECT 1 FROM department_closure dc WHERE dc.tenant_id=a.tenant_id AND ((dc.ancestor_id=a.owner_department_id AND dc.descendant_id=?) OR (dc.ancestor_id=? AND dc.descendant_id=a.owner_department_id)))) OR EXISTS(SELECT 1 FROM user_roles ur JOIN department_closure dc ON dc.tenant_id=ur.tenant_id AND dc.ancestor_id=ur.scope_department_id WHERE ur.tenant_id=a.tenant_id AND ur.user_id=? AND dc.descendant_id=a.owner_department_id)) AND (?='' OR a.status=?) AND (?='%%' OR a.name LIKE ?) ORDER BY a.updated_at DESC LIMIT ? OFFSET ?";
-const DEPLOYMENT_SELECT: &str = "SELECT ad.id,ad.application_id,ad.workflow_version_id,wv.version_number,ad.environment_id,e.name environment_name,ad.sequence_number,ad.input_schema_json,ad.output_schema_json,ad.session_version_policy,ad.status,ad.created_at FROM application_deployments ad JOIN workflow_versions wv ON wv.id=ad.workflow_version_id JOIN workflow_environments e ON e.id=ad.environment_id WHERE ad.tenant_id=? AND ad.application_id=? ORDER BY ad.sequence_number DESC";
+const DEPLOYMENT_SELECT: &str = "SELECT ad.id,ad.application_id,ad.workflow_version_id,wv.version_number,ad.environment_id,e.name environment_name,ad.sequence_number,ad.input_schema_json,ad.output_schema_json,ad.output_expression,ad.session_version_policy,ad.status,ad.created_at FROM application_deployments ad JOIN workflow_versions wv ON wv.id=ad.workflow_version_id JOIN workflow_environments e ON e.id=ad.environment_id WHERE ad.tenant_id=? AND ad.application_id=? ORDER BY ad.sequence_number DESC";
 const SESSION_SELECT: &str = "SELECT id,application_id,application_deployment_id,workflow_version_id,version_policy,external_user_id,title,status,version,updated_at FROM application_sessions WHERE tenant_id=? AND application_id=? ORDER BY updated_at DESC";
 
 async fn require_application_access(
@@ -854,6 +1053,7 @@ fn deployment_from_row(row: sqlx::mysql::MySqlRow) -> AppResult<ApplicationDeplo
         sequence_number: row.try_get("sequence_number")?,
         input_schema: row.try_get("input_schema_json")?,
         output_schema: row.try_get("output_schema_json")?,
+        output_expression: row.try_get("output_expression")?,
         session_version_policy: row.try_get("session_version_policy")?,
         status: row.try_get("status")?,
         created_at: row.try_get("created_at")?,
@@ -864,7 +1064,7 @@ async fn load_deployment(
     tenant_id: Uuid,
     id: Uuid,
 ) -> AppResult<ApplicationDeploymentResponse> {
-    let row = sqlx::query("SELECT ad.id,ad.application_id,ad.workflow_version_id,wv.version_number,ad.environment_id,e.name environment_name,ad.sequence_number,ad.input_schema_json,ad.output_schema_json,ad.session_version_policy,ad.status,ad.created_at FROM application_deployments ad JOIN workflow_versions wv ON wv.id=ad.workflow_version_id JOIN workflow_environments e ON e.id=ad.environment_id WHERE ad.tenant_id=? AND ad.id=?")
+    let row = sqlx::query("SELECT ad.id,ad.application_id,ad.workflow_version_id,wv.version_number,ad.environment_id,e.name environment_name,ad.sequence_number,ad.input_schema_json,ad.output_schema_json,ad.output_expression,ad.session_version_policy,ad.status,ad.created_at FROM application_deployments ad JOIN workflow_versions wv ON wv.id=ad.workflow_version_id JOIN workflow_environments e ON e.id=ad.environment_id WHERE ad.tenant_id=? AND ad.id=?")
         .bind(tenant_id)
         .bind(id)
         .fetch_one(&state.pool)
@@ -910,12 +1110,13 @@ fn schedule_from_row(row: sqlx::mysql::MySqlRow) -> AppResult<ScheduleResponse> 
         cron_expression: row.try_get("cron_expression")?,
         timezone: row.try_get("timezone")?,
         input: row.try_get("input_json")?,
+        misfire_policy: row.try_get("misfire_policy")?,
         status: row.try_get("status")?,
         version: row.try_get("version")?,
     })
 }
 async fn load_schedule(state: &AppState, tenant_id: Uuid, id: Uuid) -> AppResult<ScheduleResponse> {
-    let row=sqlx::query("SELECT id,name,cron_expression,timezone,input_json,status,version FROM application_schedules WHERE tenant_id=? AND id=?").bind(tenant_id).bind(id).fetch_one(&state.pool).await?;
+    let row=sqlx::query("SELECT id,name,cron_expression,timezone,input_json,misfire_policy,status,version FROM application_schedules WHERE tenant_id=? AND id=?").bind(tenant_id).bind(id).fetch_one(&state.pool).await?;
     schedule_from_row(row)
 }
 fn session_from_row(row: sqlx::mysql::MySqlRow) -> AppResult<SessionResponse> {
@@ -1010,9 +1211,27 @@ fn validate_schedule(cron: &str, timezone: &str) -> AppResult<()> {
     Ok(())
 }
 
+fn default_misfire_policy() -> String {
+    "fire_once".into()
+}
+
+fn validate_misfire_policy(policy: &str) -> AppResult<()> {
+    if matches!(policy, "skip" | "fire_once") {
+        Ok(())
+    } else {
+        Err(AppError::bad_request(
+            "INVALID_MISFIRE_POLICY",
+            "Misfire policy must be 'skip' or 'fire_once'",
+        ))
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{generate_api_key, validate_schedule, validate_slug, validate_version_policy};
+    use super::{
+        generate_api_key, validate_misfire_policy, validate_schedule, validate_slug,
+        validate_version_policy,
+    };
     use sha2::{Digest, Sha256};
     #[test]
     fn validates_public_configuration() {
@@ -1021,6 +1240,9 @@ mod tests {
         assert!(validate_version_policy("pinned").is_ok());
         assert!(validate_schedule("0 9 * * 1", "Asia/Shanghai").is_ok());
         assert!(validate_schedule("bad", "UTC").is_err());
+        assert!(validate_misfire_policy("fire_once").is_ok());
+        assert!(validate_misfire_policy("skip").is_ok());
+        assert!(validate_misfire_policy("catch_up_all").is_err());
     }
 
     #[test]

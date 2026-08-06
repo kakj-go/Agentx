@@ -224,7 +224,7 @@ impl<'a> WorkflowCompiler<'a> {
             raw_connections.push((connection, source, target, connection.order));
         }
 
-        validate_reachability(&enabled, &raw_connections, &mut issues);
+        validate_reachability(&enabled, &manifests, &raw_connections, &mut issues);
         if !issues.is_empty() {
             return Err(CompileError::new(issues));
         }
@@ -490,17 +490,30 @@ fn port_matches(ports: &[agentx_node_protocol::NodePort], handle: &str) -> bool 
 
 fn validate_reachability(
     nodes: &[(usize, &agentx_domain::WorkflowNode)],
+    manifests: &[Option<NodeManifestVersion>],
     connections: &[(&agentx_domain::WorkflowConnection, usize, usize, u32)],
     issues: &mut Vec<CompileIssue>,
 ) {
     let adjacency = adjacency(nodes.len(), connections);
-    let mut reachable = BTreeSet::new();
-    let mut queue = nodes
+    let trigger_nodes = manifests
         .iter()
         .enumerate()
-        .filter(|(_, (_, node))| node.node_type == "manual_trigger")
-        .map(|(index, _)| index)
-        .collect::<VecDeque<_>>();
+        .filter_map(|(index, manifest)| {
+            manifest
+                .as_ref()
+                .is_some_and(|manifest| manifest.execution_style == ExecutionStyle::Trigger)
+                .then_some(index)
+        })
+        .collect::<Vec<_>>();
+    if trigger_nodes.is_empty() {
+        issues.push(CompileIssue {
+            code: "TRIGGER_REQUIRED".into(),
+            path: "nodes".into(),
+            message: "At least one enabled Trigger node is required".into(),
+        });
+    }
+    let mut reachable = BTreeSet::new();
+    let mut queue = trigger_nodes.into_iter().collect::<VecDeque<_>>();
     while let Some(node) = queue.pop_front() {
         if reachable.insert(node) {
             queue.extend(adjacency[node].iter().copied());
@@ -675,6 +688,50 @@ mod tests {
             compiler
                 .compile(&definition, &CompileContext::default())
                 .is_ok()
+        );
+    }
+
+    #[test]
+    fn trigger_roots_are_derived_from_manifests() {
+        let registry = NodeRegistry::m5_defaults();
+        let compiler = WorkflowCompiler::new(&registry);
+        let definition: WorkflowDefinition = serde_json::from_value(serde_json::json!({
+            "schemaVersion":"3.0",
+            "nodes":[
+                {"id":"remote","type":"remote_trigger","typeVersion":1,"name":"Remote","parameters":{"endpoint":"http://echo-node:8080","pollIntervalSeconds":5}},
+                {"id":"set","type":"set","typeVersion":1,"name":"Set","parameters":{"values":{"ok":true}}}
+            ],
+            "connections":[
+                {"id":"start","sourceNodeId":"remote","sourceHandle":"main","targetNodeId":"set","targetHandle":"main","order":0}
+            ]
+        }))
+        .unwrap();
+
+        let compiled = compiler
+            .compile(&definition, &CompileContext::default())
+            .unwrap();
+        assert_eq!(compiled.start_nodes, vec![0]);
+    }
+
+    #[test]
+    fn rejects_definitions_without_manifest_triggers() {
+        let registry = NodeRegistry::m5_defaults();
+        let compiler = WorkflowCompiler::new(&registry);
+        let definition: WorkflowDefinition = serde_json::from_value(serde_json::json!({
+            "schemaVersion":"3.0",
+            "nodes":[{"id":"set","type":"set","typeVersion":1,"name":"Set","parameters":{"values":{}}}],
+            "connections":[]
+        }))
+        .unwrap();
+
+        let error = compiler
+            .compile(&definition, &CompileContext::default())
+            .unwrap_err();
+        assert!(
+            error
+                .issues
+                .iter()
+                .any(|issue| issue.code == "TRIGGER_REQUIRED")
         );
     }
 }

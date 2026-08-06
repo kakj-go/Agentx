@@ -3,7 +3,9 @@ use std::{
     sync::Arc,
 };
 
-use agentx_application::{ArtifactStore, ArtifactWrite, RuntimeResourceSnapshot};
+use agentx_application::{
+    ArtifactStore, ArtifactWrite, RuntimeEventEnvelope, RuntimeResourceSnapshot,
+};
 use agentx_domain::{
     ArtifactId, ExecutionOrder, NodeExecutionId, ResourceReference, TenantId, WorkflowDefinition,
 };
@@ -20,11 +22,15 @@ use sqlx::{MySql, MySqlPool, Row, Transaction};
 use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
 
+use crate::quota::QuotaAdmission;
+use crate::runtime_events::append_runtime_event;
+
 #[derive(Clone)]
 pub struct RuntimeRepository {
     pub(crate) pool: MySqlPool,
     checkpoint_artifacts: Option<Arc<dyn ArtifactStore>>,
     checkpoint_artifact_threshold: usize,
+    quota_admission: Option<QuotaAdmission>,
 }
 
 #[derive(Clone, Debug)]
@@ -94,6 +100,16 @@ pub struct DispatchMessage {
     pub node_execution_id: Uuid,
     pub attempt_id: Uuid,
     pub capability: String,
+    #[serde(default = "default_node_protocol_version")]
+    pub node_protocol_version: String,
+    #[serde(default)]
+    pub compiler_version: String,
+    #[serde(default)]
+    pub ir_schema_version: String,
+}
+
+fn default_node_protocol_version() -> String {
+    agentx_node_protocol::NODE_PROTOCOL_VERSION.into()
 }
 
 #[derive(Clone, Debug)]
@@ -154,7 +170,14 @@ impl RuntimeRepository {
             pool,
             checkpoint_artifacts: None,
             checkpoint_artifact_threshold: 64 * 1024,
+            quota_admission: None,
         }
+    }
+
+    #[must_use]
+    pub fn with_quota_admission(mut self, admission: QuotaAdmission) -> Self {
+        self.quota_admission = Some(admission);
+        self
     }
 
     #[must_use]
@@ -197,6 +220,7 @@ impl RuntimeRepository {
             "debugOverlay": command.debug_overlay_snapshot,
             "draftResourceSnapshots": command.draft_resource_snapshots,
         }))?;
+        let execution_id = Uuid::now_v7();
         let mut transaction = self.pool.begin().await?;
         if let Some(key) = &command.idempotency_key {
             if let Some(row) = sqlx::query("SELECT request_hash,response_json FROM runtime_idempotency_keys WHERE tenant_id=? AND scope='request_execution' AND idempotency_key=? FOR UPDATE")
@@ -302,7 +326,19 @@ impl RuntimeRepository {
         for resource in resource_rows {
             let resource_type: String = resource.try_get("resource_type")?;
             let resource_id: Uuid = resource.try_get("resource_id")?;
+            let resource_version_id: Option<Uuid> = resource.try_get("resource_version_id")?;
             let operation: String = resource.try_get("operation_key")?;
+            anyhow::ensure!(
+                crate::runtime_resources::resource_is_active(
+                    &mut transaction,
+                    command.tenant_id,
+                    &resource_type,
+                    resource_id,
+                    resource_version_id
+                )
+                .await?,
+                "RESOURCE_UNAVAILABLE: {resource_type} {resource_id}"
+            );
             let grant_id: Option<Uuid> = sqlx::query_scalar("SELECT id FROM resource_grants WHERE tenant_id=? AND subject_type='workflow_service_identity' AND subject_id=? AND resource_type=? AND resource_id=? AND operation_key IN (?, 'manage') ORDER BY created_at LIMIT 1")
                 .bind(command.tenant_id).bind(identity_id).bind(&resource_type).bind(resource_id).bind(&operation)
                 .fetch_optional(&mut *transaction).await?;
@@ -316,7 +352,7 @@ impl RuntimeRepository {
                     "bindingRole": resource.try_get::<Option<String>,_>("binding_role")?,
                     "resourceType": resource_type,
                     "resourceId": resource_id,
-                    "resourceVersionId": resource.try_get::<Option<Uuid>,_>("resource_version_id")?,
+                    "resourceVersionId": resource_version_id,
                     "operation": operation,
                 },
                 "snapshotHash": resource.try_get::<String,_>("snapshot_hash")?,
@@ -334,6 +370,19 @@ impl RuntimeRepository {
                 "DRAFT_RESOURCE_SNAPSHOT_MISMATCH"
             );
             for resource in &command.draft_resource_snapshots {
+                anyhow::ensure!(
+                    crate::runtime_resources::resource_is_active(
+                        &mut transaction,
+                        command.tenant_id,
+                        resource.reference.resource_type.as_str(),
+                        resource.reference.resource_id,
+                        resource.reference.resource_version_id
+                    )
+                    .await?,
+                    "RESOURCE_UNAVAILABLE: {} {}",
+                    resource.reference.resource_type.as_str(),
+                    resource.reference.resource_id
+                );
                 let grant_id: Option<Uuid> = sqlx::query_scalar("SELECT id FROM resource_grants WHERE tenant_id=? AND subject_type='workflow_service_identity' AND subject_id=? AND resource_type=? AND resource_id=? AND operation_key IN (?, 'manage') ORDER BY created_at LIMIT 1")
                     .bind(command.tenant_id).bind(identity_id).bind(resource.reference.resource_type.as_str()).bind(resource.reference.resource_id).bind(resource.reference.operation.as_str()).fetch_optional(&mut *transaction).await?;
                 let grant_id = grant_id.context(format!(
@@ -357,7 +406,25 @@ impl RuntimeRepository {
             "workflowServiceIdentityId": identity_id,
             "resources": execution_resources,
         });
-        let execution_id = Uuid::now_v7();
+        let execution_scope_id = execution_id.to_string();
+        crate::quota::reserve_with_admission(
+            &mut transaction,
+            &crate::quota::QuotaReservation {
+                tenant_id: command.tenant_id,
+                dimension: crate::quota::EXECUTION_CONCURRENCY,
+                scope_type: "execution",
+                scope_id: &execution_scope_id,
+                amount: rust_decimal::Decimal::ONE,
+                ttl_seconds: command
+                    .runtime_settings
+                    .get("timeoutSeconds")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(86_400),
+                fail_closed: crate::config::is_production_environment(),
+            },
+            self.quota_admission.as_ref(),
+        )
+        .await?;
         let trace_id = Uuid::now_v7();
         sqlx::query("INSERT INTO workflow_executions(id,tenant_id,workflow_id,workflow_version_id,source_kind,source_id,source_revision,invocation_id,session_id,parent_execution_id,caller_execution_id,fork_checkpoint_id,trace_id,trigger_type,execution_type,fork_mode,requested_by,input_json,status,started_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'queued',CURRENT_TIMESTAMP(6))")
             .bind(execution_id).bind(command.tenant_id).bind(workflow_id).bind(workflow_version_id).bind(source_kind).bind(source_id).bind(source_revision)
@@ -456,6 +523,7 @@ impl RuntimeRepository {
             command.tenant_id,
             execution_id,
             machine.status(),
+            self.quota_admission.as_ref(),
         )
         .await?;
         if let Some(key) = &command.idempotency_key {
@@ -670,7 +738,14 @@ impl RuntimeRepository {
             },
         )
         .await?;
-        sync_execution_status(&mut transaction, tenant_id, execution_id, machine.status()).await?;
+        sync_execution_status(
+            &mut transaction,
+            tenant_id,
+            execution_id,
+            machine.status(),
+            self.quota_admission.as_ref(),
+        )
+        .await?;
         if let Some((code, message)) = transition_error {
             sqlx::query("UPDATE workflow_executions SET error_code=?,error_message=? WHERE tenant_id=? AND id=?")
                 .bind(code).bind(&message).bind(tenant_id).bind(execution_id)
@@ -720,7 +795,7 @@ impl RuntimeRepository {
             "manual",
         )
         .await?;
-        sqlx::query("UPDATE workflow_executions SET status='cancelled',cancellation_requested_at=CURRENT_TIMESTAMP(6),ended_at=CURRENT_TIMESTAMP(6),duration_ms=TIMESTAMPDIFF(MICROSECOND,started_at,CURRENT_TIMESTAMP(6))/1000 WHERE tenant_id=? AND id=?")
+        sqlx::query("UPDATE workflow_executions SET status='cancelled',cancellation_requested_at=CURRENT_TIMESTAMP(6),ended_at=CURRENT_TIMESTAMP(6),duration_ms=TIMESTAMPDIFF(MICROSECOND,started_at,CURRENT_TIMESTAMP(6))/1000,terminal_event_emitted=TRUE WHERE tenant_id=? AND id=?")
             .bind(tenant_id).bind(execution_id).execute(&mut *transaction).await?;
         sqlx::query("UPDATE execution_resume_tokens SET status='cancelled' WHERE tenant_id=? AND execution_id=? AND status='active'")
             .bind(tenant_id).bind(execution_id).execute(&mut *transaction).await?;
@@ -730,6 +805,14 @@ impl RuntimeRepository {
             .bind(tenant_id).bind(execution_id).execute(&mut *transaction).await?;
         sqlx::query("UPDATE approval_tasks SET status='cancelled',resume_status='succeeded',version=version+1 WHERE tenant_id=? AND execution_id=? AND status IN ('pending','claimed')")
             .bind(tenant_id).bind(execution_id).execute(&mut *transaction).await?;
+        crate::quota::release_scope_with_admission(
+            &mut transaction,
+            tenant_id,
+            "execution",
+            &execution_id.to_string(),
+            self.quota_admission.as_ref(),
+        )
+        .await?;
         insert_execution_event(
             &mut transaction,
             tenant_id,
@@ -819,6 +902,7 @@ impl RuntimeRepository {
             command.tenant_id,
             command.execution_id,
             machine.status(),
+            self.quota_admission.as_ref(),
         )
         .await?;
         insert_execution_event(
@@ -1090,6 +1174,19 @@ impl RuntimeRepository {
         Ok(externalized)
     }
 
+    pub async fn externalize_execution_results(&self, limit: u32) -> Result<u64> {
+        let Some(store) = &self.checkpoint_artifacts else {
+            return Ok(0);
+        };
+        crate::runtime_results::externalize_execution_results(
+            &self.pool,
+            store.as_ref(),
+            self.checkpoint_artifact_threshold,
+            limit,
+        )
+        .await
+    }
+
     async fn switch_checkpoint_to_artifact(
         &self,
         checkpoint_id: Uuid,
@@ -1108,6 +1205,12 @@ impl RuntimeRepository {
         sqlx::query("INSERT INTO checkpoint_artifacts(tenant_id,checkpoint_id,artifact_id,role) VALUES(?,?,?,'state')")
             .bind(tenant_id).bind(checkpoint_id).bind(artifact_id)
             .execute(&mut *transaction).await?;
+        sqlx::query("INSERT IGNORE INTO artifact_references(tenant_id,artifact_id,owner_type,owner_id,reference_role) VALUES(?,?,'checkpoint',?,'state')")
+            .bind(tenant_id)
+            .bind(artifact_id)
+            .bind(checkpoint_id.to_string())
+            .execute(&mut *transaction)
+            .await?;
         transaction.commit().await?;
         Ok(true)
     }
@@ -1269,6 +1372,9 @@ pub(crate) async fn queue_ready_attempts(
                 node_execution_id: node_execution_id.as_uuid(),
                 attempt_id: attempt_id.as_uuid(),
                 capability: capability.into(),
+                node_protocol_version: agentx_node_protocol::NODE_PROTOCOL_VERSION.into(),
+                compiler_version: machine.workflow().compiler_version.clone(),
+                ir_schema_version: machine.workflow().schema_version.clone(),
             };
             sqlx::query("INSERT INTO execution_outbox(id,tenant_id,execution_id,node_execution_id,attempt_id,message_type,capability,payload_json) VALUES(?,?,?,?,?,'dispatch_node',?,?)")
                 .bind(Uuid::now_v7()).bind(tenant_id).bind(execution_id).bind(node_execution_id.as_uuid()).bind(attempt_id.as_uuid())
@@ -1537,11 +1643,71 @@ pub(crate) async fn sync_execution_status(
     tenant_id: Uuid,
     execution_id: Uuid,
     status: RuntimeExecutionStatus,
+    quota_admission: Option<&QuotaAdmission>,
 ) -> Result<()> {
     let status = execution_status_name(status);
     let terminal = matches!(status, "succeeded" | "failed" | "cancelled" | "timed_out");
     sqlx::query("UPDATE workflow_executions SET status=?,ended_at=IF(?,COALESCE(ended_at,CURRENT_TIMESTAMP(6)),NULL),duration_ms=IF(?,TIMESTAMPDIFF(MICROSECOND,started_at,COALESCE(ended_at,CURRENT_TIMESTAMP(6)))/1000,NULL),state_version=state_version+1 WHERE tenant_id=? AND id=?")
         .bind(status).bind(terminal).bind(terminal).bind(tenant_id).bind(execution_id).execute(&mut **transaction).await?;
+    if !terminal {
+        return Ok(());
+    }
+    crate::quota::release_scope_with_admission(
+        transaction,
+        tenant_id,
+        "execution",
+        &execution_id.to_string(),
+        quota_admission,
+    )
+    .await?;
+    let emitted: bool = sqlx::query_scalar(
+        "SELECT terminal_event_emitted FROM workflow_executions WHERE tenant_id=? AND id=? FOR UPDATE",
+    )
+    .bind(tenant_id)
+    .bind(execution_id)
+    .fetch_one(&mut **transaction)
+    .await?;
+    if emitted {
+        return Ok(());
+    }
+    let result = if status == "succeeded" {
+        let (result, hash) = crate::runtime_results::materialize_execution_result(
+            transaction,
+            tenant_id,
+            execution_id,
+        )
+        .await?;
+        sqlx::query("UPDATE workflow_executions SET result_json=?,result_hash=?,terminal_event_emitted=TRUE WHERE tenant_id=? AND id=?")
+            .bind(&result)
+            .bind(&hash)
+            .bind(tenant_id)
+            .bind(execution_id)
+            .execute(&mut **transaction)
+            .await?;
+        Some(json!({"resultHash":hash}))
+    } else {
+        sqlx::query(
+            "UPDATE workflow_executions SET terminal_event_emitted=TRUE WHERE tenant_id=? AND id=?",
+        )
+        .bind(tenant_id)
+        .bind(execution_id)
+        .execute(&mut **transaction)
+        .await?;
+        None
+    };
+    let mut payload = result.unwrap_or_else(|| json!({}));
+    if let Value::Object(ref mut object) = payload {
+        object.insert("status".into(), Value::String(status.into()));
+    }
+    insert_execution_event(
+        transaction,
+        tenant_id,
+        execution_id,
+        &format!("execution.{status}"),
+        status,
+        payload,
+    )
+    .await?;
     Ok(())
 }
 
@@ -1560,9 +1726,26 @@ pub(crate) async fn insert_execution_event(
         .await?;
     let sequence:u64=sqlx::query_scalar("SELECT CAST(COALESCE(MAX(sequence_number),0)+1 AS UNSIGNED) FROM execution_events WHERE tenant_id=? AND execution_id=?")
         .bind(tenant_id).bind(execution_id).fetch_one(&mut **transaction).await?;
-    sqlx::query("INSERT INTO execution_events(tenant_id,execution_id,sequence_number,event_type,status,summary_json,occurred_at) VALUES(?,?,?,?,?,?,CURRENT_TIMESTAMP(6))")
-        .bind(tenant_id).bind(execution_id).bind(sequence).bind(event_type).bind(status).bind(summary).execute(&mut **transaction).await?;
-    Ok(())
+    let mut payload = match summary {
+        Value::Object(object) => Value::Object(object),
+        value => json!({"summary": value}),
+    };
+    if let Value::Object(ref mut object) = payload {
+        object.insert("status".into(), Value::String(status.into()));
+    }
+    append_runtime_event(
+        transaction,
+        &RuntimeEventEnvelope::new(
+            TenantId::from_uuid(tenant_id),
+            event_type,
+            "execution",
+            execution_id.to_string(),
+            Some(agentx_domain::ExecutionId::from_uuid(execution_id)),
+            Some(sequence),
+            payload,
+        ),
+    )
+    .await
 }
 
 struct TraceInsert<'a> {
@@ -1728,135 +1911,5 @@ fn execution_status_name(value: RuntimeExecutionStatus) -> &'static str {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn invocation_input_preserves_n8n_item_shape() {
-        assert_eq!(invocation_items(&json!([{"a":1},{"a":2}])).len(), 2);
-        assert_eq!(invocation_items(&json!({"a":1}))[0].json["a"], 1)
-    }
-    #[test]
-    fn dispatch_message_round_trips() {
-        let value = DispatchMessage {
-            tenant_id: Uuid::nil(),
-            execution_id: Uuid::nil(),
-            node_execution_id: Uuid::nil(),
-            attempt_id: Uuid::nil(),
-            capability: "builtin".into(),
-        };
-        assert_eq!(
-            serde_json::from_value::<DispatchMessage>(serde_json::to_value(value).unwrap())
-                .unwrap()
-                .capability,
-            "builtin"
-        )
-    }
-    #[test]
-    fn debug_overlay_accepts_port_maps_and_plain_json() {
-        let ports = overlay_items(&json!({"main":[{"json":{"value":1}}]}));
-        assert_eq!(ports["main"][0].json["value"], 1);
-        let plain = overlay_items(&json!([{"value":2}]));
-        assert_eq!(plain["main"][0].json[0]["value"], 2);
-        let snapshot =
-            json!({"items":[{"nodeId":"agent","kind":"mock_output","payload":{"ok":true}}]});
-        let (kind, payload) = debug_overlay_for_node(&snapshot, "agent").unwrap();
-        assert_eq!(kind, "mock_output");
-        assert_eq!(payload["ok"], true);
-    }
-
-    #[test]
-    fn draft_revision_snapshot_hash_is_stable_and_covers_debug_inputs() {
-        let definition = json!({"schemaVersion":"3.0","nodes":[],"connections":[],"settings":{}});
-        let source = json!({"kind":"draft_revision","id":Uuid::nil(),"revision":7});
-        let manifest = json!([{"nodeType":"manual_trigger","version":1}]);
-        let resources = json!({"schemaVersion":"1.0","resources":[]});
-        let base = execution_snapshot_hash(
-            &definition,
-            "sha256:compiled",
-            &source,
-            &manifest,
-            &resources,
-            &json!({"sideEffectDecisions":{}}),
-            &json!({"mode":"full"}),
-            &json!({"items":[]}),
-        )
-        .unwrap();
-        let repeated = execution_snapshot_hash(
-            &definition,
-            "sha256:compiled",
-            &source,
-            &manifest,
-            &resources,
-            &json!({"sideEffectDecisions":{}}),
-            &json!({"mode":"full"}),
-            &json!({"items":[]}),
-        )
-        .unwrap();
-        assert_eq!(base, repeated);
-
-        let changed_overlay = execution_snapshot_hash(
-            &definition,
-            "sha256:compiled",
-            &source,
-            &manifest,
-            &resources,
-            &json!({"sideEffectDecisions":{}}),
-            &json!({"mode":"full"}),
-            &json!({"items":[{"nodeId":"agent","kind":"mock_output"}]}),
-        )
-        .unwrap();
-        assert_ne!(base, changed_overlay);
-    }
-
-    #[test]
-    fn draft_resource_snapshots_allow_resolved_versions_and_transitive_dependencies() {
-        let resource_id = Uuid::from_u128(1);
-        let version_id = Uuid::from_u128(2);
-        let expected = ResourceReference {
-            binding_id: Some("model-binding".into()),
-            binding_role: Some("ai_model".into()),
-            resource_type: agentx_domain::ResourceType::Model,
-            resource_id,
-            resource_version_id: None,
-            operation: agentx_domain::ResourceOperation::Use,
-        };
-        let mut definition = WorkflowDefinition::empty();
-        definition.nodes[0].resource_references = vec![expected.clone()];
-        let direct = RuntimeResourceSnapshot {
-            node_id: "manual-trigger".into(),
-            reference: ResourceReference {
-                resource_version_id: Some(version_id),
-                ..expected
-            },
-            snapshot_hash: "sha256:direct".into(),
-            snapshot: json!({}),
-        };
-        let dependency = RuntimeResourceSnapshot {
-            node_id: "manual-trigger".into(),
-            reference: ResourceReference {
-                binding_id: None,
-                binding_role: None,
-                resource_type: agentx_domain::ResourceType::Credential,
-                resource_id: Uuid::from_u128(3),
-                resource_version_id: None,
-                operation: agentx_domain::ResourceOperation::Use,
-            },
-            snapshot_hash: "sha256:dependency".into(),
-            snapshot: json!({}),
-        };
-        assert!(draft_resource_snapshots_cover_definition(
-            &definition,
-            &[direct.clone(), dependency.clone()]
-        ));
-        assert!(!draft_resource_snapshots_cover_definition(
-            &definition,
-            &[
-                RuntimeResourceSnapshot {
-                    node_id: "unknown".into(),
-                    ..dependency
-                },
-                direct
-            ]
-        ));
-    }
-}
+#[path = "runtime_repository_tests.rs"]
+mod tests;

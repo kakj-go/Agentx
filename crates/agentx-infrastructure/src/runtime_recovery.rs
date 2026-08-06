@@ -161,7 +161,14 @@ impl RuntimeRepository {
             "manual",
         )
         .await?;
-        sync_execution_status(&mut transaction, tenant_id, execution_id, machine.status()).await?;
+        sync_execution_status(
+            &mut transaction,
+            tenant_id,
+            execution_id,
+            machine.status(),
+            None,
+        )
+        .await?;
         insert_execution_event(
             &mut transaction,
             tenant_id,

@@ -134,6 +134,10 @@ test('M5 command runners, Credential files, and network policies use isolated Sa
     const nodes = await (await page.request.get(`/api/v1/executions/${execution}/nodes`, { headers: { Authorization: `Bearer ${token}` } })).json() as { items: Array<{ nodeName: string, output: { main?: Array<{ json: { stdout?: string }, binary?: Record<string, { artifactHandle: string }> }> } }> }
     const code = nodes.items.find((node) => node.nodeName === nodeName)
     expect(code?.output.main?.[0].json.stdout).toContain(stdout)
+    if (workflow === 'M5 Network Deny Fixture') {
+      expect(code?.output.main?.[0].json.stdout).toContain('m5-ipv4-denied')
+      expect(code?.output.main?.[0].json.stdout).toContain('m5-ipv6-denied')
+    }
     expect(code?.output.main?.[0].json.stdout).not.toContain('m5-model-secret')
     if (hasArtifact) expect(code?.output.main?.[0].binary?.output0.artifactHandle).toMatch(/^[0-9a-f-]{36}$/)
   }

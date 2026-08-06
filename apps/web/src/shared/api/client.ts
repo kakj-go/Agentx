@@ -32,13 +32,15 @@ async function sendRaw(basePath: string, path: string, init: RequestInit, retry:
 
 async function send<T>(basePath: string, path: string, init: RequestInit, retry: boolean): Promise<T> {
   const response = await sendRaw(basePath, path, init, retry)
-  if (response.status === 204) return undefined as T
-  return response.json() as Promise<T>
+  const body = await response.text()
+  if (!body) return undefined as T
+  return JSON.parse(body) as T
 }
 
 export function apiRequest<T>(path: string, init: RequestInit = {}) { return send<T>('/api/v1', path, init, true) }
 export function publicRequest<T>(path: string, init: RequestInit = {}) { return send<T>('/api/v1', path, init, false) }
 export function gatewayRequest<T>(path: string, init: RequestInit = {}) { return send<T>('/gateway/v1', path, init, true) }
+export function gatewayRequestStream(path: string, init: RequestInit = {}) { return sendRaw('/gateway/v1', path, init, true) }
 export async function apiRequestText(path: string, init: RequestInit = {}) { return (await sendRaw('/api/v1', path, init, true)).text() }
 export async function apiRequestBlob(path: string, init: RequestInit = {}) { return (await sendRaw('/api/v1', path, init, true)).blob() }
 export const jsonBody = (value: unknown) => JSON.stringify(value)

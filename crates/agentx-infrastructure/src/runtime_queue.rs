@@ -10,7 +10,10 @@ use crate::{
     runtime_repository::{DispatchMessage, OutboxDelivery},
 };
 
-pub const RUNTIME_GROUP: &str = "agentx-runtime-workers-v1";
+pub const RUNTIME_GROUP: &str = "agentx-runtime-workers-v2";
+pub const RUNTIME_PROTOCOL_MAJOR: &str = "1";
+pub const RUNTIME_IR_MAJOR: &str = "3";
+pub const RUNTIME_COMPILER_MAJOR: &str = "3";
 
 #[derive(Clone)]
 pub struct RuntimeQueue {
@@ -134,7 +137,9 @@ fn decode_items(stream: &str, items: Vec<StreamId>) -> Result<Vec<QueueItem>> {
 #[must_use]
 pub fn stream_name(capability: &str) -> String {
     debug_assert!(agentx_node_protocol::ALL_RUNTIME_CAPABILITIES.contains(&capability));
-    format!("agentx:runtime:{capability}")
+    format!(
+        "agentx:runtime:node-v{RUNTIME_PROTOCOL_MAJOR}:ir-v{RUNTIME_IR_MAJOR}:compiler-v{RUNTIME_COMPILER_MAJOR}:{capability}"
+    )
 }
 
 #[cfg(test)]
@@ -143,7 +148,10 @@ mod tests {
 
     #[test]
     fn capabilities_are_isolated_by_stream() {
-        assert_eq!(stream_name("builtin"), "agentx:runtime:builtin");
+        assert_eq!(
+            stream_name("builtin"),
+            "agentx:runtime:node-v1:ir-v3:compiler-v3:builtin"
+        );
         assert_ne!(stream_name("builtin"), stream_name("remote_action"));
     }
 }

@@ -1,3 +1,5 @@
+mod runtime_command_consumer;
+
 use std::{env, net::SocketAddr, sync::Arc, time::Duration};
 
 use agentx_infrastructure::{
@@ -5,6 +7,7 @@ use agentx_infrastructure::{
     clients,
     config::RuntimeInfrastructureSettings,
     mysql,
+    quota::QuotaAdmission,
     runtime_queue::RuntimeQueue,
     runtime_repository::{
         CreateExecution, ResumeExecution, RuntimeExecutionSource, RuntimeRepository, TaskResult,
@@ -269,16 +272,21 @@ async fn main() -> Result<()> {
     let settings = RuntimeInfrastructureSettings::from_env()?;
     let health_settings = settings.clone();
     let pool = mysql::connect(&settings.mysql).await?;
+    let quota_admission = QuotaAdmission::new(settings.redis.clone());
     let object_store = clients::object_store(&settings.object_storage)?;
-    let checkpoint_store: Arc<dyn agentx_application::ArtifactStore> =
-        Arc::new(MySqlObjectArtifactStore::new(pool.clone(), object_store));
-    let repository = RuntimeRepository::new(pool.clone()).with_checkpoint_artifacts(
-        checkpoint_store,
-        env::var("AGENTX_CHECKPOINT_ARTIFACT_THRESHOLD_BYTES")
-            .ok()
-            .and_then(|value| value.parse().ok())
-            .unwrap_or(64 * 1024),
+    let checkpoint_store: Arc<dyn agentx_application::ArtifactStore> = Arc::new(
+        MySqlObjectArtifactStore::new(pool.clone(), object_store)
+            .with_quota_admission(quota_admission.clone()),
     );
+    let repository = RuntimeRepository::new(pool.clone())
+        .with_quota_admission(quota_admission.clone())
+        .with_checkpoint_artifacts(
+            checkpoint_store,
+            env::var("AGENTX_CHECKPOINT_ARTIFACT_THRESHOLD_BYTES")
+                .ok()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(64 * 1024),
+        );
     let queue = RuntimeQueue::new(settings.redis.clone());
     queue.ensure_groups().await?;
     let service = CoordinatorService {
@@ -299,7 +307,8 @@ async fn main() -> Result<()> {
         }
     });
     tokio::spawn(outbox_loop(repository.clone(), queue));
-    tokio::spawn(reaper_loop(repository.clone()));
+    tokio::spawn(runtime_command_consumer::run(repository.clone()));
+    tokio::spawn(reaper_loop(repository.clone(), quota_admission));
     tokio::spawn(checkpoint_artifact_loop(repository.clone()));
     let health = agentx_service_kit::HealthRegistry::default();
     health.register("mysql", true).await;
@@ -322,6 +331,9 @@ async fn checkpoint_artifact_loop(repository: RuntimeRepository) {
     loop {
         if let Err(error) = repository.externalize_checkpoints(100).await {
             error!(%error, "checkpoint artifact externalization failed");
+        }
+        if let Err(error) = repository.externalize_execution_results(100).await {
+            error!(%error, "execution result artifact externalization failed");
         }
         tokio::time::sleep(Duration::from_secs(2)).await;
     }
@@ -358,13 +370,24 @@ async fn outbox_loop(repository: RuntimeRepository, queue: RuntimeQueue) {
     }
 }
 
-async fn reaper_loop(repository: RuntimeRepository) {
+async fn reaper_loop(repository: RuntimeRepository, quota_admission: QuotaAdmission) {
+    let mut calibration_tick = 0_u8;
     loop {
         if let Err(error) = repository.reap_expired_leases().await {
             error!(%error, "runtime lease reaper failed");
         }
         if let Err(error) = repository.resume_due_waits().await {
             error!(%error, "runtime wait scanner failed");
+        }
+        if let Err(error) = agentx_infrastructure::quota::reap_expired(repository.pool()).await {
+            error!(%error, "quota reservation reaper failed");
+        }
+        calibration_tick = calibration_tick.wrapping_add(1);
+        if calibration_tick >= 15 {
+            calibration_tick = 0;
+            if let Err(error) = quota_admission.rebuild_from_mysql(repository.pool()).await {
+                warn!(%error, "quota Redis admission calibration failed");
+            }
         }
         tokio::time::sleep(Duration::from_secs(2)).await;
     }

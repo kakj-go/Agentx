@@ -55,7 +55,7 @@ export function ApplicationDetailPage() {
       if (kind === 'webhookEdit' && selectedWebhook) return apiRequest<ApplicationWebhook>(`/applications/${id}/webhooks/${selectedWebhook.id}`, { method: 'PATCH', body: jsonBody({ name: values.name, status: values.status, version: selectedWebhook.version }) })
       if (kind === 'sessionUpgrade' && selectedSession) return apiRequest<ApplicationSession>(`/sessions/${selectedSession.id}/upgrade`, { method: 'POST', body: jsonBody({ workflowVersionId: values.workflowVersionId, version: selectedSession.version }) })
       const path = kind === 'scheduleEdit' && selectedSchedule ? `/applications/${id}/schedules/${selectedSchedule.id}` : `/applications/${id}/schedules`
-      return apiRequest<ApplicationSchedule>(path, { method: kind === 'scheduleEdit' ? 'PATCH' : 'POST', body: jsonBody({ name: values.name, cronExpression: values.cron, timezone: values.timezone, input: JSON.parse(values.input), ...(kind === 'scheduleEdit' ? { status: values.status, version: selectedSchedule?.version } : {}) }) })
+      return apiRequest<ApplicationSchedule>(path, { method: kind === 'scheduleEdit' ? 'PATCH' : 'POST', body: jsonBody({ name: values.name, cronExpression: values.cron, timezone: values.timezone, input: JSON.parse(values.input), misfirePolicy: values.misfirePolicy, ...(kind === 'scheduleEdit' ? { status: values.status, version: selectedSchedule?.version } : {}) }) })
     },
     onSuccess: async (result, variables) => {
       if (result && typeof result === 'object' && 'secret' in result && typeof result.secret === 'string') {
@@ -122,6 +122,7 @@ function scheduleFields(t: (key: string) => string, value?: ApplicationSchedule 
     { name: 'name', label: t('common.name'), required: true, defaultValue: value?.name ?? '' },
     { name: 'cron', label: 'Cron', defaultValue: value?.cronExpression ?? '0 9 * * 1' },
     { name: 'timezone', label: t('m3.timezone'), defaultValue: value?.timezone ?? 'Asia/Shanghai' },
+    { name: 'misfirePolicy', label: t('m3.misfirePolicy'), type: 'select', defaultValue: value?.misfirePolicy ?? 'fire_once', options: ['fire_once', 'skip'].map((item) => ({ value: item, label: t(`m3.${item}`) })) },
     { name: 'input', label: t('m3.input'), type: 'textarea', defaultValue: JSON.stringify(value?.input ?? {}, null, 2) },
     ...(value ? [{ name: 'status', label: t('common.status'), type: 'select' as const, defaultValue: value.status, options: ['active', 'disabled'].map((item) => ({ value: item, label: t(`m3.${item}`) })) }] : []),
   ]

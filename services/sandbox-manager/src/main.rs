@@ -65,11 +65,11 @@ async fn main() -> Result<()> {
     }
     let settings = ManagerSettings::from_env()?;
     let pool = mysql::connect(&settings.mysql).await?;
-    let store = LeaseStore::new(
+    let store = LeaseStore::new_with_credential_source(
         pool.clone(),
         (*settings.lease_signing_key).clone(),
         settings.endpoint_keyring.clone(),
-        settings.credential_keyring.clone(),
+        settings.credential_source.clone(),
         settings.max_active_per_tenant,
     );
     let service = SandboxManagerService::new(store.clone(), settings.adapter.clone());

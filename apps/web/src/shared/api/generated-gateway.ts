@@ -45,8 +45,26 @@ export interface components {
             content?: unknown;
             partType: string;
         };
+        MessagePartResponse: {
+            /** Format: uuid */
+            artifactId?: string | null;
+            content?: unknown;
+            partType: string;
+        };
         MessageRequest: {
             parts: components["schemas"]["MessagePartInput"][];
+        };
+        MessageResponse: {
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            invocationId?: string | null;
+            parts: components["schemas"]["MessagePartResponse"][];
+            role: string;
+            /** Format: int64 */
+            sequence: number;
         };
         SessionResponse: {
             /** Format: uuid */

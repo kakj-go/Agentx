@@ -2421,6 +2421,52 @@
         "responses": {}
       }
     },
+    "/api/v1/retention-runs": {
+      "get": {
+        "tags": [
+          "governance"
+        ],
+        "operationId": "list_retention_runs",
+        "responses": {}
+      },
+      "post": {
+        "tags": [
+          "governance"
+        ],
+        "operationId": "create_retention_run",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateRetentionRunRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {}
+      }
+    },
+    "/api/v1/retention-runs/{id}/items": {
+      "get": {
+        "tags": [
+          "governance"
+        ],
+        "operationId": "list_retention_items",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {}
+      }
+    },
     "/api/v1/roles": {
       "get": {
         "tags": [
@@ -2469,6 +2515,41 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/UpdateRoleRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {}
+      }
+    },
+    "/api/v1/runtime/capabilities": {
+      "get": {
+        "tags": [
+          "governance"
+        ],
+        "operationId": "get_capabilities",
+        "responses": {}
+      }
+    },
+    "/api/v1/runtime/quotas": {
+      "get": {
+        "tags": [
+          "governance"
+        ],
+        "operationId": "get_quotas",
+        "responses": {}
+      },
+      "put": {
+        "tags": [
+          "governance"
+        ],
+        "operationId": "update_quotas",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateQuotaPoliciesRequest"
               }
             }
           },
@@ -3632,7 +3713,7 @@
         "tags": [
           "workflows"
         ],
-        "operationId": "runtime_unavailable",
+        "operationId": "run_workflow",
         "parameters": [
           {
             "name": "id",
@@ -3644,7 +3725,28 @@
             }
           }
         ],
-        "responses": {}
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RunWorkflowRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueuedWorkflowRunResponse"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/workflows/{id}/versions": {
@@ -3956,6 +4058,12 @@
             "format": "uuid"
           },
           "inputSchema": {},
+          "outputExpression": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "outputSchema": {},
           "sequenceNumber": {
             "type": "integer",
@@ -4471,6 +4579,12 @@
             "format": "uuid"
           },
           "inputSchema": {},
+          "outputExpression": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "outputSchema": {},
           "sessionVersionPolicy": {
             "type": "string"
@@ -5003,6 +5117,34 @@
           }
         }
       },
+      "CreateRetentionRunRequest": {
+        "type": "object",
+        "properties": {
+          "artifactRetentionDays": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "dryRun": {
+            "type": "boolean"
+          },
+          "evaluationRetentionDays": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "messageRetentionDays": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "traceRetentionDays": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
       "CreateRoleRequest": {
         "type": "object",
         "required": [
@@ -5077,6 +5219,9 @@
             "type": "string"
           },
           "input": {},
+          "misfirePolicy": {
+            "type": "string"
+          },
           "name": {
             "type": "string"
           },
@@ -5742,6 +5887,79 @@
           }
         }
       },
+      "EvaluationCaseResultResponse": {
+        "type": "object",
+        "required": [
+          "caseId",
+          "sourceCaseId",
+          "caseKey",
+          "status",
+          "costMicros",
+          "ruleResults"
+        ],
+        "properties": {
+          "caseId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "caseKey": {
+            "type": "string"
+          },
+          "costMicros": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "detail": {},
+          "durationMs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "errorCode": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "errorMessage": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ruleResults": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EvaluationRuleResultResponse"
+            }
+          },
+          "score": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "sourceCaseId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "type": "string"
+          },
+          "targetExecutionId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          }
+        }
+      },
       "EvaluationProfileResponse": {
         "type": "object",
         "required": [
@@ -5827,7 +6045,9 @@
           },
           "results": {
             "type": "array",
-            "items": {}
+            "items": {
+              "$ref": "#/components/schemas/EvaluationCaseResultResponse"
+            }
           },
           "run": {
             "$ref": "#/components/schemas/EvaluationRunResponse"
@@ -5897,6 +6117,70 @@
             "minimum": 0
           },
           "weight": {
+            "type": "string"
+          }
+        }
+      },
+      "EvaluationRuleResultResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "key",
+          "name",
+          "evaluatorType",
+          "status",
+          "detail",
+          "costMicros"
+        ],
+        "properties": {
+          "costMicros": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "detail": {},
+          "durationMs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "evaluatorExecutionId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "evaluatorType": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "key": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "passed": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "score": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "status": {
             "type": "string"
           }
         }
@@ -7687,6 +7971,82 @@
           }
         }
       },
+      "QueuedWorkflowRunResponse": {
+        "type": "object",
+        "required": [
+          "commandId",
+          "status"
+        ],
+        "properties": {
+          "commandId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "type": "string"
+          }
+        }
+      },
+      "QuotaPolicyInput": {
+        "type": "object",
+        "required": [
+          "dimension",
+          "hardLimit"
+        ],
+        "properties": {
+          "dimension": {
+            "type": "string"
+          },
+          "hardLimit": {
+            "type": "string"
+          },
+          "periodSeconds": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "QuotaPolicyResponse": {
+        "type": "object",
+        "required": [
+          "dimension",
+          "hardLimit",
+          "activeReserved",
+          "periodUsage",
+          "version"
+        ],
+        "properties": {
+          "activeReserved": {
+            "type": "string"
+          },
+          "dimension": {
+            "type": "string"
+          },
+          "hardLimit": {
+            "type": "string"
+          },
+          "periodSeconds": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "periodUsage": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
       "ReassignApprovalRequest": {
         "type": "object",
         "required": [
@@ -7720,6 +8080,97 @@
           },
           "valid": {
             "type": "boolean"
+          }
+        }
+      },
+      "RetentionItemResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "dataType",
+          "targetId",
+          "status",
+          "attemptCount",
+          "updatedAt"
+        ],
+        "properties": {
+          "attemptCount": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "dataType": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": "string"
+          },
+          "targetId": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "RetentionRunResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "dryRun",
+          "status",
+          "candidateCount",
+          "deletedCount",
+          "createdAt"
+        ],
+        "properties": {
+          "candidateCount": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "completedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "deletedCount": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "dryRun": {
+            "type": "boolean"
+          },
+          "errorMessage": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "type": "string"
           }
         }
       },
@@ -7845,6 +8296,18 @@
             "format": "int64",
             "minimum": 0
           }
+        }
+      },
+      "RunWorkflowRequest": {
+        "type": "object",
+        "properties": {
+          "idempotencyKey": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "input": {}
         }
       },
       "RuntimeCallDetail": {
@@ -8406,6 +8869,7 @@
           "cronExpression",
           "timezone",
           "input",
+          "misfirePolicy",
           "status",
           "version"
         ],
@@ -8418,6 +8882,9 @@
             "format": "uuid"
           },
           "input": {},
+          "misfirePolicy": {
+            "type": "string"
+          },
           "name": {
             "type": "string"
           },
@@ -9344,6 +9811,20 @@
           }
         }
       },
+      "UpdateQuotaPoliciesRequest": {
+        "type": "object",
+        "required": [
+          "policies"
+        ],
+        "properties": {
+          "policies": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QuotaPolicyInput"
+            }
+          }
+        }
+      },
       "UpdateRoleRequest": {
         "type": "object",
         "required": [
@@ -9420,6 +9901,9 @@
             "type": "string"
           },
           "input": {},
+          "misfirePolicy": {
+            "type": "string"
+          },
           "name": {
             "type": "string"
           },
@@ -9813,6 +10297,46 @@
             "type": "integer",
             "format": "int64",
             "minimum": 0
+          }
+        }
+      },
+      "WorkerCapabilityResponse": {
+        "type": "object",
+        "required": [
+          "instanceId",
+          "capability",
+          "nodeProtocolVersion",
+          "irSchemaVersions",
+          "compilerVersionMin",
+          "compilerVersionMax",
+          "manifestHashes",
+          "status",
+          "heartbeatAt"
+        ],
+        "properties": {
+          "capability": {
+            "type": "string"
+          },
+          "compilerVersionMax": {
+            "type": "string"
+          },
+          "compilerVersionMin": {
+            "type": "string"
+          },
+          "heartbeatAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "instanceId": {
+            "type": "string"
+          },
+          "irSchemaVersions": {},
+          "manifestHashes": {},
+          "nodeProtocolVersion": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
           }
         }
       },

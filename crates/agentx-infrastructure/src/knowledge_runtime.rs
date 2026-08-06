@@ -140,14 +140,11 @@ impl JsonRuntimeClient {
             .find(|r| r.reference.resource_id == id)
             .and_then(|r| r.snapshot.get("secretVersion"))
             .and_then(Value::as_u64);
-        let credential = if let Some(version) = version {
-            self.credentials
-                .resolve_version(context.tenant_id, id, version)
-                .await
-        } else {
-            self.credentials.resolve(context.tenant_id, id).await
-        }
-        .map_err(|e| RuntimeError::new(format!("{kind}_CREDENTIAL_INVALID"), e.to_string()))?;
+        let credential = self
+            .credentials
+            .resolve_for_runtime(context, id, version)
+            .await
+            .map_err(|e| RuntimeError::new(format!("{kind}_CREDENTIAL_INVALID"), e.to_string()))?;
         let secret = std::str::from_utf8(credential.secret.expose()).map_err(|_| {
             RuntimeError::new(
                 format!("{kind}_CREDENTIAL_INVALID"),

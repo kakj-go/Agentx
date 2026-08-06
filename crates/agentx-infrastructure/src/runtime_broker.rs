@@ -13,12 +13,14 @@ use sqlx::{MySqlPool, Row};
 use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
 
-use crate::credential::CredentialKeyring;
+use crate::credential::{
+    CredentialKeyring, CredentialSecretRecord, CredentialSource, SecretReadScope,
+};
 
 #[derive(Clone)]
 pub struct InvocationBroker {
     pool: MySqlPool,
-    keyring: Arc<CredentialKeyring>,
+    credential_source: CredentialSource,
     artifacts: Arc<dyn ArtifactStore>,
     base_url: String,
     maximum_ttl: Duration,
@@ -74,7 +76,24 @@ impl InvocationBroker {
     ) -> Self {
         Self {
             pool,
-            keyring,
+            credential_source: CredentialSource::local(keyring),
+            artifacts,
+            base_url: base_url.trim_end_matches('/').to_owned(),
+            maximum_ttl: Duration::seconds(maximum_ttl_seconds.clamp(5, 900)),
+        }
+    }
+
+    #[must_use]
+    pub fn new_with_credential_source(
+        pool: MySqlPool,
+        credential_source: CredentialSource,
+        artifacts: Arc<dyn ArtifactStore>,
+        base_url: String,
+        maximum_ttl_seconds: i64,
+    ) -> Self {
+        Self {
+            pool,
+            credential_source,
             artifacts,
             base_url: base_url.trim_end_matches('/').to_owned(),
             maximum_ttl: Duration::seconds(maximum_ttl_seconds.clamp(5, 900)),
@@ -194,7 +213,7 @@ impl InvocationBroker {
         let handle_hash = token_hash(&request.handle);
         let mut transaction = self.pool.begin().await.map_err(unavailable)?;
         let row = sqlx::query(
-            "SELECT h.handle_kind,h.resource_id,h.resource_version,h.expires_at,h.consumed_at,h.revoked_at,h.lease_token,a.status attempt_status,l.expires_at lease_expires,l.released_at,e.cancellation_requested_at,e.status execution_status FROM node_invocation_handles h JOIN node_attempts a ON a.id=h.attempt_id AND a.tenant_id=h.tenant_id JOIN workflow_executions e ON e.id=h.execution_id AND e.tenant_id=h.tenant_id LEFT JOIN worker_leases l ON l.node_attempt_id=h.attempt_id AND l.lease_token=h.lease_token WHERE h.token_hash=? AND h.tenant_id=? AND h.node_execution_id=? AND h.attempt_id=? FOR UPDATE",
+            "SELECT h.handle_kind,h.execution_id,h.resource_id,h.resource_version,h.expires_at,h.consumed_at,h.revoked_at,h.lease_token,a.status attempt_status,l.expires_at lease_expires,l.released_at,e.cancellation_requested_at,e.status execution_status FROM node_invocation_handles h JOIN node_attempts a ON a.id=h.attempt_id AND a.tenant_id=h.tenant_id JOIN workflow_executions e ON e.id=h.execution_id AND e.tenant_id=h.tenant_id LEFT JOIN worker_leases l ON l.node_attempt_id=h.attempt_id AND l.lease_token=h.lease_token WHERE h.token_hash=? AND h.tenant_id=? AND h.node_execution_id=? AND h.attempt_id=? FOR UPDATE",
         )
         .bind(&handle_hash)
         .bind(request.tenant_id.as_uuid())
@@ -235,21 +254,48 @@ impl InvocationBroker {
                     .try_get::<Option<u64>, _>("resource_version")
                     .map_err(unavailable)?
                     .ok_or(InvocationBrokerError::Invalid)?;
-                let secret = sqlx::query("SELECT c.credential_type,s.key_id,s.nonce,s.ciphertext FROM credentials c JOIN credential_secret_versions s ON s.credential_id=c.id AND s.tenant_id=c.tenant_id WHERE c.tenant_id=? AND c.id=? AND c.status='active' AND s.version_number=?")
+                let secret = sqlx::query("SELECT c.credential_type,s.provider,s.secret_ref,s.provider_version,s.key_id,s.nonce,s.ciphertext FROM credentials c JOIN credential_secret_versions s ON s.credential_id=c.id AND s.tenant_id=c.tenant_id WHERE c.tenant_id=? AND c.id=? AND s.version_number=?")
                     .bind(request.tenant_id.as_uuid()).bind(resource_id).bind(version)
                     .fetch_optional(&mut *transaction).await.map_err(unavailable)?
                     .ok_or(InvocationBrokerError::Invalid)?;
                 let aad = format!("{}/{}/{}", request.tenant_id, resource_id, version);
+                let provider: String = secret.try_get("provider").map_err(unavailable)?;
+                let secret_ref: Option<String> =
+                    secret.try_get("secret_ref").map_err(unavailable)?;
+                let provider_version: Option<String> =
+                    secret.try_get("provider_version").map_err(unavailable)?;
+                let key_id: Option<String> = secret.try_get("key_id").map_err(unavailable)?;
+                let nonce: Option<Vec<u8>> = secret.try_get("nonce").map_err(unavailable)?;
+                let ciphertext: Option<Vec<u8>> =
+                    secret.try_get("ciphertext").map_err(unavailable)?;
+                let scope = SecretReadScope {
+                    tenant_id: request.tenant_id.as_uuid(),
+                    credential_id: resource_id,
+                    credential_version: version,
+                    execution_id: row.try_get("execution_id").map_err(unavailable)?,
+                    node_execution_id: request.node_execution_id.as_uuid(),
+                    attempt_id: request.attempt_id,
+                    lease_token: row.try_get("lease_token").map_err(unavailable)?,
+                    deadline: row.try_get("expires_at").map_err(unavailable)?,
+                    handle: Some(request.handle.clone()),
+                    handle_id: None,
+                    consume_handle: false,
+                };
                 let plaintext = self
-                    .keyring
-                    .decrypt(
-                        &secret.try_get::<String, _>("key_id").map_err(unavailable)?,
-                        &secret.try_get::<Vec<u8>, _>("nonce").map_err(unavailable)?,
-                        &secret
-                            .try_get::<Vec<u8>, _>("ciphertext")
-                            .map_err(unavailable)?,
-                        aad.as_bytes(),
+                    .credential_source
+                    .resolve(
+                        CredentialSecretRecord {
+                            provider: &provider,
+                            secret_ref: secret_ref.as_deref(),
+                            provider_version: provider_version.as_deref(),
+                            key_id: key_id.as_deref(),
+                            nonce: nonce.as_deref(),
+                            ciphertext: ciphertext.as_deref(),
+                            aad: aad.as_bytes(),
+                        },
+                        Some(&scope),
                     )
+                    .await
                     .map_err(InvocationBrokerError::ResourceUnavailable)?;
                 let value = serde_json::from_slice::<Value>(plaintext.expose())
                     .map_err(|error| InvocationBrokerError::ResourceUnavailable(error.into()))?;

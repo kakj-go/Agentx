@@ -1,8 +1,11 @@
 use agentx_api_types::PageResponse;
-use agentx_application::{ArtifactStore, ResumeExecutionCommand};
-use agentx_domain::{ArtifactId, ExecutionId, NodeExecutionId, TenantId, UserId};
+use agentx_application::{
+    ArtifactStore, ResumeExecutionCommandPayload, RuntimeCommand, RuntimeCommandType,
+};
+use agentx_domain::{ArtifactId, TenantId};
 use agentx_infrastructure::{
     artifact::MySqlObjectArtifactStore, operations_projection::redact_trace_attributes,
+    runtime_commands::RuntimeCommandRepository,
 };
 use axum::{
     Json,
@@ -1028,7 +1031,37 @@ async fn decide(
     let mut tx = state.pool.begin().await?;
     let runtime_row=sqlx::query("SELECT t.execution_id,t.node_execution_id,w.id wait_id FROM approval_tasks t LEFT JOIN wait_subscriptions w ON w.resume_token_id=t.resume_token_id AND w.tenant_id=t.tenant_id WHERE t.id=? AND t.tenant_id=? FOR UPDATE")
         .bind(id).bind(actor.tenant_id).fetch_one(&mut *tx).await?;
-    let changed=sqlx::query("UPDATE approval_tasks SET status=?,resume_status=IF(node_execution_id IS NULL,'blocked_runtime','pending'),version=version+1 WHERE id=? AND tenant_id=? AND status='claimed' AND claimed_by=? AND version=?").bind(target).bind(id).bind(actor.tenant_id).bind(actor.user_id).bind(input.version).execute(&mut *tx).await?;
+    let resume_command = match (
+        runtime_row.try_get::<Option<Uuid>, _>("node_execution_id")?,
+        runtime_row.try_get::<Option<Uuid>, _>("wait_id")?,
+    ) {
+        (Some(node_execution_id), Some(wait_id)) => Some(RuntimeCommand::new(
+            TenantId::from_uuid(actor.tenant_id),
+            RuntimeCommandType::ResumeExecution,
+            "approval_task",
+            id.to_string(),
+            format!("approval:{id}:{}:{target}", input.version),
+            serde_json::to_value(ResumeExecutionCommandPayload {
+                execution_id: runtime_row.try_get("execution_id")?,
+                node_execution_id,
+                resume_token: wait_id.to_string(),
+                output_port: if target == "approved" {
+                    "approved".into()
+                } else {
+                    "rejected".into()
+                },
+                payload: json!({"decision":target,"input":input.input,"actorUserId":actor.user_id}),
+            })
+            .map_err(AppError::internal)?,
+        )),
+        _ => None,
+    };
+    if let Some(command) = &resume_command {
+        RuntimeCommandRepository::enqueue_in_transaction(&mut tx, command)
+            .await
+            .map_err(AppError::internal)?;
+    }
+    let changed=sqlx::query("UPDATE approval_tasks SET status=?,resume_status=IF(node_execution_id IS NULL,'blocked_runtime','pending'),decision_command_id=?,version=version+1 WHERE id=? AND tenant_id=? AND status='claimed' AND claimed_by=? AND version=?").bind(target).bind(resume_command.as_ref().map(|command| command.id)).bind(id).bind(actor.tenant_id).bind(actor.user_id).bind(input.version).execute(&mut *tx).await?;
     if changed.rows_affected() != 1 {
         return Err(AppError::conflict(
             "APPROVAL_STATE_CONFLICT",
@@ -1064,46 +1097,6 @@ async fn decide(
     )
     .await?;
     tx.commit().await?;
-    if let (Some(node_execution_id), Some(wait_id)) = (
-        runtime_row.try_get::<Option<Uuid>, _>("node_execution_id")?,
-        runtime_row.try_get::<Option<Uuid>, _>("wait_id")?,
-    ) {
-        let runtime = state.runtime.as_deref().ok_or_else(|| {
-            AppError::service_unavailable("RUNTIME_UNAVAILABLE", "Workflow runtime is unavailable")
-        })?;
-        let result = runtime
-            .resume_execution(ResumeExecutionCommand {
-                tenant_id: TenantId::from_uuid(actor.tenant_id),
-                execution_id: ExecutionId::from_uuid(runtime_row.try_get("execution_id")?),
-                node_execution_id: NodeExecutionId::from_uuid(node_execution_id),
-                resume_token: wait_id.to_string(),
-                output_port: if target == "approved" {
-                    "approved".into()
-                } else {
-                    "rejected".into()
-                },
-                payload: json!({"decision":target,"input":input.input,"actorUserId":actor.user_id}),
-                idempotency_key: format!("approval:{id}:{}:{target}", input.version),
-                actor_user_id: Some(UserId::from_uuid(actor.user_id)),
-            })
-            .await;
-        let (resume_status, error) = match result {
-            Ok(_) => ("succeeded", None),
-            Err(error) => ("failed", Some(error.to_string())),
-        };
-        sqlx::query("UPDATE approval_tasks SET resume_status=? WHERE id=? AND tenant_id=?")
-            .bind(resume_status)
-            .bind(id)
-            .bind(actor.tenant_id)
-            .execute(&state.pool)
-            .await?;
-        if let Some(error) = error {
-            return Err(AppError::service_unavailable(
-                "RUNTIME_RESUME_FAILED",
-                error,
-            ));
-        }
-    }
     Ok(Json(load_approval(state, actor.tenant_id, id).await?))
 }
 async fn terminal_admin_transition(

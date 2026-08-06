@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentx.local/schemas/isolation-evidence-v1.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "status", "isolationLevel", "runtimeClass", "context", "namespace", "selector", "podCount", "networkPolicyCount", "generatedAt", "pods", "failures"],
+  "properties": {
+    "schemaVersion": { "const": "agentx.io/isolation-evidence/v1" },
+    "status": { "enum": ["passed", "failed"] },
+    "isolationLevel": { "enum": ["standard", "strong"] },
+    "runtimeClass": { "type": "string", "minLength": 1 },
+    "context": { "type": "string", "minLength": 1 },
+    "namespace": { "type": "string", "minLength": 1 },
+    "selector": { "type": "string", "minLength": 1 },
+    "podCount": { "type": "integer", "minimum": 0 },
+    "networkPolicyCount": { "type": "integer", "minimum": 0 },
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "pods": { "type": "array", "items": { "type": "string" } },
+    "failures": { "type": "array", "items": { "type": "string" } }
+  }
+}

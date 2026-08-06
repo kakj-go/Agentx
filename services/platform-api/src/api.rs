@@ -8,8 +8,9 @@ use utoipa::OpenApi;
 
 use crate::{
     applications, auth, catalog, connection_test, credentials, datasets, external_resources,
-    grants, iam, mcp_control, models::*, models_control, operations, runtime_operations,
-    sandbox_profiles, skills_control, state::AppState, workflow_studio, workflows,
+    governance, grants, iam, mcp_control, models::*, models_control, operations,
+    runtime_operations, sandbox_profiles, skills_control, state::AppState, workflow_studio,
+    workflows,
 };
 
 #[derive(OpenApi)]
@@ -27,7 +28,7 @@ use crate::{
         workflows::list_versions, workflows::list_members, workflows::upsert_member,
         workflows::delete_member, workflows::list_environments, workflows::create_environment,
         workflows::update_environment, workflows::list_deployments, workflows::publish,
-        workflows::rollback, workflows::runtime_unavailable,
+        workflows::rollback, workflows::run_workflow,
         catalog::list_node_definitions, catalog::get_node_definition,
         catalog::list_node_provider_options,
         workflow_studio::validate_draft, workflow_studio::preview_expression, workflow_studio::get_debug_overlay,
@@ -93,7 +94,10 @@ use crate::{
         runtime_operations::start_debug_execution, runtime_operations::list_execution_events,
         runtime_operations::list_nodes, runtime_operations::get_node,
         runtime_operations::list_checkpoints, runtime_operations::list_waits,
-        runtime_operations::fork_execution, runtime_operations::confirm_side_effect
+        runtime_operations::fork_execution, runtime_operations::confirm_side_effect,
+        governance::get_quotas, governance::update_quotas, governance::get_capabilities,
+        governance::create_retention_run, governance::list_retention_runs,
+        governance::list_retention_items
     ),
     components(schemas(
         BootstrapStatus, BootstrapRequest, LoginRequest, ChangePasswordRequest, AuthResponse,
@@ -109,7 +113,8 @@ use crate::{
         workflows::UpsertWorkflowMemberRequest, workflows::EnvironmentResponse,
         workflows::CreateEnvironmentRequest, workflows::UpdateEnvironmentRequest,
         workflows::DeploymentResponse,
-        workflows::PublishWorkflowRequest, workflows::RollbackWorkflowRequest,
+        workflows::PublishWorkflowRequest, workflows::QueuedWorkflowRunResponse,
+        workflows::RollbackWorkflowRequest, workflows::RunWorkflowRequest,
         catalog::NodeDefinitionQuery, catalog::NodeDefinitionSummary,
         catalog::NodeDefinitionDetail, catalog::NodeProviderQuery,
         catalog::NodeProviderOption, catalog::NodeProviderOptionsResponse,
@@ -163,7 +168,8 @@ use crate::{
         datasets::DatasetVersionResponse, datasets::EvaluationRuleInput,
         datasets::EvaluationRuleResponse, datasets::EvaluationProfileResponse,
         datasets::CreateEvaluationProfileRequest, datasets::EvaluationRunResponse,
-        datasets::CreateEvaluationRunRequest, datasets::EvaluationReportResponse,
+        datasets::CreateEvaluationRunRequest, datasets::EvaluationCaseResultResponse,
+        datasets::EvaluationReportResponse, datasets::EvaluationRuleResultResponse,
         operations::ApprovalResponse, operations::VersionActionRequest,
         operations::ReassignApprovalRequest, operations::DecideApprovalRequest,
         operations::ApprovalActionResponse, operations::NotificationResponse,
@@ -182,7 +188,11 @@ use crate::{
         runtime_operations::ForkRequest, runtime_operations::SideEffectConfirmationRequest,
         runtime_operations::IdempotentCommandResponse, runtime_operations::DebugExecutionRequest,
         runtime_operations::ExecutionEventQuery, runtime_operations::ExecutionEventResponse,
-        runtime_operations::ExecutionEventListResponse
+        runtime_operations::ExecutionEventListResponse,
+        governance::QuotaPolicyInput, governance::UpdateQuotaPoliciesRequest,
+        governance::QuotaPolicyResponse, governance::WorkerCapabilityResponse,
+        governance::CreateRetentionRunRequest, governance::RetentionRunResponse,
+        governance::RetentionItemResponse
     )),
     tags(
         (name = "Agentx M1", description = "Bootstrap, authentication and IAM control plane"),
@@ -294,7 +304,7 @@ pub(crate) fn build_api_router(state: AppState) -> Router {
             "/workflows/{id}/resource-validation",
             get(grants::validate_workflow_resources),
         )
-        .route("/workflows/{id}/run", post(workflows::runtime_unavailable))
+        .route("/workflows/{id}/run", post(workflows::run_workflow))
         .route(
             "/workflows/{id}/debug-executions",
             post(runtime_operations::start_debug_execution),
@@ -622,8 +632,29 @@ pub(crate) fn build_api_router(state: AppState) -> Router {
             get(operations::execution_artifact),
         )
         .route("/runtime/status", get(operations::runtime_status))
+        .route(
+            "/runtime/quotas",
+            get(governance::get_quotas).put(governance::update_quotas),
+        )
+        .route("/runtime/capabilities", get(governance::get_capabilities))
+        .route(
+            "/retention-runs",
+            get(governance::list_retention_runs).post(governance::create_retention_run),
+        )
+        .route(
+            "/retention-runs/{id}/items",
+            get(governance::list_retention_items),
+        )
         .route("/dashboard/summary", get(operations::dashboard_summary));
     Router::new()
+        .route(
+            "/internal/v1/credentials/resolve",
+            post(credentials::broker_resolve),
+        )
+        .route(
+            "/internal/v1/webhooks/resolve",
+            post(credentials::broker_resolve_webhook),
+        )
         .nest("/api/v1", api)
         .layer(DefaultBodyLimit::max(105 * 1024 * 1024))
         .with_state(state)

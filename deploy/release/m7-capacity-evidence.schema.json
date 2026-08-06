@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentx.local/schemas/m7-capacity-evidence-v1.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "status", "runId", "startedAt", "completedAt", "metrics", "failures"],
+  "properties": {
+    "schemaVersion": { "const": "agentx.io/m7-capacity-evidence/v1" },
+    "status": { "enum": ["passed", "failed"] },
+    "runId": { "type": "string", "minLength": 1 },
+    "startedAt": { "type": "string", "format": "date-time" },
+    "completedAt": { "type": "string", "format": "date-time" },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["executionCount", "completedExecutionCount", "nodeExecutionCount", "sseClientCount", "successfulSseClientCount", "evaluationCaseCount", "workflowNodeCount", "stabilityDurationSeconds", "stabilityProbeCount", "projectorP95Seconds", "activeQuotaReservations"],
+      "properties": {
+        "executionCount": { "type": "integer", "minimum": 0 },
+        "completedExecutionCount": { "type": "integer", "minimum": 0 },
+        "nodeExecutionCount": { "type": "integer", "minimum": 0 },
+        "sseClientCount": { "type": "integer", "minimum": 0 },
+        "successfulSseClientCount": { "type": "integer", "minimum": 0 },
+        "evaluationCaseCount": { "type": "integer", "minimum": 0 },
+        "workflowNodeCount": { "type": "integer", "minimum": 0 },
+        "stabilityDurationSeconds": { "type": "integer", "minimum": 0 },
+        "stabilityProbeCount": { "type": "integer", "minimum": 0 },
+        "projectorP95Seconds": { "type": "number", "minimum": 0 },
+        "activeQuotaReservations": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "failures": { "type": "array", "items": { "type": "string" } }
+  }
+}

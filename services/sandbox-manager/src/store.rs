@@ -7,7 +7,9 @@ use agentx_domain::{
 };
 use agentx_infrastructure::{
     OpenSandboxAdapter,
-    credential::{CredentialKeyring, PlainSecret},
+    credential::{
+        CredentialKeyring, CredentialSecretRecord, CredentialSource, PlainSecret, SecretReadScope,
+    },
 };
 use agentx_runtime_rpc::sandbox_v1::{
     SandboxCredentialHandle, SandboxLease as RpcLease, SandboxScope,
@@ -30,7 +32,7 @@ pub struct LeaseStore {
     pool: MySqlPool,
     signing_key: SecretString,
     endpoint_keyring: CredentialKeyring,
-    credential_keyring: CredentialKeyring,
+    credential_source: CredentialSource,
     max_active_per_tenant: u64,
 }
 
@@ -56,6 +58,7 @@ pub struct ResolvedSandboxCredential {
 }
 
 impl LeaseStore {
+    #[cfg(test)]
     pub fn new(
         pool: MySqlPool,
         signing_key: SecretString,
@@ -67,7 +70,23 @@ impl LeaseStore {
             pool,
             signing_key,
             endpoint_keyring,
-            credential_keyring,
+            credential_source: CredentialSource::local(std::sync::Arc::new(credential_keyring)),
+            max_active_per_tenant,
+        }
+    }
+
+    pub fn new_with_credential_source(
+        pool: MySqlPool,
+        signing_key: SecretString,
+        endpoint_keyring: CredentialKeyring,
+        credential_source: CredentialSource,
+        max_active_per_tenant: u64,
+    ) -> Self {
+        Self {
+            pool,
+            signing_key,
+            endpoint_keyring,
+            credential_source,
             max_active_per_tenant,
         }
     }
@@ -140,6 +159,7 @@ impl LeaseStore {
             cancellation: CancellationToken::new(),
             idempotency_key: scope.request_id.clone(),
             resources: Vec::new(),
+            credential_handles: Default::default(),
         })
     }
 
@@ -221,7 +241,7 @@ impl LeaseStore {
         lease_id: Uuid,
     ) -> Result<Vec<ResolvedSandboxCredential>> {
         let mut transaction = self.pool.begin().await?;
-        let rows=sqlx::query("SELECT h.id,h.resource_id,h.resource_version,h.scope_json,h.expires_at,h.consumed_at,h.revoked_at,v.key_id,v.nonce,v.ciphertext FROM node_invocation_handles h JOIN credentials c ON c.tenant_id=h.tenant_id AND c.id=h.resource_id AND c.status='active' JOIN credential_secret_versions v ON v.tenant_id=h.tenant_id AND v.credential_id=h.resource_id AND v.version_number=h.resource_version WHERE h.sandbox_lease_id=? AND h.tenant_id=? AND h.execution_id=? AND h.node_execution_id=? AND h.attempt_id=? AND h.lease_token=? AND h.handle_kind='credential' FOR UPDATE")
+        let rows=sqlx::query("SELECT h.id,h.resource_id,h.resource_version,h.scope_json,h.expires_at,h.consumed_at,h.revoked_at,v.provider,v.secret_ref,v.provider_version,v.key_id,v.nonce,v.ciphertext FROM node_invocation_handles h JOIN credentials c ON c.tenant_id=h.tenant_id AND c.id=h.resource_id AND c.status='active' JOIN credential_secret_versions v ON v.tenant_id=h.tenant_id AND v.credential_id=h.resource_id AND v.version_number=h.resource_version WHERE h.sandbox_lease_id=? AND h.tenant_id=? AND h.execution_id=? AND h.node_execution_id=? AND h.attempt_id=? AND h.lease_token=? AND h.handle_kind='credential' FOR UPDATE")
             .bind(lease_id).bind(context.tenant_id.as_uuid()).bind(context.execution_id.as_uuid()).bind(context.node_execution_id.as_uuid()).bind(context.attempt_id.as_uuid()).bind(context.lease_token).fetch_all(&mut *transaction).await?;
         let mut result = Vec::with_capacity(rows.len());
         for row in rows {
@@ -242,12 +262,42 @@ impl LeaseStore {
                 .context("SANDBOX_CREDENTIAL_ENVIRONMENT_INVALID")?
                 .to_owned();
             let aad = format!("{}/{resource_id}/{version}", context.tenant_id.as_uuid());
-            let secret = self.credential_keyring.decrypt(
-                &row.try_get::<String, _>("key_id")?,
-                &row.try_get::<Vec<u8>, _>("nonce")?,
-                &row.try_get::<Vec<u8>, _>("ciphertext")?,
-                aad.as_bytes(),
-            )?;
+            let provider: String = row.try_get("provider")?;
+            let secret_ref: Option<String> = row.try_get("secret_ref")?;
+            let provider_version: Option<String> = row.try_get("provider_version")?;
+            let key_id: Option<String> = row.try_get("key_id")?;
+            let nonce: Option<Vec<u8>> = row.try_get("nonce")?;
+            let ciphertext: Option<Vec<u8>> = row.try_get("ciphertext")?;
+            let read_scope = SecretReadScope {
+                tenant_id: context.tenant_id.as_uuid(),
+                credential_id: resource_id,
+                credential_version: version,
+                execution_id: context.execution_id.as_uuid(),
+                node_execution_id: context.node_execution_id.as_uuid(),
+                attempt_id: context.attempt_id.as_uuid(),
+                lease_token: context.lease_token,
+                deadline: row
+                    .try_get::<OffsetDateTime, _>("expires_at")?
+                    .min(context.deadline),
+                handle: None,
+                handle_id: Some(id),
+                consume_handle: false,
+            };
+            let secret = self
+                .credential_source
+                .resolve(
+                    CredentialSecretRecord {
+                        provider: &provider,
+                        secret_ref: secret_ref.as_deref(),
+                        provider_version: provider_version.as_deref(),
+                        key_id: key_id.as_deref(),
+                        nonce: nonce.as_deref(),
+                        ciphertext: ciphertext.as_deref(),
+                        aad: aad.as_bytes(),
+                    },
+                    Some(&read_scope),
+                )
+                .await?;
             sqlx::query("UPDATE node_invocation_handles SET consumed_at=CURRENT_TIMESTAMP(6) WHERE id=? AND consumed_at IS NULL AND revoked_at IS NULL").bind(id).execute(&mut *transaction).await?;
             result.push(ResolvedSandboxCredential {
                 handle_id: id,
@@ -496,6 +546,7 @@ fn dummy_context() -> RuntimeContext {
         cancellation: CancellationToken::new(),
         idempotency_key: String::new(),
         resources: Vec::new(),
+        credential_handles: Default::default(),
     }
 }
 

@@ -1,4 +1,9 @@
 use agentx_api_types::PageResponse;
+use agentx_application::{
+    CancelExecutionCommandPayload, RuntimeCommand, RuntimeCommandType, StartExecutionCommandPayload,
+};
+use agentx_domain::TenantId;
+use agentx_infrastructure::runtime_commands::RuntimeCommandRepository;
 use axum::{
     Json,
     extract::{Path, Query, State},
@@ -9,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use sqlx::Row;
+use std::collections::BTreeMap;
 use time::OffsetDateTime;
 use utoipa::ToSchema;
 use uuid::Uuid;
@@ -229,9 +235,42 @@ pub struct CreateEvaluationRunRequest {
 #[serde(rename_all = "camelCase")]
 pub struct EvaluationReportResponse {
     pub run: EvaluationRunResponse,
-    pub results: Vec<Value>,
+    pub results: Vec<EvaluationCaseResultResponse>,
     pub metrics: Vec<Value>,
     pub report_status: String,
+}
+
+#[derive(Clone, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EvaluationCaseResultResponse {
+    pub case_id: Uuid,
+    pub source_case_id: Uuid,
+    pub case_key: String,
+    pub status: String,
+    pub score: Option<f64>,
+    pub detail: Option<Value>,
+    pub target_execution_id: Option<Uuid>,
+    pub duration_ms: Option<u64>,
+    pub cost_micros: u64,
+    pub error_code: Option<String>,
+    pub error_message: Option<String>,
+    pub rule_results: Vec<EvaluationRuleResultResponse>,
+}
+
+#[derive(Clone, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EvaluationRuleResultResponse {
+    pub id: Uuid,
+    pub key: String,
+    pub name: String,
+    pub evaluator_type: String,
+    pub status: String,
+    pub passed: Option<bool>,
+    pub score: Option<f64>,
+    pub detail: Value,
+    pub evaluator_execution_id: Option<Uuid>,
+    pub duration_ms: Option<u64>,
+    pub cost_micros: u64,
 }
 
 #[utoipa::path(get, path = "/api/v1/datasets")]
@@ -681,6 +720,15 @@ pub async fn create_profile(
     actor.require("evaluation_profile:manage")?;
     validate_visibility(&input.visibility)?;
     validate_profile(&input)?;
+    for rule in &input.rules {
+        validate_evaluator_workflow(
+            &state.pool,
+            actor.tenant_id,
+            &rule.evaluator_type,
+            &rule.configuration,
+        )
+        .await?;
+    }
     if input.rules.is_empty() {
         return Err(AppError::bad_request(
             "EVALUATION_RULE_REQUIRED",
@@ -810,14 +858,88 @@ pub async fn start_evaluation(
 ) -> AppResult<StatusCode> {
     actor.require("evaluation:manage")?;
     require_evaluation_access(&state, &actor, id, true).await?;
-    let exists:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM evaluation_runs WHERE id=? AND tenant_id=? AND status='created')").bind(id).bind(actor.tenant_id).fetch_one(&state.pool).await?;
-    if !exists {
-        return Err(AppError::not_found("Evaluation Run"));
+    let mut tx = state.pool.begin().await?;
+    let run = sqlx::query("SELECT workflow_version_id,dataset_version_id,parameters_json,status,created_by FROM evaluation_runs WHERE id=? AND tenant_id=? FOR UPDATE")
+        .bind(id)
+        .bind(actor.tenant_id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or_else(|| AppError::not_found("Evaluation Run"))?;
+    if run.try_get::<String, _>("status")? != "created" {
+        return Err(AppError::conflict(
+            "EVALUATION_ALREADY_STARTED",
+            "Evaluation Run has already been started",
+        ));
     }
-    Err(AppError::service_unavailable(
-        "RUNTIME_UNAVAILABLE",
-        "Evaluation Runtime is not available yet",
-    ))
+    let workflow_version_id: Uuid = run.try_get("workflow_version_id")?;
+    let dataset_version_id: Uuid = run.try_get("dataset_version_id")?;
+    let parameters: Value = run.try_get("parameters_json")?;
+    let cases = sqlx::query("SELECT source_case_id,case_key,input_json,context_json FROM dataset_version_cases WHERE tenant_id=? AND dataset_version_id=? ORDER BY sort_order,source_case_id")
+        .bind(actor.tenant_id)
+        .bind(dataset_version_id)
+        .fetch_all(&mut *tx)
+        .await?;
+    if cases.is_empty() {
+        return Err(AppError::unprocessable(
+            "EVALUATION_DATASET_EMPTY",
+            "Dataset Version has no Cases",
+        ));
+    }
+    for case in cases {
+        let case_id = Uuid::now_v7();
+        let source_case_id: Uuid = case.try_get("source_case_id")?;
+        let case_key: String = case.try_get("case_key")?;
+        let command = RuntimeCommand::new(
+            TenantId::from_uuid(actor.tenant_id),
+            RuntimeCommandType::StartExecution,
+            "evaluation_run_case",
+            case_id.to_string(),
+            format!("evaluation:{id}:case:{source_case_id}"),
+            serde_json::to_value(StartExecutionCommandPayload {
+                workflow_version_id,
+                invocation_id: None,
+                session_id: None,
+                requested_by: Some(actor.user_id),
+                trigger_type: "evaluation".into(),
+                input: case.try_get("input_json")?,
+                runtime_settings: json!({
+                    "evaluationRunId": id,
+                    "evaluationCaseId": case_id,
+                    "caseKey": case_key,
+                    "context": case.try_get::<Option<Value>, _>("context_json")?,
+                    "parameters": parameters.clone(),
+                }),
+            })
+            .map_err(AppError::internal)?,
+        );
+        RuntimeCommandRepository::enqueue_in_transaction(&mut tx, &command)
+            .await
+            .map_err(AppError::internal)?;
+        sqlx::query("INSERT INTO evaluation_run_cases(id,tenant_id,evaluation_run_id,source_case_id,target_command_id) VALUES(?,?,?,?,?)")
+            .bind(case_id)
+            .bind(actor.tenant_id)
+            .bind(id)
+            .bind(source_case_id)
+            .bind(command.id)
+            .execute(&mut *tx)
+            .await?;
+    }
+    sqlx::query("UPDATE evaluation_runs SET status='queued',started_at=CURRENT_TIMESTAMP(6) WHERE id=? AND tenant_id=? AND status='created'")
+        .bind(id)
+        .bind(actor.tenant_id)
+        .execute(&mut *tx)
+        .await?;
+    audit(
+        &mut tx,
+        &actor,
+        "evaluation.started",
+        "evaluation_run",
+        id,
+        json!({"workflowVersionId":workflow_version_id,"datasetVersionId":dataset_version_id}),
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(StatusCode::ACCEPTED)
 }
 
 #[utoipa::path(post, path = "/api/v1/evaluations/{id}/cancel")]
@@ -829,11 +951,50 @@ pub async fn cancel_evaluation(
     actor.require("evaluation:manage")?;
     require_evaluation_access(&state, &actor, id, true).await?;
     let mut tx = state.pool.begin().await?;
-    let changed=sqlx::query("UPDATE evaluation_runs SET status='cancelled',completed_at=CURRENT_TIMESTAMP(6) WHERE id=? AND tenant_id=? AND status='created'").bind(id).bind(actor.tenant_id).execute(&mut *tx).await?;
+    sqlx::query("SELECT id FROM evaluation_runs WHERE id=? AND tenant_id=? FOR UPDATE")
+        .bind(id)
+        .bind(actor.tenant_id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or_else(|| AppError::not_found("Evaluation Run"))?;
+    let executions = sqlx::query("SELECT id,target_command_id,target_execution_id FROM evaluation_run_cases WHERE tenant_id=? AND evaluation_run_id=? AND status NOT IN ('completed','failed','cancelled') FOR UPDATE")
+        .bind(actor.tenant_id)
+        .bind(id)
+        .fetch_all(&mut *tx)
+        .await?;
+    for case in executions {
+        let case_id: Uuid = case.try_get("id")?;
+        if let Some(execution_id) = case.try_get::<Option<Uuid>, _>("target_execution_id")? {
+            let command = RuntimeCommand::new(
+                TenantId::from_uuid(actor.tenant_id),
+                RuntimeCommandType::CancelExecution,
+                "evaluation_run_case",
+                case_id.to_string(),
+                format!("evaluation:{id}:case:{case_id}:cancel"),
+                serde_json::to_value(CancelExecutionCommandPayload { execution_id })
+                    .map_err(AppError::internal)?,
+            );
+            RuntimeCommandRepository::enqueue_in_transaction(&mut tx, &command)
+                .await
+                .map_err(AppError::internal)?;
+        } else {
+            let target_command_id: Uuid = case.try_get("target_command_id")?;
+            sqlx::query("UPDATE runtime_commands SET status='failed',error_code='EVALUATION_CANCELLED',error_message='Evaluation was cancelled before execution creation',completed_at=CURRENT_TIMESTAMP(6) WHERE id=? AND status='pending'")
+                .bind(target_command_id)
+                .execute(&mut *tx)
+                .await?;
+        }
+        sqlx::query("UPDATE evaluation_run_cases SET status='cancelled',completed_at=CURRENT_TIMESTAMP(6) WHERE tenant_id=? AND id=?")
+            .bind(actor.tenant_id)
+            .bind(case_id)
+            .execute(&mut *tx)
+            .await?;
+    }
+    let changed=sqlx::query("UPDATE evaluation_runs SET status='cancelled',completed_at=CURRENT_TIMESTAMP(6) WHERE id=? AND tenant_id=? AND status IN ('created','queued','running')").bind(id).bind(actor.tenant_id).execute(&mut *tx).await?;
     if changed.rows_affected() != 1 {
         return Err(AppError::conflict(
             "EVALUATION_NOT_CANCELLABLE",
-            "Only a created Evaluation Run can be cancelled before Runtime is connected",
+            "Evaluation Run is already terminal",
         ));
     }
     audit(
@@ -857,9 +1018,51 @@ pub async fn get_report(
 ) -> AppResult<Json<EvaluationReportResponse>> {
     actor.require("evaluation:view")?;
     let run = load_evaluation(&state, &actor, id).await?;
-    let result_rows=sqlx::query("SELECT status,score,detail_json,duration_ms,cost_micros,execution_id FROM evaluation_case_results WHERE tenant_id=? AND evaluation_run_id=? ORDER BY created_at").bind(actor.tenant_id).bind(id).fetch_all(&state.pool).await?;
+    let result_rows=sqlx::query("SELECT c.id case_id,c.source_case_id,dvc.case_key,c.status case_status,c.target_execution_id,c.duration_ms case_duration_ms,c.cost_micros case_cost_micros,c.error_code,c.error_message,cr.status result_status,CAST(cr.score AS DOUBLE) result_score,cr.detail_json,cr.duration_ms result_duration_ms,cr.cost_micros result_cost_micros FROM evaluation_run_cases c JOIN evaluation_runs er ON er.id=c.evaluation_run_id AND er.tenant_id=c.tenant_id JOIN dataset_version_cases dvc ON dvc.dataset_version_id=er.dataset_version_id AND dvc.source_case_id=c.source_case_id LEFT JOIN evaluation_case_results cr ON cr.tenant_id=c.tenant_id AND cr.evaluation_run_id=c.evaluation_run_id AND cr.source_case_id=c.source_case_id WHERE c.tenant_id=? AND c.evaluation_run_id=? ORDER BY dvc.sort_order,dvc.source_case_id").bind(actor.tenant_id).bind(id).fetch_all(&state.pool).await?;
+    let rule_rows=sqlx::query("SELECT rr.id,rr.evaluation_run_case_id,pr.rule_key,pr.name,pr.evaluator_type,rr.status,rr.passed,CAST(rr.score AS DOUBLE) score,rr.detail_json,rr.evaluator_execution_id,rr.duration_ms,rr.cost_micros FROM evaluation_rule_results rr JOIN evaluation_profile_rules pr ON pr.id=rr.profile_rule_id AND pr.tenant_id=rr.tenant_id JOIN evaluation_run_cases c ON c.id=rr.evaluation_run_case_id AND c.tenant_id=rr.tenant_id WHERE rr.tenant_id=? AND c.evaluation_run_id=? ORDER BY pr.sort_order,rr.id").bind(actor.tenant_id).bind(id).fetch_all(&state.pool).await?;
     let metric_rows=sqlx::query("SELECT metric_key,metric_value,detail_json FROM evaluation_metrics WHERE tenant_id=? AND evaluation_run_id=? ORDER BY metric_key").bind(actor.tenant_id).bind(id).fetch_all(&state.pool).await?;
-    let results=result_rows.into_iter().map(|r|json!({"status":r.try_get::<String,_>("status").ok(),"score":r.try_get::<Option<f64>,_>("score").ok().flatten(),"detail":r.try_get::<Value,_>("detail_json").ok(),"durationMs":r.try_get::<Option<u64>,_>("duration_ms").ok().flatten(),"costMicros":r.try_get::<u64,_>("cost_micros").unwrap_or(0),"executionId":r.try_get::<Uuid,_>("execution_id").ok()})).collect();
+    let mut rules = BTreeMap::<Uuid, Vec<EvaluationRuleResultResponse>>::new();
+    for row in rule_rows {
+        rules
+            .entry(row.try_get("evaluation_run_case_id")?)
+            .or_default()
+            .push(EvaluationRuleResultResponse {
+                id: row.try_get("id")?,
+                key: row.try_get("rule_key")?,
+                name: row.try_get("name")?,
+                evaluator_type: row.try_get("evaluator_type")?,
+                status: row.try_get("status")?,
+                passed: row.try_get("passed")?,
+                score: row.try_get("score")?,
+                detail: row.try_get("detail_json")?,
+                evaluator_execution_id: row.try_get("evaluator_execution_id")?,
+                duration_ms: row.try_get("duration_ms")?,
+                cost_micros: row.try_get("cost_micros")?,
+            });
+    }
+    let results = result_rows
+        .into_iter()
+        .map(|row| {
+            let case_id: Uuid = row.try_get("case_id")?;
+            let result_status: Option<String> = row.try_get("result_status")?;
+            let result_duration: Option<u64> = row.try_get("result_duration_ms")?;
+            let result_cost: Option<u64> = row.try_get("result_cost_micros")?;
+            Ok(EvaluationCaseResultResponse {
+                case_id,
+                source_case_id: row.try_get("source_case_id")?,
+                case_key: row.try_get("case_key")?,
+                status: result_status.unwrap_or(row.try_get("case_status")?),
+                score: row.try_get("result_score")?,
+                detail: row.try_get("detail_json")?,
+                target_execution_id: row.try_get("target_execution_id")?,
+                duration_ms: result_duration.or(row.try_get("case_duration_ms")?),
+                cost_micros: result_cost.unwrap_or(row.try_get("case_cost_micros")?),
+                error_code: row.try_get("error_code")?,
+                error_message: row.try_get("error_message")?,
+                rule_results: rules.remove(&case_id).unwrap_or_default(),
+            })
+        })
+        .collect::<AppResult<Vec<_>>>()?;
     let metrics=metric_rows.into_iter().map(|r|json!({"key":r.try_get::<String,_>("metric_key").ok(),"value":r.try_get::<f64,_>("metric_value").ok(),"detail":r.try_get::<Option<Value>,_>("detail_json").ok().flatten()})).collect();
     let report_status = if run.status == "created" {
         "not_started"
@@ -1380,15 +1583,104 @@ fn validate_evaluator(kind: &str, config: &Value) -> AppResult<()> {
                 ))
             }
         }
-        "llm_judge" | "custom_code" => Err(AppError::unprocessable(
-            "EVALUATOR_RUNTIME_UNAVAILABLE",
-            "This Evaluator type requires Agent Runtime",
-        )),
+        "llm_judge" | "custom_code" => config
+            .get("evaluatorWorkflowVersionId")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                AppError::bad_request(
+                    "INVALID_EVALUATOR_CONFIG",
+                    "Runtime evaluator requires evaluatorWorkflowVersionId",
+                )
+            })
+            .and_then(|value| {
+                Uuid::parse_str(value).map(|_| ()).map_err(|_| {
+                    AppError::bad_request(
+                        "INVALID_EVALUATOR_CONFIG",
+                        "evaluatorWorkflowVersionId must be a UUID",
+                    )
+                })
+            }),
         _ => Err(AppError::bad_request(
             "INVALID_EVALUATOR_TYPE",
             "Evaluator type is invalid",
         )),
     }
+}
+
+async fn validate_evaluator_workflow(
+    pool: &sqlx::MySqlPool,
+    tenant_id: Uuid,
+    kind: &str,
+    configuration: &Value,
+) -> AppResult<()> {
+    if !matches!(kind, "llm_judge" | "custom_code") {
+        return Ok(());
+    }
+    let version_id = configuration
+        .get("evaluatorWorkflowVersionId")
+        .and_then(Value::as_str)
+        .and_then(|value| Uuid::parse_str(value).ok())
+        .ok_or_else(|| {
+            AppError::bad_request(
+                "INVALID_EVALUATOR_CONFIG",
+                "Runtime evaluator requires a valid evaluatorWorkflowVersionId",
+            )
+        })?;
+    let definition: Value = sqlx::query_scalar(
+        "SELECT definition_json FROM workflow_versions WHERE tenant_id=? AND id=?",
+    )
+    .bind(tenant_id)
+    .bind(version_id)
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| {
+        AppError::unprocessable(
+            "EVALUATOR_WORKFLOW_VERSION_NOT_FOUND",
+            "Evaluator Workflow Version was not found",
+        )
+    })?;
+    let nodes = definition
+        .get("nodes")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let valid = if kind == "llm_judge" {
+        nodes.iter().any(|node| {
+            node.get("type").and_then(Value::as_str) == Some("agent")
+                && node
+                    .get("resourceReferences")
+                    .and_then(Value::as_array)
+                    .is_some_and(|references| {
+                        references.iter().any(|reference| {
+                            reference.get("resourceType").and_then(Value::as_str) == Some("model")
+                        })
+                    })
+        })
+    } else {
+        nodes.iter().any(|node| {
+            node.get("type").and_then(Value::as_str) == Some("code")
+                && node
+                    .get("resourceReferences")
+                    .and_then(Value::as_array)
+                    .is_some_and(|references| {
+                        references.iter().any(|reference| {
+                            reference.get("resourceType").and_then(Value::as_str)
+                                == Some("sandbox_profile")
+                        })
+                    })
+        })
+    };
+    if !valid {
+        return Err(AppError::unprocessable(
+            "INVALID_EVALUATOR_WORKFLOW",
+            if kind == "llm_judge" {
+                "LLM Judge Workflow Version must contain an Agent with a Model binding"
+            } else {
+                "Custom Code Workflow Version must contain a Code node with a Sandbox Profile"
+            },
+        ));
+    }
+    Ok(())
 }
 
 #[allow(dead_code)]

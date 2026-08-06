@@ -33,8 +33,8 @@ impl ExecutionProjectionPort for MySqlOperationsProjection {
             .bind(value.invocation_id.map(|id| id.as_uuid())).bind(value.session_id.map(|id| id.as_uuid())).bind(value.trace_id.as_uuid())
             .bind(&value.trigger_type).bind(status_name(&value.status)).bind(value.started_at).bind(value.ended_at).bind(value.duration_ms)
             .bind(value.cost_micros).bind(&value.error_code).bind(&value.error_message).execute(&self.pool).await?;
-        sqlx::query("INSERT INTO execution_events(tenant_id,execution_id,sequence_number,event_type,status,summary_json,occurred_at) VALUES(?,?,1,'execution.projected',?,?,?)")
-            .bind(value.tenant_id.as_uuid()).bind(value.id.as_uuid()).bind(status_name(&value.status)).bind(json!({"triggerType":value.trigger_type,"costMicros":value.cost_micros})).bind(value.started_at).execute(&self.pool).await?;
+        sqlx::query("INSERT INTO execution_events(tenant_id,execution_id,event_id,sequence_number,event_type,schema_version,status,summary_json,occurred_at) VALUES(?,?,?,1,'execution.projected','1.0',?,?,?)")
+            .bind(value.tenant_id.as_uuid()).bind(value.id.as_uuid()).bind(Uuid::now_v7()).bind(status_name(&value.status)).bind(json!({"triggerType":value.trigger_type,"costMicros":value.cost_micros})).bind(value.started_at).execute(&self.pool).await?;
         Ok(())
     }
 }

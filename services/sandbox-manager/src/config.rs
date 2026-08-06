@@ -1,7 +1,9 @@
 use std::{env, net::SocketAddr, sync::Arc, time::Duration};
 
 use agentx_infrastructure::{
-    OpenSandboxAdapter, config::MySqlSettings, credential::CredentialKeyring,
+    OpenSandboxAdapter,
+    config::{MySqlSettings, SecretProviderMode, secret_provider_mode},
+    credential::{CredentialKeyring, CredentialSource, RemoteSecretProvider},
 };
 use anyhow::{Context, Result};
 use secrecy::SecretString;
@@ -14,7 +16,7 @@ pub struct ManagerSettings {
     pub rpc_token: Arc<SecretString>,
     pub lease_signing_key: Arc<SecretString>,
     pub endpoint_keyring: CredentialKeyring,
-    pub credential_keyring: CredentialKeyring,
+    pub credential_source: CredentialSource,
     pub adapter: OpenSandboxAdapter,
     pub reaper_interval: Duration,
     pub max_active_per_tenant: u64,
@@ -63,14 +65,21 @@ impl ManagerSettings {
                     .context("sandbox endpoint encryption keyring is required")?,
             ),
         )?;
-        let credential_keyring = CredentialKeyring::from_json(
-            env::var("AGENTX_CREDENTIAL_ACTIVE_KEY_ID")
-                .context("AGENTX_CREDENTIAL_ACTIVE_KEY_ID is required")?,
-            &SecretString::from(
-                env::var("AGENTX_CREDENTIAL_KEYS_JSON")
-                    .context("AGENTX_CREDENTIAL_KEYS_JSON is required")?,
-            ),
-        )?;
+        let credential_source = match secret_provider_mode()? {
+            SecretProviderMode::VaultKvV2 => {
+                CredentialSource::external(Arc::new(RemoteSecretProvider::from_env()?))
+            }
+            SecretProviderMode::LocalEncrypted => {
+                CredentialSource::local(Arc::new(CredentialKeyring::from_json(
+                    env::var("AGENTX_CREDENTIAL_ACTIVE_KEY_ID")
+                        .context("AGENTX_CREDENTIAL_ACTIVE_KEY_ID is required")?,
+                    &SecretString::from(
+                        env::var("AGENTX_CREDENTIAL_KEYS_JSON")
+                            .context("AGENTX_CREDENTIAL_KEYS_JSON is required")?,
+                    ),
+                )?))
+            }
+        };
         let max_active_per_tenant = env::var("AGENTX_SANDBOX_MAX_ACTIVE_PER_TENANT")
             .ok()
             .map(|value| {
@@ -99,7 +108,7 @@ impl ManagerSettings {
                     .context("AGENTX_SANDBOX_LEASE_SIGNING_KEY is required")?,
             )),
             endpoint_keyring,
-            credential_keyring,
+            credential_source,
             adapter: opensandbox.adapter,
             reaper_interval: Duration::from_secs(
                 env::var("AGENTX_SANDBOX_REAPER_INTERVAL_SECONDS")

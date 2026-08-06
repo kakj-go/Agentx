@@ -103,6 +103,7 @@ try {
     Invoke-Native "web tests" { pnpm --filter @agentx/web test }
     Invoke-Native "web build" { pnpm build:web }
     Invoke-Native "deployment profile tests" { & scripts/deploy-tests.ps1 | Out-Null }
+    Invoke-Native "release supply-chain tests" { & scripts/release-tests.ps1 | Out-Null }
     Invoke-Native "Full Kustomize render" { kubectl kustomize deploy/k8s/stacks/full | Out-Null }
     Invoke-Native "E2E Kustomize render" { kubectl kustomize deploy/k8s/stacks/e2e | Out-Null }
     Invoke-Native "LightRAG Kustomize render" { kubectl kustomize deploy/k8s/addons/lightrag | Out-Null }

@@ -861,7 +861,7 @@ async fn create_network_workflows(
             workflow_name: "M5 Network Deny Fixture",
             node_name: "M5 Network Deny",
             runner: "python",
-            source: "import urllib.request\ntry:\n    urllib.request.urlopen('https://example.com', timeout=5)\nexcept Exception:\n    print('m5-network-denied')\nelse:\n    raise RuntimeError('network unexpectedly allowed')",
+            source: "import socket\nfor family, label in [(socket.AF_INET, 'ipv4'), (socket.AF_INET6, 'ipv6')]:\n    try:\n        socket.getaddrinfo('one.one.one.one', 443, family, socket.SOCK_STREAM)\n    except Exception:\n        print(f'm5-{label}-denied')\n    else:\n        raise RuntimeError(f'{label} DNS unexpectedly allowed')\nprint('m5-network-denied')",
             image: resources.sandbox_image.clone(),
             limits: SandboxLimits::STANDARD,
             expected_output_path: None,

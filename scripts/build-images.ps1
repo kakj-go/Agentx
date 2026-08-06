@@ -20,6 +20,22 @@ $kubernetesNode = docker ps --filter "name=^/desktop-control-plane$" --format "{
 $imageLoaderPod = "agentx-image-loader"
 $imageLoaderReady = $false
 
+function Invoke-DockerBuild([string[]]$DockerArguments) {
+    for ($attempt = 1; $attempt -le 3; $attempt++) {
+        try {
+            & docker build @DockerArguments
+            return
+        }
+        catch {
+            if ($attempt -eq 3) {
+                throw
+            }
+            Write-Warning "Docker build attempt $attempt failed; retrying after a transient backoff."
+            Start-Sleep -Seconds (2 * $attempt)
+        }
+    }
+}
+
 function Initialize-KubernetesImageLoader {
     if ($script:imageLoaderReady -or $kubernetesNode) {
         return
@@ -84,19 +100,19 @@ function Import-LocalKubernetesImage([string]$Image) {
 try {
     foreach ($service in $Services) {
         $image = "agentx/{0}:{1}" -f $service, $Tag
-        docker build --file "$root/deploy/docker/backend.Dockerfile" --build-arg "APP=$service" --tag $image $root
+        Invoke-DockerBuild -DockerArguments @("--file", "$root/deploy/docker/backend.Dockerfile", "--build-arg", "APP=$service", "--tag", $image, $root)
         Import-LocalKubernetesImage $image
     }
 
     if (-not $SkipWeb) {
         $webImage = "agentx/web:$Tag"
-        docker build --file "$root/deploy/docker/web.Dockerfile" --tag $webImage $root
+        Invoke-DockerBuild -DockerArguments @("--file", "$root/deploy/docker/web.Dockerfile", "--tag", $webImage, $root)
         Import-LocalKubernetesImage $webImage
     }
 
     if ($BuildMem0) {
         $mem0Image = "agentx/mem0-server:v2.0.15"
-        docker build --file server/dev.Dockerfile --tag $mem0Image "https://github.com/mem0ai/mem0.git#v2.0.15"
+        Invoke-DockerBuild -DockerArguments @("--file", "server/dev.Dockerfile", "--tag", $mem0Image, "https://github.com/mem0ai/mem0.git#v2.0.15")
         Import-LocalKubernetesImage $mem0Image
     }
 }

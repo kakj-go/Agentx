@@ -1,7 +1,11 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 
 import { ParameterField } from './parameter-field'
+
+vi.mock('./code-editor', () => ({
+  CodeEditor: ({ value, onChange }: { value: string; onChange: (value: string) => void }) => <textarea aria-label="code-editor" onChange={(event) => onChange(event.target.value)} value={value} />,
+}))
 
 describe('ParameterField', () => {
   it('renders Platform API provider options declared by the manifest', () => {
@@ -29,5 +33,18 @@ describe('ParameterField', () => {
     expect(screen.getByTestId('mapper-control')).toBeInTheDocument()
     fireEvent.change(screen.getByLabelText('Value'), { target: { value: '=$json.net' } })
     expect(onChange).toHaveBeenCalledWith({ total: '=$json.net' })
+  })
+
+  it('preserves an invalid JSON intermediate value until it becomes valid', async () => {
+    const onChange = vi.fn()
+    render(<ParameterField name="arguments" onChange={onChange} parameters={{}} schema={{ type: 'object' }} ui={{ control: 'json' }} value={{}} />)
+
+    const editor = screen.getByLabelText('code-editor')
+    fireEvent.change(editor, { target: { value: '{"text":' } })
+    await waitFor(() => expect(editor).toHaveValue('{"text":'))
+    expect(onChange).not.toHaveBeenCalled()
+
+    fireEvent.change(editor, { target: { value: '{"text":"Agentx E2E"}' } })
+    expect(onChange).toHaveBeenCalledWith({ text: 'Agentx E2E' })
   })
 })

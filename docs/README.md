@@ -38,6 +38,7 @@ Agentx 是一个采用 n8n 式画布交互、但使用 Agentx 原生 Workflow/No
 | [plan/m5-task-list.md](plan/m5-task-list.md) | M5 Rust 协议门禁、Agent、资源 Runtime、OpenSandbox、Trace 和 E2E 实施批次 |
 | [plan/m5-acceptance-evidence.md](plan/m5-acceptance-evidence.md) | M5 当前实现、自动化证据、未关闭门禁和生产强隔离边界 |
 | [plan/m6-acceptance-evidence.md](plan/m6-acceptance-evidence.md) | M6 Workflow Studio 契约、实现、静态门禁和 Kubernetes E2E 验收证据 |
+| [plan/m7-acceptance-evidence.md](plan/m7-acceptance-evidence.md) | M7 业务闭环、Vault、发布自动化和剩余生产门禁证据 |
 | [plan/e2e-testing-standard.md](plan/e2e-testing-standard.md) | 临时 Kubernetes Playwright 端到端测试规范 |
 | [plan/m2-acceptance-evidence.md](plan/m2-acceptance-evidence.md) | 已被 M2.1 取代的旧 M2 历史证据 |
 

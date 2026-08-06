@@ -31,4 +31,19 @@ describe('api client', () => {
 
     expect(fetchMock).toHaveBeenCalledOnce()
   })
+
+  it('accepts successful asynchronous responses without a body', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 202 })))
+
+    await expect(apiRequest('/evaluations/run-id/start', { method: 'POST' })).resolves.toBeUndefined()
+  })
+
+  it('still parses successful JSON responses', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ status: 'queued' }), {
+      status: 202,
+      headers: { 'Content-Type': 'application/json' },
+    })))
+
+    await expect(apiRequest<{ status: string }>('/commands')).resolves.toEqual({ status: 'queued' })
+  })
 })

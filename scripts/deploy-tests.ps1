@@ -91,6 +91,12 @@ $module = Import-Module (Join-Path $PSScriptRoot "deploy/Agentx.Deployment.psm1"
     $rendered = (Invoke-ComponentRender -Profile $localImage -RepoRoot $RepoRoot -Component "services/core") -join "`n"
     Assert-True ($rendered -match 'image: agentx/platform-api:dev') "local-build render did not use local Agentx images"
     Assert-True ($rendered -notmatch 'registry\.example\.test/ignored/platform-api') "local-build render incorrectly used images.registry"
+    Assert-True ($rendered -match 'automountServiceAccountToken: false') "core Pods still mount ServiceAccount tokens"
+    Assert-True ($rendered -match 'readOnlyRootFilesystem: true') "core Pods do not use a read-only root filesystem"
+    Assert-True ($rendered -match 'type: RuntimeDefault') "core Pods do not use RuntimeDefault seccomp"
+    Assert-True ($rendered -match 'name: agentx-core-default-deny') "core default-deny NetworkPolicy is missing"
+    Assert-True ($rendered -match 'ephemeral-storage: 256Mi') "core ephemeral storage limits are missing"
+    Assert-True (([regex]::Matches($rendered, 'name: AGENTX_VAULT_TOKEN')).Count -eq 1) "Vault token is exposed outside Platform API"
 
     $customRender = $templateJson | ConvertFrom-Json -Depth 30
     $customRender.namespace = "agentx-render-check"
@@ -119,6 +125,31 @@ $module = Import-Module (Join-Path $PSScriptRoot "deploy/Agentx.Deployment.psm1"
     $manager = (Invoke-ComponentRender -Profile $remoteRender -RepoRoot $RepoRoot -Component "services/sandbox-manager") -join "`n"
     Assert-True ($manager -match 'namespace: agentx-remote-render-check') "remote Sandbox render ignored the requested namespace"
     Assert-True ($manager -match 'image: registry\.example\.test/agentx/sandbox-manager:dev') "remote Sandbox render did not use the registry image"
+    Assert-True ($manager -match 'name: agentx-sandbox-manager-default-deny') "Sandbox Manager default-deny NetworkPolicy is missing"
+
+    $production = $templateJson | ConvertFrom-Json -Depth 30
+    $production.environment = "production"
+    $production.images.mode = "registry"
+    $production.images.registry = "registry.example.test/agentx"
+    $production.secrets.provider = "vault_kv_v2"
+    $production.secrets.vaultAddress = "https://vault.example.test"
+    $production.secrets.vaultMount = "agentx"
+    $production.components.objectStorage.allowHttp = $false
+    $production.components.rag.mode = "disabled"
+    $production.components.memory.mode = "disabled"
+    $production.network.allowedEgressCidrs = @("10.20.0.0/16", "2001:db8:20::/64")
+    foreach ($name in @("web", "platform-api", "trigger-gateway", "workflow-coordinator", "workflow-worker", "trace-writer")) {
+        $production.images.digests | Add-Member -NotePropertyName $name -NotePropertyValue ("sha256:" + ("a" * 64))
+    }
+    Assert-DeploymentProfile -Profile $production -RepoRoot $RepoRoot
+    $productionCore = (Invoke-ComponentRender -Profile $production -RepoRoot $RepoRoot -Component "services/core") -join "`n"
+    Assert-True ($productionCore -match 'image: registry\.example\.test/agentx/platform-api@sha256:[a-f0-9]{64}') "production render did not pin the Platform API digest"
+    $missingDigest = $production | ConvertTo-Json -Depth 30 | ConvertFrom-Json -Depth 30
+    $missingDigest.images.digests.PSObject.Properties.Remove("workflow-worker")
+    Assert-Throws { Assert-DeploymentProfile -Profile $missingDigest -RepoRoot $RepoRoot } "production image without digest"
+    $invalidIsolation = $production | ConvertTo-Json -Depth 30 | ConvertFrom-Json -Depth 30
+    $invalidIsolation.components.sandbox.isolationLevel = "strong"
+    Assert-Throws { Assert-DeploymentProfile -Profile $invalidIsolation -RepoRoot $RepoRoot } "runc strong isolation claim"
 
     $owned = [pscustomobject]@{ metadata = [pscustomobject]@{ labels = [pscustomobject]@{ "app.kubernetes.io/managed-by" = "agentx-deploy"; "agentx.io/component" = "mysql" } } }
     $foreign = [pscustomobject]@{ metadata = [pscustomobject]@{ labels = [pscustomobject]@{ "app.kubernetes.io/managed-by" = "helm"; "agentx.io/component" = "mysql" } } }
@@ -131,6 +162,9 @@ $module = Import-Module (Join-Path $PSScriptRoot "deploy/Agentx.Deployment.psm1"
         Assert-True ($generatedSecret -match '^[A-Za-z0-9_-]+$') "generated Secret was not URL-safe"
         Assert-True ($generatedSecret.Length -ge 43) "generated Secret did not preserve 256 bits of entropy"
     }
+
+    $minioResources = Get-Content (Join-Path $RepoRoot "deploy/k8s/infrastructure/minio/resources.yaml") -Raw
+    Assert-True ($minioResources -match 'mc alias set -- local') "MinIO initialization does not terminate options before random credentials"
 
     [pscustomobject]@{ status = "passed"; modeCombinations = $count; profileHash = Get-ProfileHash ($templateJson | ConvertFrom-Json -Depth 30) } | ConvertTo-Json
 } $root

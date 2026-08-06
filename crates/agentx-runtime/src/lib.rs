@@ -4,7 +4,7 @@ mod registry;
 mod state;
 
 pub use compiler::{
-    COMPILER_VERSION, CompileContext, CompileError, CompiledConnection, CompiledNode,
+    COMPILER_VERSION, CompileContext, CompileError, CompileIssue, CompiledConnection, CompiledNode,
     CompiledWorkflow, WorkflowCompiler,
 };
 pub use expression::{ExpressionContext, ExpressionEngine, ExpressionError};

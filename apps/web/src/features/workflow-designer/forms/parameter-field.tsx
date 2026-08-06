@@ -10,6 +10,9 @@ import type { JsonSchemaProperty, ResourceOption, UiField } from '../model/types
 import { CodeEditor } from './code-editor'
 import { ExpressionEditor } from './expression-editor'
 
+const EMPTY_JSON_OBJECT = {}
+const EMPTY_JSON_ARRAY: unknown[] = []
+
 export function ParameterField({ name, schema, ui, value, required, error, parameters, providerOptions = [], workflowId, onChange, onValidityChange }: { name: string; schema: JsonSchemaProperty; ui?: UiField; value: unknown; required?: boolean; error?: string; parameters: Record<string, unknown>; providerOptions?: ResourceOption[]; workflowId?: string; onChange: (value: unknown) => void; onValidityChange?: (valid: boolean) => void }) {
   const label = ui?.label ?? schema.title ?? humanize(name)
   const visible = !ui?.visibleWhen || parameters[ui.visibleWhen.field] === ui.visibleWhen.equals
@@ -25,7 +28,7 @@ export function ParameterField({ name, schema, ui, value, required, error, param
   if (control === 'textarea') return field(<Textarea onChange={(event) => onChange(event.target.value)} value={String(value ?? '')} />)
   if (control === 'prompt') return field(<CodeEditor height="170px" onChange={onChange} value={String(value ?? '')} />)
   if (control === 'expression') return field(<ExpressionEditor onChange={onChange} value={String(value ?? '')} workflowId={workflowId} />)
-  if (control === 'json') return field(<JsonControl fallback={schema.type === 'array' ? [] : {}} onChange={onChange} onValidityChange={onValidityChange} value={value} />)
+  if (control === 'json') return field(<JsonControl fallback={schema.type === 'array' ? EMPTY_JSON_ARRAY : EMPTY_JSON_OBJECT} onChange={onChange} onValidityChange={onValidityChange} value={value} />)
   if (control === 'code') return field(<CodeEditor height="260px" language={codeLanguage(ui.languageField ? parameters[ui.languageField] : undefined)} onChange={onChange} value={String(value ?? '')} />)
   if (control === 'collection') return field(<CollectionControl itemSchema={schema.items} onChange={onChange} value={value} />)
   if (control === 'fixed_collection') return field(<FixedCollectionControl onChange={onChange} value={value} />)

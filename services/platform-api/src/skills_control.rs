@@ -1063,7 +1063,13 @@ async fn put_artifact(
             "Artifact storage is unavailable",
         )
     })?;
-    MySqlObjectArtifactStore::new(state.pool.clone(), store)
+    let mut artifacts = MySqlObjectArtifactStore::new(state.pool.clone(), store);
+    if let Some(redis) = state.redis.as_ref() {
+        artifacts = artifacts.with_quota_admission(
+            agentx_infrastructure::quota::QuotaAdmission::new((**redis).clone()),
+        );
+    }
+    artifacts
         .put(ArtifactWrite {
             tenant_id: TenantId::from_uuid(tenant),
             content_type: mime.to_owned(),

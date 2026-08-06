@@ -83,14 +83,11 @@ impl HttpMcpToolRuntime {
             .find(|r| r.reference.resource_id == id)
             .and_then(|r| r.snapshot.get("secretVersion"))
             .and_then(Value::as_u64);
-        let credential = if let Some(version) = version {
-            self.credentials
-                .resolve_version(context.tenant_id, id, version)
-                .await
-        } else {
-            self.credentials.resolve(context.tenant_id, id).await
-        }
-        .map_err(|e| RuntimeError::new("MCP_CREDENTIAL_INVALID", e.to_string()))?;
+        let credential = self
+            .credentials
+            .resolve_for_runtime(context, id, version)
+            .await
+            .map_err(|e| RuntimeError::new("MCP_CREDENTIAL_INVALID", e.to_string()))?;
         let secret = std::str::from_utf8(credential.secret.expose()).map_err(|_| {
             RuntimeError::new("MCP_CREDENTIAL_INVALID", "MCP credential is not UTF-8")
         })?;
@@ -180,6 +177,7 @@ impl HttpMcpToolRuntime {
             .client
             .post(endpoint.clone())
             .header("mcp-session-id", session)
+            .header(header::ACCEPT, "application/json, text/event-stream")
             .json(&json!({"jsonrpc":"2.0","method":"notifications/initialized","params":{}}));
         let response = self
             .authenticated(context, snapshot, builder)
@@ -192,7 +190,10 @@ impl HttpMcpToolRuntime {
         } else {
             Err(RuntimeError::new(
                 "MCP_HTTP_STATUS",
-                "MCP initialized notification failed",
+                format!(
+                    "MCP initialized notification returned HTTP {}",
+                    response.status().as_u16()
+                ),
             ))
         }
     }
@@ -324,10 +325,7 @@ impl McpToolRuntime for HttpMcpToolRuntime {
                 .await?
         };
         if let Some(schema) = snapshot.get("outputSchema").filter(|v| !v.is_null()) {
-            jsonschema::validator_for(schema)
-                .map_err(|e| RuntimeError::new("MCP_SCHEMA_INVALID", e.to_string()))?
-                .validate(&value)
-                .map_err(|e| RuntimeError::new("MCP_RESULT_INVALID", e.to_string()))?;
+            validate_structured_output(schema, &value)?;
         }
         Ok(McpToolResponse {
             content: value
@@ -341,6 +339,19 @@ impl McpToolRuntime for HttpMcpToolRuntime {
                 .unwrap_or(false),
         })
     }
+}
+
+fn validate_structured_output(schema: &Value, result: &Value) -> RuntimeResult<()> {
+    let structured_content = result.get("structuredContent").ok_or_else(|| {
+        RuntimeError::new(
+            "MCP_RESULT_INVALID",
+            "MCP result is missing structuredContent required by outputSchema",
+        )
+    })?;
+    jsonschema::validator_for(schema)
+        .map_err(|e| RuntimeError::new("MCP_SCHEMA_INVALID", e.to_string()))?
+        .validate(structured_content)
+        .map_err(|e| RuntimeError::new("MCP_RESULT_INVALID", e.to_string()))
 }
 
 async fn legacy_send(
@@ -519,5 +530,34 @@ mod tests {
         );
         assert!(error.outcome_unknown);
         assert!(error.retryable);
+    }
+
+    #[test]
+    fn output_schema_validates_structured_content_in_call_result() {
+        let schema = json!({
+            "type": "object",
+            "required": ["text"],
+            "properties": {"text": {"type": "string"}}
+        });
+        let result = json!({
+            "content": [{"type": "text", "text": "Agentx E2E"}],
+            "structuredContent": {"text": "Agentx E2E"}
+        });
+
+        validate_structured_output(&schema, &result).unwrap();
+    }
+
+    #[test]
+    fn output_schema_requires_structured_content() {
+        let schema = json!({
+            "type": "object",
+            "required": ["text"],
+            "properties": {"text": {"type": "string"}}
+        });
+        let result = json!({"content": [{"type": "text", "text": "Agentx E2E"}]});
+
+        let error = validate_structured_output(&schema, &result).unwrap_err();
+        assert_eq!(error.code, "MCP_RESULT_INVALID");
+        assert!(error.message.contains("structuredContent"));
     }
 }

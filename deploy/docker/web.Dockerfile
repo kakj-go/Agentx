@@ -10,10 +10,9 @@ RUN pnpm install --frozen-lockfile
 COPY apps/web ./apps/web
 RUN pnpm build:web
 
-FROM nginx:1.28-alpine AS runtime
+FROM nginxinc/nginx-unprivileged:1.28-alpine AS runtime
 
 COPY deploy/docker/nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=builder /workspace/apps/web/dist /usr/share/nginx/html
 
-EXPOSE 80
-
+EXPOSE 8080

@@ -73,6 +73,22 @@
       }
     },
     "/gateway/v1/sessions/{id}/messages": {
+      "get": {
+        "tags": [],
+        "operationId": "list_messages",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {}
+      },
       "post": {
         "tags": [],
         "operationId": "send_message",
@@ -270,6 +286,25 @@
           }
         }
       },
+      "MessagePartResponse": {
+        "type": "object",
+        "required": [
+          "partType"
+        ],
+        "properties": {
+          "artifactId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "content": {},
+          "partType": {
+            "type": "string"
+          }
+        }
+      },
       "MessageRequest": {
         "type": "object",
         "required": [
@@ -281,6 +316,47 @@
             "items": {
               "$ref": "#/components/schemas/MessagePartInput"
             }
+          }
+        }
+      },
+      "MessageResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "sequence",
+          "role",
+          "parts",
+          "createdAt"
+        ],
+        "properties": {
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "invocationId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "parts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MessagePartResponse"
+            }
+          },
+          "role": {
+            "type": "string"
+          },
+          "sequence": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
           }
         }
       },

@@ -31,6 +31,7 @@ ipnet.workspace = true
 object_store.workspace = true
 rand.workspace = true
 redis.workspace = true
+rust_decimal.workspace = true
 regex.workspace = true
 reqwest.workspace = true
 secrecy.workspace = true

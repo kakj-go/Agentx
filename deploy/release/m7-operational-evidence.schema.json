@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentx.local/schemas/m7-operational-evidence-v1.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "evidenceType", "status", "runId", "generatedAt", "assertions"],
+  "properties": {
+    "schemaVersion": { "const": "agentx.io/m7-operational-evidence/v1" },
+    "evidenceType": { "enum": ["failure", "security", "upgrade"] },
+    "status": { "enum": ["passed", "failed"] },
+    "runId": { "type": "string", "minLength": 1 },
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "assertions": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "status", "evidence"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "status": { "enum": ["passed", "failed"] },
+          "evidence": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  }
+}

@@ -12,6 +12,7 @@ use testcontainers::{
 
 #[tokio::test]
 async fn mysql_migrations_upgrade_an_m1_schema_to_mcp_and_skill_workspace() {
+    let _container_guard = crate::TESTCONTAINER_LOCK.lock().await;
     let container = GenericImage::new("mysql", "8.4")
         .with_exposed_port(3306.tcp())
         .with_wait_for(WaitFor::message_on_stderr("ready for connections"))

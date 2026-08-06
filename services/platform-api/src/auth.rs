@@ -165,12 +165,48 @@ pub async fn bootstrap(
         .execute(&mut *tx)
         .await?;
     seed_roles(&mut tx, tenant_id, user_id).await?;
+    seed_development_quotas(&mut tx, tenant_id, user_id).await?;
     sqlx::query("INSERT INTO audit_events(id,tenant_id,actor_user_id,action,target_type,target_id,request_id,detail_json) VALUES(?,?,?,'company.bootstrap','tenant',?,?,JSON_OBJECT('companyName',?))")
         .bind(Uuid::now_v7()).bind(tenant_id).bind(user_id).bind(tenant_id.to_string()).bind(request_id).bind(input.company_name.trim()).execute(&mut *tx).await?;
     sqlx::query("UPDATE bootstrap_state SET state='completed',tenant_id=?,completed_at=CURRENT_TIMESTAMP(6) WHERE singleton_id=1 AND state='required'").bind(tenant_id).execute(&mut *tx).await?;
     let (jar, response) = create_session(&state, &mut tx, jar, tenant_id, user_id, 1).await?;
     tx.commit().await?;
     Ok((StatusCode::CREATED, jar, Json(response)))
+}
+
+async fn seed_development_quotas(
+    tx: &mut sqlx::Transaction<'_, sqlx::MySql>,
+    tenant_id: Uuid,
+    user_id: Uuid,
+) -> AppResult<()> {
+    if agentx_infrastructure::config::is_production_environment() {
+        return Ok(());
+    }
+    let policies = [
+        ("execution_concurrency", "1000", None),
+        ("node_concurrency", "5000", None),
+        ("sandbox_concurrency", "500", None),
+        ("agent_iterations", "120000", Some(86_400_u64)),
+        ("tokens", "1000000000", Some(86_400_u64)),
+        ("cost_micros", "1000000000000", Some(86_400_u64)),
+        ("artifact_bytes", "1000000000000", None),
+        ("cpu_millis", "1000000", None),
+        ("memory_bytes", "1099511627776", None),
+        ("pids", "100000", None),
+        ("disk_bytes", "1000000000000", None),
+        ("ttl_seconds", "604800", None),
+    ];
+    for (dimension, limit, period) in policies {
+        sqlx::query("INSERT IGNORE INTO quota_policies(tenant_id,dimension_key,hard_limit,period_seconds,updated_by) VALUES(?,?,?,?,?)")
+            .bind(tenant_id)
+            .bind(dimension)
+            .bind(limit)
+            .bind(period)
+            .bind(user_id)
+            .execute(&mut **tx)
+            .await?;
+    }
+    Ok(())
 }
 
 async fn seed_roles(

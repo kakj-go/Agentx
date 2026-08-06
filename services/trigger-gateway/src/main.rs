@@ -2,12 +2,17 @@ use std::{convert::Infallible, env, sync::Arc, time::Duration};
 
 use agentx_api_types::{ApiErrorResponse, FieldError};
 use agentx_application::{
-    AcceptedExecution, ExecutionRuntime, RequestExecution, ResumeExecutionCommand,
+    CancelExecutionCommandPayload, ResumeExecutionCommandPayload, RuntimeCommand,
+    RuntimeCommandType, StartExecutionCommandPayload,
 };
-use agentx_domain::{
-    ExecutionId, ExecutionStatus, InvocationId, SessionId, TenantId, WorkflowVersionId,
+use agentx_domain::{InvocationId, TenantId};
+use agentx_infrastructure::{
+    config::MySqlSettings,
+    config::{SecretProviderMode, secret_provider_mode},
+    credential::{CredentialKeyring, PlainSecret},
+    mysql,
+    runtime_commands::RuntimeCommandRepository,
 };
-use agentx_infrastructure::{config::MySqlSettings, credential::CredentialKeyring, mysql};
 use anyhow::{Context, Result};
 use axum::{
     Json, Router,
@@ -19,7 +24,10 @@ use axum::{
     },
     routing::{get, post},
 };
-use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use base64::{
+    Engine,
+    engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
+};
 use futures::stream;
 use hmac::{Hmac, Mac};
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
@@ -32,31 +40,110 @@ use time::OffsetDateTime;
 use utoipa::{OpenApi, ToSchema};
 use uuid::Uuid;
 
+mod binding_loop;
+mod schedule_loop;
+
 #[derive(Clone)]
 struct GatewayState {
     pool: MySqlPool,
     jwt: Arc<JwtSettings>,
-    keyring: Arc<CredentialKeyring>,
-    runtime: Arc<dyn ExecutionRuntime>,
-    resume_runtime: Arc<dyn ExecutionRuntime>,
+    webhook_secrets: WebhookSecretSource,
     wait_resume_secret: Arc<SecretString>,
 }
 
-struct UnavailableExecutionRuntime;
-#[async_trait::async_trait]
-impl ExecutionRuntime for UnavailableExecutionRuntime {
-    async fn request_execution(&self, _request: RequestExecution) -> Result<AcceptedExecution> {
-        anyhow::bail!("RUNTIME_UNAVAILABLE")
-    }
-    async fn get_execution(
+#[derive(Clone)]
+enum WebhookSecretSource {
+    Local(Arc<CredentialKeyring>),
+    Broker {
+        client: reqwest::Client,
+        endpoint: String,
+        token: Arc<SecretString>,
+    },
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WebhookSecretRequest<'a> {
+    secret_ref: &'a str,
+    version: u64,
+    tenant_id: Uuid,
+    webhook_id: Uuid,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WebhookSecretResponse {
+    secret_base64: String,
+}
+
+impl WebhookSecretSource {
+    async fn resolve(
         &self,
-        _tenant_id: TenantId,
-        _id: ExecutionId,
-    ) -> Result<Option<ExecutionStatus>> {
-        anyhow::bail!("RUNTIME_UNAVAILABLE")
-    }
-    async fn cancel_execution(&self, _tenant_id: TenantId, _id: ExecutionId) -> Result<()> {
-        anyhow::bail!("RUNTIME_UNAVAILABLE")
+        row: &sqlx::mysql::MySqlRow,
+        tenant_id: Uuid,
+        webhook_id: Uuid,
+    ) -> GatewayResult<PlainSecret> {
+        let provider: String = row.try_get("secret_provider")?;
+        match (provider.as_str(), self) {
+            ("local_encrypted", Self::Local(keyring)) => {
+                let aad = format!("{tenant_id}/{webhook_id}/webhook/1");
+                keyring
+                    .decrypt(
+                        row.try_get("secret_key_id")?,
+                        row.try_get::<Vec<u8>, _>("secret_nonce")?.as_slice(),
+                        row.try_get::<Vec<u8>, _>("secret_ciphertext")?.as_slice(),
+                        aad.as_bytes(),
+                    )
+                    .map_err(GatewayError::internal)
+            }
+            (
+                "vault_kv_v2",
+                Self::Broker {
+                    client,
+                    endpoint,
+                    token,
+                },
+            ) => {
+                let secret_ref: String = row.try_get("secret_ref")?;
+                let version = row
+                    .try_get::<String, _>("secret_provider_version")?
+                    .parse::<u64>()
+                    .map_err(GatewayError::internal)?;
+                let response = client
+                    .post(format!(
+                        "{}/internal/v1/webhooks/resolve",
+                        endpoint.trim_end_matches('/')
+                    ))
+                    .header("X-Agentx-Credential-Broker-Token", token.expose_secret())
+                    .json(&WebhookSecretRequest {
+                        secret_ref: &secret_ref,
+                        version,
+                        tenant_id,
+                        webhook_id,
+                    })
+                    .send()
+                    .await
+                    .map_err(GatewayError::internal)?;
+                if !response.status().is_success() {
+                    return Err(GatewayError::service_unavailable(
+                        "WEBHOOK_SECRET_PROVIDER_UNAVAILABLE",
+                        "Webhook Secret provider is unavailable",
+                    ));
+                }
+                let response = response
+                    .json::<WebhookSecretResponse>()
+                    .await
+                    .map_err(GatewayError::internal)?;
+                let secret = STANDARD
+                    .decode(response.secret_base64)
+                    .map_err(GatewayError::internal)?;
+                Ok(PlainSecret::new(secret))
+            }
+            _ => Err(GatewayError::service_unavailable(
+                "WEBHOOK_SECRET_PROVIDER_UNAVAILABLE",
+                "Webhook Secret storage does not match the Gateway configuration",
+            )),
+        }
     }
 }
 
@@ -168,18 +255,14 @@ impl GatewayError {
     fn bad_request(code: &'static str, message: impl Into<String>) -> Self {
         Self::new(StatusCode::BAD_REQUEST, code, message)
     }
+    fn service_unavailable(code: &'static str, message: impl Into<String>) -> Self {
+        Self::new(StatusCode::SERVICE_UNAVAILABLE, code, message)
+    }
     fn not_found(resource: &str) -> Self {
         Self::new(
             StatusCode::NOT_FOUND,
             "NOT_FOUND",
             format!("{resource} was not found"),
-        )
-    }
-    fn runtime_unavailable() -> Self {
-        Self::new(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "RUNTIME_UNAVAILABLE",
-            "Workflow Runtime is not available yet",
         )
     }
     fn internal(error: impl std::fmt::Display) -> Self {
@@ -276,8 +359,29 @@ struct MessagePartInput {
     artifact_id: Option<Uuid>,
 }
 
+#[derive(Clone, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct MessagePartResponse {
+    part_type: String,
+    content: Option<Value>,
+    artifact_id: Option<Uuid>,
+}
+
+#[derive(Clone, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct MessageResponse {
+    id: Uuid,
+    invocation_id: Option<Uuid>,
+    sequence: u64,
+    role: String,
+    parts: Vec<MessagePartResponse>,
+    #[serde(with = "time::serde::rfc3339")]
+    created_at: OffsetDateTime,
+}
+
 struct InvocationCommand<'a> {
     application_id: Uuid,
+    application_deployment_id: Uuid,
     session_id: Option<Uuid>,
     workflow_version_id: Uuid,
     input: Value,
@@ -313,7 +417,7 @@ struct WaitResumeResponse {
 }
 
 #[derive(OpenApi)]
-#[openapi(paths(create_session,get_session,create_invocation,send_message,get_invocation,cancel_invocation,invocation_events,webhook_trigger,resume_wait),components(schemas(CreateSessionRequest,SessionResponse,InvocationRequest,MessageRequest,MessagePartInput,InvocationResponse,WaitResumeRequest,WaitResumeResponse,ApiErrorResponse,FieldError)),tags((name="Agentx Gateway",description="Application invocation and runtime wait API")))]
+#[openapi(paths(create_session,get_session,list_messages,create_invocation,send_message,get_invocation,cancel_invocation,invocation_events,webhook_trigger,resume_wait),components(schemas(CreateSessionRequest,SessionResponse,InvocationRequest,MessageRequest,MessagePartInput,MessageResponse,MessagePartResponse,InvocationResponse,WaitResumeRequest,WaitResumeResponse,ApiErrorResponse,FieldError)),tags((name="Agentx Gateway",description="Application invocation and runtime wait API")))]
 struct GatewayApi;
 
 #[tokio::main]
@@ -329,24 +433,32 @@ async fn main() -> Result<()> {
         return Ok(());
     }
     let pool = mysql::connect(&MySqlSettings::from_env()?).await?;
-    let key_id = env::var("AGENTX_CREDENTIAL_ACTIVE_KEY_ID")
-        .context("AGENTX_CREDENTIAL_ACTIVE_KEY_ID is required")?;
-    let keys = SecretString::from(
-        env::var("AGENTX_CREDENTIAL_KEYS_JSON")
-            .context("AGENTX_CREDENTIAL_KEYS_JSON is required")?,
-    );
+    let webhook_secrets = match secret_provider_mode()? {
+        SecretProviderMode::VaultKvV2 => WebhookSecretSource::Broker {
+            client: reqwest::Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()?,
+            endpoint: env::var("AGENTX_CREDENTIAL_BROKER_URL")
+                .context("AGENTX_CREDENTIAL_BROKER_URL is required")?,
+            token: Arc::new(SecretString::from(
+                env::var("AGENTX_CREDENTIAL_BROKER_TOKEN")
+                    .context("AGENTX_CREDENTIAL_BROKER_TOKEN is required")?,
+            )),
+        },
+        SecretProviderMode::LocalEncrypted => {
+            let key_id = env::var("AGENTX_CREDENTIAL_ACTIVE_KEY_ID")
+                .context("AGENTX_CREDENTIAL_ACTIVE_KEY_ID is required")?;
+            let keys = SecretString::from(
+                env::var("AGENTX_CREDENTIAL_KEYS_JSON")
+                    .context("AGENTX_CREDENTIAL_KEYS_JSON is required")?,
+            );
+            WebhookSecretSource::Local(Arc::new(CredentialKeyring::from_json(key_id, &keys)?))
+        }
+    };
     let state = GatewayState {
         pool: pool.clone(),
         jwt: Arc::new(JwtSettings::from_env()?),
-        keyring: Arc::new(CredentialKeyring::from_json(key_id, &keys)?),
-        runtime: Arc::new(UnavailableExecutionRuntime),
-        resume_runtime: Arc::new(
-            agentx_infrastructure::runtime_client::GrpcExecutionRuntime::connect(
-                &env::var("AGENTX_RUNTIME_COORDINATOR_URL")
-                    .unwrap_or_else(|_| "http://workflow-coordinator:9090".into()),
-                pool.clone(),
-            )?,
-        ),
+        webhook_secrets,
         wait_resume_secret: Arc::new(SecretString::from(
             env::var("AGENTX_WAIT_RESUME_SECRET").unwrap_or_else(|_| {
                 env::var("AGENTX_JWT_SIGNING_SECRET")
@@ -354,6 +466,8 @@ async fn main() -> Result<()> {
             }),
         )),
     };
+    tokio::spawn(schedule_loop::run(pool.clone()));
+    tokio::spawn(binding_loop::run(pool.clone()));
     let health = agentx_service_kit::HealthRegistry::default();
     health.register("mysql", true).await;
     health.set_status("mysql", "ready").await;
@@ -368,7 +482,10 @@ fn router(state: GatewayState) -> Router {
                 .route("/applications/{slug}/sessions", post(create_session))
                 .route("/applications/{slug}/invocations", post(create_invocation))
                 .route("/sessions/{id}", get(get_session))
-                .route("/sessions/{id}/messages", post(send_message))
+                .route(
+                    "/sessions/{id}/messages",
+                    get(list_messages).post(send_message),
+                )
                 .route("/invocations/{id}", get(get_invocation))
                 .route("/invocations/{id}/cancel", post(cancel_invocation))
                 .route("/invocations/{id}/events", get(invocation_events))
@@ -415,6 +532,46 @@ async fn get_session(
     Ok(Json(response))
 }
 
+#[utoipa::path(get, path = "/gateway/v1/sessions/{id}/messages", params(("id" = Uuid, Path)))]
+async fn list_messages(
+    State(state): State<GatewayState>,
+    caller: Caller,
+    Path(id): Path<Uuid>,
+) -> GatewayResult<Json<Vec<MessageResponse>>> {
+    let session = load_session(&state, caller.tenant_id(), id).await?;
+    authorize_application(&state, &caller, session.application_id).await?;
+    let rows = sqlx::query("SELECT id,invocation_id,sequence_number,role,created_at FROM application_messages WHERE tenant_id=? AND session_id=? ORDER BY sequence_number,id LIMIT 1000")
+        .bind(caller.tenant_id()).bind(id).fetch_all(&state.pool).await?;
+    let part_rows = sqlx::query("SELECT p.message_id,p.part_type,p.content_json,p.artifact_id FROM application_message_parts p JOIN application_messages m ON m.id=p.message_id AND m.tenant_id=p.tenant_id WHERE p.tenant_id=? AND m.session_id=? ORDER BY m.sequence_number,p.part_index")
+        .bind(caller.tenant_id()).bind(id).fetch_all(&state.pool).await?;
+    let mut parts = std::collections::BTreeMap::<Uuid, Vec<MessagePartResponse>>::new();
+    for row in part_rows {
+        parts
+            .entry(row.try_get("message_id")?)
+            .or_default()
+            .push(MessagePartResponse {
+                part_type: row.try_get("part_type")?,
+                content: row.try_get("content_json")?,
+                artifact_id: row.try_get("artifact_id")?,
+            });
+    }
+    Ok(Json(
+        rows.into_iter()
+            .map(|row| {
+                let message_id: Uuid = row.try_get("id")?;
+                Ok(MessageResponse {
+                    id: message_id,
+                    invocation_id: row.try_get("invocation_id")?,
+                    sequence: row.try_get("sequence_number")?,
+                    role: row.try_get("role")?,
+                    parts: parts.remove(&message_id).unwrap_or_default(),
+                    created_at: row.try_get("created_at")?,
+                })
+            })
+            .collect::<GatewayResult<Vec<_>>>()?,
+    ))
+}
+
 #[utoipa::path(post,path="/gateway/v1/applications/{slug}/invocations",request_body=InvocationRequest)]
 async fn create_invocation(
     State(state): State<GatewayState>,
@@ -422,7 +579,7 @@ async fn create_invocation(
     Path(slug): Path<String>,
     headers: HeaderMap,
     Json(input): Json<InvocationRequest>,
-) -> GatewayResult<Json<InvocationResponse>> {
+) -> GatewayResult<(StatusCode, Json<InvocationResponse>)> {
     let app = load_active_application(&state, &caller, &slug).await?;
     validate_response_mode(input.response_mode.as_deref())?;
     if let Some(session_id) = input.session_id {
@@ -438,12 +595,14 @@ async fn create_invocation(
     let idempotency_key = validate_idempotency(&headers)?;
     validate_input(&input.input, app.try_get("input_schema_json")?)?;
     let application_id: Uuid = app.try_get("id")?;
+    let application_deployment_id: Uuid = app.try_get("deployment_id")?;
     let workflow_version_id: Uuid = app.try_get("workflow_version_id")?;
-    request_invocation(
+    let response = request_invocation(
         &state,
         &caller,
         InvocationCommand {
             application_id,
+            application_deployment_id,
             session_id: input.session_id,
             workflow_version_id,
             input: input.input,
@@ -451,7 +610,8 @@ async fn create_invocation(
             message_parts: None,
         },
     )
-    .await
+    .await?;
+    Ok((StatusCode::ACCEPTED, response))
 }
 
 #[utoipa::path(post,path="/gateway/v1/sessions/{id}/messages",request_body=MessageRequest)]
@@ -461,7 +621,7 @@ async fn send_message(
     Path(id): Path<Uuid>,
     headers: HeaderMap,
     Json(input): Json<MessageRequest>,
-) -> GatewayResult<Json<InvocationResponse>> {
+) -> GatewayResult<(StatusCode, Json<InvocationResponse>)> {
     let session = load_session(&state, caller.tenant_id(), id).await?;
     authorize_application(&state, &caller, session.application_id).await?;
     let idempotency_key = validate_idempotency(&headers)?;
@@ -488,9 +648,10 @@ async fn send_message(
             ));
         }
     }
-    let row=sqlx::query("SELECT a.id application_id,COALESCE(s.workflow_version_id,ad.workflow_version_id) workflow_version_id FROM application_sessions s JOIN applications a ON a.id=s.application_id AND a.tenant_id=s.tenant_id JOIN application_deployment_heads h ON h.application_id=a.id AND h.tenant_id=a.tenant_id JOIN application_deployments ad ON ad.id=h.deployment_id WHERE s.id=? AND s.tenant_id=? AND s.status='active' AND a.status='active'")
+    let row=sqlx::query("SELECT a.id application_id,COALESCE(s.workflow_version_id,ad.workflow_version_id) workflow_version_id,IF(s.workflow_version_id IS NULL,h.deployment_id,s.application_deployment_id) application_deployment_id FROM application_sessions s JOIN applications a ON a.id=s.application_id AND a.tenant_id=s.tenant_id JOIN application_deployment_heads h ON h.application_id=a.id AND h.tenant_id=a.tenant_id JOIN application_deployments ad ON ad.id=h.deployment_id WHERE s.id=? AND s.tenant_id=? AND s.status='active' AND a.status='active'")
         .bind(id).bind(caller.tenant_id()).fetch_optional(&state.pool).await?.ok_or_else(||GatewayError::not_found("Session"))?;
     let application_id: Uuid = row.try_get("application_id")?;
+    let application_deployment_id: Uuid = row.try_get("application_deployment_id")?;
     let workflow_version_id: Uuid = row.try_get("workflow_version_id")?;
     let input_value = serde_json::to_value(&input.parts).map_err(GatewayError::internal)?;
     let response = request_invocation(
@@ -498,6 +659,7 @@ async fn send_message(
         &caller,
         InvocationCommand {
             application_id,
+            application_deployment_id,
             session_id: Some(id),
             workflow_version_id,
             input: json!({"parts":input_value}),
@@ -506,7 +668,7 @@ async fn send_message(
         },
     )
     .await?;
-    Ok(response)
+    Ok((StatusCode::ACCEPTED, response))
 }
 
 async fn request_invocation(
@@ -516,6 +678,7 @@ async fn request_invocation(
 ) -> GatewayResult<Json<InvocationResponse>> {
     let InvocationCommand {
         application_id,
+        application_deployment_id,
         session_id,
         workflow_version_id,
         input,
@@ -537,10 +700,30 @@ async fn request_invocation(
         caller_id,
         idempotency_key,
     );
+    let runtime_command = RuntimeCommand::new(
+        TenantId::from_uuid(caller.tenant_id()),
+        RuntimeCommandType::StartExecution,
+        "application_invocation",
+        invocation_id.to_string(),
+        format!("invocation:{invocation_id}"),
+        serde_json::to_value(StartExecutionCommandPayload {
+            workflow_version_id,
+            invocation_id: Some(invocation_id.as_uuid()),
+            session_id,
+            requested_by: caller.user_id(),
+            trigger_type: "application".into(),
+            input,
+            runtime_settings: json!({}),
+        })
+        .map_err(GatewayError::internal)?,
+    );
     let mut tx = state.pool.begin().await?;
-    let insert_result = sqlx::query("INSERT INTO application_invocations(id,tenant_id,application_id,session_id,workflow_version_id,execution_id,caller_type,caller_id,request_hash,idempotency_key,status) VALUES(?,?,?,?,?,NULL,?,?,?,?, 'queued')")
-        .bind(invocation_id.as_uuid()).bind(caller.tenant_id()).bind(application_id).bind(session_id).bind(workflow_version_id)
-        .bind(caller_type).bind(caller_id).bind(&request_hash).bind(idempotency_key).execute(&mut *tx).await;
+    RuntimeCommandRepository::enqueue_in_transaction(&mut tx, &runtime_command)
+        .await
+        .map_err(GatewayError::internal)?;
+    let insert_result = sqlx::query("INSERT INTO application_invocations(id,tenant_id,application_id,application_deployment_id,session_id,workflow_version_id,execution_id,runtime_command_id,caller_type,caller_id,request_hash,idempotency_key,status) VALUES(?,?,?,?,?,?,NULL,?,?,?,?,?, 'queued')")
+        .bind(invocation_id.as_uuid()).bind(caller.tenant_id()).bind(application_id).bind(application_deployment_id).bind(session_id).bind(workflow_version_id)
+        .bind(runtime_command.id).bind(caller_type).bind(caller_id).bind(&request_hash).bind(idempotency_key).execute(&mut *tx).await;
     let inserted = match insert_result {
         Ok(_) => true,
         Err(sqlx::Error::Database(error)) if error.is_unique_violation() => false,
@@ -560,43 +743,8 @@ async fn request_invocation(
         }
         return Ok(Json(invocation_from_row(row)?));
     }
-    let accepted = match state
-        .runtime
-        .request_execution(RequestExecution {
-            tenant_id: TenantId::from_uuid(caller.tenant_id()),
-            invocation_id: Some(invocation_id),
-            session_id: session_id.map(SessionId::from_uuid),
-            source: agentx_domain::ExecutionSource::Version {
-                version_id: WorkflowVersionId::from_uuid(workflow_version_id),
-            },
-            requested_by: caller.user_id().map(agentx_domain::UserId::from_uuid),
-            trigger_type: "application".into(),
-            input,
-            debug_plan: serde_json::json!({}),
-            debug_overlay: serde_json::json!({}),
-            resource_snapshots: Vec::new(),
-            idempotency_key: Some(idempotency_key.into()),
-        })
-        .await
-    {
-        Ok(accepted) => accepted,
-        Err(_) => {
-            tx.rollback().await?;
-            return Err(GatewayError::runtime_unavailable());
-        }
-    };
-    let status = execution_status_name(&accepted.status);
-    sqlx::query(
-        "UPDATE application_invocations SET execution_id=?,status=? WHERE id=? AND tenant_id=?",
-    )
-    .bind(accepted.execution_id.as_uuid())
-    .bind(status)
-    .bind(invocation_id.as_uuid())
-    .bind(caller.tenant_id())
-    .execute(&mut *tx)
-    .await?;
-    sqlx::query("INSERT INTO invocation_events(tenant_id,invocation_id,sequence_number,event_type,payload_json) VALUES(?,?,1,'invocation.accepted',?)")
-        .bind(caller.tenant_id()).bind(invocation_id.as_uuid()).bind(json!({"executionId":accepted.execution_id.as_uuid(),"status":status})).execute(&mut *tx).await?;
+    sqlx::query("INSERT INTO invocation_events(tenant_id,invocation_id,sequence_number,event_type,payload_json) VALUES(?,?,1,'invocation.queued',?)")
+        .bind(caller.tenant_id()).bind(invocation_id.as_uuid()).bind(json!({"commandId":runtime_command.id,"status":"queued"})).execute(&mut *tx).await?;
     if let (Some(session_id), Some(parts)) = (session_id, message_parts) {
         sqlx::query("SELECT id FROM application_sessions WHERE id=? AND tenant_id=? FOR UPDATE")
             .bind(session_id)
@@ -611,6 +759,14 @@ async fn request_invocation(
         for (index, part) in parts.iter().enumerate() {
             sqlx::query("INSERT INTO application_message_parts(id,tenant_id,message_id,part_index,part_type,content_json,artifact_id) VALUES(?,?,?,?,?,?,?)")
                 .bind(Uuid::now_v7()).bind(caller.tenant_id()).bind(message_id).bind(index as u32).bind(&part.part_type).bind(&part.content).bind(part.artifact_id).execute(&mut *tx).await?;
+            if let Some(artifact_id) = part.artifact_id {
+                sqlx::query("INSERT IGNORE INTO artifact_references(tenant_id,artifact_id,owner_type,owner_id,reference_role) VALUES(?,?,'application_message',?,'part')")
+                    .bind(caller.tenant_id())
+                    .bind(artifact_id)
+                    .bind(message_id.to_string())
+                    .execute(&mut *tx)
+                    .await?;
+            }
         }
     }
     let row=sqlx::query("SELECT id,application_id,session_id,execution_id,status,created_at FROM application_invocations WHERE id=? AND tenant_id=?")
@@ -640,19 +796,6 @@ fn stable_invocation_id(
     bytes[6] = (bytes[6] & 0x0f) | 0x80;
     bytes[8] = (bytes[8] & 0x3f) | 0x80;
     InvocationId::from_uuid(Uuid::from_bytes(bytes))
-}
-
-fn execution_status_name(status: &ExecutionStatus) -> &'static str {
-    match status {
-        ExecutionStatus::Queued | ExecutionStatus::Created => "queued",
-        ExecutionStatus::Running
-        | ExecutionStatus::Waiting
-        | ExecutionStatus::WaitingApproval
-        | ExecutionStatus::Suspended => "running",
-        ExecutionStatus::Succeeded => "completed",
-        ExecutionStatus::Failed | ExecutionStatus::TimedOut => "failed",
-        ExecutionStatus::Cancelled => "cancelled",
-    }
 }
 
 #[utoipa::path(get, path = "/gateway/v1/invocations/{id}")]
@@ -686,23 +829,72 @@ async fn cancel_invocation(
             "Invocation is already terminal",
         ));
     }
-    let execution_id = invocation
-        .execution_id
-        .ok_or_else(GatewayError::runtime_unavailable)?;
-    state
-        .runtime
-        .cancel_execution(
-            TenantId::from_uuid(caller.tenant_id()),
-            ExecutionId::from_uuid(execution_id),
-        )
-        .await
-        .map_err(|_| GatewayError::runtime_unavailable())?;
     let mut tx = state.pool.begin().await?;
-    sqlx::query("UPDATE application_invocations SET status='cancelled',completed_at=CURRENT_TIMESTAMP(6) WHERE id=? AND tenant_id=? AND status NOT IN ('completed','failed','cancelled')").bind(id).bind(caller.tenant_id()).execute(&mut *tx).await?;
-    let sequence:u64=sqlx::query_scalar("SELECT CAST(COALESCE(MAX(sequence_number),0)+1 AS UNSIGNED) FROM invocation_events WHERE tenant_id=? AND invocation_id=?").bind(caller.tenant_id()).bind(id).fetch_one(&mut *tx).await?;
-    sqlx::query("INSERT INTO invocation_events(tenant_id,invocation_id,sequence_number,event_type,payload_json) VALUES(?,?,?,'invocation.cancelled',JSON_OBJECT())").bind(caller.tenant_id()).bind(id).bind(sequence).execute(&mut *tx).await?;
+    let locked = sqlx::query("SELECT execution_id,runtime_command_id,status FROM application_invocations WHERE id=? AND tenant_id=? FOR UPDATE")
+        .bind(id)
+        .bind(caller.tenant_id())
+        .fetch_one(&mut *tx)
+        .await?;
+    let locked_status: String = locked.try_get("status")?;
+    if matches!(locked_status.as_str(), "completed" | "failed" | "cancelled") {
+        tx.rollback().await?;
+        return Err(GatewayError::new(
+            StatusCode::CONFLICT,
+            "INVOCATION_TERMINAL",
+            "Invocation is already terminal",
+        ));
+    }
+    let execution_id: Option<Uuid> = locked.try_get("execution_id")?;
+    if execution_id.is_none() {
+        let runtime_command_id: Uuid = locked.try_get("runtime_command_id")?;
+        let stopped = sqlx::query("UPDATE runtime_commands SET status='failed',error_code='INVOCATION_CANCELLED',error_message='Invocation was cancelled before execution creation',completed_at=CURRENT_TIMESTAMP(6) WHERE id=? AND tenant_id=? AND status='pending'")
+            .bind(runtime_command_id)
+            .bind(caller.tenant_id())
+            .execute(&mut *tx)
+            .await?;
+        if stopped.rows_affected() == 0 {
+            tx.rollback().await?;
+            return Err(GatewayError::new(
+                StatusCode::CONFLICT,
+                "INVOCATION_STARTING",
+                "Invocation execution is being created; retry cancellation shortly",
+            ));
+        }
+        sqlx::query("UPDATE application_invocations SET status='cancelled',completed_at=CURRENT_TIMESTAMP(6) WHERE id=? AND tenant_id=?")
+            .bind(id)
+            .bind(caller.tenant_id())
+            .execute(&mut *tx)
+            .await?;
+        let sequence:u64=sqlx::query_scalar("SELECT CAST(COALESCE(MAX(sequence_number),0)+1 AS UNSIGNED) FROM invocation_events WHERE tenant_id=? AND invocation_id=?").bind(caller.tenant_id()).bind(id).fetch_one(&mut *tx).await?;
+        sqlx::query("INSERT INTO invocation_events(tenant_id,invocation_id,sequence_number,event_type,payload_json) VALUES(?,?,?,'invocation.cancelled',?)")
+            .bind(caller.tenant_id())
+            .bind(id)
+            .bind(sequence)
+            .bind(json!({"commandId":runtime_command_id,"status":"cancelled","beforeExecution":true}))
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        return Ok(StatusCode::ACCEPTED);
+    }
+    let execution_id = execution_id.expect("checked above");
+    let command = RuntimeCommand::new(
+        TenantId::from_uuid(caller.tenant_id()),
+        RuntimeCommandType::CancelExecution,
+        "application_invocation",
+        id.to_string(),
+        format!("invocation:{id}:cancel"),
+        serde_json::to_value(CancelExecutionCommandPayload { execution_id })
+            .map_err(GatewayError::internal)?,
+    );
+    let inserted = RuntimeCommandRepository::enqueue_in_transaction(&mut tx, &command)
+        .await
+        .map_err(GatewayError::internal)?;
+    if inserted {
+        let sequence:u64=sqlx::query_scalar("SELECT CAST(COALESCE(MAX(sequence_number),0)+1 AS UNSIGNED) FROM invocation_events WHERE tenant_id=? AND invocation_id=?").bind(caller.tenant_id()).bind(id).fetch_one(&mut *tx).await?;
+        sqlx::query("INSERT INTO invocation_events(tenant_id,invocation_id,sequence_number,event_type,payload_json) VALUES(?,?,?,'invocation.cancel_queued',?)").bind(caller.tenant_id()).bind(id).bind(sequence).bind(json!({"commandId":command.id,"status":"queued"})).execute(&mut *tx).await?;
+    }
     tx.commit().await?;
-    Ok(StatusCode::NO_CONTENT)
+    Ok(StatusCode::ACCEPTED)
 }
 
 #[utoipa::path(get, path = "/gateway/v1/invocations/{id}/events")]
@@ -870,22 +1062,44 @@ async fn resume_wait(
         }
     }
     let idempotency_key = validate_idempotency(&headers)?;
-    let replayed = state
-        .resume_runtime
-        .resume_execution(ResumeExecutionCommand {
-            tenant_id: TenantId::from_uuid(row.try_get("tenant_id")?),
-            execution_id: ExecutionId::from_uuid(row.try_get("execution_id")?),
-            node_execution_id: agentx_domain::NodeExecutionId::from_uuid(
-                row.try_get("node_execution_id")?,
-            ),
+    let tenant_id: Uuid = row.try_get("tenant_id")?;
+    let execution_id: Uuid = row.try_get("execution_id")?;
+    let command = RuntimeCommand::new(
+        TenantId::from_uuid(tenant_id),
+        RuntimeCommandType::ResumeExecution,
+        "wait_subscription",
+        binding_id.to_string(),
+        format!("wait:{binding_id}:{idempotency_key}"),
+        serde_json::to_value(ResumeExecutionCommandPayload {
+            execution_id,
+            node_execution_id: row.try_get("node_execution_id")?,
             resume_token: binding_id.to_string(),
             output_port: output_port.into(),
             payload: input.payload,
-            idempotency_key: idempotency_key.into(),
-            actor_user_id: None,
         })
+        .map_err(GatewayError::internal)?,
+    );
+    let commands = RuntimeCommandRepository::new(state.pool.clone());
+    let wait_status: String = row.try_get("status")?;
+    if wait_status != "waiting" {
+        let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM runtime_commands WHERE tenant_id=? AND command_type=? AND idempotency_key=?)")
+            .bind(tenant_id)
+            .bind(RuntimeCommandType::ResumeExecution.as_str())
+            .bind(&command.idempotency_key)
+            .fetch_one(&state.pool)
+            .await?;
+        if !exists {
+            return Err(GatewayError::new(
+                StatusCode::CONFLICT,
+                "WAIT_NOT_RESUMABLE",
+                format!("Wait subscription is {wait_status}"),
+            ));
+        }
+    }
+    let replayed = !commands
+        .enqueue(&command)
         .await
-        .map_err(|_| GatewayError::runtime_unavailable())?;
+        .map_err(GatewayError::internal)?;
     Ok(Json(WaitResumeResponse {
         accepted: true,
         replayed,
@@ -898,8 +1112,8 @@ async fn webhook_trigger(
     Path(public_id): Path<String>,
     headers: HeaderMap,
     body: String,
-) -> GatewayResult<Json<InvocationResponse>> {
-    let row=sqlx::query("SELECT w.id,w.tenant_id,w.application_id,w.secret_key_id,w.secret_nonce,w.secret_ciphertext,w.version,ad.workflow_version_id FROM application_webhooks w JOIN applications a ON a.id=w.application_id JOIN application_deployment_heads h ON h.application_id=a.id AND h.tenant_id=a.tenant_id JOIN application_deployments ad ON ad.id=h.deployment_id WHERE w.public_id=? AND w.status='active' AND a.status='active'").bind(&public_id).fetch_optional(&state.pool).await?.ok_or_else(||GatewayError::not_found("Webhook"))?;
+) -> GatewayResult<(StatusCode, Json<InvocationResponse>)> {
+    let row=sqlx::query("SELECT w.id,w.tenant_id,w.application_id,w.secret_provider,w.secret_ref,w.secret_provider_version,w.secret_key_id,w.secret_nonce,w.secret_ciphertext,h.deployment_id,ad.workflow_version_id FROM application_webhooks w JOIN applications a ON a.id=w.application_id JOIN application_deployment_heads h ON h.application_id=a.id AND h.tenant_id=a.tenant_id JOIN application_deployments ad ON ad.id=h.deployment_id WHERE w.public_id=? AND w.status='active' AND a.status='active'").bind(&public_id).fetch_optional(&state.pool).await?.ok_or_else(||GatewayError::not_found("Webhook"))?;
     let timestamp = headers
         .get("x-agentx-timestamp")
         .and_then(|v| v.to_str().ok())
@@ -915,17 +1129,10 @@ async fn webhook_trigger(
     }
     let tenant_id: Uuid = row.try_get("tenant_id")?;
     let webhook_id: Uuid = row.try_get("id")?;
-    let version: u64 = row.try_get("version")?;
-    let aad = format!("{tenant_id}/{webhook_id}/webhook/{version}");
     let secret = state
-        .keyring
-        .decrypt(
-            row.try_get("secret_key_id")?,
-            row.try_get::<Vec<u8>, _>("secret_nonce")?.as_slice(),
-            row.try_get::<Vec<u8>, _>("secret_ciphertext")?.as_slice(),
-            aad.as_bytes(),
-        )
-        .map_err(GatewayError::internal)?;
+        .webhook_secrets
+        .resolve(&row, tenant_id, webhook_id)
+        .await?;
     let signature = headers
         .get("x-agentx-signature")
         .and_then(|v| v.to_str().ok())
@@ -945,6 +1152,7 @@ async fn webhook_trigger(
         ));
     }
     let application_id: Uuid = row.try_get("application_id")?;
+    let application_deployment_id: Uuid = row.try_get("deployment_id")?;
     let workflow_version_id: Uuid = row.try_get("workflow_version_id")?;
     let idempotency_key = validate_idempotency(&headers)?;
     let input = serde_json::from_str(&body)
@@ -954,11 +1162,12 @@ async fn webhook_trigger(
         application_id,
         webhook_id,
     };
-    request_invocation(
+    let response = request_invocation(
         &state,
         &caller,
         InvocationCommand {
             application_id,
+            application_deployment_id,
             session_id: None,
             workflow_version_id,
             input,
@@ -966,7 +1175,8 @@ async fn webhook_trigger(
             message_parts: None,
         },
     )
-    .await
+    .await?;
+    Ok((StatusCode::ACCEPTED, response))
 }
 
 async fn authenticate_jwt(state: &GatewayState, token: &str) -> GatewayResult<Caller> {

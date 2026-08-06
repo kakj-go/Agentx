@@ -5,7 +5,10 @@ use clickhouse::Client as ClickHouseClient;
 use hyper_rustls::HttpsConnectorBuilder;
 use hyper_util::{client::legacy::Client as HyperClient, rt::TokioExecutor};
 use object_store::{Certificate, ClientOptions, ObjectStore, aws::AmazonS3Builder};
-use redis::{IntoConnectionInfo, aio::ConnectionManager};
+use redis::{
+    IntoConnectionInfo,
+    aio::{ConnectionManager, ConnectionManagerConfig},
+};
 use secrecy::ExposeSecret;
 
 use crate::config::{ClickHouseSettings, ObjectStorageSettings, RedisSettings};
@@ -47,7 +50,12 @@ pub async fn connect_redis(settings: &RedisSettings) -> Result<ConnectionManager
     } else {
         redis::Client::open(connection_info).context("invalid Redis configuration")?
     };
-    ConnectionManager::new(client)
+    let manager_config = ConnectionManagerConfig::new()
+        .set_number_of_retries(2)
+        .set_max_delay(500)
+        .set_connection_timeout(Duration::from_secs(2))
+        .set_response_timeout(Duration::from_secs(5));
+    ConnectionManager::new_with_config(client, manager_config)
         .await
         .context("failed to connect to Redis")
 }

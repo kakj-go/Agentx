@@ -317,9 +317,19 @@ async fn lifecycle(
             "The lifecycle path does not match the request",
         ));
     }
+    let state = if request.operation == agentx_node_protocol::LifecycleOperation::Poll {
+        json!({
+            "operation": operation,
+            "nodeType": request.node_type,
+            "eventId": request.configuration.get("eventId").cloned().unwrap_or_else(|| json!("echo-poll")),
+            "input": request.configuration.get("pollInput").cloned().unwrap_or_else(|| json!({"source":"echo-poll"})),
+        })
+    } else {
+        json!({"operation":operation,"nodeType":request.node_type})
+    };
     Ok(Json(LifecycleResponse {
         accepted: true,
-        state: json!({"operation":operation,"nodeType":request.node_type}),
+        state,
     }))
 }
 

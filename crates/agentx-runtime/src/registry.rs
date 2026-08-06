@@ -2,8 +2,8 @@ use std::collections::BTreeMap;
 
 use agentx_domain::ResourceType;
 use agentx_node_protocol::{
-    BindingSlot, ExecutionStyle, NODE_PROTOCOL_VERSION, NodeCapability, NodeManifestVersion,
-    NodePort, PortKind, ReadinessPolicy, SideEffectLevel,
+    BindingSlot, ExecutionStyle, LifecycleOperation, NODE_PROTOCOL_VERSION, NodeCapability,
+    NodeManifestVersion, NodePort, PortKind, ReadinessPolicy, SideEffectLevel,
 };
 use serde_json::json;
 use thiserror::Error;
@@ -195,7 +195,7 @@ fn m5_manifest(
 
 fn category(node_type: &str) -> &'static str {
     match node_type {
-        "manual_trigger" => "triggers",
+        "manual_trigger" | "remote_trigger" => "triggers",
         "if" | "switch" | "merge" | "loop_over_items" | "wait" | "approval" | "sub_workflow" => {
             "flow"
         }
@@ -208,6 +208,7 @@ fn category(node_type: &str) -> &'static str {
 fn icon_key(node_type: &str) -> &'static str {
     match node_type {
         "manual_trigger" => "mouse-pointer-click",
+        "remote_trigger" => "radio-tower",
         "agent" => "bot",
         "model" => "brain-circuit",
         "mcp_tool" => "wrench",
@@ -249,6 +250,27 @@ fn default_manifests() -> Vec<NodeManifestVersion> {
             vec![port("main", PortKind::Main, false, false)],
             SideEffectLevel::None,
         ),
+        {
+            let mut trigger = configured(
+                manifest(
+                    "remote_trigger",
+                    ExecutionStyle::Trigger,
+                    NodeCapability::RemoteAction,
+                    ReadinessPolicy::Any,
+                    vec![],
+                    vec![port("main", PortKind::Main, false, false)],
+                    SideEffectLevel::None,
+                ),
+                json!({"type":"object","required":["endpoint"],"properties":{"endpoint":{"type":"string"},"pollIntervalSeconds":{"type":"integer","minimum":1,"maximum":86400,"default":60}},"additionalProperties":true}),
+                json!({"order":["endpoint","pollIntervalSeconds"],"fields":{"endpoint":{"control":"text"},"pollIntervalSeconds":{"control":"number"}}}),
+            );
+            trigger.lifecycle_operations = vec![
+                LifecycleOperation::Activate,
+                LifecycleOperation::Deactivate,
+                LifecycleOperation::Poll,
+            ];
+            trigger
+        },
         configured(
             manifest(
                 "set",
@@ -524,5 +546,22 @@ mod tests {
             .as_array()
             .expect("wait kinds");
         assert!(kinds.iter().any(|kind| kind == "form"));
+    }
+
+    #[test]
+    fn remote_trigger_declares_poll_and_deployment_lifecycle() {
+        let registry = NodeRegistry::m5_defaults();
+        let operations = &registry
+            .get("remote_trigger", 1)
+            .expect("remote trigger manifest")
+            .lifecycle_operations;
+        assert_eq!(
+            operations,
+            &[
+                LifecycleOperation::Activate,
+                LifecycleOperation::Deactivate,
+                LifecycleOperation::Poll,
+            ]
+        );
     }
 }

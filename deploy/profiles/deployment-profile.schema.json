@@ -4,7 +4,7 @@
   "title": "Agentx deployment profile",
   "type": "object",
   "additionalProperties": false,
-  "required": ["apiVersion", "namespace", "environment", "images", "ingress", "components", "secrets"],
+  "required": ["apiVersion", "namespace", "environment", "images", "ingress", "network", "components", "secrets"],
   "properties": {
     "apiVersion": { "const": "agentx.io/deployment/v1alpha1" },
     "namespace": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", "maxLength": 63 },
@@ -12,12 +12,39 @@
     "images": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["mode", "registry", "tag", "pullPolicy"],
+      "required": ["mode", "registry", "tag", "pullPolicy", "digests"],
       "properties": {
         "mode": { "enum": ["local-build", "registry"] },
         "registry": { "type": "string" },
         "tag": { "type": "string", "minLength": 1 },
-        "pullPolicy": { "enum": ["Always", "IfNotPresent", "Never"] }
+        "pullPolicy": { "enum": ["Always", "IfNotPresent", "Never"] },
+        "digests": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "web": { "$ref": "#/$defs/imageDigest" },
+            "platform-api": { "$ref": "#/$defs/imageDigest" },
+            "trigger-gateway": { "$ref": "#/$defs/imageDigest" },
+            "workflow-coordinator": { "$ref": "#/$defs/imageDigest" },
+            "workflow-worker": { "$ref": "#/$defs/imageDigest" },
+            "sandbox-manager": { "$ref": "#/$defs/imageDigest" },
+            "trace-writer": { "$ref": "#/$defs/imageDigest" },
+            "echo-mcp": { "$ref": "#/$defs/imageDigest" },
+            "echo-node": { "$ref": "#/$defs/imageDigest" }
+          }
+        }
+      }
+    },
+    "network": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["allowedEgressCidrs"],
+      "properties": {
+        "allowedEgressCidrs": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 3, "maxLength": 64 }
+        }
       }
     },
     "ingress": {
@@ -33,10 +60,14 @@
     "secrets": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["mode", "name", "lightragName", "mem0Name"],
+      "required": ["mode", "provider", "vaultAddress", "vaultMount", "name", "vaultName", "lightragName", "mem0Name"],
       "properties": {
         "mode": { "enum": ["managed", "existing"] },
+        "provider": { "enum": ["local_encrypted", "vault_kv_v2"] },
+        "vaultAddress": { "type": ["string", "null"], "pattern": "^https?://" },
+        "vaultMount": { "type": ["string", "null"], "pattern": "^[A-Za-z0-9_.-]+$" },
         "name": { "const": "agentx-secrets" },
+        "vaultName": { "const": "agentx-vault-secrets" },
         "lightragName": { "const": "agentx-lightrag-secrets" },
         "mem0Name": { "const": "agentx-mem0-secrets" }
       }
@@ -57,6 +88,10 @@
     }
   },
   "$defs": {
+    "imageDigest": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
     "tls": {
       "type": "object",
       "additionalProperties": false,
@@ -139,9 +174,13 @@
     "sandbox": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["mode"],
+      "required": ["mode", "runtimeClass", "runtimeClassName", "isolationLevel", "isolationEvidence"],
       "properties": {
         "mode": { "enum": ["disabled", "remote"] },
+        "runtimeClass": { "enum": ["runc", "gvisor", "kata", "custom"] },
+        "runtimeClassName": { "type": ["string", "null"], "maxLength": 253 },
+        "isolationLevel": { "enum": ["standard", "strong"] },
+        "isolationEvidence": { "type": ["string", "null"] },
         "endpoint": { "type": ["string", "null"] },
         "secureAccess": { "type": "boolean" },
         "useServerProxy": { "type": "boolean" },

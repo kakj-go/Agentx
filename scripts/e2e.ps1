@@ -29,6 +29,7 @@ $openSandboxHeaders = @{ "OPEN-SANDBOX-API-KEY" = $OpenSandboxApiKey }
 $deploymentProfile = Join-Path ([IO.Path]::GetTempPath()) "agentx-e2e-deployment-$PID.json"
 $clusterOpenSandbox = [UriBuilder]$OpenSandboxEndpoint
 if ($clusterOpenSandbox.Host -in @("127.0.0.1", "localhost", "::1")) { $clusterOpenSandbox.Host = "host.docker.internal" }
+$resolverImage = "busybox:1.37@sha256:9db7b59979c38555a39def84a31fb98b5296952f9e3afd4f6f11f05b07adfab0"
 
 function Get-OpenSandboxIds {
     $response = Invoke-RestMethod -TimeoutSec 10 -Headers $openSandboxHeaders -Uri "$OpenSandboxEndpoint/v1/sandboxes?pageSize=100"
@@ -44,6 +45,31 @@ function Assert-OpenSandboxReady {
         throw "OpenSandbox health response was not healthy at $OpenSandboxEndpoint."
     }
     [void](Get-OpenSandboxIds)
+}
+
+function Resolve-ClusterEndpointCidrs([string]$HostName) {
+    $parsed = $null
+    if ([Net.IPAddress]::TryParse($HostName, [ref]$parsed)) {
+        return @("$($parsed.IPAddressToString)/$(if ($parsed.AddressFamily -eq [Net.Sockets.AddressFamily]::InterNetwork) { 32 } else { 128 })")
+    }
+    $pod = "agentx-egress-resolver"
+    kubectl -n $namespace delete pod $pod --ignore-not-found --wait=true | Out-Null
+    try {
+        kubectl run $pod -n $namespace --image=$resolverImage --restart=Never --command -- nslookup $HostName | Out-Null
+        kubectl -n $namespace wait --for=jsonpath='{.status.phase}'=Succeeded "pod/$pod" --timeout=60s | Out-Null
+        $output = (kubectl -n $namespace logs "pod/$pod") -join "`n"
+        $escapedHost = [Regex]::Escape($HostName)
+        $matches = [Regex]::Matches($output, "(?im)^Name:\s*$escapedHost\s*`r?`nAddress:\s*([^\s]+)")
+        $cidrs = @($matches | ForEach-Object {
+            $address = [Net.IPAddress]::Parse($_.Groups[1].Value)
+            "$($address.IPAddressToString)/$(if ($address.AddressFamily -eq [Net.Sockets.AddressFamily]::InterNetwork) { 32 } else { 128 })"
+        } | Select-Object -Unique)
+        if ($cidrs.Count -eq 0) { throw "Cluster DNS did not resolve $HostName to an IP address." }
+        return $cidrs
+    }
+    finally {
+        kubectl -n $namespace delete pod $pod --ignore-not-found --wait=true | Out-Null
+    }
 }
 
 function Clear-M5Sandboxes {
@@ -349,12 +375,16 @@ try {
     if ($existing) {
         kubectl delete namespace $namespace --wait=true --timeout=300s
     }
+    kubectl create namespace $namespace | Out-Null
+    $openSandboxCidrs = @(Resolve-ClusterEndpointCidrs -HostName $clusterOpenSandbox.Host)
     $profile = Get-Content "$root/deploy/profiles/full-local.json" -Raw | ConvertFrom-Json -Depth 30
     $profile.namespace = $namespace
     $profile.ingress.host = "agentx-e2e.localhost"
     $profile.components.sandbox.mode = "remote"
     $profile.components.sandbox.endpoint = $clusterOpenSandbox.Uri.AbsoluteUri.TrimEnd('/')
     $profile.components.sandbox.allowedHosts = @($clusterOpenSandbox.Host)
+    $profile.components.sandbox.allowedCidrs = $openSandboxCidrs
+    $profile.network.allowedEgressCidrs = @($profile.network.allowedEgressCidrs + $openSandboxCidrs | Select-Object -Unique)
     if ($SkipBuild) { $profile.images.mode = "registry"; $profile.images.registry = "agentx" }
     [IO.File]::WriteAllText($deploymentProfile, ($profile | ConvertTo-Json -Depth 30), [Text.UTF8Encoding]::new($false))
     $env:AGENTX_DEPLOY_OPENSANDBOX_API_KEY = $OpenSandboxApiKey
@@ -384,10 +414,9 @@ try {
     $forward = Start-Process kubectl -ArgumentList @("-n", $namespace, "port-forward", "service/web", "${Port}:80") -PassThru -WindowStyle Hidden -RedirectStandardOutput $forwardOut -RedirectStandardError $forwardError
     Wait-TcpPort $Port
     $env:AGENTX_E2E_BASE_URL = "http://127.0.0.1:$Port"
-    Invoke-Playwright -Suite "m2-m3-control-plane" -Tests @("tests/m2.1-control-plane.spec.ts", "tests/m3-control-plane.spec.ts")
-    Assert-MySqlScalar "SELECT COUNT(*) FROM application_invocations i JOIN applications a ON a.id=i.application_id WHERE a.slug='m3-e2e'" 0 "Runtime-unavailable invocation created a fake Invocation"
-    Assert-MySqlScalar "SELECT COUNT(*) FROM application_messages m JOIN application_sessions s ON s.id=m.session_id JOIN applications a ON a.id=s.application_id WHERE a.slug='m3-e2e'" 0 "Runtime-unavailable message created a fake Message"
-    Assert-MySqlScalar "SELECT COUNT(*) FROM evaluation_case_results r JOIN evaluation_runs e ON e.id=r.evaluation_run_id WHERE e.name='M3 Runtime Boundary'" 0 "Runtime-unavailable evaluation created fake Case Results"
+    Invoke-Playwright -Suite "m2.1-control-plane" -Tests @("tests/m2.1-control-plane.spec.ts")
+    Invoke-Playwright -Suite "m3-control-plane" -Tests @("tests/m3-control-plane.spec.ts")
+    Wait-MySqlScalar "SELECT COUNT(*) FROM runtime_commands WHERE status IN ('pending','processing')" 0 "M7 Runtime Commands after M3 control-plane execution"
     kubectl -n $namespace delete job/m3-fixture --ignore-not-found --wait=true
     kubectl apply -f "$root/deploy/k8s/stacks/e2e/m3-fixture-job.yaml"
     kubectl -n $namespace wait --for=condition=complete job/m3-fixture --timeout=180s
@@ -404,9 +433,34 @@ try {
     kubectl -n $namespace wait --for=condition=complete job/m5-fixture --timeout=180s
     Invoke-Playwright -Suite "m5-agent-sandbox" -Tests @("tests/m5-agent-sandbox.spec.ts")
     Invoke-Playwright -Suite "m6-workflow-studio" -Tests @("tests/m6-workflow-studio.spec.ts")
+    Invoke-Playwright -Suite "m7-business-closure" -Tests @("tests/m7-business-closure.spec.ts")
+    Wait-MySqlValue "SELECT b.status FROM trigger_bindings b JOIN applications a ON a.id=b.application_id AND a.tenant_id=b.tenant_id WHERE a.name LIKE 'M7 Remote Trigger %' AND b.trigger_kind='lifecycle' ORDER BY b.created_at DESC LIMIT 1" @("disabled") "M7 Trigger Lifecycle deactivate" 60 | Out-Null
+    Assert-MySqlScalar "SELECT COUNT(*) FROM trigger_bindings b JOIN applications a ON a.id=b.application_id AND a.tenant_id=b.tenant_id WHERE a.status='disabled' AND b.status IN ('active','activating','deactivating')" 0 "Disabled Application retained active Trigger Bindings"
+    Assert-MySqlScalar "SELECT COUNT(*) FROM application_invocations i JOIN applications a ON a.id=i.application_id AND a.tenant_id=i.tenant_id WHERE a.name LIKE 'M7 Remote Trigger %' AND i.caller_type='poll'" 1 "Repeated Poll scanning was not idempotent"
+    Assert-MySqlScalar "SELECT COUNT(*) FROM application_invocations i JOIN applications a ON a.id=i.application_id AND a.tenant_id=i.tenant_id WHERE a.name LIKE 'M7 Remote Trigger %' AND i.caller_type='schedule'" 1 "Schedule did not fire exactly once"
+    $scheduleCount = Get-MySqlValue "SELECT COUNT(*) FROM application_invocations i JOIN applications a ON a.id=i.application_id AND a.tenant_id=i.tenant_id WHERE a.name LIKE 'M7 Remote Trigger %' AND i.caller_type='schedule'"
+    Invoke-MySqlEvidenceQuery "UPDATE applications SET status='active' WHERE name LIKE 'M7 Remote Trigger %'; UPDATE application_schedules s JOIN applications a ON a.id=s.application_id AND a.tenant_id=s.tenant_id SET s.misfire_policy='skip',s.next_fire_at=DATE_SUB(CURRENT_TIMESTAMP(6),INTERVAL 10 MINUTE) WHERE a.name LIKE 'M7 Remote Trigger %' AND s.name='M7 Fire Once'" | Out-Null
+    Start-Sleep -Seconds 3
+    Assert-MySqlScalar "SELECT COUNT(*) FROM application_invocations i JOIN applications a ON a.id=i.application_id AND a.tenant_id=i.tenant_id WHERE a.name LIKE 'M7 Remote Trigger %' AND i.caller_type='schedule'" ([long]$scheduleCount) "Schedule skip misfire created an Execution"
+    Invoke-MySqlEvidenceQuery "UPDATE applications SET status='disabled' WHERE name LIKE 'M7 Remote Trigger %'" | Out-Null
     Invoke-M5SandboxFaultSuite
+    Wait-MySqlScalar "SELECT COUNT(*) FROM outbox_events WHERE published_at IS NULL" 0 "M7 Business Outbox relay"
     Assert-MySqlScalar "SELECT COUNT(*) FROM sandbox_leases WHERE status<>'terminated'" 0 "M5 terminal Sandbox leases"
     Assert-MySqlScalar "SELECT COUNT(*) FROM node_invocation_handles WHERE sandbox_lease_id IS NOT NULL AND revoked_at IS NULL" 0 "M5 Sandbox Credential Handles were not revoked"
+    @(
+        "pendingRuntimeCommands=$(Get-MySqlValue "SELECT COUNT(*) FROM runtime_commands WHERE status IN ('pending','processing')")",
+        "unpublishedOutboxEvents=$(Get-MySqlValue "SELECT COUNT(*) FROM outbox_events WHERE published_at IS NULL")",
+        "runtimeEventsWithoutProjection=$(Get-MySqlValue "SELECT COUNT(*) FROM outbox_events o LEFT JOIN projection_receipts r ON r.projector_name='m7-business-v1' AND r.event_id=o.id WHERE r.event_id IS NULL AND (o.event_type LIKE 'runtime.%' OR o.event_type LIKE 'execution.%' OR o.event_type LIKE 'node.%')")",
+        "terminalExecutionsWithoutEvent=$(Get-MySqlValue "SELECT COUNT(*) FROM workflow_executions WHERE status IN ('succeeded','failed','cancelled','timed_out') AND terminal_event_emitted=FALSE")",
+        "activeQuotaReservations=$(Get-MySqlValue "SELECT COUNT(*) FROM quota_reservations WHERE status='active' AND expires_at>CURRENT_TIMESTAMP(6)")",
+        "evaluationCases=$(Get-MySqlValue "SELECT COUNT(*) FROM evaluation_run_cases")",
+        "evaluationRules=$(Get-MySqlValue "SELECT COUNT(*) FROM evaluation_rule_results")",
+        "projectorReceipts=$(Get-MySqlValue "SELECT COUNT(*) FROM projection_receipts WHERE projector_name='m7-business-v1'")",
+        "readyWorkerCapabilities=$(Get-MySqlValue "SELECT COUNT(*) FROM worker_capabilities WHERE status='ready'")"
+        "remotePollInvocations=$(Get-MySqlValue "SELECT COUNT(*) FROM application_invocations i JOIN applications a ON a.id=i.application_id AND a.tenant_id=i.tenant_id WHERE a.name LIKE 'M7 Remote Trigger %' AND i.caller_type='poll'")"
+        "remoteScheduleInvocations=$(Get-MySqlValue "SELECT COUNT(*) FROM application_invocations i JOIN applications a ON a.id=i.application_id AND a.tenant_id=i.tenant_id WHERE a.name LIKE 'M7 Remote Trigger %' AND i.caller_type='schedule'")"
+        "activeBindingsForDisabledApplications=$(Get-MySqlValue "SELECT COUNT(*) FROM trigger_bindings b JOIN applications a ON a.id=b.application_id AND a.tenant_id=b.tenant_id WHERE a.status='disabled' AND b.status IN ('active','activating','deactivating')")"
+    ) | Out-File -LiteralPath (Join-Path $results "m7-database-evidence.txt") -Encoding utf8
 }
 finally {
     if ($forward -and -not $forward.HasExited) {

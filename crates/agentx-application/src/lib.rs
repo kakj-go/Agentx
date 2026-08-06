@@ -15,6 +15,8 @@ use zeroize::Zeroize;
 
 pub mod runtime;
 pub use runtime::*;
+pub mod runtime_integration;
+pub use runtime_integration::*;
 
 #[async_trait]
 pub trait WorkflowRepository: Send + Sync {
@@ -106,6 +108,21 @@ pub trait CredentialResolver: Send + Sync {
         credential_id: Uuid,
         version: u64,
     ) -> Result<ResolvedCredential>;
+
+    async fn resolve_for_runtime(
+        &self,
+        context: &RuntimeContext,
+        credential_id: Uuid,
+        version: Option<u64>,
+    ) -> Result<ResolvedCredential> {
+        match version {
+            Some(version) => {
+                self.resolve_version(context.tenant_id, credential_id, version)
+                    .await
+            }
+            None => self.resolve(context.tenant_id, credential_id).await,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]

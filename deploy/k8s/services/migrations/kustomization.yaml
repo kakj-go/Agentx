@@ -13,6 +13,8 @@ patches:
           - name: agentx-trust-bundle
             mountPath: /etc/agentx/trust
             readOnly: true
+          - name: agentx-tmp
+            mountPath: /tmp
       - op: add
         path: /spec/template/spec/volumes
         value:
@@ -20,6 +22,37 @@ patches:
             secret:
               secretName: agentx-trust-bundle
               optional: true
+          - name: agentx-tmp
+            emptyDir:
+              sizeLimit: 128Mi
+      - op: add
+        path: /spec/template/spec/automountServiceAccountToken
+        value: false
+      - op: add
+        path: /spec/template/spec/securityContext
+        value:
+          runAsNonRoot: true
+          seccompProfile:
+            type: RuntimeDefault
+      - op: add
+        path: /spec/template/spec/containers/0/securityContext
+        value:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+      - op: add
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+            ephemeral-storage: 32Mi
+          limits:
+            cpu: "1"
+            memory: 512Mi
+            ephemeral-storage: 256Mi
 labels:
   - pairs:
       app.kubernetes.io/part-of: agentx

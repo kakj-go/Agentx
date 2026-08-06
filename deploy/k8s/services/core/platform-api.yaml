@@ -21,6 +21,13 @@ spec:
                 name: agentx-config
             - secretRef:
                 name: agentx-secrets
+          env:
+            - name: AGENTX_VAULT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: agentx-vault-secrets
+                  key: AGENTX_VAULT_TOKEN
+                  optional: true
           ports:
             - name: http
               containerPort: 8080
@@ -44,4 +51,3 @@ spec:
     - name: http
       port: 8080
       targetPort: http
-

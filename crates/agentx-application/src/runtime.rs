@@ -1,4 +1,4 @@
-use std::{fmt, pin::Pin};
+use std::{collections::BTreeMap, fmt, pin::Pin};
 
 use agentx_domain::{
     ArtifactId, AttemptId, ExecutionId, NodeExecutionId, ResourceReference, TenantId, TraceId,
@@ -40,6 +40,14 @@ pub struct RuntimeContext {
     pub cancellation: CancellationToken,
     pub idempotency_key: String,
     pub resources: Vec<RuntimeResourceSnapshot>,
+    pub credential_handles: BTreeMap<Uuid, RuntimeCredentialHandle>,
+}
+
+#[derive(Clone, Debug)]
+pub struct RuntimeCredentialHandle {
+    pub version: u64,
+    pub handle: String,
+    pub expires_at: OffsetDateTime,
 }
 
 impl RuntimeContext {

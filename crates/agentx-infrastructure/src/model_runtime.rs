@@ -66,8 +66,8 @@ impl OpenAiCompatibleRuntime {
         let value = &snapshot.snapshot;
         if value.get("providerType").and_then(Value::as_str) != Some("openai_compatible") {
             return Err(RuntimeError::new(
-                "RUNTIME_UNAVAILABLE",
-                "Only openai_compatible model providers are runnable in M5",
+                "MODEL_PROVIDER_UNSUPPORTED",
+                "The selected model provider is not supported by this Worker",
             ));
         }
         let endpoint = value
@@ -164,14 +164,13 @@ impl OpenAiCompatibleRuntime {
             .header(header::ACCEPT, "application/json, text/event-stream")
             .json(&prepared.body);
         if let Some(id) = prepared.credential_id {
-            let credential = if let Some(version) = prepared.credential_version {
-                self.credentials
-                    .resolve_version(context.tenant_id, id, version)
-                    .await
-            } else {
-                self.credentials.resolve(context.tenant_id, id).await
-            }
-            .map_err(|error| RuntimeError::new("MODEL_CREDENTIAL_INVALID", error.to_string()))?;
+            let credential = self
+                .credentials
+                .resolve_for_runtime(context, id, prepared.credential_version)
+                .await
+                .map_err(|error| {
+                    RuntimeError::new("MODEL_CREDENTIAL_INVALID", error.to_string())
+                })?;
             let value = std::str::from_utf8(credential.secret.expose()).map_err(|_| {
                 RuntimeError::new("MODEL_CREDENTIAL_INVALID", "Credential must be UTF-8")
             })?;

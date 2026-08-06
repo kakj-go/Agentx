@@ -2,7 +2,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use agentx_application::ExecutionRuntime;
 use agentx_infrastructure::config::RedisSettings;
-use agentx_infrastructure::credential::CredentialKeyring;
+use agentx_infrastructure::credential::{CredentialKeyring, SecretProvider};
 use agentx_infrastructure::runtime_client::GrpcExecutionRuntime;
 use object_store::ObjectStore;
 use sqlx::MySqlPool;
@@ -16,6 +16,7 @@ pub struct AppState {
     pub pool: MySqlPool,
     pub auth: Arc<AuthSettings>,
     pub credential_keyring: Option<Arc<CredentialKeyring>>,
+    pub secret_provider: Option<Arc<dyn SecretProvider>>,
     pub object_store: Option<Arc<dyn ObjectStore>>,
     pub http: reqwest::Client,
     pub connections: Arc<ConnectionSettings>,
@@ -31,6 +32,7 @@ impl AppState {
             pool,
             auth: Arc::new(auth),
             credential_keyring: None,
+            secret_provider: None,
             object_store: None,
             http: reqwest::Client::builder()
                 .redirect(reqwest::redirect::Policy::none())
@@ -71,6 +73,19 @@ impl AppState {
         connections: ConnectionSettings,
     ) -> Self {
         self.credential_keyring = Some(Arc::new(credential_keyring));
+        self.object_store = object_store;
+        self.connections = Arc::new(connections);
+        self
+    }
+
+    #[must_use]
+    pub fn with_m2_external(
+        mut self,
+        secret_provider: Arc<dyn SecretProvider>,
+        object_store: Option<Arc<dyn ObjectStore>>,
+        connections: ConnectionSettings,
+    ) -> Self {
+        self.secret_provider = Some(secret_provider);
         self.object_store = object_store;
         self.connections = Arc::new(connections);
         self

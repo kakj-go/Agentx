@@ -1,8 +1,9 @@
 use agentx_api_types::{FieldError, PageResponse};
+use agentx_application::{RuntimeCommand, RuntimeCommandType, StartExecutionCommandPayload};
 use agentx_domain::{
-    EditorDocument, WorkflowDefinition, canonical_content_hash, validate_definition,
-    validate_editor_document,
+    EditorDocument, TenantId, WorkflowDefinition, canonical_content_hash, validate_editor_document,
 };
+use agentx_infrastructure::runtime_commands::RuntimeCommandRepository;
 use agentx_runtime::{CompileContext, WorkflowCompiler};
 use axum::{
     Json,
@@ -173,6 +174,21 @@ pub struct UpdateEnvironmentRequest {
     pub name: String,
     pub status: String,
     pub version: u64,
+}
+
+#[derive(Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct RunWorkflowRequest {
+    #[serde(default)]
+    pub input: Value,
+    pub idempotency_key: Option<String>,
+}
+
+#[derive(Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct QueuedWorkflowRunResponse {
+    pub command_id: Uuid,
+    pub status: String,
 }
 
 #[derive(Clone, Deserialize, Serialize, ToSchema)]
@@ -427,9 +443,11 @@ pub async fn save_draft(
         serde_json::from_value(input.definition.clone()).map_err(|error| {
             AppError::unprocessable("INVALID_WORKFLOW_DEFINITION", error.to_string())
         })?;
-    let issues = validate_definition(&definition);
-    if !issues.is_empty() {
-        return Err(definition_error(issues));
+    let registry = crate::catalog::registry_for_tenant(&state.pool, actor.tenant_id).await?;
+    if let Err(error) =
+        WorkflowCompiler::new(&registry).compile(&definition, &CompileContext::default())
+    {
+        return Err(compile_definition_error(error.issues));
     }
     let editor_document: EditorDocument =
         serde_json::from_value(if input.editor_document.is_null() {
@@ -996,17 +1014,62 @@ pub async fn update_environment(
     Ok(Json(response))
 }
 
-#[utoipa::path(post, path = "/api/v1/workflows/{id}/run", params(("id" = Uuid, Path)))]
-pub async fn runtime_unavailable(
+#[utoipa::path(post, path = "/api/v1/workflows/{id}/run", request_body = RunWorkflowRequest, responses((status = 202, body = QueuedWorkflowRunResponse)), params(("id" = Uuid, Path)))]
+pub async fn run_workflow(
     State(state): State<AppState>,
     actor: AuthActor,
     Path(id): Path<Uuid>,
-) -> AppResult<StatusCode> {
-    actor.require("workflow:view")?;
-    require_workflow_access(&state.pool, &actor, id, false).await?;
-    Err(AppError::service_unavailable(
-        "RUNTIME_UNAVAILABLE",
-        "Workflow runtime is not available in M2",
+    Json(input): Json<RunWorkflowRequest>,
+) -> AppResult<(StatusCode, Json<QueuedWorkflowRunResponse>)> {
+    actor.require("execution:run")?;
+    require_workflow_access(&state.pool, &actor, id, true).await?;
+    let version_id: Uuid = sqlx::query_scalar("SELECT id FROM workflow_versions WHERE tenant_id=? AND workflow_id=? ORDER BY version_number DESC LIMIT 1")
+        .bind(actor.tenant_id)
+        .bind(id)
+        .fetch_optional(&state.pool)
+        .await?
+        .ok_or_else(|| AppError::unprocessable("WORKFLOW_VERSION_REQUIRED", "Publish a Workflow Version before running this Workflow"))?;
+    let command_id = Uuid::now_v7();
+    let command = RuntimeCommand {
+        id: command_id,
+        tenant_id: TenantId::from_uuid(actor.tenant_id),
+        command_type: RuntimeCommandType::StartExecution,
+        aggregate_type: "workflow".into(),
+        aggregate_id: id.to_string(),
+        idempotency_key: input
+            .idempotency_key
+            .unwrap_or_else(|| command_id.to_string()),
+        payload: serde_json::to_value(StartExecutionCommandPayload {
+            workflow_version_id: version_id,
+            invocation_id: None,
+            session_id: None,
+            requested_by: Some(actor.user_id),
+            trigger_type: "manual".into(),
+            input: input.input,
+            runtime_settings: json!({}),
+        })
+        .map_err(AppError::internal)?,
+    };
+    let mut transaction = state.pool.begin().await?;
+    RuntimeCommandRepository::enqueue_in_transaction(&mut transaction, &command)
+        .await
+        .map_err(AppError::internal)?;
+    audit(
+        &mut transaction,
+        &actor,
+        "workflow.run_queued",
+        "workflow",
+        id,
+        json!({"commandId":command_id,"workflowVersionId":version_id}),
+    )
+    .await?;
+    transaction.commit().await?;
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(QueuedWorkflowRunResponse {
+            command_id,
+            status: "queued".into(),
+        }),
     ))
 }
 
@@ -1303,6 +1366,22 @@ fn validate_visibility(value: &str) -> AppResult<()> {
     }
 }
 fn definition_error(issues: Vec<agentx_domain::DefinitionIssue>) -> AppError {
+    let mut error = AppError::unprocessable(
+        "INVALID_WORKFLOW_DEFINITION",
+        "Workflow definition is invalid",
+    );
+    error.fields = issues
+        .into_iter()
+        .map(|issue| FieldError {
+            field: issue.path,
+            code: issue.code,
+            message: issue.message,
+        })
+        .collect();
+    error
+}
+
+fn compile_definition_error(issues: Vec<agentx_runtime::CompileIssue>) -> AppError {
     let mut error = AppError::unprocessable(
         "INVALID_WORKFLOW_DEFINITION",
         "Workflow definition is invalid",

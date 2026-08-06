@@ -23,6 +23,19 @@ async function submit(container: Locator, name: string) {
   await expect(container).toBeHidden()
 }
 
+async function fillMonaco(page: Page, scope: Locator, value: string) {
+  const editor = scope.getByRole('textbox', { name: 'Editor content' })
+  await expect(editor).toBeVisible({ timeout: 30_000 })
+  await editor.focus()
+  await page.keyboard.press('Control+A')
+  await page.keyboard.press('Backspace')
+  await page.keyboard.insertText(value)
+  await expect.poll(async () => {
+    const text = (await scope.locator('.view-lines').textContent())?.replaceAll('\u00a0', ' ').trim()
+    try { return JSON.parse(text ?? '') } catch { return null }
+  }).toEqual(JSON.parse(value))
+}
+
 async function grantResource(page: Page, name: string, resourceType: string, subject: 'workflow' | 'department', operation = '使用') {
   await page.getByRole('tab', { name: resourceType, exact: true }).click()
   const row = page.getByRole('row').filter({ hasText: name }).filter({ hasText: resourceType }).first()
@@ -178,7 +191,7 @@ async function createAndExerciseMcp(page: Page) {
   await submit(unavailable, '保存')
   await page.getByRole('row', { name: /Unavailable MCP/ }).getByRole('link', { name: '详情' }).click()
   await page.getByRole('button', { name: '测试连接' }).click()
-  await expect(page.getByText(/could not be reached|无法连接|MCP_CONNECTION_FAILED/i).first()).toBeVisible()
+  await expect(page.getByText(/could not be reached|无法连接|MCP_CONNECTION_FAILED|request timed out/i).first()).toBeVisible()
 }
 
 async function createSkillWorkspace(page: Page) {
@@ -291,6 +304,7 @@ async function configureAndPublishWorkflow(page: Page) {
   const resource = page.getByTestId('resource-selector-mcp_tool').getByRole('combobox')
   await resource.click()
   await page.getByRole('option', { name: /echo/ }).click()
+  await fillMonaco(page, page.getByTestId('parameter-arguments'), '{"text":"Agentx E2E"}')
   const source = page.locator('.react-flow__node').filter({ hasText: 'Manual Trigger' }).first().locator('.react-flow__handle.source[data-handleid="main"]')
   const target = toolNode.locator('.react-flow__handle.target[data-handleid="main"]')
   await expect(source).toBeVisible()
@@ -304,7 +318,10 @@ async function configureAndPublishWorkflow(page: Page) {
   await page.mouse.up()
   await expect(page.locator('.react-flow__edge')).toHaveCount(1)
   const save = page.getByRole('button', { name: '保存', exact: true })
+  const draftRequest = page.waitForRequest((request) => request.method() === 'PUT' && /\/workflows\/[^/]+\/draft$/.test(request.url()))
   await save.click()
+  const payload = (await draftRequest).postDataJSON() as { definition: { nodes: Array<{ type: string; parameters: Record<string, unknown> }> } }
+  expect(payload.definition.nodes.find((node) => node.type === 'mcp_tool')?.parameters).toEqual({ arguments: { text: 'Agentx E2E' } })
   await expect(page.getByRole('status').filter({ hasText: /mcp_server .* requires use grant/i })).toBeVisible()
 
   const grantsPage = await page.context().newPage()
