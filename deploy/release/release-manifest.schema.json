@@ -13,20 +13,44 @@
     "runtimeClass": { "type": "string", "minLength": 1 },
     "images": {
       "type": "array",
-      "minItems": 6,
+      "minItems": 7,
+      "maxItems": 7,
+      "uniqueItems": true,
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["name", "reference", "digest", "sbom", "sbomSha256", "signatureVerified"],
+        "required": ["name", "reference", "digest", "sbom", "sbomSha256", "sbomCanonicalSha256", "predicateType", "signatureVerified", "attestationVerified"],
         "properties": {
-          "name": { "type": "string", "minLength": 1 },
-          "reference": { "type": "string", "minLength": 1 },
+          "name": {
+            "enum": [
+              "platform-api",
+              "trigger-gateway",
+              "workflow-coordinator",
+              "workflow-worker",
+              "sandbox-manager",
+              "trace-writer",
+              "web"
+            ]
+          },
+          "reference": { "type": "string", "pattern": "^.+@sha256:[a-f0-9]{64}$" },
           "digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
           "sbom": { "type": "string", "minLength": 1 },
           "sbomSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
-          "signatureVerified": { "const": true }
+          "sbomCanonicalSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "predicateType": { "type": "string", "pattern": "[Cc]yclone" },
+          "signatureVerified": { "const": true },
+          "attestationVerified": { "const": true }
         }
-      }
+      },
+      "allOf": [
+        { "contains": { "properties": { "name": { "const": "platform-api" } }, "required": ["name"] }, "minContains": 1, "maxContains": 1 },
+        { "contains": { "properties": { "name": { "const": "trigger-gateway" } }, "required": ["name"] }, "minContains": 1, "maxContains": 1 },
+        { "contains": { "properties": { "name": { "const": "workflow-coordinator" } }, "required": ["name"] }, "minContains": 1, "maxContains": 1 },
+        { "contains": { "properties": { "name": { "const": "workflow-worker" } }, "required": ["name"] }, "minContains": 1, "maxContains": 1 },
+        { "contains": { "properties": { "name": { "const": "sandbox-manager" } }, "required": ["name"] }, "minContains": 1, "maxContains": 1 },
+        { "contains": { "properties": { "name": { "const": "trace-writer" } }, "required": ["name"] }, "minContains": 1, "maxContains": 1 },
+        { "contains": { "properties": { "name": { "const": "web" } }, "required": ["name"] }, "minContains": 1, "maxContains": 1 }
+      ]
     }
   }
 }

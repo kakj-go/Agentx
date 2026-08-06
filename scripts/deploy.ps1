@@ -12,7 +12,11 @@ param(
     [string]$Target = "all",
     [switch]$DeleteData,
     [switch]$DeleteNamespace,
-    [switch]$RotateSecrets
+    [switch]$RotateSecrets,
+    [ValidateSet("all", "expand", "contract")]
+    [string]$MigrationPhase = "all",
+    [switch]$MigrationOnly,
+    [switch]$SkipMigrations
 )
 
 $ErrorActionPreference = "Stop"

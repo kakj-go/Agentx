@@ -27,9 +27,9 @@
 | Checkpoint、Fork 和部分执行 | 01 §1/4、04 §5–7 | REC-001–003、REC-007–010 | coordinator、worker | Execution、Studio | MySQL、MinIO | workflow fork_execution | 原记录不变、依赖恢复、副作用确认 | done / [M4 验收证据](m4-acceptance-evidence.md) |
 | Model、Agent、MCP Tool、Skill、RAG 和 Memory 运行 | 01 §1/4、04 §8–9、05 §3–7 | AGT-001–007、AGT-012–013、INT-005 | worker、infrastructure | Execution Workbench、Trace | MySQL、ClickHouse、MinIO | resource grant/workflow run | 运行时授权、撤权、预算、循环、Attempt 恢复、递归依赖和固定版本 Addon | done / [M5 验收证据](m5-acceptance-evidence.md)、[M7 验收证据](m7-acceptance-evidence.md) |
 | OpenSandbox 与 Code Runtime 功能基线 | 01 §1/4、04 §10、07 §11 | AGT-008–011/013 | sandbox-manager、worker | Execution Workbench、Trace | MySQL、Redis、MinIO、OpenSandbox | workflow run/resource grant | Rust 直接 Adapter、Spec/差分契约、SSE/Endpoint、Docker+runc 功能 E2E、内存/TTL/配额、默认拒绝网络、Secret 和强制回收 | done / [M5 验收证据](m5-acceptance-evidence.md) |
-| Sandbox 生产强隔离与供应链 | 04 §10、07 §6–11 | INT-006/010/011/014 | sandbox-manager、worker、deployment | Runtime Status | MySQL、OpenSandbox、Kubernetes | tenant admin/workflow run | RuntimeClass、CPU/内存/PID/磁盘/TTL、双栈 egress、Vault、签名镜像和两租户攻击矩阵 | in_progress / [M7 验收证据](m7-acceptance-evidence.md)；runc `standard` 基线已通过，供应链和强隔离仍待 RC |
+| Sandbox 生产强隔离与供应链 | 04 §10、07 §6–11 | INT-006/010/011/014 | sandbox-manager、worker、deployment | Runtime Status | MySQL、OpenSandbox、Kubernetes | tenant admin/workflow run | RuntimeClass、CPU/内存/PID/磁盘/TTL、双栈 egress、Vault、签名镜像和两租户攻击矩阵 | in_progress / [M7 验收证据](m7-acceptance-evidence.md)；runc `standard` 基线已通过，本地供应链验收器已实现但真实 Run 尚未执行 |
 | n8n-like 画布、Agent/Code 编排、Draft 调试和发布 | 01 §1/2、10 §7–10 | STU-001–016 | platform-api、runtime services | `/workflows/:id/editor` | MySQL、Redis、MinIO | workflow edit/run/publish/resource grant | Definition 3.0/Editor/Overlay 分离、Catalog Manifest 表单、Draft Revision Snapshot、真实拖拽/连线、Pin、运行高亮、Trace 定位和发布 | done / [M6 验收证据](m6-acceptance-evidence.md) |
-| 配额、保留、扩容和发布 | 07 §2/6–9 | INT-006、INT-008–014 | 全部服务 | Runtime Status | MySQL、Redis、ClickHouse、MinIO、K8s | tenant admin | 故障、容量、清理、滚动升级 | in_progress / [M7 验收证据](m7-acceptance-evidence.md) |
+| 配额、保留、扩容和发布 | 07 §2/6–9 | INT-006、INT-008–014 | 全部服务 | Runtime Status | MySQL、Redis、ClickHouse、MinIO、K8s | tenant admin | 故障、容量、清理、滚动升级 | in_progress / [M7 验收证据](m7-acceptance-evidence.md)；INT-009/011 本地验收器已实现，INT-012/014 不在本轮关闭 |
 
 ## 2. MVP 十二步映射
 

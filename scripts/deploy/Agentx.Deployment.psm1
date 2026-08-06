@@ -29,7 +29,10 @@ function Invoke-AgentxDeployment {
         [ValidateSet("all", "services", "infrastructure", "addons", "sandbox", "ingress")][string]$Target = "all",
         [switch]$DeleteData,
         [switch]$DeleteNamespace,
-        [switch]$RotateSecrets
+        [switch]$RotateSecrets,
+        [ValidateSet("all", "expand", "contract")][string]$MigrationPhase = "all",
+        [switch]$MigrationOnly,
+        [switch]$SkipMigrations
     )
     $repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
     if ($Action -in @("Status", "Uninstall") -and -not $ConfigFile) {
@@ -43,8 +46,8 @@ function Invoke-AgentxDeployment {
 
     switch ($Action) {
         "Doctor" { Invoke-Doctor -Profile $profileValue -RepoRoot $repoRoot -DryRun:$DryRun }
-        "Install" { Invoke-Install -Profile $profileValue -RepoRoot $repoRoot -Target $Target -DryRun:$DryRun -RotateSecrets:$RotateSecrets -IsUpgrade:$false }
-        "Upgrade" { Invoke-Install -Profile $profileValue -RepoRoot $repoRoot -Target $Target -DryRun:$DryRun -RotateSecrets:$RotateSecrets -IsUpgrade:$true }
+        "Install" { Invoke-Install -Profile $profileValue -RepoRoot $repoRoot -Target $Target -DryRun:$DryRun -RotateSecrets:$RotateSecrets -IsUpgrade:$false -MigrationPhase $MigrationPhase -MigrationOnly:$MigrationOnly -SkipMigrations:$SkipMigrations }
+        "Upgrade" { Invoke-Install -Profile $profileValue -RepoRoot $repoRoot -Target $Target -DryRun:$DryRun -RotateSecrets:$RotateSecrets -IsUpgrade:$true -MigrationPhase $MigrationPhase -MigrationOnly:$MigrationOnly -SkipMigrations:$SkipMigrations }
         "Status" { Show-DeploymentStatus -Profile $profileValue }
         "Uninstall" { Invoke-Uninstall -Profile $profileValue -RepoRoot $repoRoot -Target $Target -DeleteData:$DeleteData -DeleteNamespace:$DeleteNamespace -DryRun:$DryRun -NonInteractive:$NonInteractive }
     }
@@ -263,12 +266,14 @@ function Invoke-Doctor {
 }
 
 function Invoke-Install {
-    param($Profile, [string]$RepoRoot, [string]$Target, [switch]$DryRun, [switch]$RotateSecrets, [bool]$IsUpgrade)
+    param($Profile, [string]$RepoRoot, [string]$Target, [switch]$DryRun, [switch]$RotateSecrets, [bool]$IsUpgrade, [string]$MigrationPhase, [switch]$MigrationOnly, [switch]$SkipMigrations)
     Invoke-Doctor -Profile $Profile -RepoRoot $RepoRoot -DryRun:$DryRun | Out-Null
     $previous = Get-DeployedProfile -Namespace $Profile.namespace
     if ($IsUpgrade -and -not $previous) { throw "Upgrade requires an existing agentx-deployment-state ConfigMap." }
     if ($previous) { Assert-StatefulModesUnchanged -Before $previous -After $Profile; Assert-SandboxTransitionAllowed -Before $previous -After $Profile }
     if ($RotateSecrets -and $Target -ne "all") { throw "Secret rotation requires -Target all so every consumer is restarted." }
+    if ($MigrationOnly -and $Target -notin @("all", "services")) { throw "MigrationOnly requires Target all or services." }
+    if ($MigrationOnly -and $SkipMigrations) { throw "MigrationOnly cannot be combined with SkipMigrations." }
     if ($RotateSecrets -and $Profile.secrets.mode -eq "existing") { throw "Secret rotation is not supported for secrets.mode=existing; rotate that Secret outside Agentx deploy." }
     if ($RotateSecrets -and $previous -and $previous.components.sandbox.mode -eq "remote") { Assert-SandboxDrained -Profile $previous }
     if ($DryRun) { Write-Output "Dry run passed for $($Profile.namespace); no Kubernetes resources were changed."; return }
@@ -284,7 +289,8 @@ function Invoke-Install {
     if (Test-Target $Target "infrastructure") { Apply-BundledInfrastructure -Profile $Profile -RepoRoot $RepoRoot }
     if ($Target -in @("all", "services", "infrastructure")) { Invoke-DependencyDoctor -Profile $Profile -RepoRoot $RepoRoot }
     if (Test-Target $Target "services") {
-        Apply-Migrations -Profile $Profile -RepoRoot $RepoRoot
+        if (-not $SkipMigrations) { Apply-Migrations -Profile $Profile -RepoRoot $RepoRoot -MigrationPhase $MigrationPhase }
+        if ($MigrationOnly) { Write-Output "Migration phase '$MigrationPhase' completed in $($Profile.namespace)."; return }
         Apply-Component -Profile $Profile -RepoRoot $RepoRoot -Component "services/core"
         Restart-ComponentDeployments -Namespace $Profile.namespace -Names @("platform-api", "trigger-gateway", "workflow-coordinator", "workflow-worker", "trace-writer", "web")
         Wait-CoreServices -Profile $Profile
@@ -525,9 +531,11 @@ function Apply-BundledInfrastructure {
 }
 
 function Apply-Migrations {
-    param($Profile, [string]$RepoRoot)
+    param($Profile, [string]$RepoRoot, [ValidateSet("all", "expand", "contract")][string]$MigrationPhase = "all")
     kubectl -n $Profile.namespace delete job platform-api-migrate trace-writer-migrate --ignore-not-found | Out-Null
-    Apply-Component -Profile $Profile -RepoRoot $RepoRoot -Component "services/migrations"
+    $arguments = if ($MigrationPhase -eq "expand") { @("migrate", "--through", "16") } else { @("migrate") }
+    $rendered = Invoke-ComponentRender -Profile $Profile -RepoRoot $RepoRoot -Component "services/migrations" -MigrationArguments $arguments
+    $rendered | kubectl apply -f - | Out-Null
     kubectl -n $Profile.namespace wait --for=condition=complete job/platform-api-migrate --timeout=300s
     kubectl -n $Profile.namespace wait --for=condition=complete job/trace-writer-migrate --timeout=300s
 }
@@ -581,7 +589,7 @@ function Apply-Component {
 }
 
 function Invoke-ComponentRender {
-    param($Profile, [string]$RepoRoot, [string]$Component)
+    param($Profile, [string]$RepoRoot, [string]$Component, [string[]]$MigrationArguments)
     $temp = Join-Path $RepoRoot ("deploy/k8s/.agentx-render-" + [Guid]::NewGuid().ToString("N")); New-Item -ItemType Directory -Path $temp | Out-Null
     try {
         $resolvedComponent = (Resolve-Path (Join-Path $RepoRoot "deploy/k8s/$Component")).Path
@@ -598,6 +606,10 @@ function Invoke-ComponentRender {
         $workloads = @(Get-ComponentWorkloads -Component $Component)
         if ($workloads.Count -gt 0) { $lines += "patches:" }
         foreach ($workload in $workloads) { $lines += @("  - target:", "      kind: $($workload.kind)", "      name: $($workload.name)", "    patch: |-", "      - op: add", "        path: /spec/template/spec/containers/0/imagePullPolicy", "        value: $policy") }
+        if ($Component -eq "services/migrations" -and $MigrationArguments) {
+            $argumentsJson = ConvertTo-Json -InputObject ([string[]]$MigrationArguments) -Compress
+            $lines += @("  - target:", "      kind: Job", "      name: platform-api-migrate", "    patch: |-", "      - op: replace", "        path: /spec/template/spec/containers/0/args", "        value: $argumentsJson")
+        }
         if ($Component -eq "addons/mem0") { $lines += @("  - target:", "      kind: Deployment", "      name: mem0", "    patch: |-", "      - op: add", "        path: /spec/template/spec/initContainers/0/imagePullPolicy", "        value: $policy") }
         [IO.File]::WriteAllLines((Join-Path $temp "kustomization.yaml"), $lines, [Text.UTF8Encoding]::new($false))
         return (kubectl kustomize $temp --load-restrictor LoadRestrictionsNone)

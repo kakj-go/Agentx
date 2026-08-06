@@ -77,7 +77,7 @@ M3 评测模型和前端依赖引导的破坏性修正见 [M3.1 评测方案与�
 | M6 | n8n-like 交互的 Agentx Workflow Studio：拖拽、Manifest 配置、Draft Revision 调试、Trace、版本和发布（done） | 11；[验收证据](m6-acceptance-evidence.md) |
 | M7 | 复用 M6 Runtime 的应用/Trigger/Approval/Evaluation 集成、配额、生产 Sandbox/Vault/签名、故障容量和首期发布 | 12 |
 
-按阶段原子任务统计，M4 的 24 项、M5 的 13 项和 M6 的 STU-001～016 共 16 项已经完成；M7 有 INT-001～014 共 14 项，当前 INT-001～008、INT-010、INT-013 共 10 项为 `done`，INT-009、INT-011、INT-012、INT-014 共 4 项为 `in_progress`。M5-0 Rust OpenSandbox 协议 Spike 是 AGT-008 的前置门禁，不另计原子任务；AGT-010 生产强化只归入 M7 INT-006/010/011/014，完成边界见 [M5 任务清单](m5-task-list.md)。
+按阶段原子任务统计，M4 的 24 项、M5 的 13 项和 M6 的 STU-001～016 共 16 项已经完成；M7 有 INT-001～014 共 14 项，当前 INT-001～008、INT-010、INT-013 共 10 项为 `done`，INT-009、INT-011、INT-012、INT-014 共 4 项为 `in_progress`。INT-009/011 的 Docker Desktop 本地验收器已经实现，但真实 Run 尚未生成，不能提前改为 `done`；INT-012/014 不在该本地验收中关闭。M5-0 Rust OpenSandbox 协议 Spike 是 AGT-008 的前置门禁，不另计原子任务；AGT-010 生产强化只归入 M7 INT-006/010/011/014，完成边界见 [M5 任务清单](m5-task-list.md)。
 
 ## 5. 任务格式
 

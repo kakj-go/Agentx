@@ -16,9 +16,9 @@ M7 的 Application、Session、Message、Webhook、Approval Resume 和 Evaluatio
 | INT-006 | done | 12 个 Quota 维度共用单一清单；MySQL+Redis 双租户测试覆盖并发、Token、Cost、Artifact、CPU、内存、PID、磁盘和 TTL 的 Reservation/Ledger、周期用量、释放、过期回收与校准，Sandbox 资源强制和双租户攻击矩阵已通过；容量后零漂移继续由 INT-012 验收 |
 | INT-007 | done | Runtime Event v1、Outbox、Receipt 和业务 Projector 已通过完整 Run；重复/乱序 Projector 单测和故障矩阵通过，未投影事件、终态缺失事件和未发布 Outbox 均为 0 |
 | INT-008 | done | Retention Reference、Dry Run 和批次清理已实现；MySQL + InMemory ObjectStore 覆盖引用阻止、对象存储中断后恢复、501 条跨 6 批清理和幂等删除；ClickHouse Trace 分段失败恢复、Checkpoint 保护、Application Message 清理、Evaluation Case/Metric/Report 清理和 Comparison 引用保护均通过 |
-| INT-009 | in_progress | 0016 expand、0017 contract、Worker Capability 分流和 Digest Profile 已实现；缺真实新旧实例滚动和 Application rollback 证据 |
+| INT-009 | in_progress | 0016 expand、0017 contract、Worker Capability 分流、Digest Profile 和 Docker Desktop 双阶段验收器已实现；尚未生成 M6→M7、M7 Previous→Candidate 滚动及回滚的真实本地证据 |
 | INT-010 | done | 故障矩阵覆盖 Coordinator、Worker、Redis、ClickHouse、MinIO、OpenSandbox、Vault、SSE 和 Projector；Docker Desktop runc 基线隔离检查通过并记录 `isolationLevel=standard` |
-| INT-011 | in_progress | Vault KV v2、内部一次性 Broker、Handle 撤销和供应链脚本已实现；两租户攻击矩阵 7/7 通过，仍缺真实 Cosign/SBOM 产物 |
+| INT-011 | in_progress | Vault KV v2、内部一次性 Broker、Handle 撤销、本地 TLS Registry、7 镜像 SBOM/签名/Attestation 和 8 项负向验收器已实现；尚未生成真实本地产物 |
 | INT-012 | in_progress | 容量验收器已实现；100 Execution、500 Node、200 SSE、1000 Case、200 节点和 2 小时结果尚未执行 |
 | INT-013 | done | Playground、Application Trigger、Evaluation、Approval 和 Runtime 页面均接真实 API；中英文、浅深主题、3 种桌面尺寸共 60 张截图通过横向溢出和可访问名称检查 |
 | INT-014 | in_progress | 临时 Namespace 业务闭环、故障、安全、标准隔离和页面证据通过；升级、回滚、容量和签名证据尚未满足最终发布汇总器 |
@@ -67,6 +67,8 @@ Run `20260806T075729954Z` 保存 7 个阶段 JUnit 文件，共 14 条测试，`
 - `scripts/m7-capacity.ps1`：真实执行 100/500/200/1000/200 和默认 2 小时稳定性门禁，统计 Projector p95 与活跃 Quota Reservation。
 - `scripts/verify-runtime-isolation.ps1`：检查 Kubernetes Sandbox 工作负载 Pod 的 RuntimeClass、non-root、只读根文件系统、ServiceAccount、seccomp、Capability、资源限制和 NetworkPolicy。当前本地证据选择 `sandbox-manager` Pod；宿主侧 OpenSandbox 执行实例由 M5 Oracle 和残留检查覆盖。
 - `scripts/release-images.ps1`：解析镜像 Digest，生成 CycloneDX SBOM，Cosign 签名/证明并生成 Release Manifest。
+- `scripts/m7-local-prereqs.ps1`：固定并校验 Docker Desktop Kubernetes、kubectl、Cosign 和 Syft 工具链及 SHA-256。
+- `scripts/m7-local-release-tests.ps1`：在独立 TLS Registry/Test Namespace 中编排 INT-011、M6→M7 Schema 迁移、M7 滚动/回滚、持续 Invocation 探针、秘密扫描、JUnit 和证据清单。
 - `scripts/m7-release-gate.ps1`：强制汇总 7 个 JUnit/HTML/Trace、容量、Vault、故障、安全、升级、隔离和供应链证据；任何阈值不足都不会生成 `passed` 文件。
 
 `scripts/release-tests.ps1` 已验证上述脚本语法、证据 Schema、Digest 约束和 runc 不得声明 `strong`。
@@ -86,19 +88,32 @@ Run `20260806T075729954Z` 保存 7 个阶段 JUnit 文件，共 14 条测试，`
 
 ## 4. 尚未关闭的发布门禁
 
-以下项目必须在 RC 环境生成真实证据后才能把剩余 INT-009、INT-011、INT-012、INT-014、阶段 12 和 M7 标记为 `done`：
+INT-009/011 采用已锁定的本地验收边界：在 Docker Desktop 单节点 Kubernetes、TLS 本地 Registry 和 runc 上执行以下命令，生成 `m7-local-evidence.json` 且 JUnit `failures=0`、`errors=0`、`skipped=0` 后，可将两项标为 `done`：
+
+执行前还必须启动本机 OpenSandbox，并确保 `http://127.0.0.1:18080/health` 和带 API Key 的 `/v1/sandboxes` Lifecycle API 可访问；默认 Key 为本地 E2E 使用的 `agentx-local-opensandbox-key`。也可以通过验收脚本的 `-OpenSandboxEndpoint` 和 `-OpenSandboxApiKey` 参数覆盖，前置检查失败时不会进入镜像构建或升级阶段。
+
+```powershell
+.\scripts\m7-local-release-tests.ps1 `
+  -RegistryHost <docker-desktop-node-internal-ip> `
+  -RegistryPort 30500 `
+  -CosignPrivateKey C:\secure\agentx-m7-local-cosign.key `
+  -CosignPublicKey C:\secure\agentx-m7-local-cosign.pub
+```
+
+该命令只接受不同于 `f343333` 的已提交 Candidate；默认通过公开 API 创建阶段 A/B 的独立 Workflow、Version、Application 和 Execution，Token 不落盘。成功证据只代表 `local-docker-desktop`、`local-tls`、`trustScope=local-only` 和 `isolationLevel=standard`，不代表生产长期信任根或强隔离。
+
+当前尚未执行上述完整 Run，因此 INT-009/011 仍为 `in_progress`。之后仍需完成：
 
 1. 100 并发 Execution、500 Node Execution、200 SSE、1000 Evaluation Case、200 节点 Workflow 和 2 小时稳定性运行，Projector p95 `<5s` 且 Quota Reservation 最终为零。
-2. 0016/0017 新旧实例滚动、未知 IR Worker 门禁、Migration 保留和 Application rollback。
-3. RC 镜像 Digest、CycloneDX SBOM、Cosign 签名/验证和最终 Release Manifest。
+2. INT-014 最终 Release Gate 汇总；它继续依赖既有业务、Vault、故障、安全、隔离、本地升级/供应链证据和 INT-012 容量证据。
 
 本地 Kubernetes 使用 Docker+runc，只能记录 `isolationLevel=standard`。在 gVisor、Kata 或经评审的 custom RuntimeClass 上通过真实 Pod 验证后，才允许记录 `strong`。
 
 ## 5. 最终完成动作
 
-生产证据齐备后运行 `scripts/m7-release-gate.ps1`。只有该脚本生成符合 `agentx.io/m7-acceptance-evidence/v1` 的 `passed` 文件，才同步执行以下状态变更：
+本地 INT-009/011 证据通过后先只更新这两项；INT-012 仍保持 `in_progress`。全部证据齐备后运行 `scripts/m7-release-gate.ps1`，只有该脚本生成符合 `agentx.io/m7-acceptance-evidence/v1` 的 `passed` 文件，才同步执行以下最终状态变更：
 
-- 剩余 INT-009、INT-011、INT-012、INT-014 改为 `done`。
+- INT-012、INT-014 改为 `done`；若 INT-009/011 尚未有有效本地证据，Release Gate 必须拒绝。
 - 阶段 12 和里程碑 M7 改为 `done`。
 - `99-feature-traceability.md` 不再存在 `planned`、`in_progress` 或 `blocked`。
 - 本文状态改为 `done`，记录最终 RC Run ID、Release Manifest 和回滚证据路径。

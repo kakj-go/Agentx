@@ -1,4 +1,6 @@
-use anyhow::{Context, Result};
+use std::borrow::Cow;
+
+use anyhow::{Context, Result, ensure};
 use secrecy::ExposeSecret;
 use sqlx::{
     MySqlPool,
@@ -39,7 +41,37 @@ pub async fn connect(settings: &MySqlSettings) -> Result<MySqlPool> {
 }
 
 pub async fn run_migrations(pool: &MySqlPool) -> Result<()> {
-    sqlx::migrate!("../../migrations/mysql")
+    run_migrations_internal(pool, None).await
+}
+
+pub async fn run_migrations_through(pool: &MySqlPool, through: i64) -> Result<()> {
+    run_migrations_internal(pool, Some(through)).await
+}
+
+async fn run_migrations_internal(pool: &MySqlPool, through: Option<i64>) -> Result<()> {
+    let all = sqlx::migrate!("../../migrations/mysql");
+    let migrator = if let Some(through) = through {
+        ensure!(through > 0, "migration upper bound must be positive");
+        ensure!(
+            all.migrations
+                .iter()
+                .any(|migration| migration.version == through),
+            "migration {through} does not exist"
+        );
+        sqlx::migrate::Migrator {
+            migrations: Cow::Owned(
+                all.migrations
+                    .iter()
+                    .filter(|migration| migration.version <= through)
+                    .cloned()
+                    .collect(),
+            ),
+            ..sqlx::migrate::Migrator::DEFAULT
+        }
+    } else {
+        all
+    };
+    migrator
         .run(pool)
         .await
         .context("failed to run MySQL migrations")

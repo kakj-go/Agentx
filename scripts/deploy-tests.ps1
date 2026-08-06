@@ -98,6 +98,12 @@ $module = Import-Module (Join-Path $PSScriptRoot "deploy/Agentx.Deployment.psm1"
     Assert-True ($rendered -match 'ephemeral-storage: 256Mi') "core ephemeral storage limits are missing"
     Assert-True (([regex]::Matches($rendered, 'name: AGENTX_VAULT_TOKEN')).Count -eq 1) "Vault token is exposed outside Platform API"
 
+    $expandMigration = (Invoke-ComponentRender -Profile $localImage -RepoRoot $RepoRoot -Component "services/migrations" -MigrationArguments @("migrate", "--through", "16")) -join "`n"
+    Assert-True ($expandMigration -match '(?s)name: platform-api-migrate.+args:\s*- migrate\s*- --through\s*- "?16"?') "expand migration render did not stop at 0016"
+    $contractMigration = (Invoke-ComponentRender -Profile $localImage -RepoRoot $RepoRoot -Component "services/migrations" -MigrationArguments @("migrate")) -join "`n"
+    Assert-True ($contractMigration -match '(?m)^\s+- args:\r?\n\s+- migrate\r?$') "contract migration render did not preserve args as an array"
+    Assert-True ($contractMigration -notmatch '--through') "contract migration render retained the expand upper bound"
+
     $customRender = $templateJson | ConvertFrom-Json -Depth 30
     $customRender.namespace = "agentx-render-check"
     $customRender.images.mode = "registry"

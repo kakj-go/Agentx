@@ -44,6 +44,64 @@ function Add-Evidence([string]$Kind, [string]$Path) {
     })
 }
 
+function Get-CanonicalValue($Value) {
+    if ($null -eq $Value) { return $null }
+    if ($Value -is [System.Collections.IDictionary]) {
+        $ordered = [ordered]@{}
+        foreach ($key in $Value.Keys | Sort-Object) { $ordered[[string]$key] = Get-CanonicalValue $Value[$key] }
+        return $ordered
+    }
+    if ($Value -is [pscustomobject]) {
+        $ordered = [ordered]@{}
+        foreach ($property in $Value.PSObject.Properties | Sort-Object Name) { $ordered[$property.Name] = Get-CanonicalValue $property.Value }
+        return $ordered
+    }
+    if ($Value -is [System.Collections.IEnumerable] -and $Value -isnot [string]) {
+        return @($Value | ForEach-Object { Get-CanonicalValue $_ })
+    }
+    return $Value
+}
+
+function Get-JsonCanonicalHash($Value) {
+    $json = Get-CanonicalValue $Value | ConvertTo-Json -Depth 100 -Compress
+    [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($json))).ToLowerInvariant()
+}
+
+function Read-AttestationStatements([string[]]$Output) {
+    $raw = ($Output -join "`n").Trim()
+    if (-not $raw) { throw "Cosign returned no attestation payload." }
+    foreach ($item in @($raw | ConvertFrom-Json -Depth 100)) {
+        $payload = if ($item.payload) { [string]$item.payload } elseif ($item.dsseEnvelope.payload) { [string]$item.dsseEnvelope.payload } else { $null }
+        if (-not $payload) { continue }
+        [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($payload)) | ConvertFrom-Json -Depth 100
+    }
+}
+
+function Assert-CycloneDxAttestation($Image, [string]$SbomPath) {
+    if ($Image.reference -notmatch '@(sha256:[a-f0-9]{64})$' -or $Matches[1] -ne $Image.digest) {
+        throw "$($Image.name) reference and digest do not match."
+    }
+    $output = @(& cosign verify-attestation --key $CosignPublicKey --type cyclonedx --output json $Image.reference)
+    if ($LASTEXITCODE -ne 0) { throw "SBOM Attestation verification failed for $($Image.name)." }
+    $expectedDigest = ([string]$Image.digest).Substring("sha256:".Length)
+    $localSbom = Get-Content -Raw -LiteralPath $SbomPath | ConvertFrom-Json -Depth 100
+    $localCanonicalHash = Get-JsonCanonicalHash $localSbom
+    $matching = $null
+    foreach ($statement in Read-AttestationStatements $output) {
+        $subjectMatches = @($statement.subject | Where-Object { $_.digest.sha256 -eq $expectedDigest }).Count -gt 0
+        if ($subjectMatches -and $statement.predicateType -match 'cyclonedx|cyclone') { $matching = $statement; break }
+    }
+    if (-not $matching) { throw "No CycloneDX statement targets $($Image.digest)." }
+    if ($matching.predicate.bomFormat -ne "CycloneDX") { throw "$($Image.name) Attestation predicate is not CycloneDX." }
+    $attestedHash = Get-JsonCanonicalHash $matching.predicate
+    if ($attestedHash -ne $localCanonicalHash -or $attestedHash -ne $Image.sbomCanonicalSha256) {
+        throw "$($Image.name) Attestation predicate does not match the canonical SBOM hash."
+    }
+    if ([string]$matching.predicateType -ne [string]$Image.predicateType) {
+        throw "$($Image.name) Attestation Predicate Type does not match the Release Manifest."
+    }
+}
+
 function Read-SchemaJson([string]$Path, [string]$SchemaName) {
     $resolved = Resolve-RequiredFile $Path $SchemaName
     $schema = Join-Path $root "deploy/release/$SchemaName"
@@ -178,6 +236,8 @@ foreach ($image in $manifest.images) {
     $sbom = Resolve-RequiredFile (Join-Path $manifestDirectory $image.sbom) "$($image.name) SBOM"
     $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $sbom).Hash.ToLowerInvariant()
     if ($hash -ne $image.sbomSha256) { throw "$($image.name) SBOM hash does not match Release Manifest." }
+    if (-not $image.attestationVerified -or $image.predicateType -notmatch 'cyclone') { throw "$($image.name) does not declare a verified CycloneDX Attestation." }
+    Assert-CycloneDxAttestation $image $sbom
     Add-Evidence "sbom:$($image.name)" $sbom
 }
 Add-Evidence "release-manifest" $ReleaseManifest

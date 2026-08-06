@@ -136,9 +136,9 @@ M7 只建设现有领域投影：
 | INT-006 | M7-1 | done | IAM-005、RUN-010–013、AGT-010、INT-001–005 | 租户限额、Reservation/Usage Ledger、限流和 Sandbox 资源强制 | 并发、Token、Cost、CPU、内存、PID、磁盘、TTL 无跨租户影响；崩溃后预留可回收 |
 | INT-007 | M7-1 | done | OBS-003、INT-001–006 | 版本化 Runtime Event、幂等 Projector 和业务通知 | 重复/乱序事件不重复通知或回退终态；跳转定位正确业务对象 |
 | INT-008 | M7-1 | done | FND-005、OBS-005–006、REC-001、INT-007 | Trace/Artifact/Message/Report 保留、Dry Run、引用检查和批次清理 | 被 Version/Checkpoint/Evaluation/Session/Comparison 引用的数据不删除；未引用 Message 和 Evaluation 可清理；失败批次、ObjectStore 和 ClickHouse 故障可重试 |
-| INT-009 | M7-2 | in_progress | FND-003–010、INT-001–008 | RC Migration、Schema 兼容、Capability 门禁、滚动升级和应用回滚 | 新旧实例过渡期间状态无损；未知 IR 不被旧 Worker 领取；应用回滚可用 |
+| INT-009 | M7-2 | in_progress | FND-003–010、INT-001–008 | Migration、Schema 兼容、Capability 门禁、Docker Desktop 双阶段滚动升级和应用回滚验收器 | M6→M7 数据保留；M7 Previous→Candidate 过渡期间状态无损；未知 IR 不被旧 Worker 领取；应用回滚可用 |
 | INT-010 | M7-2 | done | RUN-010–013、AGT-008–012、INT-006 | Redis/Worker/Coordinator/ClickHouse/MinIO/OpenSandbox 故障矩阵和生产 RuntimeClass | 最终 MySQL 状态正确；实际 Pod 的 RuntimeClass、CPU/内存/PID/磁盘/TTL、IPv4/IPv6 Egress 和残留检查通过 |
-| INT-011 | M7-2 | in_progress | IAM-007、RES-001、INT-001–010 | Vault/SecretProvider、API Key、Sandbox 凭证撤销、镜像/SBOM/签名和两租户攻击矩阵 | 无跨租户 ID 猜测、Grant 绕过、日志泄密或凭证重放；Sandbox 销毁后 Handle 失效；签名可验证 |
+| INT-011 | M7-2 | in_progress | IAM-007、RES-001、INT-001–010 | Vault/SecretProvider、API Key、Sandbox 凭证撤销、本地 TLS Registry、7 镜像 SBOM/签名/Attestation 和两租户攻击矩阵 | 无跨租户 ID 猜测、Grant 绕过、日志泄密或凭证重放；Sandbox 销毁后 Handle 失效；本地签名链与负向门禁可验证 |
 | INT-012 | M7-3 | in_progress | INT-001–011 | 容量基线、水平扩容、背压、长时间运行和大型 Workflow 测试 | Coordinator/Worker/Gateway/Sandbox/Trace Writer 可独立扩容；队列、SSE、Trace 和配额达到记录的首期基线 |
 | INT-013 | M7-3 | done | STU-015–016、INT-001–012 | 全部正式页面的真实 API、错误/空状态、中文/英文、浅/深主题和桌面无障碍收口 | 无业务 Mock、未实现 Toast、硬编码文案和样式分叉；M6 Studio 交互不被改变 |
 | INT-014 | M7-3 | in_progress | INT-001–013 | 全新集群安装、MVP 十二步、Release Manifest、镜像 Digest/签名、JUnit/HTML/Trace 证据和运维手册 | 追踪矩阵全部 done；`failures=0`、`skipped=0`；安装到业务闭环和回滚可重复通过 |
@@ -183,6 +183,7 @@ INT-001～004 可以并行，但必须复用同一 `ExecutionRuntime` 和 Event 
 - 故障测试至少覆盖 Worker 强退、Coordinator 重启、Redis 中断、ClickHouse 中断、MinIO 延迟、OpenSandbox 超时/残留、Vault 暂不可用和 SSE 断线。
 - 安全矩阵使用两个租户/部门身份验证 Workflow、Execution、Artifact、Grant、Credential Handle、Approval、Application Key 和 Sandbox 网络边界。
 - `scripts/m7-capacity.ps1` 生成版本化容量证据；`scripts/vault-integration.ps1` 生成真实 Vault KV v2 证据；`scripts/m7-release-gate.ps1` 只有在全部业务、容量、故障、安全、升级、隔离和供应链证据通过后才生成最终验收文件。
+- `scripts/m7-local-release-tests.ps1` 使用 `scripts/deploy.ps1 + Kustomize` 完成 INT-009/011 本地验收；Helm 仍只安装 ingress-nginx，不新增 Agentx Chart。真实本地 Run 通过前两项保持 `in_progress`。
 
 ## 9. 发布门禁
 

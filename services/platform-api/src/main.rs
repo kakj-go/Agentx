@@ -14,6 +14,7 @@ mod governance;
 mod grants;
 mod iam;
 mod mcp_control;
+mod migration_command;
 mod models;
 mod models_control;
 mod operations;
@@ -40,10 +41,12 @@ use state::AppState;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let command = env::args().nth(1);
-    if command.as_deref() == Some("openapi") {
-        let path = env::args()
-            .nth(2)
+    let arguments = env::args().skip(1).collect::<Vec<_>>();
+    let command = arguments.first().map(String::as_str);
+    if command == Some("openapi") {
+        let path = arguments
+            .get(1)
+            .cloned()
             .unwrap_or_else(|| "openapi/platform-api.json".to_owned());
         let content = api::openapi_json()?;
         std::fs::write(&path, format!("{content}\n"))
@@ -52,13 +55,21 @@ async fn main() -> Result<()> {
     }
 
     let infrastructure = InfrastructureSettings::from_env()?;
-    if command.as_deref() == Some("doctor-infrastructure") {
+    if command == Some("doctor-infrastructure") {
         doctor_infrastructure(&infrastructure).await?;
         return Ok(());
     }
     let pool = mysql::connect(&infrastructure.mysql).await?;
-    if command.as_deref() == Some("migrate") {
-        mysql::run_migrations(&pool).await?;
+    if command == Some("migrate") {
+        let through = migration_command::parse_migration_upper_bound(&arguments[1..])?;
+        if through.is_none() {
+            migration_command::validate_m7_contract_inputs(&pool).await?;
+        }
+        if let Some(through) = through {
+            mysql::run_migrations_through(&pool, through).await?;
+        } else {
+            mysql::run_migrations(&pool).await?;
+        }
         catalog::reconcile_builtin_catalog(&pool).await?;
         return Ok(());
     }
