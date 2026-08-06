@@ -6,6 +6,7 @@ import { Button } from '../../../shared/ui/button'
 import { Input } from '../../../shared/ui/input'
 import { Select } from '../../../shared/ui/select'
 import { Textarea } from '../../../shared/ui/textarea'
+import { MarkdownEditor } from '../../../shared/ui/markdown-editor'
 import type { JsonSchemaProperty, ResourceOption, UiField } from '../model/types'
 import { CodeEditor } from './code-editor'
 import { ExpressionEditor } from './expression-editor'
@@ -26,14 +27,22 @@ export function ParameterField({ name, schema, ui, value, required, error, param
   if (control === 'boolean') return <div><label className="flex items-center gap-2 text-xs"><input checked={Boolean(value)} className="size-4 accent-primary" onChange={(event) => onChange(event.target.checked)} type="checkbox" /><span>{label}</span></label>{error && <p className="mt-1 text-[10px] text-danger">{error}</p>}</div>
   if (control === 'number') return field(<Input max={schema.maximum} min={schema.minimum} onChange={(event) => onChange(event.target.value === '' ? undefined : Number(event.target.value))} type="number" value={value === undefined ? '' : String(value)} />)
   if (control === 'textarea') return field(<Textarea onChange={(event) => onChange(event.target.value)} value={String(value ?? '')} />)
-  if (control === 'prompt') return field(<CodeEditor height="170px" onChange={onChange} value={String(value ?? '')} />)
+  if (control === 'prompt') return field(<RichPromptControl onChange={onChange} value={String(value ?? '')} />)
   if (control === 'expression') return field(<ExpressionEditor onChange={onChange} value={String(value ?? '')} workflowId={workflowId} />)
   if (control === 'json') return field(<JsonControl fallback={schema.type === 'array' ? EMPTY_JSON_ARRAY : EMPTY_JSON_OBJECT} onChange={onChange} onValidityChange={onValidityChange} value={value} />)
-  if (control === 'code') return field(<CodeEditor height="260px" language={codeLanguage(ui.languageField ? parameters[ui.languageField] : undefined)} onChange={onChange} value={String(value ?? '')} />)
+  if (control === 'code') return field(<CodeControl language={codeLanguage(ui.languageField ? parameters[ui.languageField] : undefined)} onChange={onChange} value={String(value ?? '')} />)
   if (control === 'collection') return field(<CollectionControl itemSchema={schema.items} onChange={onChange} value={value} />)
   if (control === 'fixed_collection') return field(<FixedCollectionControl onChange={onChange} value={value} />)
   if (control === 'mapper') return field(<MapperControl onChange={onChange} value={value} />)
   return field(<Input onChange={(event) => onChange(event.target.value)} value={String(value ?? '')} />)
+}
+
+function RichPromptControl({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+  return <div className="h-[196px] overflow-hidden rounded-md border border-border bg-surface shadow-inner focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/15"><MarkdownEditor onChange={onChange} value={value} /></div>
+}
+
+function CodeControl({ language, value, onChange }: { language: string; value: string; onChange: (value: string) => void }) {
+  return <div className="overflow-hidden rounded-md border border-border bg-canvas shadow-inner focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/15"><div className="flex h-7 items-center justify-between border-b border-border px-2.5 text-[9px] font-medium uppercase tracking-wide text-muted-foreground"><span>{language}</span><span>Source</span></div><CodeEditor height="238px" language={language} onChange={onChange} value={value} /></div>
 }
 
 function JsonControl({ value, fallback, onChange, onValidityChange }: { value: unknown; fallback: unknown; onChange: (value: unknown) => void; onValidityChange?: (valid: boolean) => void }) {

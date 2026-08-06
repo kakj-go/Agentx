@@ -1,6 +1,8 @@
 import { lazy, Suspense, useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { Textarea } from '../../../shared/ui/textarea'
+
 const Monaco = lazy(() => import('@monaco-editor/react'))
 let expressionLanguageRegistered = false
 
@@ -11,7 +13,7 @@ export function CodeEditor({ value, language = 'plaintext', height = '150px', co
   const theme = typeof document !== 'undefined' && document.documentElement.classList.contains('dark') ? 'vs-dark' : 'light'
   const disposable = useRef<{ dispose: () => void }>()
   useEffect(() => () => disposable.current?.dispose(), [])
-  return <Suspense fallback={<div className="grid place-items-center border border-border bg-muted/20 text-[11px] text-muted-foreground" style={{ height }}>{t('studio.editorLoading')}</div>}><Monaco beforeMount={(monaco) => {
+  return <Suspense fallback={<div className="border border-border bg-muted/20 p-1"><Textarea aria-label={t('studio.editorFallback')} className="resize-none border-0 bg-transparent font-mono text-xs focus-visible:ring-0" onChange={(event) => onChange(event.target.value)} style={{ height }} value={value} /></div>}><Monaco beforeMount={(monaco) => {
     if (language === 'agentx-expression' && !expressionLanguageRegistered) {
       monaco.languages.register({ id: 'agentx-expression' })
       monaco.languages.setMonarchTokensProvider('agentx-expression', { tokenizer: { root: [[/\$[a-zA-Z][\w]*/, 'variable'], [/'[^']*'|"[^"]*"/, 'string'], [/\b\d+(?:\.\d+)?\b/, 'number'], [/[a-zA-Z_]\w*(?=\()/, 'function']] } })

@@ -16,7 +16,7 @@
 
 实现 Model、MCP Tool、Skill、LightRAG、Mem0、Agent Tool Loop、成本、循环控制和 OpenSandbox Runner。不实现插件市场、任意未授权外网访问或在 Worker 直接运行动态代码。Sandbox Profile 与 OpenSandbox Connection 是独立资源，不复用 MCP Server、连接测试或 Tool Policy。首个可验收模型协议为 `openai_compatible`；`custom_http` 在版本化请求/响应映射契约冻结前不得作为可运行 Provider 暴露。
 
-M5 的 OpenSandbox 必需子集为 create/get/kill、Endpoint、Command SSE、interrupt、文件上传/下载、Metrics 和网络策略。Python、JavaScript、Shell 以及首期 Browser Runner 统一通过 execd Command API 和固定 digest 镜像执行；完整 Jupyter Context、PTY WebSocket、Pool、Snapshot 和交互式浏览器会话延期，不属于 AGT-008～009 完成门禁。
+M5 的 OpenSandbox 必需子集为 create/get/kill、Endpoint、Command SSE、interrupt、文件上传/下载、Metrics 和网络策略。Python、JavaScript、Shell 以及首期 Browser Runner 统一通过 execd Command API 和 Sandbox Profile 指定的镜像 tag 执行；完整 Jupyter Context、PTY WebSocket、Pool、Snapshot 和交互式浏览器会话延期，不属于 AGT-008～009 完成门禁。
 
 ## 4. 领域对象、状态和不变量
 
@@ -86,7 +86,7 @@ AGT-008 的前置协议门禁必须先完成，且不新增原子任务编号：
 - Provider 流中断保存部分输出和明确错误，不伪装为完整回复。
 - Tool 副作用重试遵循阶段 09 的 Side Effect Policy。
 - Agent State 大对象通过 Artifact 引用，重复调用指纹基于标准化 Tool 名称和参数。
-- Sandbox 默认拒绝未声明网络，使用固定 digest 模板和只读基础镜像。
+- Sandbox 默认拒绝未声明网络，使用 Sandbox Profile 指定的镜像 tag 和只读基础镜像；tag 由 Profile Version 固化，生产环境的不可变性由受控 Registry、镜像签名或发布流程保证。
 - 短期 Credential 限定资源、操作、Execution 和 TTL，Sandbox 销毁后立即失效。
 - OpenSandbox 不可用只影响需要 Sandbox 的节点，不能使 Coordinator 状态不一致。
 - Lifecycle 返回的 Endpoint 视为不可信输入，必须先完成 URL/Origin/Host/Port/Header 校验；API Key 与 execd Token 不得被日志、重定向或错误正文带出。

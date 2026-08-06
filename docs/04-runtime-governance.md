@@ -249,7 +249,7 @@ SSE、取消和重试边界：
 安全基线：
 
 - 创建请求默认 `networkPolicy.defaultAction=deny`，只允许节点声明且经 Workflow Grant 校验的域名或 CIDR。
-- 基础镜像固定 digest，默认只读；临时写入只进入受限工作目录，输出通过 Artifact 收集。
+- 基础镜像使用 Sandbox Profile 指定的镜像 tag，默认只读；临时写入只进入受限工作目录，输出通过 Artifact 收集。tag 不提供 digest 级别的不可变性，生产环境应通过受控 Registry、镜像签名或发布流程保证 tag 不被静默改写。
 - CPU、内存、进程数、磁盘、TTL 和租户并发在 Agentx 与 OpenSandbox 两侧同时限制。
 - Credential 优先通过 OpenSandbox Credential Vault 或 Agentx 短期凭证代理注入，不得进入命令行、stdout、stderr、Trace 或持久镜像。
 - Sandbox 完成、超时、取消、Worker 失联或 Lease 过期时都必须幂等终止；回收失败进入 Reaper，不得把节点标记为虚假成功。

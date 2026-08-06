@@ -16,7 +16,7 @@ M5 完成后，平台必须能够：
 
 M5 不实现插件市场、任意未授权外网访问、Worker 进程内动态代码执行、生产强隔离基础设施的安装自动化或所有模型 Provider 的私有协议兼容。`openai_compatible` 是首个可验收 Model Provider；`custom_http` 在版本化请求/响应映射契约冻结前必须保持不可运行且明确返回 `RUNTIME_UNAVAILABLE`。
 
-OpenSandbox 首期只承诺 create/get/kill、Endpoint、Command SSE、interrupt、文件上传/下载、Metrics 和网络策略。Python、JavaScript、Shell 及 Browser 首期都通过固定 digest 镜像中的 execd Command API；完整 Jupyter Context、PTY WebSocket、Pool、Snapshot 和交互式浏览器会话延期。
+OpenSandbox 首期只承诺 create/get/kill、Endpoint、Command SSE、interrupt、文件上传/下载、Metrics 和网络策略。Python、JavaScript、Shell 及 Browser 首期都通过 Sandbox Profile 指定 tag 镜像中的 execd Command API；完整 Jupyter Context、PTY WebSocket、Pool、Snapshot 和交互式浏览器会话延期。
 
 ## 2. 进入检查（已完成）
 

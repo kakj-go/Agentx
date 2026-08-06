@@ -22,6 +22,8 @@ Thumbs.db
 # Local Kubernetes and artifacts
 *.log
 *.pid
+platform-api-test.out
+platform-api-test.err
 .local/
 /artifacts/
 apps/web/src/assets/hero.png

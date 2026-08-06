@@ -103,13 +103,17 @@ async function choose(page: Page, scope: Locator, option: string | RegExp) {
 }
 
 async function fillMonaco(page: Page, scope: Locator, value: string) {
-  const editor = scope.getByRole('textbox', { name: 'Editor content' })
+  const monaco = scope.getByRole('textbox', { name: 'Editor content' })
+  const editor = (await monaco.count()) ? monaco : scope.locator('[contenteditable="true"]').first()
   await expect(editor).toBeVisible({ timeout: 30_000 })
   await editor.focus()
   await expect(editor).toBeFocused()
   await page.keyboard.press('Control+A')
   await page.keyboard.insertText(value)
-  await expect.poll(async () => (await scope.locator('.view-lines').textContent())?.replaceAll('\u00a0', ' ')).toContain(value.split('\n')[0])
+  await expect.poll(async () => {
+    const lines = await scope.locator('.view-lines').textContent()
+    return (lines ?? await editor.textContent())?.replaceAll('\u00a0', ' ')
+  }).toContain(value.split('\n')[0])
 }
 
 async function saveAndReadDraft(page: Page, token: string, workflowId: string) {

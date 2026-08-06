@@ -1,7 +1,7 @@
 param(
     [string]$OpenSandboxEndpoint = "http://127.0.0.1:18080",
     [string]$OpenSandboxApiKey = "agentx-local-opensandbox-key",
-    [string]$OpenSandboxImage = "opensandbox/code-interpreter@sha256:133a3c1720dd52291a019740c2987e7164ea6de79e23d8198798e58950ae2e6e",
+    [string]$OpenSandboxImage = "opensandbox/code-interpreter:latest",
     [string]$SourceRoot,
     [string]$ResultsPath,
     [switch]$SkipRustTests

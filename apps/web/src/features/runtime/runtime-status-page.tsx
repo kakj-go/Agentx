@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Box, Boxes, CircleGauge, Play, Save, ShieldCheck, Trash2 } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { apiRequest, jsonBody } from '../../shared/api/client'
@@ -34,10 +34,10 @@ export function RuntimeStatusPage() {
     <section className="mt-6 grid grid-cols-2 overflow-hidden rounded-lg border border-border bg-surface lg:grid-cols-4"><MetricCard label={t('dashboard.metrics.running')} value={String(status.data?.running ?? 0)} /><MetricCard label={t('common.waiting')} value={String(status.data?.waiting ?? 0)} /><MetricCard label={t('m3.failedToday')} value={String(status.data?.failedToday ?? 0)} /><MetricCard label={t('m5.activeSandboxes')} value={String(status.data?.activeSandboxes ?? 0)} /></section>
     <Card className="mt-5 overflow-hidden"><SectionTitle icon={<Boxes className="size-4 text-primary" />} title={t('m3.runtimeComponents')} /><div className="divide-y divide-border">{status.data?.components.map((component) => <div className="grid gap-2 px-5 py-4 text-xs sm:grid-cols-[minmax(180px,1fr)_120px_120px_220px] sm:items-center" key={component.component}><span className="flex items-center gap-2 font-medium"><CircleGauge className="size-4 text-muted-foreground" />{component.component}</span><Badge className="w-fit" tone={component.status === 'ready' ? 'success' : component.status === 'unknown' ? 'neutral' : 'warning'}>{component.status}</Badge><span>{component.instances ?? '—'} {t('m3.instances')}</span><span className="text-muted-foreground">{component.lastHeartbeat ? new Date(component.lastHeartbeat).toLocaleString() : t('m3.noHeartbeat')}</span></div>)}</div></Card>
     <div className="mt-5 grid gap-5 xl:grid-cols-2">
-      <Card className="overflow-hidden"><SectionTitle icon={<CircleGauge className="size-4 text-primary" />} title={t('m7.runtimeQuotas')} /><div className="divide-y divide-border">{quotas.data?.map((policy) => <QuotaRow key={policy.dimension} onSave={(value) => updateQuota.mutate({ ...policy, hardLimit: value })} pending={updateQuota.isPending} policy={policy} />)}</div></Card>
-      <Card className="overflow-hidden"><SectionTitle icon={<ShieldCheck className="size-4 text-primary" />} title={t('m7.workerCapabilities')} /><div className="divide-y divide-border">{capabilities.data?.map((capability) => <div className="grid gap-2 px-5 py-3 text-xs sm:grid-cols-[minmax(0,1fr)_110px_120px]" key={`${capability.instanceId}-${capability.capability}`}><span className="truncate"><strong>{capability.instanceId}</strong><span className="mt-1 block text-[10px] text-muted-foreground">{capability.capability} · IR {JSON.stringify(capability.irSchemaVersions)}</span></span><Badge className="w-fit" tone={capability.status === 'ready' ? 'success' : 'warning'}>{capability.status}</Badge><span className="text-muted-foreground">{capability.nodeProtocolVersion}</span></div>)}</div></Card>
+      <Card className="overflow-hidden"><SectionTitle icon={<CircleGauge className="size-4 text-primary" />} title={t('m7.runtimeQuotas')} /><p className="border-b border-border px-5 py-3 text-xs text-muted-foreground">{t('runtimeGovernance.quotaDescription')}</p><div className="divide-y divide-border">{quotas.data?.map((policy) => <QuotaRow key={policy.dimension} onSave={(value) => updateQuota.mutate({ ...policy, hardLimit: value })} pending={updateQuota.isPending} policy={policy} t={t} />)}</div></Card>
+      <WorkerCapabilitiesCard capabilities={capabilities.data ?? []} t={t} />
     </div>
-    <Card className="mt-5 overflow-hidden"><div className="flex items-center border-b border-border px-5 py-4"><h2 className="flex items-center gap-2 text-sm font-semibold"><Trash2 className="size-4 text-primary" />{t('m7.retention')}</h2><div className="ml-auto flex gap-2"><Button disabled={createRetention.isPending} onClick={() => createRetention.mutate(true)} size="sm" variant="secondary"><Play className="size-3.5" />{t('m7.dryRun')}</Button><Button disabled={createRetention.isPending} onClick={() => setConfirmCleanup(true)} size="sm" variant="danger"><Trash2 className="size-3.5" />{t('m7.cleanup')}</Button></div></div><div className="grid min-h-48 lg:grid-cols-[minmax(300px,0.8fr)_minmax(0,1.2fr)]"><div className="border-r border-border">{retention.data?.map((run) => <button className={`grid w-full grid-cols-[1fr_auto] gap-2 border-b border-border px-5 py-3 text-left text-xs hover:bg-muted/50 ${selectedRun === run.id ? 'bg-primary/5' : ''}`} key={run.id} onClick={() => setSelectedRun(run.id)} type="button"><span><strong>{run.dryRun ? t('m7.dryRun') : t('m7.cleanup')}</strong><span className="mt-1 block text-[10px] text-muted-foreground">{new Date(run.createdAt).toLocaleString()} · {run.candidateCount}/{run.deletedCount}</span></span><Badge tone={run.status === 'completed' ? 'success' : run.status === 'failed' ? 'danger' : 'warning'}>{run.status}</Badge></button>)}</div><div className="max-h-80 overflow-auto divide-y divide-border">{items.data?.map((item) => <div className="grid gap-2 px-5 py-3 text-[11px] sm:grid-cols-[150px_minmax(0,1fr)_100px]" key={item.id}><span>{item.dataType}</span><span className="truncate text-muted-foreground" title={item.targetId}>{item.targetId}{item.reason ? ` · ${item.reason}` : ''}</span><Badge className="w-fit" tone={item.status === 'deleted' ? 'success' : item.status === 'blocked' || item.status === 'failed' ? 'danger' : 'neutral'}>{item.status}</Badge></div>)}</div></div></Card>
+    <Card className="mt-5 overflow-hidden"><div className="flex items-center border-b border-border px-5 py-4"><h2 className="flex items-center gap-2 text-sm font-semibold"><Trash2 className="size-4 text-primary" />{t('m7.retention')}</h2><div className="ml-auto flex gap-2"><Button disabled={createRetention.isPending} onClick={() => createRetention.mutate(true)} size="sm" variant="secondary"><Play className="size-3.5" />{t('m7.dryRun')}</Button><Button disabled={createRetention.isPending} onClick={() => setConfirmCleanup(true)} size="sm" variant="danger"><Trash2 className="size-3.5" />{t('m7.cleanup')}</Button></div></div><p className="border-b border-border px-5 py-3 text-xs text-muted-foreground">{t('runtimeGovernance.retentionDescription')}</p><div className="grid min-h-48 lg:grid-cols-[minmax(300px,0.8fr)_minmax(0,1.2fr)]"><div className="border-r border-border">{retention.data?.map((run) => <button className={`grid w-full grid-cols-[1fr_auto] gap-2 border-b border-border px-5 py-3 text-left text-xs hover:bg-muted/50 ${selectedRun === run.id ? 'bg-primary/5' : ''}`} key={run.id} onClick={() => setSelectedRun(run.id)} type="button"><span><strong>{run.dryRun ? t('m7.dryRun') : t('m7.cleanup')}</strong><span className="mt-1 block text-[10px] text-muted-foreground">{new Date(run.createdAt).toLocaleString()} · {run.candidateCount} / {run.deletedCount}</span></span><Badge tone={run.status === 'completed' ? 'success' : run.status === 'failed' ? 'danger' : 'warning'}>{t(`runtimeGovernance.runStatus.${run.status}`, { defaultValue: run.status })}</Badge></button>)}</div><div className="max-h-80 overflow-auto divide-y divide-border">{items.data?.map((item) => <div className="grid gap-2 px-5 py-3 text-[11px] sm:grid-cols-[150px_minmax(0,1fr)_100px]" key={item.id}><span>{t(`m7.retentionDataType.${item.dataType}`, { defaultValue: item.dataType })}</span><span className="truncate text-muted-foreground" title={item.targetId}>{item.targetId}{item.reason ? ` · ${item.reason}` : ''}</span><Badge className="w-fit" tone={item.status === 'deleted' ? 'success' : item.status === 'blocked' || item.status === 'failed' ? 'danger' : 'neutral'}>{t(`m7.retentionStatus.${item.status}`, { defaultValue: item.status })}</Badge></div>)}</div></div></Card>
     {status.data?.sandboxCompatibility !== undefined && <Card className="mt-5 p-5"><div className="flex items-center gap-2"><ShieldCheck className="size-4 text-primary" /><h2 className="text-sm font-semibold">{t('m5.sandboxCompatibility')}</h2><Badge className="ml-auto" tone="primary"><Box className="mr-1 size-3" />OpenSandbox</Badge></div><pre className="mt-4 overflow-auto rounded-md bg-muted p-3 text-[11px] leading-5">{JSON.stringify(status.data.sandboxCompatibility, null, 2)}</pre></Card>}
     <ConfirmDialog cancelLabel={t('common.cancel')} confirmLabel={t('m7.cleanup')} description={t('m7.cleanupConfirmation')} onClose={() => setConfirmCleanup(false)} onConfirm={() => createRetention.mutateAsync(false).then(() => undefined)} open={confirmCleanup} pending={createRetention.isPending} title={t('m7.cleanup')} />
   </PageContainer>
@@ -45,8 +45,62 @@ export function RuntimeStatusPage() {
 
 function SectionTitle({ icon, title }: { icon: React.ReactNode; title: string }) { return <div className="border-b border-border px-5 py-4"><h2 className="flex items-center gap-2 text-sm font-semibold">{icon}{title}</h2></div> }
 
-function QuotaRow({ policy, pending, onSave }: { policy: QuotaPolicy; pending: boolean; onSave: (value: string) => void }) {
-  const [value, setValue] = useState(policy.hardLimit)
-  useEffect(() => setValue(policy.hardLimit), [policy.hardLimit])
-  return <div className="grid items-center gap-3 px-5 py-3 text-xs sm:grid-cols-[minmax(150px,1fr)_100px_120px_36px]"><span><strong>{policy.dimension}</strong><span className="mt-1 block text-[10px] text-muted-foreground">{policy.periodUsage} used · {policy.activeReserved} reserved</span></span><Input aria-label={policy.dimension} className="h-8" onChange={(event) => setValue(event.target.value)} value={value} /><span className="text-muted-foreground">{policy.periodSeconds ? `${policy.periodSeconds}s` : 'concurrent'}</span><Button aria-label="Save quota" disabled={pending || value === policy.hardLimit} onClick={() => onSave(value)} size="icon" variant="ghost"><Save className="size-3.5" /></Button></div>
+function QuotaRow({ policy, pending, onSave, t }: { policy: QuotaPolicy; pending: boolean; onSave: (value: string) => void; t: (key: string, options?: Record<string, unknown>) => string }) {
+  const config = quotaCopy(policy.dimension, t)
+  const [value, setValue] = useState(formatQuotaValue(policy.hardLimit, policy.dimension))
+  useEffect(() => setValue(formatQuotaValue(policy.hardLimit, policy.dimension)), [policy.hardLimit, policy.dimension])
+  const submitValue = parseQuotaValue(value, policy.dimension)
+  return <div className="grid items-center gap-3 px-5 py-3 text-xs sm:grid-cols-[minmax(180px,1fr)_100px_90px_120px_36px]"><span><strong>{config.label}</strong><span className="mt-1 block text-[10px] text-muted-foreground">{t('runtimeGovernance.used')} {formatQuotaValue(policy.periodUsage, policy.dimension)} {config.unit} · {t('runtimeGovernance.reserved')} {formatQuotaValue(policy.activeReserved, policy.dimension)} {config.unit}</span></span><Input aria-label={config.label} className="h-8" onChange={(event) => setValue(event.target.value)} step={quotaStep(policy.dimension)} type="number" value={value} /><span className="text-muted-foreground">{config.unit}</span><span className="text-muted-foreground">{periodLabel(policy.periodSeconds, config.period)}</span><Button aria-label={`${t('common.save')} ${config.label}`} disabled={pending || submitValue === policy.hardLimit} onClick={() => onSave(submitValue)} size="icon" variant="ghost"><Save className="size-3.5" /></Button></div>
+}
+
+function quotaCopy(dimension: string, t: (key: string, options?: Record<string, unknown>) => string) {
+  return { label: t(`m7.quota.${dimension}.label`, { defaultValue: dimension }), unit: t(`m7.quota.${dimension}.unit`, { defaultValue: '' }), period: t(`m7.quota.${dimension}.period`, { defaultValue: '' }) }
+}
+
+function quotaScale(dimension: string) {
+  if (dimension === 'cpu_millis') return 1000
+  if (dimension === 'memory_bytes' || dimension === 'disk_bytes' || dimension === 'artifact_bytes') return 1024 ** 3
+  if (dimension === 'ttl_seconds') return 3600
+  return 1
+}
+
+function trimDecimal(value: number) {
+  return value.toFixed(6).replace(/\.?0+$/, '') || '0'
+}
+
+function formatQuotaValue(value: string, dimension: string) {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? trimDecimal(parsed / quotaScale(dimension)) : value
+}
+
+function parseQuotaValue(value: string, dimension: string) {
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed) || parsed < 0) return value
+  return String(Math.round(parsed * quotaScale(dimension)))
+}
+
+function quotaStep(dimension: string) {
+  return quotaScale(dimension) === 1 ? 1 : 0.001
+}
+
+function periodLabel(seconds: number | null | undefined, fallback: string) {
+  if (!seconds) return fallback
+  if (seconds === 86_400) return fallback
+  if (seconds % 3600 === 0) return `${seconds / 3600}h`
+  if (seconds % 60 === 0) return `${seconds / 60}m`
+  return `${seconds}s`
+}
+
+function WorkerCapabilitiesCard({ capabilities, t }: { capabilities: WorkerCapability[]; t: (key: string, options?: Record<string, unknown>) => string }) {
+  const grouped = useMemo(() => {
+    const groups = new Map<string, { capability: string; count: number; ready: boolean }>()
+    for (const item of capabilities) {
+      const current = groups.get(item.capability) ?? { capability: item.capability, count: 0, ready: false }
+      current.count += 1
+      current.ready ||= item.status === 'ready'
+      groups.set(item.capability, current)
+    }
+    return [...groups.values()].sort((left, right) => left.capability.localeCompare(right.capability))
+  }, [capabilities])
+  return <Card className="overflow-hidden"><SectionTitle icon={<ShieldCheck className="size-4 text-primary" />} title={t('m7.workerCapabilities')} /><p className="border-b border-border px-5 py-3 text-xs text-muted-foreground">{t('runtimeGovernance.capabilityDescription')}</p><div className="divide-y divide-border">{grouped.map((item) => <div className="grid gap-2 px-5 py-3 text-xs sm:grid-cols-[minmax(0,1fr)_150px_120px]" key={item.capability}><span className="font-medium">{t(`m7.capability.${item.capability}`, { defaultValue: item.capability })}</span><span className="text-muted-foreground">{t('runtimeGovernance.workerCount', { count: item.count })}</span><Badge className="w-fit" tone={item.ready ? 'success' : 'warning'}>{t(`m7.capabilityStatus.${item.ready ? 'ready' : 'unavailable'}`, { defaultValue: item.ready ? 'ready' : 'unavailable' })}</Badge></div>)}</div></Card>
 }

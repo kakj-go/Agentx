@@ -105,6 +105,49 @@ button:disabled {
   fill: currentColor !important;
 }
 
+/* Studio nodes use shape and colour as a quick port-level visual language. */
+.studio-node-trigger {
+  border-radius: 18px;
+  border-left-width: 3px;
+  border-left-color: var(--ui-success);
+}
+
+.studio-node-flow {
+  border-radius: 10px;
+  border-top: 3px solid var(--ui-warning);
+}
+
+.studio-node-branch {
+  border-radius: 28px 8px 28px 8px;
+  border-color: color-mix(in srgb, var(--ui-warning) 65%, var(--ui-border));
+  border-width: 1px 3px;
+}
+
+.studio-node-agent {
+  border-radius: 12px;
+  border-left: 4px solid var(--ui-primary);
+}
+
+.studio-node-ai {
+  border-radius: 12px;
+  border-top: 3px solid var(--ui-primary);
+}
+
+.studio-node-data {
+  border-radius: 6px;
+  border-bottom: 3px solid var(--ui-success);
+}
+
+.studio-node-code {
+  border-radius: 6px;
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--ui-danger) 55%, var(--ui-border));
+}
+
+.studio-node-attachment {
+  border-radius: 14px;
+}
+
 .agentx-markdown-editor {
   --accentBase: color-mix(in srgb, var(--ui-primary) 4%, var(--ui-surface));
   --accentBgSubtle: color-mix(in srgb, var(--ui-primary) 8%, var(--ui-surface));

@@ -120,11 +120,11 @@ export function SkillDetailPage() {
     showToast(t('m2.publishedWorkspace'))
   }
   const editSkill = async (values: Record<string, string>) => {
-    await apiRequest(`/skills/${id}`, { method: 'PATCH', body: jsonBody({ name: values.name, description: skill.data?.description ?? null, status: skill.data?.status, version: skill.data?.version }) })
+    await apiRequest(`/skills/${id}`, { method: 'PATCH', body: jsonBody({ name: values.name, alias: values.alias, description: skill.data?.description ?? null, status: skill.data?.status, version: skill.data?.version }) })
     await refresh()
   }
   const toggle = useMutation({
-    mutationFn: () => apiRequest(`/skills/${id}`, { method: 'PATCH', body: jsonBody({ name: skill.data?.name, description: skill.data?.description ?? null, status: skill.data?.status === 'active' ? 'disabled' : 'active', version: skill.data?.version }) }),
+    mutationFn: () => apiRequest(`/skills/${id}`, { method: 'PATCH', body: jsonBody({ name: skill.data?.name, alias: skill.data?.alias, description: skill.data?.description ?? null, status: skill.data?.status === 'active' ? 'disabled' : 'active', version: skill.data?.version }) }),
     onSuccess: refresh,
     onError: (error: Error) => showToast(error.message),
   })
@@ -151,7 +151,7 @@ export function SkillDetailPage() {
   if (skill.error || workspace.error || !skill.data || !workspace.data) return <PageContainer><p className="text-sm text-danger">{String(skill.error ?? workspace.error ?? t('m2.loadFailed'))}</p></PageContainer>
   return <PageContainer className="max-w-none">
     <PageHeader action={actions} description={skill.data.description ?? t('pages.skills.description')} title={skill.data.name} />
-    <div className="mt-3 flex items-center gap-3 text-xs text-muted-foreground"><StatusBadge status={skill.data.status === 'active' ? 'active' : skill.data.status === 'draft' ? 'draft' : 'inactive'} /><span>{t('m2.workspaceRevision', { revision: workspace.data.revision })}</span><span>{workspace.data.entries.length} {t('m2.entries')}</span></div>
+    <div className="mt-3 flex items-center gap-3 text-xs text-muted-foreground"><StatusBadge status={skill.data.status === 'active' ? 'active' : skill.data.status === 'draft' ? 'draft' : 'inactive'} /><span>{t('m2.alias')}: {skill.data.alias}</span><span>{t('m2.workspaceRevision', { revision: workspace.data.revision })}</span><span>{workspace.data.entries.length} {t('m2.entries')}</span></div>
     <div className="mt-5 grid h-[calc(100vh-250px)] min-h-[560px] grid-cols-[260px_minmax(0,1fr)_300px] overflow-hidden rounded-lg border border-border bg-surface">
       <aside className="flex min-h-0 flex-col border-r border-border">
         <div className="flex h-12 items-center gap-1 border-b border-border px-3"><span className="text-xs font-semibold">{t('m2.files')}</span><div className="flex-1" />{auth.hasPermission('skill:manage') && <><Button aria-label={t('m2.newFolder')} onClick={() => { setCreateKind('directory'); setDialog('create') }} size="icon" variant="ghost"><FolderPlus className="size-4" /></Button><Button aria-label={t('m2.newMarkdown')} onClick={() => { setCreateKind('file'); setDialog('create') }} size="icon" variant="ghost"><FilePlus2 className="size-4" /></Button><Button aria-label={t('m2.uploadFile')} onClick={() => fileInput.current?.click()} size="icon" variant="ghost"><Upload className="size-4" /></Button></>}</div>
@@ -178,7 +178,7 @@ export function SkillDetailPage() {
     {dialog === 'move' && selected && <EntityFormDialog cancelLabel={t('common.cancel')} fields={[{ name: 'name', label: t('common.name'), defaultValue: selected.name, required: true }, parentField(directories.filter((entry) => !entry.path.startsWith(`${selected.path}/`) && entry.id !== selected.id), t, selected.parentId)]} onClose={() => setDialog(undefined)} onSubmit={moveEntry} open submitLabel={t('common.save')} title={t('m2.moveRename')} />}
     {dialog === 'reference' && <EntityFormDialog cancelLabel={t('common.cancel')} fields={[{ name: 'file', label: t('m2.referenceTarget'), type: 'select', required: true, options: files.map((entry) => ({ value: entry.id, label: entry.path })) }]} onClose={() => setDialog(undefined)} onSubmit={insertReference} open submitLabel={t('m2.insertReference')} title={t('m2.insertReference')} />}
     {dialog === 'publish' && <EntityFormDialog cancelLabel={t('common.cancel')} fields={[{ name: 'dependencies', label: t('m2.dependencies'), type: 'textarea', defaultValue: '[]' }]} onClose={() => setDialog(undefined)} onSubmit={publish} open submitLabel={t('m2.publish')} title={t('m2.publishWorkspace')} />}
-    {dialog === 'edit' && <EntityFormDialog cancelLabel={t('common.cancel')} fields={[{ name: 'name', label: t('common.name'), defaultValue: skill.data.name, required: true }]} onClose={() => setDialog(undefined)} onSubmit={editSkill} open submitLabel={t('common.save')} title={t('m2.editSkill')} />}
+    {dialog === 'edit' && <EntityFormDialog cancelLabel={t('common.cancel')} fields={[{ name: 'name', label: t('common.name'), defaultValue: skill.data.name, required: true }, { name: 'alias', label: t('m2.alias'), defaultValue: skill.data.alias, required: true }]} onClose={() => setDialog(undefined)} onSubmit={editSkill} open submitLabel={t('common.save')} title={t('m2.editSkill')} />}
     <Dialog onOpenChange={setDeleteOpen} open={deleteOpen}><DialogContent title={t('m2.deleteEntry')}><div className="p-5"><h2 className="text-sm font-semibold">{t('m2.deleteEntry')}</h2><p className="mt-2 text-xs text-muted-foreground">{t('m2.deleteEntryConfirm', { path: selected?.path })}</p><div className="mt-5 flex justify-end gap-2"><Button onClick={() => setDeleteOpen(false)} variant="ghost">{t('common.cancel')}</Button><Button disabled={remove.isPending} onClick={() => remove.mutate()} variant="danger">{t('m2.deleteEntry')}</Button></div></div></DialogContent></Dialog>
   </PageContainer>
 }

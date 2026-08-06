@@ -304,7 +304,7 @@ async fn skill_runtime_rechecks_revoked_grants_and_rejects_cross_tenant_contexts
         resource_version_id: Some(Uuid::now_v7()),
         operation: ResourceOperation::Use,
     };
-    sqlx::query("INSERT INTO skills(id,tenant_id,name,owner_department_id,status,created_by) VALUES(?,?,'Runtime Skill',?,'active',?)")
+    sqlx::query("INSERT INTO skills(id,tenant_id,name,alias,owner_department_id,status,created_by) VALUES(?,?, 'Runtime Skill','runtime-skill',?,'active',?)")
         .bind(reference.resource_id)
         .bind(ids.tenant)
         .bind(ids.department)

@@ -199,6 +199,7 @@ async function createSkillWorkspace(page: Page) {
   await page.getByRole('button', { name: '新建 Skill' }).click()
   const create = await dialog(page, '新建 Skill')
   await (await field(create, '名称')).fill('Workspace Skill')
+  await (await field(create, 'Alias')).fill('workspace-skill')
   await (await field(create, '描述')).fill('Managed entirely in the browser')
   await select(create, '所属部门', company)
   await submit(create, '保存')
@@ -209,6 +210,12 @@ async function createSkillWorkspace(page: Page) {
   await skillDescription.fill('Build browser-managed reusable instructions')
   await page.getByRole('button', { name: '保存', exact: true }).last().click()
   await expect(page.getByText('Build browser-managed reusable instructions', { exact: true })).toBeVisible()
+
+  await page.getByRole('button', { name: '编辑' }).click()
+  const edit = await dialog(page, '编辑 Skill')
+  await (await field(edit, 'Alias')).fill('workspace-skill-updated')
+  await submit(edit, '保存')
+  await expect(page.getByText('Alias: workspace-skill-updated', { exact: true })).toBeVisible()
 
   await page.getByRole('button', { name: '新建目录' }).click()
   const folder = await dialog(page, '新建目录')

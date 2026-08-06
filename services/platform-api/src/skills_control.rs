@@ -48,6 +48,7 @@ pub struct SkillListQuery {
 pub struct SkillResponse {
     pub id: Uuid,
     pub name: String,
+    pub alias: String,
     pub description: Option<String>,
     pub owner_department_id: Uuid,
     pub status: String,
@@ -63,6 +64,7 @@ pub type SkillPage = PageResponse<SkillResponse>;
 #[serde(rename_all = "camelCase")]
 pub struct CreateSkillRequest {
     pub name: String,
+    pub alias: String,
     pub description: String,
     pub owner_department_id: Uuid,
 }
@@ -70,6 +72,7 @@ pub struct CreateSkillRequest {
 #[serde(rename_all = "camelCase")]
 pub struct UpdateSkillRequest {
     pub name: String,
+    pub alias: String,
     pub description: Option<String>,
     pub status: String,
     pub version: u64,
@@ -179,7 +182,7 @@ pub struct ArtifactUploadResponse {
     pub revision: u64,
 }
 
-const SKILL_COLUMNS: &str = "s.id,s.name,s.description,s.owner_department_id,s.status,s.draft_revision,s.version,s.updated_at,(SELECT version_number FROM skill_versions sv WHERE sv.skill_id=s.id ORDER BY version_number DESC LIMIT 1) latest_version,(SELECT COUNT(*) FROM resource_grants rg WHERE rg.tenant_id=s.tenant_id AND rg.resource_type='skill' AND rg.resource_id=s.id AND rg.subject_type='workflow_service_identity') grant_count,COUNT(*) OVER() total_count";
+const SKILL_COLUMNS: &str = "s.id,s.name,s.alias,s.description,s.owner_department_id,s.status,s.draft_revision,s.version,s.updated_at,(SELECT version_number FROM skill_versions sv WHERE sv.skill_id=s.id ORDER BY version_number DESC LIMIT 1) latest_version,(SELECT COUNT(*) FROM resource_grants rg WHERE rg.tenant_id=s.tenant_id AND rg.resource_type='skill' AND rg.resource_id=s.id AND rg.subject_type='workflow_service_identity') grant_count,COUNT(*) OVER() total_count";
 
 #[utoipa::path(get, path = "/api/v1/skills")]
 pub async fn list_skills(
@@ -194,11 +197,11 @@ pub async fn list_skills(
     let status = query.status.unwrap_or_default();
     let sql = if actor.company_admin {
         format!(
-            "SELECT {SKILL_COLUMNS} FROM skills s WHERE s.tenant_id=? AND (?='' OR s.status=?) AND (?='%%' OR s.name LIKE ?) ORDER BY s.updated_at DESC LIMIT ? OFFSET ?"
+            "SELECT {SKILL_COLUMNS} FROM skills s WHERE s.tenant_id=? AND (?='' OR s.status=?) AND (?='%%' OR s.name LIKE ? OR s.alias LIKE ?) ORDER BY s.updated_at DESC LIMIT ? OFFSET ?"
         )
     } else {
         format!(
-            "SELECT {SKILL_COLUMNS} FROM skills s WHERE s.tenant_id=? AND EXISTS(SELECT 1 FROM user_roles ur JOIN department_closure dc ON dc.ancestor_id=ur.scope_department_id AND dc.tenant_id=ur.tenant_id WHERE ur.user_id=? AND ur.tenant_id=s.tenant_id AND dc.descendant_id=s.owner_department_id) AND (?='' OR s.status=?) AND (?='%%' OR s.name LIKE ?) ORDER BY s.updated_at DESC LIMIT ? OFFSET ?"
+            "SELECT {SKILL_COLUMNS} FROM skills s WHERE s.tenant_id=? AND EXISTS(SELECT 1 FROM user_roles ur JOIN department_closure dc ON dc.ancestor_id=ur.scope_department_id AND dc.tenant_id=ur.tenant_id WHERE ur.user_id=? AND ur.tenant_id=s.tenant_id AND dc.descendant_id=s.owner_department_id) AND (?='' OR s.status=?) AND (?='%%' OR s.name LIKE ? OR s.alias LIKE ?) ORDER BY s.updated_at DESC LIMIT ? OFFSET ?"
         )
     };
     let mut q = sqlx::query(&sql).bind(actor.tenant_id);
@@ -208,6 +211,7 @@ pub async fn list_skills(
     let rows = q
         .bind(&status)
         .bind(&status)
+        .bind(&search)
         .bind(&search)
         .bind(&search)
         .bind(size)
@@ -237,6 +241,7 @@ pub async fn create_skill(
     actor.require("skill:manage")?;
     require_department_scope(&state.pool, &actor, input.owner_department_id).await?;
     let name = validate_name(&input.name, 160)?;
+    let alias = validate_name(&input.alias, 160)?;
     let description = validate_skill_description(Some(&input.description))?;
     let id = Uuid::now_v7();
     let content = render_skill_document(&name, &description, &format!("# {name}\n"))?;
@@ -249,7 +254,7 @@ pub async fn create_skill(
     .await?;
     let entry_id = Uuid::now_v7();
     let mut tx = state.pool.begin().await?;
-    sqlx::query("INSERT INTO skills(id,tenant_id,name,description,owner_department_id,created_by) VALUES(?,?,?,?,?,?)").bind(id).bind(actor.tenant_id).bind(&name).bind(&description).bind(input.owner_department_id).bind(actor.user_id).execute(&mut *tx).await?;
+    sqlx::query("INSERT INTO skills(id,tenant_id,name,alias,description,owner_department_id,created_by) VALUES(?,?,?,?,?,?,?)").bind(id).bind(actor.tenant_id).bind(&name).bind(&alias).bind(&description).bind(input.owner_department_id).bind(actor.user_id).execute(&mut *tx).await?;
     sqlx::query("INSERT INTO skill_workspace_entries(id,tenant_id,skill_id,parent_id,name,path,path_hash,entry_type,mime_type,artifact_id,content_hash,size_bytes,editable) VALUES(?,?,?,NULL,'SKILL.md','SKILL.md',?,'file','text/markdown; charset=utf-8',?,?,?,TRUE)").bind(entry_id).bind(actor.tenant_id).bind(id).bind(path_hash("SKILL.md")).bind(artifact.id.as_uuid()).bind(&artifact.sha256).bind(artifact.content.len() as u64).execute(&mut *tx).await?;
     sqlx::query("INSERT INTO skill_file_revisions(id,tenant_id,skill_id,entry_id,workspace_revision,artifact_id,content_hash,size_bytes,created_by) VALUES(?,?,?,?,1,?,?,?,?)").bind(Uuid::now_v7()).bind(actor.tenant_id).bind(id).bind(entry_id).bind(artifact.id.as_uuid()).bind(&artifact.sha256).bind(artifact.content.len() as u64).bind(actor.user_id).execute(&mut *tx).await?;
     audit(&mut tx, &actor, "skill.created", "skill", id, json!({})).await?;
@@ -281,6 +286,7 @@ pub async fn update_skill(
     actor.require("skill:manage")?;
     require_resource_visible(&state, &actor, "skill", id).await?;
     let name = validate_name(&input.name, 160)?;
+    let alias = validate_name(&input.alias, 160)?;
     let description = validate_skill_description(input.description.as_deref())?;
     if !matches!(input.status.as_str(), "draft" | "active" | "disabled") {
         return Err(AppError::bad_request(
@@ -341,11 +347,11 @@ pub async fn update_skill(
         }
     }
     let result = if root_update.is_some() {
-        sqlx::query("UPDATE skills SET name=?,description=?,status=?,version=version+1,draft_revision=draft_revision+1 WHERE tenant_id=? AND id=? AND version=? AND draft_revision=?")
-            .bind(&name).bind(&description).bind(&input.status).bind(actor.tenant_id).bind(id).bind(input.version).bind(current.draft_revision).execute(&mut *tx).await?
+        sqlx::query("UPDATE skills SET name=?,alias=?,description=?,status=?,version=version+1,draft_revision=draft_revision+1 WHERE tenant_id=? AND id=? AND version=? AND draft_revision=?")
+            .bind(&name).bind(&alias).bind(&description).bind(&input.status).bind(actor.tenant_id).bind(id).bind(input.version).bind(current.draft_revision).execute(&mut *tx).await?
     } else {
-        sqlx::query("UPDATE skills SET name=?,description=?,status=?,version=version+1 WHERE tenant_id=? AND id=? AND version=?")
-            .bind(&name).bind(&description).bind(&input.status).bind(actor.tenant_id).bind(id).bind(input.version).execute(&mut *tx).await?
+        sqlx::query("UPDATE skills SET name=?,alias=?,description=?,status=?,version=version+1 WHERE tenant_id=? AND id=? AND version=?")
+            .bind(&name).bind(&alias).bind(&description).bind(&input.status).bind(actor.tenant_id).bind(id).bind(input.version).execute(&mut *tx).await?
     };
     if result.rows_affected() != 1 {
         return Err(AppError::conflict(
@@ -1784,6 +1790,7 @@ fn skill_from_row(r: sqlx::mysql::MySqlRow) -> Result<SkillResponse, sqlx::Error
     Ok(SkillResponse {
         id: r.try_get("id")?,
         name: r.try_get("name")?,
+        alias: r.try_get("alias")?,
         description: r.try_get("description")?,
         owner_department_id: r.try_get("owner_department_id")?,
         status: r.try_get("status")?,

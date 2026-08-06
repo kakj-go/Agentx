@@ -132,8 +132,8 @@ function Invoke-DisabledSandboxE2E([string]$FixtureImage) {
                                 @{ secretRef = @{ name = "agentx-secrets" } }
                             )
                             env = @(
-                                @{ name = "AGENTX_M5_SANDBOX_IMAGE"; value = "opensandbox/code-interpreter@sha256:133a3c1720dd52291a019740c2987e7164ea6de79e23d8198798e58950ae2e6e" }
-                                @{ name = "AGENTX_M5_BROWSER_IMAGE"; value = "opensandbox/playwright@sha256:09709684c785db3107fc3357e7af5b921f5d5a60e75071601122a473d344b475" }
+                                @{ name = "AGENTX_M5_SANDBOX_IMAGE"; value = "opensandbox/code-interpreter:latest" }
+                                @{ name = "AGENTX_M5_BROWSER_IMAGE"; value = "opensandbox/playwright:latest" }
                                 @{ name = "LIGHTRAG_API_KEY"; value = "m5-disabled-fixture-key" }
                             )
                         })

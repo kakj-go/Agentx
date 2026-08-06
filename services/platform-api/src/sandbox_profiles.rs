@@ -344,20 +344,10 @@ fn validate_configuration(input: &SandboxProfileVersionInput) -> AppResult<()> {
             "Sandbox runner is invalid",
         ));
     }
-    let digest = input
-        .image_digest
-        .rsplit_once("@sha256:")
-        .is_some_and(|(image, digest)| {
-            !image.is_empty()
-                && digest.len() == 64
-                && digest
-                    .bytes()
-                    .all(|value| value.is_ascii_hexdigit() && !value.is_ascii_uppercase())
-        });
-    if !digest {
+    if !agentx_infrastructure::opensandbox::is_tagged_image(&input.image_digest) {
         return Err(AppError::bad_request(
-            "SANDBOX_IMAGE_NOT_PINNED",
-            "Sandbox image must be pinned by a lowercase sha256 digest",
+            "SANDBOX_IMAGE_TAG_INVALID",
+            "Sandbox image must include a valid tag",
         ));
     }
     if input.cpu_millis == 0
@@ -432,7 +422,7 @@ mod tests {
     fn input(network_policy: serde_json::Value) -> SandboxProfileVersionInput {
         SandboxProfileVersionInput {
             runner: "python".into(),
-            image_digest: format!("registry.example/runner@sha256:{}", "a".repeat(64)),
+            image_digest: "registry.example/runner:stable".into(),
             cpu_millis: 1000,
             memory_bytes: 536_870_912,
             pids_limit: 128,
@@ -459,5 +449,13 @@ mod tests {
     fn network_policy_must_default_to_deny() {
         assert!(validate_configuration(&input(json!({"defaultAction":"deny"}))).is_ok());
         assert!(validate_configuration(&input(json!({"defaultAction":"allow"}))).is_err());
+    }
+
+    #[test]
+    fn image_must_use_a_tag() {
+        let mut tagged = input(json!({"defaultAction":"deny"}));
+        assert!(validate_configuration(&tagged).is_ok());
+        tagged.image_digest = "registry.example/runner@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into();
+        assert!(validate_configuration(&tagged).is_err());
     }
 }

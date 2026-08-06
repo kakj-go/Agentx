@@ -1,6 +1,7 @@
 import { Background, BackgroundVariant, Controls, MiniMap, ReactFlow, type Connection, type ReactFlowInstance } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { useCallback, useMemo, useRef, type DragEvent } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import type { NodeManifest, ResourceType, StudioEdge, StudioNode } from '../model/types'
 import { StudioEdgeComponent } from '../edges/studio-edge'
@@ -12,6 +13,7 @@ export const LARGE_GRAPH_RENDER_THRESHOLD = 150
 export const LARGE_GRAPH_MINIMAP_THRESHOLD = 300
 
 export function WorkflowFlow({ manifests, runtimeStatuses, onDropAction, onDropBinding }: { manifests: Map<string, NodeManifest>; runtimeStatuses: Map<string, string>; onDropAction: (manifest: NodeManifest, position: { x: number; y: number }) => void; onDropBinding: (resourceType: ResourceType, role: string, position: { x: number; y: number }) => void }) {
+  const { t } = useTranslation()
   const instance = useRef<ReactFlowInstance<StudioNode, StudioEdge>>()
   const { nodes, edges, viewport, onNodesChange, onEdgesChange, connect, select, setViewport, beginEdit } = useEditorStore()
   const nodeTypes = useMemo(() => ({
@@ -37,6 +39,7 @@ export function WorkflowFlow({ manifests, runtimeStatuses, onDropAction, onDropB
     if (value.kind === 'binding' && value.resourceType && value.role) onDropBinding(value.resourceType, value.role, position)
   }
   return <div className="relative min-w-0 flex-1 bg-canvas" data-testid="workflow-canvas" onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = 'copy' }} onDrop={onDrop}>
+    <div className="pointer-events-none absolute right-3 top-3 z-10 flex items-center gap-3 rounded-md border border-border bg-surface/90 px-2.5 py-1.5 text-[9px] text-muted-foreground shadow-sm backdrop-blur"><LegendDot className="bg-primary" label={t('studio.ports.flow')} /><LegendDot className="bg-danger" label={t('studio.ports.error')} /><LegendDot className="bg-warning" label={t('studio.ports.resource')} /></div>
     <ReactFlow<StudioNode, StudioEdge> defaultViewport={viewport} edges={edges} edgeTypes={edgeTypes} fitView nodes={nodes} nodeTypes={nodeTypes} onConnect={onConnect} onEdgesChange={onEdgesChange} onInit={(value) => { instance.current = value }} onMoveEnd={(_, next) => setViewport(next)} onNodeClick={(_, node) => select(node.id)} onNodeDragStart={beginEdit} onNodesChange={onNodesChange} onPaneClick={() => select(undefined)} isValidConnection={valid} multiSelectionKeyCode="Shift" onlyRenderVisibleElements={nodes.length >= LARGE_GRAPH_RENDER_THRESHOLD} proOptions={{ hideAttribution: true }} selectionOnDrag>
       <Background color="var(--ui-canvas-dot)" gap={22} size={1} variant={BackgroundVariant.Dots} />
       <Controls className="!border-border !bg-surface !shadow-md" />
@@ -44,3 +47,5 @@ export function WorkflowFlow({ manifests, runtimeStatuses, onDropAction, onDropB
     </ReactFlow>
   </div>
 }
+
+function LegendDot({ className, label }: { className: string; label: string }) { return <span className="flex items-center gap-1.5"><span className={`size-2.5 rounded-full border-2 border-background shadow-sm ${className}`} />{label}</span> }

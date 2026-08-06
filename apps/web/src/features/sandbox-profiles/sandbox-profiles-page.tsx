@@ -14,7 +14,7 @@ import { ListPage } from '../../shared/components/list-page'
 import { StatusBadge } from '../../shared/components/status-badge'
 import { Button } from '../../shared/ui/button'
 import { useToast } from '../../shared/ui/toast'
-import { sandboxVersionBody, sandboxVersionFields } from './sandbox-profile-form'
+import { bytesToGb, sandboxVersionBody, sandboxVersionFields } from './sandbox-profile-form'
 
 export function SandboxProfilesPage() {
   const { t } = useTranslation()
@@ -31,7 +31,7 @@ export function SandboxProfilesPage() {
         name: values.name.trim(),
         description: values.description.trim() || null,
         ownerDepartmentId: values.department,
-        ...sandboxVersionBody(values, t('m2.invalidJson')),
+        ...sandboxVersionBody(values, t('m2.invalidJson'), t('sandbox.invalidImageTag')),
       }),
     }),
     onSuccess: async () => { await queryClient.invalidateQueries({ queryKey: ['sandbox-profiles'] }); showToast(t('sandbox.created')) },
@@ -39,7 +39,7 @@ export function SandboxProfilesPage() {
   const columns = useMemo<Array<ColumnDef<SandboxProfile>>>(() => [
     { accessorKey: 'name', header: t('common.name'), cell: ({ row }) => <EntityCell detail={`${row.original.current.runner} · v${row.original.currentVersionNumber}`} icon={Box} name={row.original.name} /> },
     { id: 'image', header: t('sandbox.image'), cell: ({ row }) => <span className="block max-w-72 truncate font-mono text-[11px]" title={row.original.current.imageDigest}>{row.original.current.imageDigest}</span> },
-    { id: 'limits', header: t('sandbox.limits'), cell: ({ row }) => `${row.original.current.cpuMillis}m · ${formatBytes(row.original.current.memoryBytes)}` },
+    { id: 'limits', header: t('sandbox.limits'), cell: ({ row }) => `${formatCpu(row.original.current.cpuMillis)} cores · ${formatBytes(row.original.current.memoryBytes)}` },
     { accessorKey: 'status', header: t('common.status'), cell: ({ row }) => <StatusBadge status={row.original.status === 'active' ? 'active' : 'inactive'} /> },
     { accessorKey: 'updatedAt', header: t('common.updatedAt'), cell: ({ row }) => new Date(row.original.updatedAt).toLocaleString() },
     { id: 'actions', header: '', cell: ({ row }) => <Button asChild size="sm" variant="ghost"><Link to={`/sandbox-profiles/${row.original.id}`}>{t('m2.details')}</Link></Button> },
@@ -57,7 +57,9 @@ export function SandboxProfilesPage() {
 }
 
 function formatBytes(value: number) {
-  if (value >= 1073741824) return `${(value / 1073741824).toFixed(1)} GiB`
-  if (value >= 1048576) return `${(value / 1048576).toFixed(0)} MiB`
-  return `${value} B`
+  return `${bytesToGb(value)} GB`
+}
+
+function formatCpu(value: number) {
+  return (value / 1000).toFixed(3).replace(/\.?(0+)$/, '')
 }

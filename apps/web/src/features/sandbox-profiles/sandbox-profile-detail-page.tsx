@@ -12,7 +12,7 @@ import { ResourceDetailLayout } from '../../shared/components/resource-detail-la
 import { Button } from '../../shared/ui/button'
 import { Card } from '../../shared/ui/card'
 import { useToast } from '../../shared/ui/toast'
-import { sandboxVersionBody, sandboxVersionFields } from './sandbox-profile-form'
+import { bytesToGb, bytesToKb, sandboxVersionBody, sandboxVersionFields } from './sandbox-profile-form'
 
 export function SandboxProfileDetailPage() {
   const { id = '' } = useParams()
@@ -32,7 +32,7 @@ export function SandboxProfileDetailPage() {
     onSuccess: async () => { await invalidate(); showToast(t('sandbox.saved')) },
   })
   const createVersion = useMutation({
-    mutationFn: (values: Record<string, string>) => apiRequest<SandboxProfileVersion>(`/sandbox-profiles/${id}/versions`, { method: 'POST', body: jsonBody(sandboxVersionBody(values, t('m2.invalidJson'))) }),
+    mutationFn: (values: Record<string, string>) => apiRequest<SandboxProfileVersion>(`/sandbox-profiles/${id}/versions`, { method: 'POST', body: jsonBody(sandboxVersionBody(values, t('m2.invalidJson'), t('sandbox.invalidImageTag'))) }),
     onSuccess: async () => { await invalidate(); showToast(t('sandbox.versionCreated')) },
   })
   const value = profile.data
@@ -45,10 +45,10 @@ export function SandboxProfileDetailPage() {
   return <>
     <ResourceDetailLayout actions={actions} description={t('pages.sandboxProfiles.description')} details={value ? [
       { label: t('sandbox.runner'), value: value.current.runner },
-      { label: t('sandbox.imageDigest'), value: <span className="font-mono text-[11px]">{value.current.imageDigest}</span> },
-      { label: t('sandbox.limits'), value: `${value.current.cpuMillis}m CPU · ${formatBytes(value.current.memoryBytes)} RAM · ${value.current.pidsLimit} PIDs · ${formatBytes(value.current.diskBytes)} disk` },
+      { label: t('sandbox.imageTag'), value: <span className="font-mono text-[11px]">{value.current.imageDigest}</span> },
+      { label: t('sandbox.limits'), value: `${(value.current.cpuMillis / 1000).toFixed(3).replace(/\.?(0+)$/, '')} cores CPU · ${bytesToGb(value.current.memoryBytes)} GB RAM · ${value.current.pidsLimit} PIDs · ${bytesToGb(value.current.diskBytes)} GB disk` },
       { label: t('sandbox.timeoutSeconds'), value: `${value.current.timeoutSeconds}s` },
-      { label: t('sandbox.outputLimitBytes'), value: formatBytes(value.current.outputLimitBytes) },
+      { label: t('sandbox.outputKb'), value: `${bytesToKb(value.current.outputLimitBytes)} KB` },
       { label: t('m2.department'), value: value.ownerDepartmentId },
       { label: t('sandbox.networkPolicy'), value: <pre className="whitespace-pre-wrap text-[11px]">{JSON.stringify(value.current.networkPolicy, null, 2)}</pre> },
       { label: t('sandbox.configurationHash'), value: <span className="font-mono text-[11px]">{value.current.configurationHash}</span> },
@@ -58,10 +58,4 @@ export function SandboxProfileDetailPage() {
     {editOpen && <EntityFormDialog cancelLabel={t('common.cancel')} fields={editFields} onClose={() => setEditOpen(false)} onSubmit={(values) => update.mutateAsync(values).then(() => undefined)} open submitLabel={t('common.save')} title={t('sandbox.edit')} />}
     {versionOpen && value && <EntityFormDialog cancelLabel={t('common.cancel')} fields={sandboxVersionFields(t, value.current)} onClose={() => setVersionOpen(false)} onSubmit={(values) => createVersion.mutateAsync(values).then(() => undefined)} open submitLabel={t('common.save')} title={t('sandbox.newVersion')} />}
   </>
-}
-
-function formatBytes(value: number) {
-  if (value >= 1073741824) return `${(value / 1073741824).toFixed(1)} GiB`
-  if (value >= 1048576) return `${(value / 1048576).toFixed(0)} MiB`
-  return `${value} B`
 }

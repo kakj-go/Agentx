@@ -16,7 +16,7 @@ M7 的 Application、Session、Message、Webhook、Approval Resume 和 Evaluatio
 | INT-006 | done | 12 个 Quota 维度共用单一清单；MySQL+Redis 双租户测试覆盖并发、Token、Cost、Artifact、CPU、内存、PID、磁盘和 TTL 的 Reservation/Ledger、周期用量、释放、过期回收与校准，Sandbox 资源强制和双租户攻击矩阵已通过；容量后零漂移继续由 INT-012 验收 |
 | INT-007 | done | Runtime Event v1、Outbox、Receipt 和业务 Projector 已通过完整 Run；重复/乱序 Projector 单测和故障矩阵通过，未投影事件、终态缺失事件和未发布 Outbox 均为 0 |
 | INT-008 | done | Retention Reference、Dry Run 和批次清理已实现；MySQL + InMemory ObjectStore 覆盖引用阻止、对象存储中断后恢复、501 条跨 6 批清理和幂等删除；ClickHouse Trace 分段失败恢复、Checkpoint 保护、Application Message 清理、Evaluation Case/Metric/Report 清理和 Comparison 引用保护均通过 |
-| INT-009 | in_progress | 0016 expand、0017 contract、Worker Capability 分流、Digest Profile 和 Docker Desktop 双阶段验收器已实现；尚未生成 M6→M7、M7 Previous→Candidate 滚动及回滚的真实本地证据 |
+| INT-009 | in_progress | 0016 expand、0017 contract、Worker Capability 分流、tag-based Sandbox Profile 和 Docker Desktop 双阶段验收器已实现；尚未生成 M6→M7、M7 Previous→Candidate 滚动及回滚的真实本地证据 |
 | INT-010 | done | 故障矩阵覆盖 Coordinator、Worker、Redis、ClickHouse、MinIO、OpenSandbox、Vault、SSE 和 Projector；Docker Desktop runc 基线隔离检查通过并记录 `isolationLevel=standard` |
 | INT-011 | in_progress | Vault KV v2、内部一次性 Broker、Handle 撤销、本地 TLS Registry、7 镜像 SBOM/签名/Attestation 和 8 项负向验收器已实现；尚未生成真实本地产物 |
 | INT-012 | in_progress | 容量验收器已实现；100 Execution、500 Node、200 SSE、1000 Case、200 节点和 2 小时结果尚未执行 |

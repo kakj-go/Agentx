@@ -367,10 +367,10 @@ impl SandboxRuntime for OpenSandboxAdapter {
         }
         let profile = &request.profile.snapshot;
         let image = required_str(profile, "imageDigest")?;
-        if !is_digest_image(image) {
+        if !is_tagged_image(image) {
             return Err(RuntimeError::new(
                 "SANDBOX_PROFILE_INVALID",
-                "Sandbox image must be pinned by sha256 digest",
+                "Sandbox image must include a valid tag",
             ));
         }
         let timeout = required_u64(profile, "timeoutSeconds")?.clamp(60, 86_400);
@@ -961,12 +961,20 @@ fn shell_join(argv: &[String]) -> String {
         .collect::<Vec<_>>()
         .join(" ")
 }
-fn is_digest_image(value: &str) -> bool {
-    value.rsplit_once("@sha256:").is_some_and(|(_, digest)| {
-        digest.len() == 64
-            && digest
-                .bytes()
-                .all(|value| value.is_ascii_hexdigit() && !value.is_ascii_uppercase())
+pub fn is_tagged_image(value: &str) -> bool {
+    let value = value.trim();
+    if value.is_empty() || value.contains('@') || value.chars().any(char::is_whitespace) {
+        return false;
+    }
+    let Some((name, tag)) = value.rsplit_once(':') else {
+        return false;
+    };
+    if name.is_empty() || name.ends_with('/') || tag.is_empty() || tag.len() > 128 {
+        return false;
+    }
+    tag.bytes().enumerate().all(|(index, value)| {
+        (value.is_ascii_alphanumeric() || value == b'_') && index == 0
+            || (value.is_ascii_alphanumeric() || matches!(value, b'_' | b'.' | b'-'))
     })
 }
 fn metadata_hash(value: &str) -> String {
@@ -1010,6 +1018,17 @@ fn cancelled_error() -> RuntimeError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn image_reference_requires_a_tag_and_rejects_digests() {
+        assert!(is_tagged_image("python:3.12"));
+        assert!(is_tagged_image("registry.example:5000/runner:dev-2026.08"));
+        assert!(!is_tagged_image("python"));
+        assert!(!is_tagged_image(
+            "python@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        ));
+        assert!(!is_tagged_image("python:bad tag"));
+    }
     use std::{
         convert::Infallible,
         sync::{

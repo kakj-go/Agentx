@@ -21,7 +21,7 @@
 - Model Alias 是 Workflow 推荐引用，Model Deployment 保存 Provider、Endpoint 和 Credential Reference。
 - Model Price Version 不可变，历史成本按调用发生时版本计算。
 - MCP Server 配置可版本化；MCP Tool 只由发现流程创建，Tool Version 固化 Schema，Tool Policy 保存启停、调试、超时和副作用等级。
-- Skill Workspace 可变且使用乐观锁 Revision；根 `SKILL.md` 使用必填的 `name`、`description` frontmatter，界面将描述与富文本正文分栏编辑；Skill Version 不可变并固化每个文件、引用、Content Hash、Artifact 和依赖。
+- Skill 具有租户内唯一且可修改的必填 `name`、`alias` 和 `description` 元数据；Workspace 可变且使用乐观锁 Revision，根 `SKILL.md` 仍使用 `name`、`description` frontmatter，界面将描述与富文本正文分栏编辑；Skill Version 不可变并固化每个文件、引用、Content Hash、Artifact 和依赖。
 - RAG 和 Memory 授权区分读写范围。
 - Grant 可以授予 Department 或 Workflow；运行时最终使用 Workflow Service Identity 检查。MCP Tool 引用必须展开为 MCP Tool、所属 MCP Server 和 Server Credential 三项独立 Grant。
 

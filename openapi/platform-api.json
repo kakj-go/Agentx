@@ -5234,10 +5234,14 @@
         "type": "object",
         "required": [
           "name",
+          "alias",
           "description",
           "ownerDepartmentId"
         ],
         "properties": {
+          "alias": {
+            "type": "string"
+          },
           "description": {
             "type": "string"
           },
@@ -9020,6 +9024,7 @@
         "required": [
           "id",
           "name",
+          "alias",
           "ownerDepartmentId",
           "status",
           "draftRevision",
@@ -9028,6 +9033,9 @@
           "updatedAt"
         ],
         "properties": {
+          "alias": {
+            "type": "string"
+          },
           "description": {
             "type": [
               "string",
@@ -9924,10 +9932,14 @@
         "type": "object",
         "required": [
           "name",
+          "alias",
           "status",
           "version"
         ],
         "properties": {
+          "alias": {
+            "type": "string"
+          },
           "description": {
             "type": [
               "string",

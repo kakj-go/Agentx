@@ -1262,14 +1262,31 @@ mod integration_tests {
             .oneshot(json_request(
                 "POST",
                 "/api/v1/skills",
-                json!({"name":"Workspace Integration Skill","description":"test","ownerDepartmentId":root_department}),
+                json!({"name":"Workspace Integration Skill","alias":"workspace-integration-skill","description":"test","ownerDepartmentId":root_department}),
+                Some(&access_token),
+            ))
+        .await
+            .expect("create workspace skill");
+        assert_eq!(skill.status(), StatusCode::CREATED);
+        let skill_response = response_json(skill).await;
+        assert_eq!(skill_response["alias"], "workspace-integration-skill");
+        let skill_id: uuid::Uuid =
+            serde_json::from_value(skill_response["id"].clone()).expect("workspace skill id");
+        let updated_skill = router
+            .clone()
+            .oneshot(json_request(
+                "PATCH",
+                &format!("/api/v1/skills/{skill_id}"),
+                json!({"name":"Workspace Integration Skill","alias":"workspace-integration-skill-v2","description":"test","status":"draft","version":1}),
                 Some(&access_token),
             ))
             .await
-            .expect("create workspace skill");
-        assert_eq!(skill.status(), StatusCode::CREATED);
-        let skill_id: uuid::Uuid = serde_json::from_value(response_json(skill).await["id"].clone())
-            .expect("workspace skill id");
+            .expect("update workspace skill alias");
+        assert_eq!(updated_skill.status(), StatusCode::OK);
+        assert_eq!(
+            response_json(updated_skill).await["alias"],
+            "workspace-integration-skill-v2"
+        );
         let workspace = router
             .clone()
             .oneshot(json_request(

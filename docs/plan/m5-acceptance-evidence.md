@@ -14,7 +14,7 @@ M5 已交付 Runtime Port 与快照、资源 Adapter、Agent Ledger/预算/循�
 - `sandbox-manager` 暴露带内部 Token 拦截器的独立 gRPC，持久化 Lease/加密 Endpoint，执行 Reaper；Worker 只依赖 `SandboxRuntime`。
 - Rust Adapter 实现 create/get/list/kill、Endpoint、Command SSE/interrupt、上传/下载、Metrics 和网络策略。默认启用 Server Proxy；无 scheme Endpoint 只继承 Lifecycle scheme，Proxy 必须同 Origin 且路径绑定当前 Sandbox，API Key 不进入 Endpoint 文档或跨 Origin 请求。
 - `scripts/opensandbox-contract.ps1` 校验固定 Commit 和两份 Spec Hash，使用官方 Go SDK 对与 Rust E2E 相同的 Python 源码、stdout 和 Artifact 内容执行 create/get/Endpoint/upload/command/download/Metrics/kill，并在成功或失败路径回收 Sandbox；Go 不进入生产构建或镜像。
-- Code Runner 使用固定 digest Profile 和 argv Command，先上传脚本再执行；输出和下载文件转换为 Item/Artifact，终止时撤销 Sandbox 绑定 Handle。
+- Code Runner 使用带 tag 的 Sandbox Profile 和 argv Command，先上传脚本再执行；输出和下载文件转换为 Item/Artifact，终止时撤销 Sandbox 绑定 Handle。
 - Browser Runner 固定 `opensandbox/playwright@sha256:09709684c785db3107fc3357e7af5b921f5d5a60e75071601122a473d344b475`，使用镜像的 Python Playwright/Chromium 和 `/home/playwright` 工作根目录；其他 Runner 保持 `/workspace`，Adapter、Manager 和下载校验只允许这两个根目录。
 - Worker 取消时并行监听 Runtime Cancellation 与 Command Stream，先请求 interrupt，再在收尾路径 terminate。Manager 的清理鉴权仍校验 Tenant/Execution/Node/Attempt/Worker Lease/Sandbox Lease Token 的完整绑定，但允许绑定执行已终态或 Lease 已过期，并对重复 terminate 幂等返回。
 - OpenSandbox 幂等 terminate 对可重试错误执行最多 3 次有限重试；Reaper 为前台 TTL 清理保留 5 秒窗口，只接管卡住 30 秒的 `terminating` Lease，且失败状态不能覆盖已完成的 `terminated` 终态。

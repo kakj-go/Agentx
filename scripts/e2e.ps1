@@ -398,8 +398,8 @@ try {
     kubectl -n $namespace apply -k "$root/deploy/k8s/fixtures/echo-node"
     $config = kubectl -n $namespace get configmap agentx-config -o json | ConvertFrom-Json
     $config.data | Add-Member -Force -NotePropertyName AGENTX_REMOTE_NODE_ENDPOINT -NotePropertyValue "http://echo-node:8080"
-    $config.data | Add-Member -Force -NotePropertyName AGENTX_M5_SANDBOX_IMAGE -NotePropertyValue "opensandbox/code-interpreter@sha256:133a3c1720dd52291a019740c2987e7164ea6de79e23d8198798e58950ae2e6e"
-    $config.data | Add-Member -Force -NotePropertyName AGENTX_M5_BROWSER_IMAGE -NotePropertyValue "opensandbox/playwright@sha256:09709684c785db3107fc3357e7af5b921f5d5a60e75071601122a473d344b475"
+    $config.data | Add-Member -Force -NotePropertyName AGENTX_M5_SANDBOX_IMAGE -NotePropertyValue "opensandbox/code-interpreter:latest"
+    $config.data | Add-Member -Force -NotePropertyName AGENTX_M5_BROWSER_IMAGE -NotePropertyValue "opensandbox/playwright:latest"
     $config.data | Add-Member -Force -NotePropertyName AGENTX_SANDBOX_MAX_ACTIVE_PER_TENANT -NotePropertyValue "1"
     $config | ConvertTo-Json -Depth 30 | kubectl apply -f - | Out-Null
     kubectl -n $namespace rollout restart deployment/platform-api deployment/workflow-worker deployment/sandbox-manager

@@ -421,6 +421,7 @@ export interface components {
             timezone: string;
         };
         CreateSkillRequest: {
+            alias: string;
             description: string;
             name: string;
             /** Format: uuid */
@@ -1539,6 +1540,7 @@ export interface components {
             resourceVersionId?: string | null;
         };
         SkillResponse: {
+            alias: string;
             description?: string | null;
             /** Format: int64 */
             draftRevision: number;
@@ -1782,6 +1784,7 @@ export interface components {
             version: number;
         };
         UpdateSkillRequest: {
+            alias: string;
             description?: string | null;
             name: string;
             status: string;

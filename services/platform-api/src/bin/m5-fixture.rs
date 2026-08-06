@@ -91,14 +91,10 @@ async fn main() -> Result<()> {
     )
     .await?;
     let browser_image = std::env::var("AGENTX_M5_BROWSER_IMAGE")
-        .context("AGENTX_M5_BROWSER_IMAGE must be pinned by digest")?;
+        .context("AGENTX_M5_BROWSER_IMAGE must include a tag")?;
     anyhow::ensure!(
-        browser_image.contains("@sha256:")
-            && browser_image
-                .rsplit('@')
-                .next()
-                .is_some_and(|digest| digest.len() == 71 && digest.starts_with("sha256:")),
-        "AGENTX_M5_BROWSER_IMAGE must be pinned by sha256 digest"
+        agentx_infrastructure::opensandbox::is_tagged_image(&browser_image),
+        "AGENTX_M5_BROWSER_IMAGE must include a valid tag"
     );
     let (browser_profile, browser_profile_version) = ensure_sandbox_profile(
         &pool,
@@ -352,14 +348,10 @@ async fn ensure_resources(
     let rag = ensure_rag(pool, tenant, department, rag_credential).await?;
     let memory = ensure_memory(pool, tenant, department).await?;
     let sandbox_image = std::env::var("AGENTX_M5_SANDBOX_IMAGE")
-        .context("AGENTX_M5_SANDBOX_IMAGE must be pinned by digest")?;
+        .context("AGENTX_M5_SANDBOX_IMAGE must include a tag")?;
     anyhow::ensure!(
-        sandbox_image.contains("@sha256:")
-            && sandbox_image
-                .rsplit('@')
-                .next()
-                .is_some_and(|value| value.len() == 71),
-        "AGENTX_M5_SANDBOX_IMAGE must be pinned by sha256 digest"
+        agentx_infrastructure::opensandbox::is_tagged_image(&sandbox_image),
+        "AGENTX_M5_SANDBOX_IMAGE must include a valid tag"
     );
     let (sandbox_profile, sandbox_profile_version) = ensure_sandbox_profile(
         pool,

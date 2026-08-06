@@ -1069,7 +1069,7 @@ mod tests {
         sqlx::query("INSERT INTO sandbox_profiles(id,tenant_id,name,owner_department_id,created_by) VALUES(?,?,'Test Profile',?,?)").bind(profile_id).bind(tenant).bind(department).bind(user).execute(pool).await.unwrap();
         sqlx::query("INSERT INTO sandbox_profile_versions(id,tenant_id,profile_id,version_number,runner,image_digest,cpu_millis,memory_bytes,pids_limit,disk_bytes,timeout_seconds,output_limit_bytes,network_policy_json,configuration_hash,created_by) VALUES(?,?,?,1,'python',?,500,536870912,128,1073741824,120,1048576,JSON_OBJECT('defaultAction','deny','egress',JSON_ARRAY()),?,?)")
             .bind(profile_version).bind(tenant).bind(profile_id)
-            .bind(format!("example/test@sha256:{}", "a".repeat(64)))
+            .bind("example/test:stable")
             .bind("b".repeat(64)).bind(user).execute(pool).await.unwrap();
         ManagerFixture {
             scope: agentx_runtime_rpc::sandbox_v1::SandboxScope {
@@ -1100,7 +1100,7 @@ mod tests {
                 snapshot: json!({
                     "profileVersionId":profile_version,
                     "runner":"python",
-                    "imageDigest":format!("example/test@sha256:{}", "a".repeat(64)),
+                    "imageDigest":"example/test:stable",
                     "cpuMillis":500,
                     "memoryBytes":536870912_u64,
                     "pidsLimit":128,
