@@ -12,7 +12,12 @@ class ResizeObserverMock {
   disconnect() {}
 }
 
+class DOMMatrixReadOnlyMock {
+  m22 = 1
+}
+
 Object.defineProperty(window, 'ResizeObserver', { configurable: true, value: ResizeObserverMock })
+Object.defineProperty(window, 'DOMMatrixReadOnly', { configurable: true, value: DOMMatrixReadOnlyMock })
 Object.defineProperties(HTMLElement.prototype, {
   hasPointerCapture: { configurable: true, value: () => false },
   releasePointerCapture: { configurable: true, value: () => undefined },

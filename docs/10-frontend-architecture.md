@@ -142,7 +142,13 @@ Agentx 自己实现：
     ├── model/
     └── utils/
 
-Studio 采用左侧 Node Palette、中央 Canvas、右侧 Node Inspector 和底部 Input/Output/Trace Panel 的稳定桌面布局。节点类型、端口、参数和能力全部来自 Node Manifest；业务组件不得维护 Agent/Code 等 Node Type 白名单。Feature 内任何文件不得超过 2000 行。
+Studio 采用 n8n 风格的紧凑桌面画布：左侧 56px 工具栏按需展开 320px Node Creator，中央无限 Canvas，单击节点后打开 480px 全高 Node Details，底部为可折叠的全局 Execution Rail。节点类型、端口、参数和能力全部来自 Node Manifest；业务组件不得维护 Agent/Code 等 Node Type 白名单。Feature 内任何文件不得超过 2000 行。
+
+画布视觉由 `uiSchema.canvas.role` 驱动（`default`、`trigger`、`branch`、`flow`、`merge`、`loop`、`suspend`、`approval`、`sub_workflow`、`agent`、`code`、`error_handler`）。React Flow 外层只承担矩形命中与测量，不显示边框或背景；异形、选择和运行状态均作用于内部真实表面，Handle 独立定位在该表面边界。资源附件仍由 `editorKind=binding` 表示，Agent 的 Model、Tool、Memory、Knowledge、Skill 端口位于底边，附件自动布局到 Agent 下方。便签和分组是仅编辑态的派生节点，序列化进入 Editor Document，不进入 Definition 或 Runtime。空画布只显示添加 Trigger 和搜索节点两个入口，不引入未实现的 AI Builder。
+
+左侧 56px 节点栏固定搜索、便签和分组，并按 Manifest 分类滚动展示全部节点与附件；320px Node Creator 继续负责搜索、合法端口过滤和大预览。单击执行节点或附件立即打开 480px Details，单击空画布清除选择并关闭；关闭按钮和 Esc 只关闭 Details 并保留选择。
+
+Manifest `localizations` 是节点名称、说明、搜索关键词、端口和 Binding Slot 展示名的唯一业务本地化来源。显示按当前语言、`en-US`、基础字段依次回退，协议 ID 不翻译。Workflow Settings 的 `primaryOutputNodeId` 进入 Definition 和 Undo/Redo；主要输出在节点表面稳定标识，不写入 Editor Document。
 
 ## 8. 画布状态转换
 

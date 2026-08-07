@@ -8,6 +8,8 @@ type ShortcutOptions = {
   workflowId?: string
   revalidatePaste?: (nodes: StudioNode[], edges: StudioEdge[]) => Promise<string[]>
   onPasteRejected?: (messages: string[]) => void
+  onOpenNode?: (nodeId: string) => void
+  onEscape?: () => void
 }
 
 export function useStudioShortcuts(options: ShortcutOptions = {}) {
@@ -19,6 +21,15 @@ export function useStudioShortcuts(options: ShortcutOptions = {}) {
       if (isEditable(event.target)) return
       const state = useEditorStore.getState()
       const command = event.ctrlKey || event.metaKey
+      if (event.key === 'Escape') {
+        optionsRef.current.onEscape?.()
+        return
+      }
+      if (event.key === 'Enter' && state.selectedId && state.nodes.some((node) => node.id === state.selectedId)) {
+        event.preventDefault()
+        optionsRef.current.onOpenNode?.(state.selectedId)
+        return
+      }
       if (command && event.key.toLowerCase() === 'z') {
         event.preventDefault()
         if (event.shiftKey) state.redo()
@@ -49,7 +60,14 @@ export function useStudioShortcuts(options: ShortcutOptions = {}) {
         } else state.paste(nodes, edges)
         return
       }
-      if (event.key === 'Delete' || event.key === 'Backspace') state.removeSelected()
+      if (event.key === 'Delete' || event.key === 'Backspace') {
+        if (state.edges.some((edge) => edge.selected)) {
+          event.preventDefault()
+          state.removeSelectedEdges()
+          return
+        }
+        state.removeSelected()
+      }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)

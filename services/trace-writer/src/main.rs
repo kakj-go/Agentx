@@ -328,7 +328,7 @@ async fn process_items(
         let mut insert = state.clickhouse.insert("workflow_trace_events")?;
         insert.write(&TraceRow::from(payload)).await?;
         insert.end().await?;
-        sqlx::query("UPDATE trace_delivery_outbox SET status='delivered',delivered_at=CURRENT_TIMESTAMP(6),last_error=NULL WHERE event_id=? AND status='streamed'")
+        sqlx::query("UPDATE trace_delivery_outbox SET status='delivered',delivered_at=CURRENT_TIMESTAMP(6),last_error=NULL WHERE event_id=? AND status IN ('pending','streamed')")
             .bind(event_id)
             .execute(&state.pool)
             .await?;

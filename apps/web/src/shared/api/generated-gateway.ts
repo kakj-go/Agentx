@@ -31,6 +31,8 @@ export interface components {
             applicationId: string;
             /** Format: date-time */
             createdAt: string;
+            errorCode?: string | null;
+            errorMessage?: string | null;
             /** Format: uuid */
             executionId?: string | null;
             /** Format: uuid */

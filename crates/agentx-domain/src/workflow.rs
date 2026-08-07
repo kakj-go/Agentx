@@ -83,6 +83,10 @@ pub struct EditorAnnotation {
     pub text: String,
     pub x: f64,
     pub y: f64,
+    #[serde(default = "default_annotation_width")]
+    pub width: f64,
+    #[serde(default = "default_annotation_height")]
+    pub height: f64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<String>,
 }
@@ -93,8 +97,18 @@ pub struct EditorGroup {
     pub id: String,
     pub label: String,
     pub node_ids: Vec<String>,
+    #[serde(default)]
+    pub collapsed: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<String>,
+}
+
+const fn default_annotation_width() -> f64 {
+    240.0
+}
+
+const fn default_annotation_height() -> f64 {
+    160.0
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, JsonSchema, PartialEq, Serialize)]
@@ -191,6 +205,8 @@ pub struct WorkflowSettings {
     pub activation_budget: u32,
     #[serde(default)]
     pub timeout_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub primary_output_node_id: Option<String>,
 }
 
 impl Default for WorkflowSettings {
@@ -199,6 +215,7 @@ impl Default for WorkflowSettings {
             execution_order: ExecutionOrder::Deterministic,
             activation_budget: default_activation_budget(),
             timeout_ms: None,
+            primary_output_node_id: None,
         }
     }
 }
@@ -388,6 +405,19 @@ pub fn validate_definition(definition: &WorkflowDefinition) -> Vec<DefinitionIss
             }
         }
     }
+    if let Some(node_id) = definition.settings.primary_output_node_id.as_deref()
+        && !definition
+            .nodes
+            .iter()
+            .any(|node| node.id == node_id && !node.disabled)
+    {
+        issue(
+            &mut issues,
+            "PRIMARY_OUTPUT_NODE_INVALID",
+            "settings.primaryOutputNodeId",
+            "Primary output must reference an enabled Workflow node",
+        );
+    }
     let mut connection_ids = HashSet::new();
     let mut connection_orders = HashSet::new();
     for (index, connection) in definition.connections.iter().enumerate() {
@@ -517,6 +547,55 @@ pub fn validate_editor_document(
             );
         }
     }
+    let mut annotation_ids = HashSet::new();
+    for (index, annotation) in document.annotations.iter().enumerate() {
+        if annotation.id.is_empty() || !annotation_ids.insert(annotation.id.as_str()) {
+            issue(
+                &mut issues,
+                "INVALID_ANNOTATION_ID",
+                &format!("annotations[{index}].id"),
+                "Annotation ids must be present and unique",
+            );
+        }
+        if !annotation.x.is_finite()
+            || !annotation.y.is_finite()
+            || !annotation.width.is_finite()
+            || annotation.width < 150.0
+            || !annotation.height.is_finite()
+            || annotation.height < 80.0
+        {
+            issue(
+                &mut issues,
+                "INVALID_ANNOTATION_LAYOUT",
+                &format!("annotations[{index}]"),
+                "Annotation coordinates must be finite and dimensions must be at least 150 by 80",
+            );
+        }
+    }
+    let mut group_ids = HashSet::new();
+    for (index, group) in document.groups.iter().enumerate() {
+        if group.id.is_empty() || !group_ids.insert(group.id.as_str()) {
+            issue(
+                &mut issues,
+                "INVALID_GROUP_ID",
+                &format!("groups[{index}].id"),
+                "Group ids must be present and unique",
+            );
+        }
+        if group.node_ids.is_empty()
+            || group
+                .node_ids
+                .iter()
+                .any(|node_id| !node_ids.contains(node_id.as_str()))
+        {
+            issue(
+                &mut issues,
+                "INVALID_GROUP_MEMBERS",
+                &format!("groups[{index}].nodeIds"),
+                "Groups must reference at least one existing workflow node",
+            );
+        }
+    }
     if !document.viewport.x.is_finite()
         || !document.viewport.y.is_finite()
         || !document.viewport.zoom.is_finite()
@@ -619,7 +698,7 @@ fn canonicalize(value: &Value) -> Value {
 mod tests {
     use serde_json::json;
 
-    use super::{WorkflowDefinition, canonical_content_hash, validate_definition};
+    use super::{EditorDocument, WorkflowDefinition, canonical_content_hash, validate_definition};
 
     #[test]
     fn canonical_hash_ignores_object_order_but_keeps_array_order() {
@@ -636,6 +715,18 @@ mod tests {
     #[test]
     fn empty_definition_is_valid() {
         assert!(validate_definition(&WorkflowDefinition::empty()).is_empty());
+    }
+
+    #[test]
+    fn editor_annotations_and_groups_apply_backward_compatible_defaults() {
+        let document: EditorDocument = serde_json::from_value(json!({
+            "annotations": [{"id": "note", "text": "Remember", "x": 10, "y": 20}],
+            "groups": [{"id": "group", "label": "Main", "nodeIds": ["node"]}]
+        }))
+        .unwrap();
+        assert_eq!(document.annotations[0].width, 240.0);
+        assert_eq!(document.annotations[0].height, 160.0);
+        assert!(!document.groups[0].collapsed);
     }
 
     #[test]

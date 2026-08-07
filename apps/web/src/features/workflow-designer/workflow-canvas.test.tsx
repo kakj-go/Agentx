@@ -1,6 +1,6 @@
 import * as Tooltip from '@radix-ui/react-tooltip'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -19,7 +19,7 @@ const draft = {
 let requiredAgentBinding = false
 
 const manifest = (nodeType: string, executionStyle = 'action'): NodeManifest => ({
-  protocolVersion: '1.0', nodeType, version: 1, displayName: nodeType === 'agent' ? 'Agent' : 'Manual Trigger', description: '', category: nodeType === 'agent' ? 'ai' : 'triggers', keywords: [nodeType], iconKey: nodeType === 'agent' ? 'bot' : 'mouse-pointer-click', executionStyle: executionStyle as NodeManifest['executionStyle'], capability: nodeType === 'agent' ? 'agent' : 'builtin', readiness: 'any', inputPorts: nodeType === 'agent' ? [{ name: 'main', kind: 'main', required: true, variadic: false }] : [], outputPorts: [{ name: 'main', kind: 'main', required: false, variadic: false }], bindingSlots: nodeType === 'agent' ? [{ name: 'ai_model', resourceType: 'model', required: requiredAgentBinding, multiple: false }] : [], parameterSchema: { type: 'object', properties: {} }, uiSchema: {}, providers: [], credentials: [], retryPolicy: { retryable: false, maxAttempts: 1, initialBackoffMs: 0, maxBackoffMs: 0 }, sandboxRequired: false, supportsMock: true, sideEffectLevel: 'none',
+  protocolVersion: '1.0', nodeType, version: 1, displayName: nodeType === 'agent' ? 'Agent' : 'Manual Trigger', description: '', category: nodeType === 'agent' ? 'ai' : 'triggers', keywords: [nodeType], iconKey: nodeType === 'agent' ? 'bot' : 'mouse-pointer-click', executionStyle: executionStyle as NodeManifest['executionStyle'], capability: nodeType === 'agent' ? 'agent' : 'builtin', readiness: 'any', inputPorts: nodeType === 'agent' ? [{ name: 'main', kind: 'main', required: true, variadic: false }] : [], outputPorts: [{ name: 'main', kind: 'main', required: false, variadic: false }], bindingSlots: nodeType === 'agent' ? [{ name: 'ai_model', resourceType: 'model', required: requiredAgentBinding, multiple: false }] : [], parameterSchema: { type: 'object', properties: {} }, uiSchema: { canvas: { role: nodeType === 'agent' ? 'agent' : 'trigger' } }, providers: [], credentials: [], retryPolicy: { retryable: false, maxAttempts: 1, initialBackoffMs: 0, maxBackoffMs: 0 }, sandboxRequired: false, supportsMock: true, sideEffectLevel: 'none',
 })
 
 function json(value: unknown, status = 200) { return new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } }) }
@@ -28,7 +28,7 @@ describe('workflow studio shell', () => {
   beforeEach(() => {
     requiredAgentBinding = false
     localStorage.clear()
-    useEditorStore.setState({ nodes: [], edges: [], viewport: { x: 0, y: 0, zoom: 1 }, annotations: [], groups: [], dirty: false, past: [], future: [], selectedId: undefined })
+    useEditorStore.setState({ nodes: [], edges: [], viewport: { x: 0, y: 0, zoom: 1 }, annotations: [], groups: [], settings: { executionOrder: 'deterministic', activationBudget: 10_000 }, dirty: false, past: [], future: [], selectedId: undefined })
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = new URL(String(input), 'http://agentx.test').pathname
       if (path.endsWith('/draft') && init?.method === 'PUT') return json({ code: 'DRAFT_REVISION_CONFLICT', message: 'Draft changed', requestId: 'request-1' }, 409)
@@ -46,7 +46,8 @@ describe('workflow studio shell', () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
     render(<QueryClientProvider client={queryClient}><Tooltip.Provider><ToastProvider><MemoryRouter initialEntries={['/workflows/workflow-1/editor']}><Routes><Route element={<WorkflowCanvas />} path="/workflows/:workflowId/editor" /></Routes></MemoryRouter></ToastProvider></Tooltip.Provider></QueryClientProvider>)
 
-    fireEvent.click(await screen.findByRole('button', { name: /Agent/ }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Search nodes' }))
+    fireEvent.click(screen.getByTestId('palette-action-agent'))
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
 
     expect((await screen.findAllByText('Draft revision conflict')).length).toBeGreaterThan(0)
@@ -61,11 +62,40 @@ describe('workflow studio shell', () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
     render(<QueryClientProvider client={queryClient}><Tooltip.Provider><ToastProvider><MemoryRouter initialEntries={['/workflows/workflow-1/editor']}><Routes><Route element={<WorkflowCanvas />} path="/workflows/:workflowId/editor" /></Routes></MemoryRouter></ToastProvider></Tooltip.Provider></QueryClientProvider>)
 
-    fireEvent.click(await screen.findByRole('button', { name: /Agent/ }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Search nodes' }))
+    fireEvent.click(screen.getByTestId('palette-action-agent'))
     await new Promise((resolve) => window.setTimeout(resolve, 1600))
     expect(screen.queryByRole('dialog', { name: 'Validation failed' })).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
     expect(await screen.findByRole('dialog', { name: 'Validation failed' })).toBeInTheDocument()
+  })
+
+  it('locates a validation issue in the selected node details', async () => {
+    requiredAgentBinding = true
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
+    render(<QueryClientProvider client={queryClient}><Tooltip.Provider><ToastProvider><MemoryRouter initialEntries={['/workflows/workflow-1/editor']}><Routes><Route element={<WorkflowCanvas />} path="/workflows/:workflowId/editor" /></Routes></MemoryRouter></ToastProvider></Tooltip.Provider></QueryClientProvider>)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Search nodes' }))
+    fireEvent.click(screen.getByTestId('palette-action-agent'))
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    const issue = await screen.findByText('AI_BINDING_REQUIRED')
+    fireEvent.click(issue.closest('button')!)
+
+    const field = document.querySelector<HTMLElement>('[data-field-path="resourceReferences.ai_model"]')
+    await waitFor(() => expect(field).toHaveFocus())
+    expect(field).toHaveClass('studio-field-located')
+  })
+
+  it('explains why an invalid primary output was cleared', async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
+    render(<QueryClientProvider client={queryClient}><Tooltip.Provider><ToastProvider><MemoryRouter initialEntries={['/workflows/workflow-1/editor']}><Routes><Route element={<WorkflowCanvas />} path="/workflows/:workflowId/editor" /></Routes></MemoryRouter></ToastProvider></Tooltip.Provider></QueryClientProvider>)
+    await screen.findByTestId('workflow-canvas')
+
+    act(() => useEditorStore.getState().setPrimaryOutput('trigger'))
+    await waitFor(() => expect(useEditorStore.getState().settings.primaryOutputNodeId).toBe('trigger'))
+    act(() => useEditorStore.getState().updateNode('trigger', { disabled: true }))
+
+    expect(await screen.findByText('Primary output cleared because the node was disabled')).toBeInTheDocument()
   })
 })
 

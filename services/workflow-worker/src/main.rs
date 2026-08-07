@@ -485,6 +485,13 @@ async fn execute_builtin(state: &WorkerState, task: &RuntimeTask) -> Result<Task
             }
             Ok(completed("main", output))
         }
+        "error_handler" => Ok(execute_error_handler(
+            items,
+            task.node_parameters
+                .get("mode")
+                .and_then(Value::as_str)
+                .unwrap_or("recover"),
+        )),
         "if" => {
             let mut truthy = Vec::new();
             let mut falsy = Vec::new();
@@ -573,6 +580,26 @@ async fn execute_builtin(state: &WorkerState, task: &RuntimeTask) -> Result<Task
             message: format!("Builtin node {other} is not implemented"),
             retryable: false,
         }),
+    }
+}
+
+fn execute_error_handler(items: Vec<Item>, mode: &str) -> TaskResult {
+    if mode != "fail" {
+        return completed("recovered", items);
+    }
+    let error = items.first().and_then(|item| item.json.get("error"));
+    TaskResult::Failed {
+        code: error
+            .and_then(|value| value.get("code"))
+            .and_then(Value::as_str)
+            .unwrap_or("HANDLED_ERROR")
+            .into(),
+        message: error
+            .and_then(|value| value.get("message"))
+            .and_then(Value::as_str)
+            .unwrap_or("Error Handler rethrew the incoming error")
+            .into(),
+        retryable: false,
     }
 }
 
@@ -1268,5 +1295,23 @@ mod tests {
             panic!("done result")
         };
         assert_eq!(outputs.remove("done").expect("done items").len(), 3);
+    }
+
+    #[test]
+    fn error_handler_recovers_or_rethrows_the_original_error() {
+        let items = vec![Item {
+            json: json!({"error":{"code":"MODEL_FAILED","message":"model unavailable"},"sourceNode":"agent"}),
+            ..Item::default()
+        }];
+        let TaskResult::Completed(mut outputs) = execute_error_handler(items.clone(), "recover")
+        else {
+            panic!("recover result")
+        };
+        assert_eq!(outputs.remove("recovered").unwrap(), items);
+        assert!(matches!(
+            execute_error_handler(items, "fail"),
+            TaskResult::Failed { code, message, retryable: false }
+                if code == "MODEL_FAILED" && message == "model unavailable"
+        ));
     }
 }

@@ -138,6 +138,8 @@ impl RuntimeEventEnvelope {
 pub struct ExecutionResult {
     pub schema_version: String,
     pub terminal_nodes: Vec<TerminalNodeResult>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub primary_output: Option<TerminalNodeResult>,
     pub output_hash: String,
 }
 

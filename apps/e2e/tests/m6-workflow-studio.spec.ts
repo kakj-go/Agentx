@@ -12,11 +12,16 @@ const resourceTabs = { credential: '凭证', model: '模型', mcp_server: 'MCP S
 
 type Execution = { id: string; status: string }
 type Approval = { id: string; executionId: string; status: string }
+type Application = { id: string; name: string; slug: string }
+type WorkflowVersion = { id: string; versionNumber: number }
+type GatewayInvocation = { id: string; executionId?: string; status: string; errorCode?: string | null; errorMessage?: string | null }
+type GatewayMessage = { role: string; parts: Array<{ content?: unknown }> }
 type StudioDraft = {
   revision: number
   definition: {
     schemaVersion: string
-    nodes: Array<{ type: string; resourceReferences: Array<{ bindingRole?: string }> }>
+    settings: { primaryOutputNodeId?: string | null }
+    nodes: Array<{ id: string; type: string; name: string; resourceReferences: Array<{ bindingRole?: string }>; settings: { onError?: string } }>
   }
   editorDocument: { bindingEdges: unknown[] }
 }
@@ -39,6 +44,12 @@ async function api<T>(page: Page, token: string, path: string): Promise<T> {
   if (!response.ok()) {
     throw new Error(`${path}: ${response.status()} ${await response.text()}`)
   }
+  return response.json() as Promise<T>
+}
+
+async function mutate<T>(page: Page, token: string, path: string, method: 'POST' | 'PUT' | 'PATCH', body: unknown): Promise<T> {
+  const response = await page.request.fetch(`/api/v1${path}`, { method, data: body, headers: { Authorization: `Bearer ${token}` } })
+  if (!response.ok()) throw new Error(`${path}: ${response.status()} ${await response.text()}`)
   return response.json() as Promise<T>
 }
 
@@ -74,8 +85,35 @@ async function grantResource(page: Page, resourceType: keyof typeof resourceTabs
   await dialog.getByRole('button', { name: '取消' }).click()
 }
 
-function flowNode(page: Page, label: string) {
-  return page.locator('.react-flow__node').filter({ hasText: label }).first()
+function flowNode(page: Page, role: string) {
+  const labels: Record<string, RegExp> = {
+    trigger: /手动触发|Manual Trigger/,
+    agent: /智能体|Agent/,
+    code: /代码|Code/,
+    approval: /审批|Approval/,
+    error_handler: /错误处理|Error Handler/,
+    merge: /合并|Merge/,
+  }
+  return page.locator('.react-flow__node').filter({ hasText: labels[role] ?? new RegExp(role, 'i') }).first()
+}
+
+function studioRun(page: Page) {
+  return page.locator('header').getByRole('button', { name: '运行', exact: true })
+}
+
+async function addFromCreator(page: Page, testId: string) {
+  if (!await page.getByTestId('node-creator').isVisible()) await page.getByTestId('node-creator-rail').getByRole('button', { name: '搜索节点' }).click()
+  await expect(page.getByTestId('node-creator')).toBeVisible()
+  await page.getByTestId(testId).click()
+  await expect(page.getByTestId('node-creator')).toBeHidden()
+}
+
+async function openNodeDetails(page: Page, node: Locator) {
+  const details = page.getByTestId('node-details-view')
+  if (await details.isVisible()) await details.getByRole('button', { name: /^(关闭|Close)$/ }).click()
+  await node.click()
+  await expect(details).toBeVisible()
+  return details
 }
 
 async function connect(page: Page, source: Locator, sourceHandle: string, target: Locator, targetHandle: string) {
@@ -85,10 +123,14 @@ async function connect(page: Page, source: Locator, sourceHandle: string, target
   const to = target.locator(`.react-flow__handle.target[data-handleid="${targetHandle}"]`)
   await expect(from).toBeVisible()
   await expect(to).toBeVisible()
-  const fromBox = await from.boundingBox()
-  const toBox = await to.boundingBox()
-  expect(fromBox).not.toBeNull()
-  expect(toBox).not.toBeNull()
+  let boxes: Awaited<ReturnType<Locator['boundingBox']>>[] | undefined
+  await expect.poll(async () => {
+    const next = await Promise.all([from.boundingBox(), to.boundingBox()])
+    if (next.some((box) => box === null)) return false
+    boxes = next
+    return true
+  }).toBeTruthy()
+  const [fromBox, toBox] = boxes!
   await page.mouse.move(fromBox!.x + fromBox!.width / 2, fromBox!.y + fromBox!.height / 2)
   await page.mouse.down()
   await page.mouse.move(toBox!.x + toBox!.width / 2, toBox!.y + toBox!.height / 2, { steps: 12 })
@@ -103,17 +145,22 @@ async function choose(page: Page, scope: Locator, option: string | RegExp) {
 }
 
 async function fillMonaco(page: Page, scope: Locator, value: string) {
+  await scope.scrollIntoViewIfNeeded()
   const monaco = scope.getByRole('textbox', { name: 'Editor content' })
-  const editor = (await monaco.count()) ? monaco : scope.locator('[contenteditable="true"]').first()
+  const richText = scope.locator('[contenteditable="true"]').first()
+  const usesMonaco = await richText.count() === 0
+  const editor = usesMonaco ? monaco : richText
   await expect(editor).toBeVisible({ timeout: 30_000 })
-  await editor.focus()
-  await expect(editor).toBeFocused()
-  await page.keyboard.press('Control+A')
-  await page.keyboard.insertText(value)
-  await expect.poll(async () => {
-    const lines = await scope.locator('.view-lines').textContent()
-    return (lines ?? await editor.textContent())?.replaceAll('\u00a0', ' ')
-  }).toContain(value.split('\n')[0])
+  if (usesMonaco) {
+    await editor.focus()
+    await expect(editor).toBeFocused()
+    await page.keyboard.press('Control+A')
+    await page.keyboard.insertText(value)
+    await expect.poll(async () => (await scope.locator('.view-lines:visible').textContent())?.replaceAll('\u00a0', ' ')).toContain(value.split('\n')[0])
+  } else {
+    await editor.fill(value)
+    await expect(editor).toContainText(value.split('\n')[0])
+  }
 }
 
 async function saveAndReadDraft(page: Page, token: string, workflowId: string) {
@@ -190,74 +237,136 @@ test('M6 Studio creates, debugs, versions and publishes a manifest-driven Workfl
 
   await page.goto(`/workflows/${workflowId}/editor`)
   await expect(page.getByTestId('workflow-canvas')).toBeVisible()
-  for (const type of ['agent', 'code', 'approval']) await page.getByTestId(`palette-action-${type}`).click()
-  for (const type of ['model', 'mcp_tool']) await page.getByTestId(`palette-binding-${type}`).click()
+  await expect(page.getByTestId('node-creator')).toBeHidden()
+  const rail = page.getByTestId('node-creator-rail')
+  await expect(rail.getByRole('button', { name: '搜索节点' })).toBeVisible()
+  await expect(rail.getByRole('button', { name: '便签' })).toBeVisible()
+  await expect(rail.getByRole('button', { name: '分组' })).toBeVisible()
+  await expect(rail.getByTestId('rail-action-agent')).toBeVisible()
+  await expect(rail.getByTestId('rail-action-error_handler')).toBeVisible()
+  expect(await rail.locator('[data-testid^="rail-action-"]').count()).toBeGreaterThan(8)
+  const initialTrigger = flowNode(page, 'trigger')
+  await initialTrigger.hover()
+  await initialTrigger.getByRole('button', { name: /后添加节点/ }).click({ force: true })
+  await page.getByTestId('palette-action-agent').click()
+  await expect(page.locator('.react-flow__edge')).toHaveCount(1)
+  for (const type of ['code', 'approval']) await addFromCreator(page, `palette-action-${type}`)
+  for (const type of ['model', 'mcp_tool']) await addFromCreator(page, `palette-binding-${type}`)
   await page.getByRole('button', { name: 'Fit View' }).click()
 
-  const trigger = flowNode(page, 'Manual Trigger')
-  const agent = flowNode(page, 'Agent')
-  const code = flowNode(page, 'Code')
-  const approval = flowNode(page, 'Approval')
-  const model = page.locator('.react-flow__node-attachment').filter({ hasText: 'model' }).first()
-  const tool = page.locator('.react-flow__node-attachment').filter({ hasText: 'mcp_tool' }).first()
+  const agent = flowNode(page, 'agent')
+  const code = flowNode(page, 'code')
+  const approval = flowNode(page, 'approval')
+  const model = page.locator('.react-flow__node-attachment').filter({ hasText: /model|模型/i }).first()
+  const tool = page.locator('.react-flow__node-attachment').filter({ hasText: /mcp[ _]tool|工具/i }).first()
   await expect(approval).toBeVisible()
 
-  await model.click()
+  await openNodeDetails(page, model)
   await choose(page, page.getByTestId('attachment-resource'), /m5-fixture-model/)
-  await tool.click()
+  await openNodeDetails(page, tool)
   await choose(page, page.getByTestId('attachment-resource'), /Echo/)
 
-  await agent.click()
+  await openNodeDetails(page, agent)
   await fillMonaco(page, page.getByTestId('parameter-systemPrompt'), 'Use the attached resources and return a concise result.')
 
-  await code.click()
+  await openNodeDetails(page, code)
   await choose(page, page.getByTestId('parameter-runner'), /^python$/)
   await fillMonaco(page, page.getByTestId('parameter-source'), 'print("m6-studio-ok")')
   await choose(page, page.getByTestId('resource-selector-sandbox_profile'), /M5 Python Fixture/)
 
-  await approval.click()
+  await openNodeDetails(page, approval)
   await page.getByTestId('parameter-title').getByRole('textbox').fill('M6 Studio Approval')
   await page.getByTestId('parameter-description').getByRole('textbox').fill('Approve the Workflow created through the Studio UI.')
   await page.getByTestId('parameter-candidateUserId').getByRole('textbox').fill(userId)
 
-  await connect(page, trigger, 'main', agent, 'main')
+  await page.getByTestId('node-details-view').getByRole('button', { name: /^(关闭|Close)$/ }).click()
+  await page.getByRole('button', { name: 'Fit View' }).click()
   await connect(page, agent, 'main', code, 'main')
   await connect(page, code, 'main', approval, 'main')
   await connect(page, model, 'resource', agent, 'binding:ai_model')
   await connect(page, tool, 'resource', agent, 'binding:ai_tool')
   await expect(page.locator('.react-flow__edge')).toHaveCount(5)
 
+  await code.hover()
+  await code.getByRole('button', { name: /在 错误 后添加节点/ }).click({ force: true })
+  await expect(page.getByTestId('node-creator')).toBeVisible()
+  await expect(page.getByTestId('palette-action-error_handler')).toBeVisible()
+  await page.getByTestId('palette-action-error_handler').click()
+  await expect(page.getByTestId('node-creator')).toBeHidden()
+  await expect(page.locator('.react-flow__edge')).toHaveCount(6)
+  const errorHandler = flowNode(page, 'error_handler')
+  await expect(errorHandler).toBeVisible()
+  await expect(page.getByTestId('node-details-view')).toBeVisible()
+
+  const approvalDetails = await openNodeDetails(page, approval)
+  await approvalDetails.getByRole('button', { name: '更多节点操作' }).click()
+  await page.getByRole('menuitem', { name: '设为主要输出' }).click()
+  await expect(approval.locator('[title="主要输出"]')).toBeVisible()
+
+  await openNodeDetails(page, code)
+  await page.getByRole('button', { name: '关闭' }).click()
+
+  await page.getByTestId('node-creator-rail').getByRole('button', { name: '便签' }).click()
+  const note = page.locator('[data-testid^="studio-note-"]').first()
+  await expect(note).toBeVisible()
+  await note.dispatchEvent('dblclick')
+  await note.getByRole('textbox').fill('M6 runtime notes')
+  await note.getByRole('textbox').press('Control+Enter')
+  await note.getByRole('button', { name: /便签颜色：blue/ }).click()
+
+  await code.click()
+  await page.keyboard.down('Shift')
+  await approval.click()
+  await page.keyboard.up('Shift')
+  await page.getByTestId('node-creator-rail').getByRole('button', { name: '分组' }).click()
+  const group = page.locator('[data-testid^="studio-group-"]').first()
+  await expect(group).toBeVisible()
+  await group.getByRole('button', { name: '折叠分组' }).click()
+  await expect(group.getByRole('button', { name: '展开分组' })).toBeVisible()
+  await group.getByRole('button', { name: '展开分组' }).click()
+
   const draft = await saveAndReadDraft(page, token, workflowId)
   expect(draft.definition.schemaVersion).toBe('3.0')
-  expect(draft.definition.nodes.map((node) => node.type)).toEqual(expect.arrayContaining(['manual_trigger', 'agent', 'code', 'approval']))
+  expect(draft.definition.nodes.map((node) => node.type)).toEqual(expect.arrayContaining(['manual_trigger', 'agent', 'code', 'approval', 'error_handler']))
   expect(draft.definition.nodes.find((node) => node.type === 'agent')?.resourceReferences.map((item) => item.bindingRole)).toEqual(expect.arrayContaining(['ai_model', 'ai_tool']))
+  expect(draft.definition.nodes.find((node) => node.type === 'code')?.settings.onError).toBe('continue_error_output')
+  expect(draft.definition.settings.primaryOutputNodeId).toBe(draft.definition.nodes.find((node) => node.type === 'approval')?.id)
   expect(draft.editorDocument.bindingEdges).toHaveLength(2)
 
-  const firstExecution = await startDebug(page, () => page.getByRole('button', { name: '运行', exact: true }).click())
+  const firstExecution = await startDebug(page, () => studioRun(page).click())
   const approvalPage = await context.newPage()
   await approveExecution(approvalPage, token, firstExecution)
   await waitExecution(page, token, firstExecution, ['succeeded'])
 
-  await code.click()
-  await expect(page.getByRole('tabpanel').getByRole('textbox')).toHaveValue(/m6-studio-ok/, { timeout: 30_000 })
-  await page.getByRole('tab', { name: 'Trace' }).click()
-  await expect(page.getByRole('tabpanel')).toContainText(/agentRuns|sandboxes/, { timeout: 30_000 })
-  await page.getByRole('tab', { name: '事件' }).click()
-  await expect(page.getByRole('tabpanel')).toContainText('node.completed')
+  const details = await openNodeDetails(page, code)
+  await details.getByRole('tab', { name: '输出' }).click()
+  await expect(details.getByRole('textbox', { name: '输出' })).toHaveValue(/m6-studio-ok/, { timeout: 30_000 })
+  await details.getByRole('tab', { name: 'Trace' }).click()
+  await expect(details.getByRole('tabpanel')).toContainText(/runs|sandboxes/, { timeout: 30_000 })
+  const runtimeRail = page.getByTestId('runtime-rail')
+  await runtimeRail.getByRole('tab', { name: '事件' }).click()
+  await expect(runtimeRail.getByRole('tabpanel')).toContainText('node.completed')
+  await runtimeRail.getByRole('button', { name: '折叠执行轨道' }).click()
+  await expect(runtimeRail.getByRole('button', { name: '展开执行轨道' })).toBeVisible()
+  await runtimeRail.getByRole('button', { name: '展开执行轨道' }).click()
 
-  await agent.click()
-  await page.getByRole('button', { name: '模拟', exact: true }).click()
-  await expect(page.getByText('调试覆盖已保存', { exact: true })).toBeVisible()
-  await code.click()
-  await page.getByRole('button', { name: '固定', exact: true }).click()
-  await expect(page.getByText('调试覆盖已保存', { exact: true })).toBeVisible()
+  const agentDetails = await openNodeDetails(page, agent)
+  await agentDetails.getByRole('tab', { name: '输出' }).click()
+  const mockResponse = page.waitForResponse((value) => value.url().includes('/debug-overlays/') && value.request().method() === 'PUT')
+  await agentDetails.getByRole('button', { name: '模拟', exact: true }).click()
+  expect((await mockResponse).ok()).toBeTruthy()
+  const codeDetails = await openNodeDetails(page, code)
+  await codeDetails.getByRole('tab', { name: '输出' }).click()
+  const pinResponse = page.waitForResponse((value) => value.url().includes('/debug-overlays/') && value.request().method() === 'PUT')
+  await codeDetails.getByRole('button', { name: '固定', exact: true }).click()
+  expect((await pinResponse).ok()).toBeTruthy()
 
   let failedEventPolls = 0
   await page.route('**/api/v1/executions/*/events?*', async (route) => {
     if (failedEventPolls++ < 2) await route.abort('connectionfailed')
     else await route.continue()
   })
-  const overlayExecution = await startDebug(page, () => page.getByRole('button', { name: '运行', exact: true }).click())
+  const overlayExecution = await startDebug(page, () => studioRun(page).click())
   await approveExecution(approvalPage, token, overlayExecution)
   await waitExecution(page, token, overlayExecution, ['succeeded'])
   await page.unroute('**/api/v1/executions/*/events?*')
@@ -265,29 +374,29 @@ test('M6 Studio creates, debugs, versions and publishes a manifest-driven Workfl
   expect(overlayEvents.items.filter((item) => item.eventType === 'node.debug_overlay_applied')).toHaveLength(2)
   await expect(page.getByRole('tab', { name: '事件' })).toBeVisible()
 
-  await code.click()
+  await openNodeDetails(page, code)
   await selectDebugMode(page, 'single_node')
   const singleExecution = await startDebug(page, async () => {
-    await page.getByRole('button', { name: '运行', exact: true }).click()
+    await studioRun(page).click()
     const dialog = page.getByRole('dialog', { name: '调试输入' })
     await dialog.getByRole('button', { name: '运行', exact: true }).click()
   })
   await waitExecution(page, token, singleExecution, ['succeeded'])
 
   await selectDebugMode(page, 'to_node')
-  const toExecution = await startDebug(page, () => page.getByRole('button', { name: '运行', exact: true }).click())
+  const toExecution = await startDebug(page, () => studioRun(page).click())
   await waitExecution(page, token, toExecution, ['succeeded'])
 
   await selectDebugMode(page, 'from_node')
   const fromExecution = await startDebug(page, async () => {
-    await page.getByRole('button', { name: '运行', exact: true }).click()
+    await studioRun(page).click()
     const dialog = page.getByRole('dialog', { name: '调试输入' })
     await dialog.getByRole('button', { name: '运行', exact: true }).click()
   })
   await approveExecution(approvalPage, token, fromExecution)
   await waitExecution(page, token, fromExecution, ['succeeded'])
 
-  await page.getByRole('tab', { name: '检查点' }).click()
+  await page.getByTestId('runtime-rail').getByRole('tab', { name: '检查点' }).click()
   const forkButton = page.getByRole('button', { name: 'Fork' }).last()
   await expect(forkButton).toBeVisible({ timeout: 30_000 })
   const forkResponse = page.waitForResponse((value) => value.url().endsWith(`/executions/${fromExecution}/fork`) && value.request().method() === 'POST')
@@ -299,10 +408,10 @@ test('M6 Studio creates, debugs, versions and publishes a manifest-driven Workfl
   if (await stopFork.isVisible()) {
     await stopFork.click()
     await waitExecution(page, token, forkExecution, ['cancelled', 'failed', 'succeeded'])
-  } else await expect(page.getByRole('button', { name: '运行', exact: true })).toBeVisible()
+  } else await expect(studioRun(page)).toBeVisible()
 
   await selectDebugMode(page, 'full')
-  const stoppedExecution = await startDebug(page, () => page.getByRole('button', { name: '运行', exact: true }).click())
+  const stoppedExecution = await startDebug(page, () => studioRun(page).click())
   await waitExecution(page, token, stoppedExecution, ['waiting', 'waiting_approval'])
   await page.getByRole('button', { name: '停止', exact: true }).click()
   await waitExecution(page, token, stoppedExecution, ['cancelled'])
@@ -340,12 +449,14 @@ test('M6 Studio creates, debugs, versions and publishes a manifest-driven Workfl
   const concurrent = await context.newPage()
   await concurrent.goto(`/workflows/${workflowId}/editor`)
   await expect(concurrent.getByTestId('workflow-canvas')).toBeVisible()
-  await flowNode(concurrent, 'code').click()
-  await concurrent.getByLabel('Name').fill('code concurrent')
+  const concurrentDetails = await openNodeDetails(concurrent, flowNode(concurrent, 'code'))
+  await concurrentDetails.getByRole('tab', { name: 'Parameters' }).click()
+  await concurrentDetails.getByLabel('Name').fill('code concurrent')
   await concurrent.getByRole('button', { name: 'Save', exact: true }).click()
   await expect(concurrent.locator('header').getByText(/Revision \d+ · Saved/)).toBeVisible()
-  await code.click()
-  await page.getByLabel('Name').fill('code local')
+  const localDetails = await openNodeDetails(page, code)
+  await localDetails.getByRole('tab', { name: 'Parameters' }).click()
+  await localDetails.getByLabel('Name').fill('code local')
   await page.getByRole('button', { name: 'Save', exact: true }).click()
   await expect(page.getByRole('dialog', { name: 'Draft revision conflict' })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Keep local copy' })).toBeVisible()
@@ -354,4 +465,115 @@ test('M6 Studio creates, debugs, versions and publishes a manifest-driven Workfl
 
   await concurrent.close()
   await approvalPage.close()
+})
+
+test('M6 Studio makes dual-Agent output selection explicit across serial, parallel and Merge topologies', async ({ page }, testInfo) => {
+  const { token } = await login(page)
+  const workflowName = `M6 Multi Agent ${Date.now()}`
+  const workflowId = await createWorkflow(page, workflowName)
+  await grantResource(page, 'credential', 'M5 Model Fixture Credential', undefined, workflowName)
+  await grantResource(page, 'model', 'm5-fixture-model', undefined, workflowName)
+
+  await page.goto(`/workflows/${workflowId}/editor`)
+  const trigger = flowNode(page, 'trigger')
+  await trigger.hover()
+  await trigger.getByRole('button', { name: /后添加节点/ }).click({ force: true })
+  await page.getByTestId('palette-action-agent').click()
+  await addFromCreator(page, 'palette-action-agent')
+  await addFromCreator(page, 'palette-binding-model')
+
+  const agents = () => page.locator('.react-flow__node').filter({ hasText: /智能体|Agent/ })
+  const firstAgent = agents().first()
+  const secondAgent = agents().nth(1)
+  const firstDetails = await openNodeDetails(page, firstAgent)
+  await firstDetails.getByLabel('名称').fill('Agent A')
+  await fillMonaco(page, firstDetails.getByTestId('parameter-systemPrompt'), 'Return the serial Agent A result.')
+  const secondDetails = await openNodeDetails(page, secondAgent)
+  await secondDetails.getByLabel('名称').fill('Agent B')
+  await fillMonaco(page, secondDetails.getByTestId('parameter-systemPrompt'), 'Return the selected Agent B result.')
+
+  const model = page.locator('.react-flow__node-attachment').first()
+  await openNodeDetails(page, model)
+  await choose(page, page.getByTestId('attachment-resource'), /m5-fixture-model/)
+  await page.getByTestId('node-details-view').getByRole('button', { name: '关闭' }).click()
+  await page.getByRole('button', { name: 'Fit View' }).click()
+
+  await connect(page, model, 'resource', firstAgent, 'binding:ai_model')
+  await connect(page, model, 'resource', secondAgent, 'binding:ai_model')
+  await connect(page, firstAgent, 'main', secondAgent, 'main')
+  const serialDraft = await saveAndReadDraft(page, token, workflowId)
+  expect(serialDraft.definition.nodes.filter((node) => node.type === 'agent')).toHaveLength(2)
+  const serialExecution = await startDebug(page, () => studioRun(page).click())
+  await waitExecution(page, token, serialExecution, ['succeeded'], 180_000)
+
+  const serialEdge = page.locator('.react-flow__edge').last()
+  await serialEdge.click({ force: true })
+  await page.keyboard.press('Delete')
+  await expect(page.locator('.react-flow__edge')).toHaveCount(3)
+  await page.getByRole('button', { name: 'Fit View' }).click()
+  await connect(page, trigger, 'main', secondAgent, 'main')
+  const parallelDraft = await saveAndReadDraft(page, token, workflowId)
+  const parallelVersion = await mutate<WorkflowVersion>(page, token, `/workflows/${workflowId}/versions`, 'POST', { draftRevision: parallelDraft.revision })
+  const application = await mutate<Application>(page, token, '/applications', 'POST', { workflowId, name: workflowName, slug: `m6-multi-agent-${Date.now()}`, description: 'Dual Agent output contract E2E', visibility: 'company' })
+  const environments = await api<Array<{ id: string; code: string }>>(page, token, '/environments')
+  const environment = environments.find((item) => item.code === 'development')
+  expect(environment).toBeTruthy()
+  await mutate<{ id: string }>(page, token, `/workflows/${workflowId}/deployments`, 'POST', { workflowVersionId: parallelVersion.id, environmentId: environment!.id })
+  const rejected = await page.request.post(`/api/v1/applications/${application.id}/deployments`, { data: { workflowVersionId: parallelVersion.id, environmentId: environment!.id, inputSchema: {}, outputSchema: {}, outputExpression: null, sessionVersionPolicy: 'pinned' }, headers: { Authorization: `Bearer ${token}` } })
+  expect(rejected.status()).toBe(422)
+  expect((await rejected.json() as { code: string }).code).toBe('APPLICATION_PRIMARY_OUTPUT_REQUIRED')
+
+  await openNodeDetails(page, secondAgent)
+  await page.getByTestId('node-details-view').getByRole('button', { name: '更多节点操作' }).click()
+  await page.getByRole('menuitem', { name: '设为主要输出' }).click()
+  const primaryDraft = await saveAndReadDraft(page, token, workflowId)
+  const primaryVersion = await mutate<WorkflowVersion>(page, token, `/workflows/${workflowId}/versions`, 'POST', { draftRevision: primaryDraft.revision })
+  await mutate<{ id: string }>(page, token, `/workflows/${workflowId}/deployments`, 'POST', { workflowVersionId: primaryVersion.id, environmentId: environment!.id })
+  const deployment = await mutate<{ id: string }>(page, token, `/applications/${application.id}/deployments`, 'POST', { workflowVersionId: primaryVersion.id, environmentId: environment!.id, inputSchema: {}, outputSchema: {}, outputExpression: null, sessionVersionPolicy: 'pinned' })
+  expect(deployment.id).toBeTruthy()
+
+  await page.goto('/playground')
+  await page.getByRole('combobox').click()
+  await page.getByRole('option', { name: workflowName, exact: true }).click()
+  const sessionResponse = page.waitForResponse((value) => value.url().includes('/gateway/v1/applications/') && value.url().endsWith('/sessions') && value.request().method() === 'POST')
+  await page.getByRole('button', { name: '新建会话' }).click()
+  const session = await (await sessionResponse).json() as { id: string }
+  const invocationResponse = page.waitForResponse((value) => value.url().includes('/gateway/v1/sessions/') && value.url().endsWith('/messages') && value.request().method() === 'POST')
+  await page.getByPlaceholder('输入消息进行测试…').fill('M6 dual Agent output')
+  await page.getByRole('button', { name: '发送' }).click()
+  const invocation = await (await invocationResponse).json() as GatewayInvocation
+  let completed: GatewayInvocation | undefined
+  await expect.poll(async () => {
+    const response = await page.request.get(`/gateway/v1/invocations/${invocation.id}`, { headers: { Authorization: `Bearer ${token}` } })
+    completed = await response.json() as GatewayInvocation
+    return completed.status
+  }, { timeout: 180_000, intervals: [500, 1_000, 2_000] }).toBe('completed')
+  expect(completed?.errorCode).toBeNull()
+  const messagesResponse = await page.request.get(`/gateway/v1/sessions/${session.id}/messages`, { headers: { Authorization: `Bearer ${token}` } })
+  const messages = await messagesResponse.json() as GatewayMessage[]
+  const assistant = messages.find((message) => message.role === 'assistant')
+  expect(assistant).toBeTruthy()
+  const nodeRuns = await api<{ items: Array<{ nodeId: string; status: string; output?: { main?: Array<{ json?: { message?: { content?: string }; output?: string; text?: string } }> } }> }>(page, token, `/executions/${completed!.executionId}/nodes`)
+  const selectedRun = nodeRuns.items.find((item) => item.nodeId === primaryDraft.definition.settings.primaryOutputNodeId && item.status === 'succeeded')
+  const selectedJson = selectedRun?.output?.main?.[0]?.json
+  const selectedText = selectedJson?.message?.content ?? selectedJson?.output ?? selectedJson?.text
+  expect(selectedText).toBeTruthy()
+  expect(assistant!.parts.some((part) => part.content === selectedText)).toBeTruthy()
+
+  await page.goto(`/workflows/${workflowId}/editor`)
+  await expect(page.getByTestId('workflow-canvas')).toBeVisible()
+  await addFromCreator(page, 'palette-action-merge')
+  const merge = flowNode(page, 'merge')
+  await page.getByTestId('node-details-view').getByRole('button', { name: '关闭' }).click()
+  await page.getByRole('button', { name: 'Fit View' }).click()
+  await connect(page, firstAgent, 'main', merge, 'main')
+  await connect(page, secondAgent, 'main', merge, 'main')
+  await expect(page.getByText('主要输出已清除：该节点新增了正常输出连线')).toBeVisible()
+  const mergedDraft = await saveAndReadDraft(page, token, workflowId)
+  expect(mergedDraft.definition.nodes.some((node) => node.type === 'merge')).toBeTruthy()
+  expect(mergedDraft.definition.settings.primaryOutputNodeId).toBeFalsy()
+  const mergedExecution = await startDebug(page, () => studioRun(page).click())
+  await waitExecution(page, token, mergedExecution, ['succeeded'], 180_000)
+
+  await page.screenshot({ path: testInfo.outputPath('dual-agent-output-semantics.png'), fullPage: true })
 })

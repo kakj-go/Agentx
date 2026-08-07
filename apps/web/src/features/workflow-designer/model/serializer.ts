@@ -30,7 +30,7 @@ export function deserializeDraft(value: WorkflowDraft): StudioDocument {
   }
   const executionEdges: StudioEdge[] = definition.connections.map((connection) => ({ id: connection.id, source: connection.sourceNodeId, sourceHandle: connection.sourceHandle, target: connection.targetNodeId, targetHandle: connection.targetHandle, data: { edgeKind: 'execution', order: connection.order }, type: 'studio' }))
   const bindingEdges: StudioEdge[] = editor.bindingEdges.filter((edge) => seen.has(edge.sourceBindingId)).map((edge) => ({ id: edge.edgeId, source: bindingNodeId(edge.sourceBindingId), sourceHandle: 'resource', target: edge.targetNodeId, targetHandle: `binding:${edge.targetSlot}`, data: { edgeKind: 'binding', targetSlot: edge.targetSlot }, type: 'studio' }))
-  return { nodes, edges: [...executionEdges, ...bindingEdges], viewport: editor.viewport, annotations: editor.annotations, groups: editor.groups }
+  return { nodes, edges: [...executionEdges, ...bindingEdges], viewport: editor.viewport, annotations: editor.annotations, groups: editor.groups, settings: definition.settings ?? { executionOrder: 'deterministic', activationBudget: 10_000 } }
 }
 
 export function serializeStudio(document: StudioDocument): { definition: WorkflowDefinition; editorDocument: EditorDocument } {
@@ -52,7 +52,7 @@ export function serializeStudio(document: StudioDocument): { definition: Workflo
   return {
     definition: {
       schemaVersion: '3.0',
-      settings: { executionOrder: 'deterministic', activationBudget: 10_000 },
+      settings: document.settings,
       nodes: actionNodes.map((node) => ({ id: node.id, type: node.data.nodeType, typeVersion: node.data.typeVersion, name: node.data.label, disabled: node.data.disabled, parameters: node.data.parameters, resourceReferences: [...node.data.resourceReferences.filter((reference) => !reference.bindingId), ...(bindingByTarget.get(node.id) ?? [])], settings: node.data.settings })),
       connections,
     },
@@ -71,7 +71,14 @@ export function serializeStudio(document: StudioDocument): { definition: Workflo
 function normalizeEditor(value: unknown): EditorDocument {
   const base = emptyEditorDocument()
   if (!value || typeof value !== 'object') return base
-  return { ...base, ...(value as Partial<EditorDocument>), viewport: { ...base.viewport, ...((value as Partial<EditorDocument>).viewport ?? {}) } }
+  const input = value as Partial<EditorDocument>
+  return {
+    ...base,
+    ...input,
+    annotations: (input.annotations ?? []).map((annotation) => ({ width: 240, height: 160, ...annotation })),
+    groups: (input.groups ?? []).map((group) => ({ collapsed: false, ...group })),
+    viewport: { ...base.viewport, ...(input.viewport ?? {}) },
+  }
 }
 
 export const bindingNodeId = (bindingId: string) => `binding:${bindingId}`

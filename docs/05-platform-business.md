@@ -199,6 +199,10 @@ Session 默认固定 Workflow Version，保证长会话行为稳定。Applicatio
 
 Playground 使用相同的 Application API，不维护另一套运行路径。
 
+Application 的回答由不可变 Workflow Version 决定。正常输出候选是已启用、可执行、具有 Main 输出且没有向外 Main 连线的节点；Error 连线不影响候选资格。唯一候选可自动成为主要输出，多候选 Workflow 仍可调试和版本化，但创建 Application Deployment 前必须在 Definition 的 `primaryOutputNodeId` 中明确选择，否则返回 `APPLICATION_PRIMARY_OUTPUT_REQUIRED`；无候选返回 `APPLICATION_OUTPUT_UNAVAILABLE`。
+
+Invocation 只读取 `ExecutionResult.primaryOutput`，不按画布位置、完成时间或 `terminalNodes` 数组顺序猜测回答。同一节点多次激活时按 Activation Generation、Slot、Run Index 和 Node Execution ID 选最后一次成功输出。显式主要节点未执行返回 `APPLICATION_PRIMARY_OUTPUT_NOT_REACHED`，不创建 Assistant Message。输出处理顺序为 `outputExpression`、唯一 Main Item 的 `json.message.content/json.output/json.text` 文本推断、原始结构化 outputs、Output Schema 校验；多个 Agent 结果不会被隐式拼接。
+
 ## 10. API
 
 建议的核心接口：

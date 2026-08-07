@@ -19,6 +19,7 @@ export type JsonSchemaProperty = {
   format?: string
 }
 export type ParameterSchema = { type?: string; required?: string[]; properties?: Record<string, JsonSchemaProperty>; additionalProperties?: boolean }
+export type CanvasNodeRole = 'default' | 'trigger' | 'branch' | 'flow' | 'merge' | 'loop' | 'suspend' | 'approval' | 'sub_workflow' | 'agent' | 'code' | 'error_handler'
 export type UiField = {
   control: string
   label?: string
@@ -31,6 +32,7 @@ export type NodeUiSchema = {
   order?: string[]
   fields?: Record<string, UiField>
   resourceSelectors?: unknown[]
+  canvas?: { role?: CanvasNodeRole }
 }
 
 export type NodeManifest = {
@@ -57,6 +59,16 @@ export type NodeManifest = {
   sandboxRequired: boolean
   supportsMock: boolean
   sideEffectLevel: 'none' | 'idempotent' | 'reversible' | 'irreversible'
+  localizations?: Record<string, NodeManifestLocalization>
+}
+
+export type NodeManifestLocalization = {
+  displayName?: string
+  description?: string
+  keywords?: string[]
+  inputPortLabels?: Record<string, string>
+  outputPortLabels?: Record<string, string>
+  bindingSlotLabels?: Record<string, string>
 }
 
 export type ResourceReference = {
@@ -79,15 +91,16 @@ export type DefinitionNode = {
   settings: Record<string, unknown>
 }
 export type DefinitionConnection = { id: string; sourceNodeId: string; sourceHandle: string; targetNodeId: string; targetHandle: string; order: number }
-export type WorkflowDefinition = { schemaVersion: '3.0'; nodes: DefinitionNode[]; connections: DefinitionConnection[]; settings: { executionOrder: 'deterministic' | 'parallel'; activationBudget: number; timeoutMs?: number | null } }
+export type WorkflowSettings = { executionOrder: 'deterministic' | 'parallel'; activationBudget: number; timeoutMs?: number | null; primaryOutputNodeId?: string | null }
+export type WorkflowDefinition = { schemaVersion: '3.0'; nodes: DefinitionNode[]; connections: DefinitionConnection[]; settings: WorkflowSettings }
 
 export type EditorDocument = {
   nodeLayouts: Array<{ nodeId: string; x: number; y: number; width?: number; height?: number; collapsed?: boolean }>
   bindingLayouts: Array<{ bindingId: string; x: number; y: number }>
   edges: Array<{ edgeId: string; labelPosition?: number }>
   bindingEdges: Array<{ edgeId: string; sourceBindingId: string; targetNodeId: string; targetSlot: string }>
-  annotations: Array<{ id: string; text: string; x: number; y: number; color?: string }>
-  groups: Array<{ id: string; label: string; nodeIds: string[]; color?: string }>
+  annotations: Array<{ id: string; text: string; x: number; y: number; width?: number; height?: number; color?: string }>
+  groups: Array<{ id: string; label: string; nodeIds: string[]; collapsed?: boolean; color?: string }>
   viewport: Viewport
 }
 
@@ -112,12 +125,16 @@ export type BindingNodeData = {
   operation: 'use' | 'read' | 'write'
   label: string
 }
+export type GroupNodeData = { editorKind: 'group'; groupId: string; label: string; collapsed: boolean; color?: string; memberCount: number; onToggle: () => void; onRemove: () => void }
+export type AnnotationNodeData = { editorKind: 'annotation'; annotationId: string; text: string; color?: string; onChange: (patch: Partial<EditorDocument['annotations'][number]>) => void; onRemove: () => void; onResizeStart: () => void; onResize: (frame: { x: number; y: number; width: number; height: number }) => void }
 export type StudioNodeData = ActionNodeData | BindingNodeData
 export type StudioNode = Node<StudioNodeData, 'manifest' | 'attachment'>
-export type StudioEdgeData = { edgeKind: 'execution' | 'binding'; order?: number; targetSlot?: string }
+export type CanvasNodeData = StudioNodeData | GroupNodeData | AnnotationNodeData
+export type CanvasNode = Node<CanvasNodeData, 'manifest' | 'attachment' | 'group' | 'annotation'>
+export type StudioEdgeData = { edgeKind: 'execution' | 'binding'; order?: number; targetSlot?: string; sourcePortKind?: PortKind }
 export type StudioEdge = Edge<StudioEdgeData>
 
-export type StudioDocument = { nodes: StudioNode[]; edges: StudioEdge[]; viewport: Viewport; annotations: EditorDocument['annotations']; groups: EditorDocument['groups'] }
+export type StudioDocument = { nodes: StudioNode[]; edges: StudioEdge[]; viewport: Viewport; annotations: EditorDocument['annotations']; groups: EditorDocument['groups']; settings: WorkflowSettings }
 export type ResourceOption = { value: string; label: string; versionId?: string | null }
 
 export const emptyEditorDocument = (): EditorDocument => ({ nodeLayouts: [], bindingLayouts: [], edges: [], bindingEdges: [], annotations: [], groups: [], viewport: { x: 0, y: 0, zoom: 1 } })

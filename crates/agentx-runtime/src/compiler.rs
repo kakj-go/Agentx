@@ -5,7 +5,7 @@ use agentx_domain::{
     validate_definition,
 };
 use agentx_node_protocol::{
-    ExecutionStyle, NodeCapability, NodeManifestVersion, ReadinessPolicy, SideEffectLevel,
+    ExecutionStyle, NodeCapability, NodeManifestVersion, PortKind, ReadinessPolicy, SideEffectLevel,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -53,6 +53,8 @@ pub struct CompiledWorkflow {
     pub definition_hash: String,
     pub execution_order: ExecutionOrder,
     pub activation_budget: u32,
+    pub primary_output_node: Option<usize>,
+    pub normal_output_candidates: Vec<usize>,
     pub nodes: Vec<CompiledNode>,
     pub connections: Vec<CompiledConnection>,
     pub start_nodes: Vec<usize>,
@@ -88,8 +90,10 @@ pub struct CompiledConnection {
     pub id: String,
     pub source_node: usize,
     pub source_port: String,
+    pub source_port_kind: PortKind,
     pub target_node: usize,
     pub target_port: String,
+    pub target_port_kind: PortKind,
     pub branch_order: u32,
     pub back_edge: bool,
 }
@@ -221,8 +225,67 @@ impl<'a> WorkflowCompiler<'a> {
                     ),
                 });
             }
+            if let (Some(source_manifest), Some(target_manifest)) =
+                (&manifests[source], &manifests[target])
+                && let (Some(source_kind), Some(target_kind)) = (
+                    port_kind(&source_manifest.output_ports, &connection.source_handle),
+                    port_kind(&target_manifest.input_ports, &connection.target_handle),
+                )
+                && source_kind != target_kind
+            {
+                issues.push(CompileIssue {
+                    code: "PORT_KIND_MISMATCH".into(),
+                    path: format!("connections[{definition_index}]"),
+                    message: format!(
+                        "Connection {} links incompatible {:?} and {:?} ports",
+                        connection.id, source_kind, target_kind
+                    ),
+                });
+            }
             raw_connections.push((connection, source, target, connection.order));
         }
+
+        let normal_output_candidates = enabled
+            .iter()
+            .enumerate()
+            .filter_map(|(index, (_, node))| {
+                let has_main_output = manifests[index].as_ref().is_some_and(|manifest| {
+                    manifest
+                        .output_ports
+                        .iter()
+                        .any(|port| port.kind == PortKind::Main)
+                });
+                let has_outgoing_main = raw_connections.iter().any(|(connection, source, _, _)| {
+                    *source == index
+                        && manifests[index].as_ref().is_some_and(|manifest| {
+                            port_kind(&manifest.output_ports, &connection.source_handle)
+                                == Some(PortKind::Main)
+                        })
+                });
+                (has_main_output && !has_outgoing_main).then_some((index, node.id.as_str()))
+            })
+            .collect::<Vec<_>>();
+        let primary_output_node = definition
+            .settings
+            .primary_output_node_id
+            .as_deref()
+            .and_then(|id| indexes.get(id).copied());
+        if let Some(primary) = primary_output_node
+            && !normal_output_candidates
+                .iter()
+                .any(|(candidate, _)| *candidate == primary)
+        {
+            issues.push(CompileIssue {
+                code: "PRIMARY_OUTPUT_NOT_TERMINAL".into(),
+                path: "settings.primaryOutputNodeId".into(),
+                message: "Primary output must be an enabled node without outgoing main connections"
+                    .into(),
+            });
+        }
+        let normal_output_candidates = normal_output_candidates
+            .into_iter()
+            .map(|(index, _)| index)
+            .collect::<Vec<_>>();
 
         validate_reachability(&enabled, &manifests, &raw_connections, &mut issues);
         if !issues.is_empty() {
@@ -246,8 +309,24 @@ impl<'a> WorkflowCompiler<'a> {
                     id: connection.id.clone(),
                     source_node: *source,
                     source_port: connection.source_handle.clone(),
+                    source_port_kind: port_kind(
+                        &manifests[*source]
+                            .as_ref()
+                            .expect("manifest validated")
+                            .output_ports,
+                        &connection.source_handle,
+                    )
+                    .expect("source port validated"),
                     target_node: *target,
                     target_port: connection.target_handle.clone(),
+                    target_port_kind: port_kind(
+                        &manifests[*target]
+                            .as_ref()
+                            .expect("manifest validated")
+                            .input_ports,
+                        &connection.target_handle,
+                    )
+                    .expect("target port validated"),
                     branch_order: *branch_order,
                     back_edge: component_by_node[*source] == component_by_node[*target]
                         && (components[component_by_node[*source]].len() > 1 || source == target),
@@ -329,6 +408,8 @@ impl<'a> WorkflowCompiler<'a> {
             definition_hash,
             execution_order: definition.settings.execution_order,
             activation_budget: definition.settings.activation_budget,
+            primary_output_node,
+            normal_output_candidates,
             nodes,
             connections,
             start_nodes,
@@ -486,6 +567,18 @@ fn port_matches(ports: &[agentx_node_protocol::NodePort], handle: &str) -> bool 
                 && (handle.starts_with(&format!("{}:", port.name))
                     || handle.bytes().all(|byte| byte.is_ascii_digit()))
     })
+}
+
+fn port_kind(ports: &[agentx_node_protocol::NodePort], handle: &str) -> Option<PortKind> {
+    ports
+        .iter()
+        .find(|port| {
+            port.name == handle
+                || port.variadic
+                    && (handle.starts_with(&format!("{}:", port.name))
+                        || handle.bytes().all(|byte| byte.is_ascii_digit()))
+        })
+        .map(|port| port.kind.clone())
 }
 
 fn validate_reachability(
@@ -732,6 +825,59 @@ mod tests {
                 .issues
                 .iter()
                 .any(|issue| issue.code == "TRIGGER_REQUIRED")
+        );
+    }
+
+    #[test]
+    fn error_connections_do_not_disqualify_normal_output_candidates() {
+        let registry = NodeRegistry::m5_defaults();
+        let compiler = WorkflowCompiler::new(&registry);
+        let definition: WorkflowDefinition = serde_json::from_value(serde_json::json!({
+            "schemaVersion":"3.0",
+            "settings":{"primaryOutputNodeId":"if"},
+            "nodes":[
+                {"id":"trigger","type":"manual_trigger","typeVersion":1,"name":"Trigger"},
+                {"id":"if","type":"if","typeVersion":1,"name":"Condition","parameters":{"condition":"=$json.ok"},"settings":{"onError":"continue_error_output"}},
+                {"id":"handler","type":"error_handler","typeVersion":1,"name":"Error Handler","parameters":{"mode":"recover"}}
+            ],
+            "connections":[
+                {"id":"main","sourceNodeId":"trigger","sourceHandle":"main","targetNodeId":"if","targetHandle":"main","order":0},
+                {"id":"error","sourceNodeId":"if","sourceHandle":"error","targetNodeId":"handler","targetHandle":"error","order":0}
+            ]
+        }))
+        .unwrap();
+
+        let compiled = compiler
+            .compile(&definition, &CompileContext::default())
+            .unwrap();
+        let condition = compiled.nodes.iter().find(|node| node.id == "if").unwrap();
+        assert_eq!(compiled.primary_output_node, Some(condition.index));
+        assert!(compiled.normal_output_candidates.contains(&condition.index));
+        assert_eq!(
+            compiled
+                .connections
+                .iter()
+                .find(|edge| edge.id == "error")
+                .unwrap()
+                .source_port_kind,
+            PortKind::Error
+        );
+    }
+
+    #[test]
+    fn rejects_primary_output_with_an_outgoing_main_connection() {
+        let registry = NodeRegistry::m5_defaults();
+        let compiler = WorkflowCompiler::new(&registry);
+        let mut definition = fixture();
+        definition.settings.primary_output_node_id = Some("merge".into());
+        let error = compiler
+            .compile(&definition, &CompileContext::default())
+            .unwrap_err();
+        assert!(
+            error
+                .issues
+                .iter()
+                .any(|issue| issue.code == "PRIMARY_OUTPUT_NOT_TERMINAL")
         );
     }
 }

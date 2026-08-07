@@ -15,6 +15,16 @@ M6 对齐 n8n 的交互模型，不兼容 n8n 的实现协议。以下能力明�
 
 M6 完成后，Studio 本身必须是完整闭环；M7 不再补画布、节点表单、草稿调试或发布 UI，只消费 M6 冻结的契约完成外围入口和生产发布。
 
+### 1.1 n8n 风格画布重构（Agentx 原生）
+
+画布采用 n8n 的紧凑节点语言和工作区节奏，但不复制其源码、许可证实现或 JSON 协议。Catalog Manifest 的 `uiSchema.canvas.role` 是唯一视觉角色来源；缺失角色的旧 Manifest 仅在前端回退到 `default`，未知角色由 Catalog 校验拒绝。普通/Flow 节点以图标为主并在下方显示最多两行标签，Trigger、Branch、Merge、Loop、Suspend、Approval、Sub-workflow、Agent、Code 和 Error Handler 使用受控内部形状，AI/Binding 端口使用菱形提示。Manifest `localizations` 统一驱动画布、节点栏、搜索、详情和 Tooltip 的中英文显示。
+
+Workflow Definition 的 `primaryOutputNodeId` 固化 Application/Playground 主要输出。普通调试和版本化允许多个正常终点；Application Deployment 对零终点和未指定的多终点执行门禁。Runtime 按 Activation 元组稳定选取主要节点的最后一次成功输出，绝不依赖画布坐标或墙钟时间。
+
+左侧 Node Creator 默认折叠为 56px 工具栏，搜索或从输出端口打开 320px 覆盖创建器，支持自动聚焦、Manifest 分类、键盘导航、拖拽和合法连接过滤。无节点画布只提供 Add Trigger/Search Nodes。右侧 Node Details 为 480px 全高视图，固定 Parameters、Input、Output、Trace 四个 Tab；单节点运行仍复用 `single_node` Debug Plan。底部 Runtime Panel 是 40px 折叠、默认 220px 展开的全局 Execution Rail，可调整到 160px–65vh，节点结果不在画布和轨道重复复制。
+
+Sticky Note（默认 240×160，最小 150×80）和非嵌套 Group（`collapsed=false`）只写入 Editor Document。便签支持双击编辑、语义色和缩放；Group 可移动成员、折叠为 240×64 代理并临时聚合外部连线，删除仅解除分组。Undo/Redo Snapshot 同时包含 nodes、edges、viewport、annotations 和 groups；`canvasNodeMetrics` 是渲染、ELK、对齐、粘贴和 Minimap 的唯一尺寸来源。
+
 ## 2. 实施前基线与必须修正的问题
 
 - 当前 `workflow-canvas.tsx` 是单文件最小画布，只硬编码 `manual_trigger`、`model`、`mcp_tool`、`skill`、`rag` 和 `memory`，运行按钮仍禁用。

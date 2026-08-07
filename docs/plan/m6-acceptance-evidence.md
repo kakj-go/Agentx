@@ -1,6 +1,6 @@
 # M6 Workflow Studio 验收证据
 
-状态：`done`。最终验收日期：2026-08-05。最终 Kubernetes Run ID：`20260805T123104044Z`。
+状态：`done`。最终验收日期：2026-08-07。最终 Kubernetes Run ID：`20260807T125227802Z`。
 
 M6 的 STU-001～016 已全部实现并通过契约、单元、构建、临时 Kubernetes 和真实浏览器闭环验收。Studio 使用 Agentx 原生 Definition 3.0、Editor Document、Debug Overlay、Node Manifest 和 ExecutionRuntime；不兼容 n8n JSON、节点包、Credential 或 JavaScript 表达式。
 
@@ -10,6 +10,7 @@ M6 的 STU-001～016 已全部实现并通过契约、单元、构建、临时 K
 - Draft 与 Version 分别保存 Definition/Editor Hash；Draft Debug 固化指定 Revision 的 Definition、IR、Manifest、资源、授权和 Debug Plan Snapshot。
 - Catalog、Compiler 和 Studio 共用 Rust Registry Reconcile 后的 Manifest 与 Hash；前端不存在业务 NodeKind 白名单。
 - React Flow Studio 支持 Palette 搜索/拖拽、main/error/AI Handle、框选/多选、复制粘贴、对齐、ELK 自动布局、Undo/Redo、自动保存、离线恢复和显式 Revision Conflict。
+- 画布采用紧凑 n8n 风格：Manifest 视觉角色驱动异形节点，Node Creator 可折叠，Node Details 为 480px 全高四 Tab 视图，Runtime Panel 为可折叠全局执行轨道；Sticky Note 和 Group 作为 Editor Document 编辑态元素保存。
 - 跨 Workflow 粘贴使用会话级剪贴板，重建 Node/Binding/Edge ID，并在目标 Workflow 通过 Draft Validate 重新校验节点版本、资源可见性和 Service Identity Grant。
 - Inspector 支持 Text、Textarea、Number、Boolean、Select、Collection、Fixed Collection、Mapper、Resource/Credential、Provider、Expression、Prompt、JSON 和 Code；未知 UI 控件阻止保存。
 - Agentx Expression 使用 Monaco 补全，由 Platform API 的同一个 Rust `ExpressionEngine` 做预览和权威校验；预览不读取 Credential，并递归脱敏 Secret/Token/Authorization 等字段。
@@ -44,14 +45,16 @@ M6 的 STU-001～016 已全部实现并通过契约、单元、构建、临时 K
 
 ```powershell
 .\scripts\check.ps1
-git diff --check
+git diff --check -- . ':!README.md'
 ```
 
 结果：通过。
 
+仓库级 `git diff --check` 仍会报告用户已有的 `README.md:66: new blank line at EOF`；该文件不属于本次画布重构，按工作树保护约束保留。本次涉及文件的差异检查无错误。
+
 - Rust fmt、Clippy `-D warnings`、Workspace Tests 和 Doc Tests 通过。
 - Platform/Gateway/Node OpenAPI、生成 TypeScript、Workflow/Manifest/Action JSON Schema 无漂移。
-- Web Oxlint、19 个 Vitest 文件共 39 项测试、TypeScript 和 Vite 生产构建通过。
+- Web Oxlint、29 个 Vitest 文件共 83 项测试、TypeScript 和 Vite 生产构建通过。
 - Deployment Profile 测试和全部 Kustomize 渲染通过。
 - 前后端源文件均低于 2000 行。
 - Studio 新增聚焦覆盖包括 Serializer、Connection、History、Autosave、Provider、Mapper、跨 Workflow Clipboard、Version Diff、Debug Plan、Runtime Event、Overlay 和 600 节点布局。
@@ -64,31 +67,33 @@ git diff --check
 .\scripts\e2e.ps1
 ```
 
-本轮未使用 `-SkipBuild`，重新构建并导入本轮 Platform API、Web、Coordinator、Worker、Sandbox Manager 与 Fixture 镜像。
+最终复跑使用 `-SkipBuild` 复用已构建的 Platform API、Web、Worker、Sandbox Manager 与 Fixture 镜像；Approval 主要输出恢复缺陷修复后单独重建并导入 Coordinator 镜像，再从全新 Namespace 执行完整七阶段流程。
 
 | Stage | Tests | Failures | Skipped | Errors |
 |---|---:|---:|---:|---:|
-| m2-m3-control-plane | 2 | 0 | 0 | 0 |
+| m2.1-control-plane | 1 | 0 | 0 | 0 |
+| m3-control-plane | 1 | 0 | 0 | 0 |
 | m3-observability | 1 | 0 | 0 | 0 |
 | m4-runtime-recovery | 2 | 0 | 0 | 0 |
 | m5-agent-sandbox | 7 | 0 | 0 | 0 |
-| m6-workflow-studio | 1 | 0 | 0 | 0 |
-| 合计 | 13 | 0 | 0 | 0 |
+| m6-workflow-studio | 2 | 0 | 0 | 0 |
+| m7-business-closure | 1 | 0 | 0 | 0 |
+| 合计 | 15 | 0 | 0 | 0 |
 
-M6 浏览器用例通过 UI 创建 Workflow，拖入 Manual Trigger、Agent、Code、Approval、Model 和 MCP Tool，完成参数与资源配置、5 条执行/AI 连线、保存 Revision、Full/Single/To/From/Stop、事件断线恢复、Pin/Mock、Trace、Checkpoint/Fork、Version、Deployment 和并发冲突。Fixture 只准备账号、Model、MCP、Credential、Sandbox Profile 和 Approval 依赖，没有通过 API/SQL 写入被测 Workflow。
+M6 浏览器用例通过 UI 创建 Workflow，使用完整左栏和搜索面板拖入 Manual Trigger、Agent、Code、Approval、Error Handler、Model 和 MCP Tool，完成双语语义形状、边界 Handle、错误策略、主要输出、参数与资源配置、执行/AI/Error 连线、保存 Revision、Full/Single/To/From/Stop、事件断线恢复、Pin/Mock、Trace、Checkpoint/Fork、Version、Deployment 和并发冲突。Fixture 只准备账号、Model、MCP、Credential、Sandbox Profile 和 Approval 依赖，没有通过 API/SQL 写入被测 Workflow。
 
 视觉证据覆盖 1280x800、1440x900、1920x1080，中文/英文和浅色/深色共 12 张截图；每个视口均断言页面无横向溢出和未翻译 key。
 
 证据目录：
 
-- `apps/e2e/test-results/kubernetes/20260805T123104044Z/`
+- `apps/e2e/test-results/kubernetes/20260807T125227802Z/`
 - `m6-workflow-studio/junit.xml`
 - `m6-workflow-studio/playwright-report/index.html`
 - `m6-workflow-studio/artifacts/trace.zip`
 - `m6-workflow-studio/artifacts/studio-*.png`
 - `m4-database-evidence.txt`、`m5-database-evidence.txt`、`m5-sandbox-cleanup.txt`
 
-默认清理已确认：`agentx-e2e` Namespace 不存在，OpenSandbox `sandboxCount=0`，本轮清理证据为 `created=0`、`remaining=0`，开发 Namespace 原副本数已恢复。开发 Namespace 的旧 MySQL 未就地清理或强制执行 Migration 0015。
+默认清理已确认：`agentx-e2e` Namespace 不存在，OpenSandbox 没有本轮残留实例，本轮清理证据为 `remaining=0`，开发 Namespace 原副本数已恢复。
 
 ## 5. M6 完成边界
 

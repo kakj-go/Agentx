@@ -1,22 +1,37 @@
-import type { StudioEdge, StudioNode } from '../model/types'
+import type { NodeManifest, StudioEdge, StudioNode } from '../model/types'
+import { canvasNodeMetrics, canvasNodeRole } from '../nodes/node-appearance'
 
 export const LARGE_GRAPH_LAYOUT_THRESHOLD = 250
 
-export async function autoLayout(nodes: StudioNode[], edges: StudioEdge[]) {
-  if (nodes.length >= LARGE_GRAPH_LAYOUT_THRESHOLD) return largeGraphLayout(nodes, edges)
+export async function autoLayout(nodes: StudioNode[], edges: StudioEdge[], manifests?: Map<string, NodeManifest>) {
+  if (nodes.length >= LARGE_GRAPH_LAYOUT_THRESHOLD) return largeGraphLayout(nodes, edges, manifests)
   const { default: ELK } = await import('elkjs/lib/elk.bundled.js')
   const elk = new ELK()
   const graph = await elk.layout({
     id: 'root',
     layoutOptions: { 'elk.algorithm': 'layered', 'elk.direction': 'RIGHT', 'elk.spacing.nodeNode': '48', 'elk.layered.spacing.nodeNodeBetweenLayers': '90' },
-    children: nodes.map((node) => ({ id: node.id, width: node.data.editorKind === 'binding' ? 180 : 220, height: node.data.editorKind === 'binding' ? 58 : 88 })),
+    children: nodes.map((node) => {
+      if (node.data.editorKind === 'binding') {
+        const metrics = canvasNodeMetrics('default', { kind: 'binding' })
+        return { id: node.id, width: metrics.width, height: metrics.height }
+      }
+      const manifest = manifests?.get(`${node.data.nodeType}@${node.data.typeVersion}`)
+      const metrics = canvasNodeMetrics(canvasNodeRole(manifest), {
+        inputs: manifest?.inputPorts.length,
+        outputs: manifest?.outputPorts.length,
+        bindings: manifest?.bindingSlots.length,
+        richHeight: node.height ?? node.measured?.height,
+      })
+      return { id: node.id, width: metrics.width, height: metrics.height }
+    }),
     edges: edges.map((edge) => ({ id: edge.id, sources: [edge.source], targets: [edge.target] })),
   })
   const positions = new Map(graph.children?.map((node) => [node.id, { x: node.x ?? 0, y: node.y ?? 0 }]))
+  placeBindingsBelowTargets(nodes, edges, positions, manifests)
   return nodes.map((node) => ({ ...node, position: positions.get(node.id) ?? node.position }))
 }
 
-export function largeGraphLayout(nodes: StudioNode[], edges: StudioEdge[]) {
+export function largeGraphLayout(nodes: StudioNode[], edges: StudioEdge[], manifests?: Map<string, NodeManifest>) {
   const actions = nodes.filter((node) => node.data.editorKind === 'action')
   const actionIds = new Set(actions.map((node) => node.id))
   const outgoing = new Map<string, string[]>()
@@ -43,15 +58,37 @@ export function largeGraphLayout(nodes: StudioNode[], edges: StudioEdge[]) {
     buckets.set(level, [...(buckets.get(level) ?? []), node.id])
   }
   const positions = new Map<string, { x: number; y: number }>()
-  for (const [level, ids] of buckets) for (const [index, id] of ids.entries()) positions.set(id, { x: 80 + level * 280, y: 60 + index * 120 })
+  for (const [level, ids] of buckets) for (const [index, id] of ids.entries()) {
+    const node = actions.find((item) => item.id === id)
+    const manifest = node?.data.editorKind === 'action' ? manifests?.get(`${node.data.nodeType}@${node.data.typeVersion}`) : undefined
+    const metrics = canvasNodeMetrics(canvasNodeRole(manifest), {
+      inputs: manifest?.inputPorts.length,
+      outputs: manifest?.outputPorts.length,
+      bindings: manifest?.bindingSlots.length,
+      richHeight: node?.height ?? node?.measured?.height,
+    })
+    positions.set(id, { x: 80 + level * 280, y: 60 + index * Math.max(120, metrics.height + 32) })
+  }
+  placeBindingsBelowTargets(nodes, edges, positions, manifests)
+  return nodes.map((node) => ({ ...node, position: positions.get(node.id) ?? node.position }))
+}
+
+function placeBindingsBelowTargets(nodes: StudioNode[], edges: StudioEdge[], positions: Map<string, { x: number; y: number }>, manifests?: Map<string, NodeManifest>) {
   const bindingIndex = new Map<string, number>()
   for (const node of nodes.filter((item) => item.data.editorKind === 'binding')) {
     const edge = edges.find((item) => item.data?.edgeKind === 'binding' && item.source === node.id)
+    const targetNode = edge ? nodes.find((item) => item.id === edge.target) : undefined
     const target = edge ? positions.get(edge.target) : undefined
-    const index = target && edge ? bindingIndex.get(edge.target) ?? 0 : bindingIndex.get('unbound') ?? 0
     const key = target && edge ? edge.target : 'unbound'
+    const index = bindingIndex.get(key) ?? 0
     bindingIndex.set(key, index + 1)
-    positions.set(node.id, target ? { x: target.x, y: target.y + 104 + index * 70 } : { x: 80 + index * 200, y: 520 })
+    const attachment = canvasNodeMetrics('default', { kind: 'binding' })
+    if (!target || !targetNode || targetNode.data.editorKind !== 'action') {
+      positions.set(node.id, { x: 80 + index * (attachment.width + 40), y: 520 })
+      continue
+    }
+    const manifest = manifests?.get(`${targetNode.data.nodeType}@${targetNode.data.typeVersion}`)
+    const targetMetrics = canvasNodeMetrics(canvasNodeRole(manifest), { richHeight: targetNode.height ?? targetNode.measured?.height })
+    positions.set(node.id, { x: target.x + index * (attachment.width + 16), y: target.y + targetMetrics.height + 72 })
   }
-  return nodes.map((node) => ({ ...node, position: positions.get(node.id) ?? node.position }))
 }

@@ -22,7 +22,9 @@ export function validateConnection(connection: ConnectionCandidate, nodes: Studi
   if (target.data.editorKind !== 'action' || connection.targetHandle?.startsWith('binding:')) return false
   const sourceManifest = manifests.get(`${source.data.nodeType}@${source.data.typeVersion}`)
   const targetManifest = manifests.get(`${target.data.nodeType}@${target.data.typeVersion}`)
-  return Boolean(sourceManifest?.outputPorts.some((port) => handleMatches(port.name, connection.sourceHandle)) && targetManifest?.inputPorts.some((port) => handleMatches(port.name, connection.targetHandle)))
+  const sourcePort = sourceManifest?.outputPorts.find((port) => handleMatches(port.name, connection.sourceHandle))
+  const targetPort = targetManifest?.inputPorts.find((port) => handleMatches(port.name, connection.targetHandle))
+  return Boolean(sourcePort && targetPort && sourcePort.kind === targetPort.kind)
 }
 
 const handleMatches = (declared: string, actual?: string | null) => declared === actual || (declared === 'main' && actual?.startsWith('main:')) || (declared === 'case' && actual?.startsWith('case:'))

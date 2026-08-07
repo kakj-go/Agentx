@@ -25,9 +25,6 @@ mod skills_control;
 mod state;
 mod workflow_studio;
 mod workflows;
-
-use std::{env, time::Duration};
-
 use agentx_infrastructure::{
     config::{InfrastructureSettings, SecretProviderMode, secret_provider_mode},
     credential::{CredentialKeyring, VaultSecretProvider},
@@ -38,7 +35,7 @@ use api::build_api_router;
 use background::{start_outbox_relay, start_runtime_projector};
 use config::{AuthSettings, ConnectionSettings, CredentialSettings};
 use state::AppState;
-
+use std::{env, time::Duration};
 #[tokio::main]
 async fn main() -> Result<()> {
     let arguments = env::args().skip(1).collect::<Vec<_>>();
@@ -53,7 +50,6 @@ async fn main() -> Result<()> {
             .with_context(|| format!("failed to write {path}"))?;
         return Ok(());
     }
-
     let infrastructure = InfrastructureSettings::from_env()?;
     if command == Some("doctor-infrastructure") {
         doctor_infrastructure(&infrastructure).await?;

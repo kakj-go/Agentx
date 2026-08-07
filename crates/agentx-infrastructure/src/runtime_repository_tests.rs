@@ -7,6 +7,14 @@ fn invocation_input_preserves_n8n_item_shape() {
 }
 
 #[test]
+fn approval_resume_payload_is_persisted_as_its_protocol_output() {
+    let outputs = resumed_output_map("approved", &json!({"decision":"approved"}));
+    assert_eq!(outputs.len(), 1);
+    assert_eq!(outputs["approved"][0].json["decision"], "approved");
+    assert!(!outputs.contains_key("main"));
+}
+
+#[test]
 fn dispatch_message_round_trips() {
     let value = DispatchMessage {
         tenant_id: Uuid::nil(),

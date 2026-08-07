@@ -24,6 +24,35 @@
       ],
       "type": "object"
     },
+    "CanvasAppearance": {
+      "additionalProperties": false,
+      "properties": {
+        "role": {
+          "$ref": "#/$defs/CanvasNodeRole"
+        }
+      },
+      "required": [
+        "role"
+      ],
+      "type": "object"
+    },
+    "CanvasNodeRole": {
+      "enum": [
+        "default",
+        "trigger",
+        "branch",
+        "flow",
+        "merge",
+        "loop",
+        "suspend",
+        "approval",
+        "sub_workflow",
+        "agent",
+        "code",
+        "error_handler"
+      ],
+      "type": "string"
+    },
     "CredentialRequirement": {
       "additionalProperties": false,
       "properties": {
@@ -74,6 +103,42 @@
         "sandbox"
       ],
       "type": "string"
+    },
+    "NodeManifestLocalization": {
+      "additionalProperties": false,
+      "properties": {
+        "bindingSlotLabels": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "description": {
+          "type": "string"
+        },
+        "displayName": {
+          "type": "string"
+        },
+        "inputPortLabels": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "keywords": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "outputPortLabels": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        }
+      },
+      "type": "object"
     },
     "NodePort": {
       "additionalProperties": false,
@@ -130,6 +195,36 @@
         "retryable": {
           "default": false,
           "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "NodeUiSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "canvas": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CanvasAppearance"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "fields": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "order": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "resourceSelectors": {
+          "items": true,
+          "type": "array"
         }
       },
       "type": "object"
@@ -238,6 +333,12 @@
       },
       "type": "array"
     },
+    "localizations": {
+      "additionalProperties": {
+        "$ref": "#/$defs/NodeManifestLocalization"
+      },
+      "type": "object"
+    },
     "nodeType": {
       "type": "string"
     },
@@ -282,7 +383,8 @@
       "type": "boolean"
     },
     "uiSchema": {
-      "default": null
+      "$ref": "#/$defs/NodeUiSchema",
+      "default": {}
     },
     "version": {
       "format": "uint32",

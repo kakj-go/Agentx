@@ -48,9 +48,11 @@ spec:
             - name: native
               containerPort: 9000
           readinessProbe:
-            httpGet:
-              path: /ping
-              port: http
+            exec:
+              command:
+                - sh
+                - -ec
+                - clickhouse-client --user "$CLICKHOUSE_USER" --password "$CLICKHOUSE_PASSWORD" --query "EXISTS DATABASE agentx" | grep -qx 1
             initialDelaySeconds: 5
           volumeMounts:
             - name: data

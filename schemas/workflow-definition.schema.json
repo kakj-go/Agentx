@@ -226,6 +226,12 @@
           "$ref": "#/$defs/ExecutionOrder",
           "default": "deterministic"
         },
+        "primaryOutputNodeId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "timeoutMs": {
           "default": null,
           "format": "uint64",

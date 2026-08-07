@@ -2,8 +2,9 @@ use std::collections::BTreeMap;
 
 use agentx_domain::ResourceType;
 use agentx_node_protocol::{
-    BindingSlot, ExecutionStyle, LifecycleOperation, NODE_PROTOCOL_VERSION, NodeCapability,
-    NodeManifestVersion, NodePort, PortKind, ReadinessPolicy, SideEffectLevel,
+    BindingSlot, CanvasAppearance, CanvasNodeRole, ExecutionStyle, LifecycleOperation,
+    NODE_PROTOCOL_VERSION, NodeCapability, NodeManifestLocalization, NodeManifestVersion, NodePort,
+    NodeUiSchema, PortKind, ReadinessPolicy, SideEffectLevel,
 };
 use serde_json::json;
 use thiserror::Error;
@@ -23,6 +24,12 @@ pub enum RegistryError {
         version: u32,
         protocol_version: String,
     },
+    #[error("node manifest {node_type}@{version} is invalid: {message}")]
+    InvalidManifest {
+        node_type: String,
+        version: u32,
+        message: String,
+    },
 }
 
 impl NodeRegistry {
@@ -32,6 +39,13 @@ impl NodeRegistry {
                 node_type: manifest.node_type,
                 version: manifest.version,
                 protocol_version: manifest.protocol_version,
+            });
+        }
+        if let Err(message) = manifest.validate_localizations() {
+            return Err(RegistryError::InvalidManifest {
+                node_type: manifest.node_type,
+                version: manifest.version,
+                message,
             });
         }
         let key = manifest.key();
@@ -79,6 +93,189 @@ fn port(name: &str, kind: PortKind, required: bool, variadic: bool) -> NodePort 
     }
 }
 
+fn localized_node_copy(
+    node_type: &str,
+) -> (&'static str, &'static str, &'static str, &'static str) {
+    match node_type {
+        "manual_trigger" => (
+            "Manual Trigger",
+            "手动触发",
+            "Start a workflow manually.",
+            "手动启动工作流。",
+        ),
+        "remote_trigger" => (
+            "Remote Trigger",
+            "远程触发",
+            "Start from a remote lifecycle event.",
+            "通过远程生命周期事件启动工作流。",
+        ),
+        "set" => (
+            "Edit Fields",
+            "编辑字段",
+            "Set or transform item fields.",
+            "设置或转换数据字段。",
+        ),
+        "if" => (
+            "Condition",
+            "条件",
+            "Route items by a true or false condition.",
+            "根据条件将数据路由到满足或不满足分支。",
+        ),
+        "switch" => (
+            "Switch",
+            "多路条件",
+            "Route items across multiple conditions.",
+            "根据多条条件将数据路由到不同分支。",
+        ),
+        "merge" => (
+            "Merge",
+            "合并",
+            "Combine multiple workflow branches.",
+            "合并多个工作流分支的数据。",
+        ),
+        "loop_over_items" => (
+            "Loop Over Items",
+            "循环处理",
+            "Process items in controlled batches.",
+            "按批次循环处理数据项。",
+        ),
+        "wait" => (
+            "Wait",
+            "等待",
+            "Suspend execution until a resume condition.",
+            "暂停执行并等待恢复条件。",
+        ),
+        "approval" => (
+            "Approval",
+            "审批",
+            "Suspend execution for a human decision.",
+            "暂停执行并等待人工审批。",
+        ),
+        "sub_workflow" => (
+            "Sub-workflow",
+            "子流程",
+            "Run an immutable workflow version.",
+            "执行一个不可变的工作流版本。",
+        ),
+        "declarative_http" => (
+            "HTTP Request",
+            "HTTP 请求",
+            "Call an HTTP endpoint.",
+            "调用 HTTP 接口。",
+        ),
+        "remote_action" => (
+            "Remote Action",
+            "远程动作",
+            "Execute a remote Agentx node action.",
+            "执行远程 Agentx 节点动作。",
+        ),
+        "model" => (
+            "Model",
+            "模型",
+            "Invoke an authorized model resource.",
+            "调用已授权的模型资源。",
+        ),
+        "mcp_tool" => (
+            "Tool",
+            "工具",
+            "Invoke an authorized MCP tool.",
+            "调用已授权的 MCP 工具。",
+        ),
+        "skill" => (
+            "Skill",
+            "技能",
+            "Load an authorized Agent skill.",
+            "加载已授权的 Agent 技能。",
+        ),
+        "rag" => (
+            "Knowledge",
+            "知识",
+            "Query or update an authorized knowledge base.",
+            "查询或更新已授权的知识库。",
+        ),
+        "memory" => (
+            "Memory",
+            "记忆",
+            "Read or write authorized memory.",
+            "读取或写入已授权的记忆。",
+        ),
+        "agent" => (
+            "Agent",
+            "智能体",
+            "Reason with models, tools, memory, knowledge, and skills.",
+            "使用模型、工具、记忆、知识和技能完成推理。",
+        ),
+        "code" => (
+            "Code",
+            "代码",
+            "Run code in an isolated sandbox.",
+            "在隔离沙箱中运行代码。",
+        ),
+        "error_handler" => (
+            "Error Handler",
+            "错误处理",
+            "Recover an error item or fail the workflow.",
+            "恢复错误数据或终止工作流。",
+        ),
+        _ => (
+            "Action",
+            "动作",
+            "Execute a workflow action.",
+            "执行一个工作流动作。",
+        ),
+    }
+}
+
+fn english_port_label(name: &str, input: bool) -> &'static str {
+    match name {
+        "main" => {
+            if input {
+                "Input"
+            } else {
+                "Output"
+            }
+        }
+        "error" => "Error",
+        "true" => "True",
+        "false" => "False",
+        "case" => "Case",
+        "fallback" => "Fallback",
+        "loop" => "Loop",
+        "done" => "Done",
+        "resumed" => "Resumed",
+        "timed_out" => "Timed out",
+        "approved" => "Approved",
+        "rejected" => "Rejected",
+        "recovered" => "Recovered",
+        _ => "Port",
+    }
+}
+
+fn chinese_port_label(name: &str, input: bool) -> &'static str {
+    match name {
+        "main" => {
+            if input {
+                "输入"
+            } else {
+                "输出"
+            }
+        }
+        "error" => "错误",
+        "true" => "满足条件",
+        "false" => "不满足条件",
+        "case" => "条件分支",
+        "fallback" => "默认分支",
+        "loop" => "循环",
+        "done" => "完成",
+        "resumed" => "已恢复",
+        "timed_out" => "已超时",
+        "approved" => "已通过",
+        "rejected" => "已拒绝",
+        "recovered" => "已恢复",
+        _ => "端口",
+    }
+}
+
 fn manifest(
     node_type: &str,
     style: ExecutionStyle,
@@ -88,14 +285,77 @@ fn manifest(
     outputs: Vec<NodePort>,
     side_effect_level: SideEffectLevel,
 ) -> NodeManifestVersion {
+    let role = canvas_role(node_type, style.clone(), capability.clone());
+    let input_port_labels = inputs
+        .iter()
+        .map(|port| {
+            (
+                port.name.clone(),
+                english_port_label(&port.name, true).into(),
+            )
+        })
+        .collect();
+    let output_port_labels = outputs
+        .iter()
+        .map(|port| {
+            (
+                port.name.clone(),
+                english_port_label(&port.name, false).into(),
+            )
+        })
+        .collect();
+    let zh_input_port_labels = inputs
+        .iter()
+        .map(|port| {
+            (
+                port.name.clone(),
+                chinese_port_label(&port.name, true).into(),
+            )
+        })
+        .collect();
+    let zh_output_port_labels = outputs
+        .iter()
+        .map(|port| {
+            (
+                port.name.clone(),
+                chinese_port_label(&port.name, false).into(),
+            )
+        })
+        .collect();
+    let (english_name, chinese_name, english_description, chinese_description) =
+        localized_node_copy(node_type);
+    let mut localizations = BTreeMap::new();
+    localizations.insert(
+        "en-US".into(),
+        NodeManifestLocalization {
+            display_name: english_name.into(),
+            description: english_description.into(),
+            keywords: node_type.split('_').map(str::to_owned).collect(),
+            input_port_labels,
+            output_port_labels,
+            binding_slot_labels: BTreeMap::new(),
+        },
+    );
+    localizations.insert(
+        "zh-CN".into(),
+        NodeManifestLocalization {
+            display_name: chinese_name.into(),
+            description: chinese_description.into(),
+            keywords: vec![chinese_name.into()],
+            input_port_labels: zh_input_port_labels,
+            output_port_labels: zh_output_port_labels,
+            binding_slot_labels: BTreeMap::new(),
+        },
+    );
     NodeManifestVersion {
         protocol_version: NODE_PROTOCOL_VERSION.into(),
         node_type: node_type.into(),
         version: 1,
-        display_name: node_type.replace('_', " "),
-        description: String::new(),
+        display_name: english_name.into(),
+        description: english_description.into(),
         category: category(node_type).into(),
         keywords: node_type.split('_').map(str::to_owned).collect(),
+        localizations,
         icon_key: icon_key(node_type).into(),
         execution_style: style,
         capability,
@@ -104,7 +364,10 @@ fn manifest(
         output_ports: outputs,
         binding_slots: Vec::new(),
         parameter_schema: json!({"type":"object"}),
-        ui_schema: json!({}),
+        ui_schema: NodeUiSchema {
+            canvas: Some(CanvasAppearance { role }),
+            ..Default::default()
+        },
         providers: Vec::new(),
         lifecycle_operations: Vec::new(),
         credentials: Vec::new(),
@@ -164,28 +427,26 @@ fn m5_manifest(
         }),
         _ => json!({}),
     };
-    value.ui_schema = json!({"fields":fields});
+    value.ui_schema.fields = fields
+        .as_object()
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .collect();
     if let Some((resource_type, operation)) = resource_selector {
-        value
-            .ui_schema
-            .as_object_mut()
-            .expect("UI schema is an object")
-            .insert(
-                "resourceSelectors".into(),
-                json!([{
-                    "resourceType":resource_type,
-                    "operation":operation,
-                    "required":true
-                }]),
-            );
+        value.ui_schema.resource_selectors.push(json!({
+            "resourceType":resource_type,
+            "operation":operation,
+            "required":true
+        }));
     }
     if node_type == "code" {
-        value
-            .ui_schema
-            .get_mut("resourceSelectors")
-            .and_then(serde_json::Value::as_array_mut)
-            .expect("Code has resource selectors")
-            .push(json!({"resourceType":"credential","operation":"use","required":false,"label":"Credential"}));
+        value.ui_schema.resource_selectors.push(json!({
+            "resourceType":"credential",
+            "operation":"use",
+            "required":false,
+            "label":"Credential"
+        }));
     }
     value.default_timeout_ms = Some(300_000);
     value.supports_mock = false;
@@ -193,12 +454,52 @@ fn m5_manifest(
     value
 }
 
+fn canvas_role(
+    node_type: &str,
+    execution_style: ExecutionStyle,
+    capability: NodeCapability,
+) -> CanvasNodeRole {
+    if execution_style == ExecutionStyle::Trigger {
+        return CanvasNodeRole::Trigger;
+    }
+    if execution_style == ExecutionStyle::Suspend {
+        return CanvasNodeRole::Suspend;
+    }
+    if execution_style == ExecutionStyle::SubWorkflow {
+        return CanvasNodeRole::SubWorkflow;
+    }
+    if matches!(node_type, "if" | "switch") {
+        return CanvasNodeRole::Branch;
+    }
+    if node_type == "merge" {
+        return CanvasNodeRole::Merge;
+    }
+    if node_type == "loop_over_items" {
+        return CanvasNodeRole::Loop;
+    }
+    if node_type == "approval" {
+        return CanvasNodeRole::Approval;
+    }
+    if node_type == "error_handler" {
+        return CanvasNodeRole::ErrorHandler;
+    }
+    if capability == NodeCapability::Agent {
+        return CanvasNodeRole::Agent;
+    }
+    if capability == NodeCapability::Sandbox {
+        return CanvasNodeRole::Code;
+    }
+    if category(node_type) == "flow" {
+        return CanvasNodeRole::Flow;
+    }
+    CanvasNodeRole::Default
+}
+
 fn category(node_type: &str) -> &'static str {
     match node_type {
         "manual_trigger" | "remote_trigger" => "triggers",
-        "if" | "switch" | "merge" | "loop_over_items" | "wait" | "approval" | "sub_workflow" => {
-            "flow"
-        }
+        "if" | "switch" | "merge" | "loop_over_items" | "wait" | "approval" | "sub_workflow"
+        | "error_handler" => "flow",
         "agent" | "model" | "mcp_tool" | "skill" | "rag" | "memory" => "ai",
         "code" => "code",
         _ => "actions",
@@ -221,6 +522,7 @@ fn icon_key(node_type: &str) -> &'static str {
         "merge" => "git-merge",
         "loop_over_items" => "repeat-2",
         "wait" => "clock-3",
+        "error_handler" => "shield-alert",
         _ => "box",
     }
 }
@@ -237,7 +539,9 @@ fn default_manifests() -> Vec<NodeManifestVersion> {
                       parameter_schema: serde_json::Value,
                       ui_schema: serde_json::Value| {
         manifest.parameter_schema = parameter_schema;
-        manifest.ui_schema = ui_schema;
+        let canvas = manifest.ui_schema.canvas.clone();
+        manifest.ui_schema = serde_json::from_value(ui_schema).expect("valid UI schema");
+        manifest.ui_schema.canvas = canvas;
         manifest
     };
     vec![
@@ -283,6 +587,19 @@ fn default_manifests() -> Vec<NodeManifestVersion> {
             ),
             json!({"type":"object","properties":{"values":{"type":"object","default":{}},"keepOnlySet":{"type":"boolean","default":false}},"additionalProperties":false}),
             json!({"order":["values","keepOnlySet"],"fields":{"values":{"control":"mapper"},"keepOnlySet":{"control":"boolean"}}}),
+        ),
+        configured(
+            manifest(
+                "error_handler",
+                ExecutionStyle::Action,
+                NodeCapability::Builtin,
+                ReadinessPolicy::Any,
+                vec![port("error", PortKind::Error, true, false)],
+                vec![port("recovered", PortKind::Main, false, false)],
+                SideEffectLevel::None,
+            ),
+            json!({"type":"object","properties":{"mode":{"type":"string","enum":["recover","fail"],"default":"recover"}},"additionalProperties":false}),
+            json!({"order":["mode"],"fields":{"mode":{"control":"select"}}}),
         ),
         configured(
             manifest(
@@ -509,6 +826,37 @@ fn default_manifests() -> Vec<NodeManifestVersion> {
                     multiple: true,
                 },
             ];
+            for (locale, labels) in [
+                (
+                    "en-US",
+                    [
+                        ("ai_model", "Model"),
+                        ("ai_tool", "Tool"),
+                        ("ai_memory", "Memory"),
+                        ("ai_retriever", "Knowledge"),
+                        ("ai_skill", "Skill"),
+                    ],
+                ),
+                (
+                    "zh-CN",
+                    [
+                        ("ai_model", "模型"),
+                        ("ai_tool", "工具"),
+                        ("ai_memory", "记忆"),
+                        ("ai_retriever", "知识"),
+                        ("ai_skill", "技能"),
+                    ],
+                ),
+            ] {
+                agent
+                    .localizations
+                    .get_mut(locale)
+                    .expect("locale exists")
+                    .binding_slot_labels = labels
+                    .into_iter()
+                    .map(|(name, label)| (name.into(), label.into()))
+                    .collect();
+            }
             agent
         },
         m5_manifest(
@@ -563,5 +911,31 @@ mod tests {
                 LifecycleOperation::Poll,
             ]
         );
+    }
+
+    #[test]
+    fn built_in_localizations_reference_declared_protocol_names() {
+        let registry = NodeRegistry::m5_defaults();
+        for manifest in registry.manifests() {
+            manifest
+                .validate_localizations()
+                .expect("valid localization");
+            assert!(manifest.localizations.contains_key("zh-CN"));
+            assert!(manifest.localizations.contains_key("en-US"));
+        }
+
+        let mut invalid = registry.get("if", 1).expect("if manifest").clone();
+        invalid
+            .localizations
+            .get_mut("zh-CN")
+            .expect("Chinese localization")
+            .output_port_labels
+            .insert("missing".into(), "不存在".into());
+        assert!(invalid.validate_localizations().is_err());
+        let mut target = NodeRegistry::default();
+        assert!(matches!(
+            target.register(invalid),
+            Err(RegistryError::InvalidManifest { .. })
+        ));
     }
 }

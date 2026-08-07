@@ -397,6 +397,8 @@ struct InvocationResponse {
     session_id: Option<Uuid>,
     execution_id: Option<Uuid>,
     status: String,
+    error_code: Option<String>,
+    error_message: Option<String>,
     #[serde(with = "time::serde::rfc3339")]
     created_at: OffsetDateTime,
 }
@@ -730,7 +732,7 @@ async fn request_invocation(
         Err(error) => return Err(error.into()),
     };
     if !inserted {
-        let row=sqlx::query("SELECT id,application_id,session_id,execution_id,status,created_at,request_hash FROM application_invocations WHERE tenant_id=? AND application_id=? AND caller_type=? AND caller_id <=> ? AND idempotency_key=?")
+        let row=sqlx::query("SELECT i.id,i.application_id,i.session_id,i.execution_id,i.status,i.created_at,i.request_hash,(SELECT JSON_UNQUOTE(JSON_EXTRACT(e.payload_json,'$.errorCode')) FROM invocation_events e WHERE e.tenant_id=i.tenant_id AND e.invocation_id=i.id AND e.event_type='application.output_invalid' ORDER BY e.sequence_number DESC LIMIT 1) error_code,(SELECT JSON_UNQUOTE(JSON_EXTRACT(e.payload_json,'$.errorMessage')) FROM invocation_events e WHERE e.tenant_id=i.tenant_id AND e.invocation_id=i.id AND e.event_type='application.output_invalid' ORDER BY e.sequence_number DESC LIMIT 1) error_message FROM application_invocations i WHERE i.tenant_id=? AND i.application_id=? AND i.caller_type=? AND i.caller_id <=> ? AND i.idempotency_key=?")
             .bind(caller.tenant_id()).bind(application_id).bind(caller_type).bind(caller_id).bind(idempotency_key).fetch_one(&mut *tx).await?;
         let existing_hash: String = row.try_get("request_hash")?;
         tx.rollback().await?;
@@ -769,7 +771,7 @@ async fn request_invocation(
             }
         }
     }
-    let row=sqlx::query("SELECT id,application_id,session_id,execution_id,status,created_at FROM application_invocations WHERE id=? AND tenant_id=?")
+    let row=sqlx::query("SELECT i.id,i.application_id,i.session_id,i.execution_id,i.status,i.created_at,NULL error_code,NULL error_message FROM application_invocations i WHERE i.id=? AND i.tenant_id=?")
         .bind(invocation_id.as_uuid()).bind(caller.tenant_id()).fetch_one(&mut *tx).await?;
     tx.commit().await?;
     Ok(Json(invocation_from_row(row)?))
@@ -804,7 +806,7 @@ async fn get_invocation(
     caller: Caller,
     Path(id): Path<Uuid>,
 ) -> GatewayResult<Json<InvocationResponse>> {
-    let row=sqlx::query("SELECT id,application_id,session_id,execution_id,status,created_at FROM application_invocations WHERE id=? AND tenant_id=?").bind(id).bind(caller.tenant_id()).fetch_optional(&state.pool).await?.ok_or_else(||GatewayError::not_found("Invocation"))?;
+    let row=sqlx::query("SELECT i.id,i.application_id,i.session_id,i.execution_id,i.status,i.created_at,(SELECT JSON_UNQUOTE(JSON_EXTRACT(e.payload_json,'$.errorCode')) FROM invocation_events e WHERE e.tenant_id=i.tenant_id AND e.invocation_id=i.id AND e.event_type='application.output_invalid' ORDER BY e.sequence_number DESC LIMIT 1) error_code,(SELECT JSON_UNQUOTE(JSON_EXTRACT(e.payload_json,'$.errorMessage')) FROM invocation_events e WHERE e.tenant_id=i.tenant_id AND e.invocation_id=i.id AND e.event_type='application.output_invalid' ORDER BY e.sequence_number DESC LIMIT 1) error_message FROM application_invocations i WHERE i.id=? AND i.tenant_id=?").bind(id).bind(caller.tenant_id()).fetch_optional(&state.pool).await?.ok_or_else(||GatewayError::not_found("Invocation"))?;
     let response = invocation_from_row(row)?;
     authorize_application(&state, &caller, response.application_id).await?;
     Ok(Json(response))
@@ -1297,6 +1299,8 @@ fn invocation_from_row(row: sqlx::mysql::MySqlRow) -> GatewayResult<InvocationRe
         session_id: row.try_get("session_id")?,
         execution_id: row.try_get("execution_id")?,
         status: row.try_get("status")?,
+        error_code: row.try_get("error_code")?,
+        error_message: row.try_get("error_message")?,
         created_at: row.try_get("created_at")?,
     })
 }
@@ -1352,7 +1356,10 @@ fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{constant_time_eq, last_event_cursor, stable_invocation_id, validate_input};
+    use super::{
+        InvocationResponse, constant_time_eq, last_event_cursor, stable_invocation_id,
+        validate_input,
+    };
     use axum::http::{HeaderMap, HeaderValue};
     use serde_json::json;
     use uuid::Uuid;
@@ -1408,5 +1415,22 @@ mod tests {
         assert_eq!(last_event_cursor(&headers), 42);
         headers.insert("last-event-id", HeaderValue::from_static("invalid"));
         assert_eq!(last_event_cursor(&headers), 0);
+    }
+
+    #[test]
+    fn invocation_response_exposes_structured_terminal_errors() {
+        let value = serde_json::to_value(InvocationResponse {
+            id: Uuid::nil(),
+            application_id: Uuid::nil(),
+            session_id: None,
+            execution_id: Some(Uuid::nil()),
+            status: "failed".into(),
+            error_code: Some("APPLICATION_PRIMARY_OUTPUT_NOT_REACHED".into()),
+            error_message: Some("Primary output was not reached".into()),
+            created_at: time::OffsetDateTime::UNIX_EPOCH,
+        })
+        .unwrap();
+        assert_eq!(value["errorCode"], "APPLICATION_PRIMARY_OUTPUT_NOT_REACHED");
+        assert_eq!(value["errorMessage"], "Primary output was not reached");
     }
 }

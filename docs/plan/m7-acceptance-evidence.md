@@ -1,6 +1,6 @@
 # M7 全链路闭环与首期发布验收证据
 
-状态：`in_progress`。当前复核日期：2026-08-06。最新业务闭环 Kubernetes Run ID：`20260806T075729954Z`。
+状态：`in_progress`。当前复核日期：2026-08-07。最新业务闭环 Kubernetes Run ID：`20260807T125227802Z`。
 
 M7 的 Application、Session、Message、Webhook、Approval Resume 和 Evaluation 已接入同一个 Version Execution Runtime，配额、保留、Worker Capability、Vault Broker、Runtime Event Projector 和发布供应链代码也已落地。完整业务闭环、撤权、故障、双租户安全、Retention 全引用矩阵和页面矩阵已经通过；M7 尚未标记为 `done`，因为容量、升级/回滚和签名镜像证据还未全部生成。
 
@@ -31,7 +31,7 @@ M7 的 Application、Session、Message、Webhook、Approval Resume 和 Evaluatio
 .\scripts\e2e.ps1
 ```
 
-Run `20260806T075729954Z` 保存 7 个阶段 JUnit 文件，共 14 条测试，`failures=0`、`errors=0`、`skipped=0`。M7 用例只依赖 M6 通过 UI 发布的 Workflow，通过公开 API/UI 完成：
+Run `20260807T125227802Z` 保存 7 个阶段 JUnit 文件，共 15 条测试，`failures=0`、`errors=0`、`skipped=0`。M7 用例只依赖 M6 通过 UI 发布的 Workflow，通过公开 API/UI 完成：
 
 - 创建 Application 和 Version Deployment，在 Playground 创建 Session 并发送 Message。
 - 断开第一次 SSE 后使用 Cursor 恢复，最终定位真实 Execution、Trace 和 Assistant Message。
@@ -39,10 +39,11 @@ Run `20260806T075729954Z` 保存 7 个阶段 JUnit 文件，共 14 条测试，`
 - 创建并验证 HMAC Webhook，返回 `202 queued` 并运行同一 Version。
 - 创建 Dataset、Dataset Version、Evaluation Profile 和 Evaluation；Case 绑定真实 target Execution 并产生规则结果。
 - 通过 Approval 页面领取和批准任务，Coordinator 通过 Runtime Command 幂等恢复执行。
+- Approval 作为 Workflow 主要输出时，恢复负载写入对应 Node Execution，事件顺序保持 `execution.resumed` 先于终态；Playground Invocation 完成并创建 Assistant Message，不再产生 `APPLICATION_PRIMARY_OUTPUT_NOT_REACHED`。
 - 查询 Worker Capability，更新 Quota Policy，运行 Retention Dry Run，并在 Runtime 页面显示真实状态。
 - 最终 `runtime_commands` 和未发布 Outbox 清零，Sandbox Lease 终止，Credential Handle 撤销。
 
-证据目录：`apps/e2e/test-results/kubernetes/20260806T075729954Z/`。该 Run 保留 `agentx-e2e` Namespace 供后续 RC 检查，开发 `agentx` Namespace 已恢复并保持 10 个 Deployment、4 个 StatefulSet 全部 Ready。该 Run 同时覆盖 Coordinator/Worker 强退、Redis/ClickHouse 故障、SSE 重连和 M5 Sandbox 清理。
+证据目录：`apps/e2e/test-results/kubernetes/20260807T125227802Z/`。该 Run 已删除 `agentx-e2e` Namespace，恢复开发 `agentx` Namespace 原副本数，并覆盖 Coordinator/Worker 强退、Redis/ClickHouse 故障、SSE 重连和 M5 Sandbox 清理。
 
 专项运行证据：
 

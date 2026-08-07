@@ -867,11 +867,29 @@ impl RuntimeRepository {
         let mut machine = self
             .load_machine(&mut transaction, command.tenant_id, command.execution_id)
             .await?;
-        machine.resume(
-            NodeExecutionId::from_uuid(command.node_execution_id),
-            &command.output_port,
-            invocation_items(&command.payload),
-        )?;
+        let resumed_outputs = resumed_output_map(&command.output_port, &command.payload);
+        let resumed_items = resumed_outputs
+            .get(&command.output_port)
+            .cloned()
+            .unwrap_or_default();
+        let node_execution_id = NodeExecutionId::from_uuid(command.node_execution_id);
+        machine.resume(node_execution_id, &command.output_port, resumed_items)?;
+        let resumed_output_json = serde_json::to_value(&resumed_outputs)?;
+        let attempt_id = machine
+            .activation(node_execution_id)
+            .and_then(|activation| activation.attempts.last())
+            .map(|attempt| attempt.id.as_uuid())
+            .context("Resumed activation has no attempt")?;
+        sqlx::query("UPDATE node_attempts SET output_json=? WHERE id=?")
+            .bind(&resumed_output_json)
+            .bind(attempt_id)
+            .execute(&mut *transaction)
+            .await?;
+        sqlx::query("UPDATE node_executions SET output_json=? WHERE id=?")
+            .bind(resumed_output_json)
+            .bind(command.node_execution_id)
+            .execute(&mut *transaction)
+            .await?;
         queue_ready_attempts(
             &mut transaction,
             command.tenant_id,
@@ -897,14 +915,6 @@ impl RuntimeRepository {
             sqlx::query("UPDATE approval_tasks SET status='timed_out',resume_status='succeeded',version=version+1 WHERE tenant_id=? AND execution_id=? AND node_execution_id=? AND status IN ('pending','claimed')")
                 .bind(command.tenant_id).bind(command.execution_id).bind(command.node_execution_id).execute(&mut *transaction).await?;
         }
-        sync_execution_status(
-            &mut transaction,
-            command.tenant_id,
-            command.execution_id,
-            machine.status(),
-            self.quota_admission.as_ref(),
-        )
-        .await?;
         insert_execution_event(
             &mut transaction,
             command.tenant_id,
@@ -912,6 +922,14 @@ impl RuntimeRepository {
             "execution.resumed",
             "running",
             json!({"nodeExecutionId":command.node_execution_id,"outputPort":command.output_port}),
+        )
+        .await?;
+        sync_execution_status(
+            &mut transaction,
+            command.tenant_id,
+            command.execution_id,
+            machine.status(),
+            self.quota_admission.as_ref(),
         )
         .await?;
         transaction.commit().await?;
@@ -1790,6 +1808,11 @@ pub(crate) fn invocation_items(input: &Value) -> Vec<Item> {
         }],
     }
 }
+
+fn resumed_output_map(output_port: &str, payload: &Value) -> BTreeMap<String, Vec<Item>> {
+    BTreeMap::from([(output_port.to_owned(), invocation_items(payload))])
+}
+
 fn hash_json(value: &Value) -> Result<String> {
     Ok(format!(
         "sha256:v1:{:x}",

@@ -29,6 +29,8 @@ export function configurationIssues(document: StudioDocument, manifests: Map<str
     for (const slot of manifest.bindingSlots) {
       if (slot.required && !document.edges.some((edge) => edge.data?.edgeKind === 'binding' && edge.target === node.id && edge.data.targetSlot === slot.name)) issues.push({ code: 'AI_BINDING_REQUIRED', nodeId: node.id, fieldPath: `resourceReferences.${slot.name}`, message: `Connect the required ${slot.name} attachment.` })
     }
+    const hasErrorEdge = document.edges.some((edge) => edge.data?.edgeKind === 'execution' && edge.source === node.id && (edge.data.sourcePortKind === 'error' || edge.sourceHandle === 'error'))
+    if (hasErrorEdge && node.data.settings.onError !== 'continue_error_output') issues.push({ code: 'ERROR_POLICY_MISMATCH', nodeId: node.id, fieldPath: 'settings.onError', message: "Error connections require the 'continue_error_output' policy." })
   }
   return issues
 }

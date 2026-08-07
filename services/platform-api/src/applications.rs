@@ -1,5 +1,6 @@
 use agentx_api_types::PageResponse;
 use agentx_infrastructure::credential::PlainSecret;
+use agentx_runtime::CompiledWorkflow;
 use axum::{
     Json,
     extract::{Path, Query, State},
@@ -414,6 +415,19 @@ pub async fn create_deployment(
             "Workflow Version is not active in the selected Environment",
         ));
     }
+    let compiled_json: Value = sqlx::query_scalar(
+        "SELECT compiled_ir_json FROM workflow_versions WHERE tenant_id=? AND id=?",
+    )
+    .bind(actor.tenant_id)
+    .bind(input.workflow_version_id)
+    .fetch_one(&state.pool)
+    .await?;
+    let compiled: CompiledWorkflow = serde_json::from_value(compiled_json)
+        .map_err(|error| AppError::unprocessable("INVALID_COMPILED_WORKFLOW", error.to_string()))?;
+    validate_application_output_contract(
+        compiled.primary_output_node,
+        compiled.normal_output_candidates.len(),
+    )?;
     validate_schema(&input.input_schema)?;
     validate_schema(&input.output_schema)?;
     if let Some(expression) = input.output_expression.as_deref() {
@@ -1185,6 +1199,22 @@ fn validate_version_policy(value: &str) -> AppResult<()> {
         ))
     }
 }
+fn validate_application_output_contract(
+    primary_output_node: Option<usize>,
+    candidate_count: usize,
+) -> AppResult<()> {
+    match (primary_output_node, candidate_count) {
+        (_, 0) => Err(AppError::unprocessable(
+            "APPLICATION_OUTPUT_UNAVAILABLE",
+            "Workflow has no enabled normal output node",
+        )),
+        (None, count) if count > 1 => Err(AppError::unprocessable(
+            "APPLICATION_PRIMARY_OUTPUT_REQUIRED",
+            "Workflow has multiple normal outputs; select a primary output node before deployment",
+        )),
+        _ => Ok(()),
+    }
+}
 fn validate_schema(value: &Value) -> AppResult<()> {
     if value.is_object() {
         Ok(())
@@ -1229,8 +1259,8 @@ fn validate_misfire_policy(policy: &str) -> AppResult<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        generate_api_key, validate_misfire_policy, validate_schedule, validate_slug,
-        validate_version_policy,
+        generate_api_key, validate_application_output_contract, validate_misfire_policy,
+        validate_schedule, validate_slug, validate_version_policy,
     };
     use sha2::{Digest, Sha256};
     #[test]
@@ -1252,5 +1282,23 @@ mod tests {
         let secret = value.strip_prefix(&format!("{prefix}_")).unwrap();
         assert!(!secret.is_empty());
         assert_eq!(hash.as_slice(), Sha256::digest(value.as_bytes()).as_slice());
+    }
+
+    #[test]
+    fn application_deployment_requires_an_unambiguous_output() {
+        assert_eq!(
+            validate_application_output_contract(None, 0)
+                .unwrap_err()
+                .code,
+            "APPLICATION_OUTPUT_UNAVAILABLE"
+        );
+        assert_eq!(
+            validate_application_output_contract(None, 2)
+                .unwrap_err()
+                .code,
+            "APPLICATION_PRIMARY_OUTPUT_REQUIRED"
+        );
+        assert!(validate_application_output_contract(None, 1).is_ok());
+        assert!(validate_application_output_contract(Some(2), 2).is_ok());
     }
 }

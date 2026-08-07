@@ -7,7 +7,7 @@ use sha2::{Digest, Sha256};
 use sqlx::{MySql, MySqlPool, Row, Transaction};
 use uuid::Uuid;
 
-const RESULT_SCHEMA_VERSION: &str = "1.0";
+const RESULT_SCHEMA_VERSION: &str = "1.1";
 
 pub async fn materialize_execution_result(
     transaction: &mut Transaction<'_, MySql>,
@@ -29,6 +29,12 @@ pub async fn materialize_execution_result(
         .filter(|node| node.outgoing_connections.is_empty())
         .map(|node| (node.id.clone(), node.index))
         .collect::<std::collections::BTreeMap<_, _>>();
+    let primary_node_index = compiled.primary_output_node.or_else(|| {
+        (compiled.normal_output_candidates.len() == 1)
+            .then_some(compiled.normal_output_candidates[0])
+    });
+    let primary_node_id =
+        primary_node_index.and_then(|index| node_id_for_compiled_index(&compiled.nodes, index));
 
     let rows = sqlx::query("SELECT id,node_id,generation,activation_slot,run_index,output_json FROM node_executions WHERE tenant_id=? AND execution_id=? AND status='succeeded' AND output_json IS NOT NULL ORDER BY run_index,generation,activation_slot,id")
         .bind(tenant_id)
@@ -36,12 +42,18 @@ pub async fn materialize_execution_result(
         .fetch_all(&mut **transaction)
         .await?;
     let mut outputs = Vec::new();
+    let mut primary_outputs = Vec::new();
     for row in rows {
         let node_id: String = row.try_get("node_id")?;
-        let Some(&node_index) = terminal_nodes.get(&node_id) else {
+        let Some(node_index) = compiled
+            .nodes
+            .iter()
+            .find(|node| node.id == node_id)
+            .map(|node| node.index)
+        else {
             continue;
         };
-        outputs.push(TerminalNodeResult {
+        let result = TerminalNodeResult {
             node_index,
             node_id,
             node_execution_id: row.try_get("id")?,
@@ -49,7 +61,13 @@ pub async fn materialize_execution_result(
             activation_slot: row.try_get("activation_slot")?,
             run_index: row.try_get("run_index")?,
             outputs: row.try_get("output_json")?,
-        });
+        };
+        if primary_node_id == Some(result.node_id.as_str()) {
+            primary_outputs.push(result.clone());
+        }
+        if terminal_nodes.contains_key(&result.node_id) {
+            outputs.push(result);
+        }
     }
     outputs.sort_by_key(|item| {
         (
@@ -60,13 +78,40 @@ pub async fn materialize_execution_result(
             item.node_execution_id,
         )
     });
-    let output_hash = format!("sha256:{:x}", Sha256::digest(serde_json::to_vec(&outputs)?));
+    let primary_output = select_primary_output(primary_outputs);
+    let output_hash = format!(
+        "sha256:{:x}",
+        Sha256::digest(serde_json::to_vec(&(&outputs, &primary_output))?)
+    );
     let result = ExecutionResult {
         schema_version: RESULT_SCHEMA_VERSION.into(),
         terminal_nodes: outputs,
+        primary_output,
         output_hash: output_hash.clone(),
     };
     Ok((serde_json::to_value(result)?, output_hash))
+}
+
+fn select_primary_output(mut outputs: Vec<TerminalNodeResult>) -> Option<TerminalNodeResult> {
+    outputs.sort_by_key(|item| {
+        (
+            item.activation_generation,
+            item.activation_slot,
+            item.run_index,
+            item.node_execution_id,
+        )
+    });
+    outputs.pop()
+}
+
+fn node_id_for_compiled_index(
+    nodes: &[agentx_runtime::CompiledNode],
+    index: usize,
+) -> Option<&str> {
+    nodes
+        .iter()
+        .find(|node| node.index == index)
+        .map(|node| node.id.as_str())
 }
 
 pub async fn externalize_execution_results(
@@ -140,10 +185,56 @@ mod tests {
                 run_index: 4,
                 outputs: serde_json::json!({"main": []}),
             }],
+            primary_output: None,
             output_hash: "sha256:test".into(),
         })
         .unwrap();
         assert_eq!(value["terminalNodes"][0]["activationSlot"], 3);
         assert_eq!(value["outputHash"], "sha256:test");
+    }
+
+    #[test]
+    fn primary_output_uses_activation_order_not_input_or_wall_clock_order() {
+        let result = |generation, slot, run_index, id| TerminalNodeResult {
+            node_index: 1,
+            node_id: "agent".into(),
+            node_execution_id: Uuid::from_u128(id),
+            activation_generation: generation,
+            activation_slot: slot,
+            run_index,
+            outputs: serde_json::json!({"main":[{"json":{"id":id}}]}),
+        };
+        let selected = select_primary_output(vec![
+            result(3, 1, 0, 4),
+            result(2, 99, 99, 9),
+            result(3, 1, 1, 2),
+            result(3, 1, 1, 8),
+        ])
+        .unwrap();
+        assert_eq!(selected.node_execution_id, Uuid::from_u128(8));
+    }
+
+    #[test]
+    fn primary_output_resolves_preserved_indices_in_partial_snapshots() {
+        let node = agentx_runtime::CompiledNode {
+            index: 3,
+            id: "approval".into(),
+            name: "Approval".into(),
+            node_type: "approval".into(),
+            type_version: 1,
+            parameters: serde_json::json!({}),
+            settings: agentx_domain::NodeSettings::default(),
+            capability: agentx_node_protocol::NodeCapability::Builtin,
+            execution_style: agentx_node_protocol::ExecutionStyle::Suspend,
+            readiness: agentx_node_protocol::ReadinessPolicy::Required,
+            required_input_ports: vec!["main".into()],
+            output_ports: vec!["approved".into()],
+            side_effect_level: agentx_node_protocol::SideEffectLevel::Reversible,
+            incoming_connections: vec![],
+            outgoing_connections: vec![],
+            component_index: 0,
+        };
+        assert_eq!(node_id_for_compiled_index(&[node], 3), Some("approval"));
+        assert_eq!(node_id_for_compiled_index(&[], 3), None);
     }
 }

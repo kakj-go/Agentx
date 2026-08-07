@@ -49,7 +49,7 @@ export function ApplicationDetailPage() {
   const save = useMutation<unknown, Error, { kind: Exclude<DialogKind, null>; values: Record<string, string> }>({
     mutationFn: ({ kind, values }) => {
       if (kind === 'edit') return apiRequest<Application>(`/applications/${id}`, { method: 'PATCH', body: jsonBody({ name: values.name, description: values.description || null, visibility: values.visibility, status: values.status, version: application.data?.version }) })
-      if (kind === 'deployment') return apiRequest<ApplicationDeployment>(`/applications/${id}/deployments`, { method: 'POST', body: jsonBody({ workflowVersionId: values.workflowVersionId, environmentId: values.environmentId, inputSchema: JSON.parse(values.inputSchema), outputSchema: JSON.parse(values.outputSchema), sessionVersionPolicy: values.sessionVersionPolicy }) })
+      if (kind === 'deployment') return apiRequest<ApplicationDeployment>(`/applications/${id}/deployments`, { method: 'POST', body: jsonBody({ workflowVersionId: values.workflowVersionId, environmentId: values.environmentId, inputSchema: JSON.parse(values.inputSchema), outputSchema: JSON.parse(values.outputSchema), outputExpression: values.outputExpression?.trim() || null, sessionVersionPolicy: values.sessionVersionPolicy }) })
       if (kind === 'key') return apiRequest<ApplicationApiKey>(`/applications/${id}/api-keys`, { method: 'POST', body: jsonBody({ name: values.name }) })
       if (kind === 'webhook') return apiRequest<ApplicationWebhook>(`/applications/${id}/webhooks`, { method: 'POST', body: jsonBody({ name: values.name }) })
       if (kind === 'webhookEdit' && selectedWebhook) return apiRequest<ApplicationWebhook>(`/applications/${id}/webhooks/${selectedWebhook.id}`, { method: 'PATCH', body: jsonBody({ name: values.name, status: values.status, version: selectedWebhook.version }) })
@@ -88,6 +88,7 @@ export function ApplicationDetailPage() {
       { name: 'sessionVersionPolicy', label: t('m3.sessionPolicy'), type: 'select', defaultValue: 'pinned', options: ['pinned', 'follow_deployment', 'manual_upgrade'].map((item) => ({ value: item, label: t(`m3.${item}`) })) },
       { name: 'inputSchema', label: t('m2.inputSchema'), type: 'textarea', defaultValue: '{"type":"object"}' },
       { name: 'outputSchema', label: t('m2.outputSchema'), type: 'textarea', defaultValue: '{"type":"object"}' },
+      { name: 'outputExpression', label: t('common.outputExpression'), defaultValue: '' },
     ],
     key: [{ name: 'name', label: t('common.name'), required: true }],
     webhook: [{ name: 'name', label: t('common.name'), required: true }],

@@ -173,6 +173,59 @@ pub struct BindingSlot {
     pub multiple: bool,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CanvasNodeRole {
+    Default,
+    Trigger,
+    Branch,
+    Flow,
+    Merge,
+    Loop,
+    Suspend,
+    Approval,
+    SubWorkflow,
+    Agent,
+    Code,
+    ErrorHandler,
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CanvasAppearance {
+    pub role: CanvasNodeRole,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct NodeUiSchema {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub order: Vec<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub fields: BTreeMap<String, Value>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub resource_selectors: Vec<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canvas: Option<CanvasAppearance>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct NodeManifestLocalization {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub display_name: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub description: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub keywords: Vec<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub input_port_labels: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub output_port_labels: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub binding_slot_labels: BTreeMap<String, String>,
+}
+
 #[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct NodeManifestVersion {
@@ -188,6 +241,8 @@ pub struct NodeManifestVersion {
     pub category: String,
     #[serde(default)]
     pub keywords: Vec<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub localizations: BTreeMap<String, NodeManifestLocalization>,
     #[serde(default)]
     pub icon_key: String,
     pub execution_style: ExecutionStyle,
@@ -199,7 +254,7 @@ pub struct NodeManifestVersion {
     pub binding_slots: Vec<BindingSlot>,
     pub parameter_schema: Value,
     #[serde(default)]
-    pub ui_schema: Value,
+    pub ui_schema: NodeUiSchema,
     #[serde(default)]
     pub providers: Vec<String>,
     #[serde(default)]
@@ -241,6 +296,51 @@ impl NodeManifestVersion {
     #[must_use]
     pub fn key(&self) -> (String, u32) {
         (self.node_type.clone(), self.version)
+    }
+
+    pub fn validate_localizations(&self) -> Result<(), String> {
+        let inputs = self
+            .input_ports
+            .iter()
+            .map(|port| port.name.as_str())
+            .collect::<std::collections::HashSet<_>>();
+        let outputs = self
+            .output_ports
+            .iter()
+            .map(|port| port.name.as_str())
+            .collect::<std::collections::HashSet<_>>();
+        let slots = self
+            .binding_slots
+            .iter()
+            .map(|slot| slot.name.as_str())
+            .collect::<std::collections::HashSet<_>>();
+        for (locale, localization) in &self.localizations {
+            if !matches!(locale.as_str(), "zh-CN" | "en-US") {
+                return Err(format!("unsupported manifest locale '{locale}'"));
+            }
+            for name in localization.input_port_labels.keys() {
+                if !inputs.contains(name.as_str()) {
+                    return Err(format!(
+                        "locale {locale} references unknown input port '{name}'"
+                    ));
+                }
+            }
+            for name in localization.output_port_labels.keys() {
+                if !outputs.contains(name.as_str()) {
+                    return Err(format!(
+                        "locale {locale} references unknown output port '{name}'"
+                    ));
+                }
+            }
+            for name in localization.binding_slot_labels.keys() {
+                if !slots.contains(name.as_str()) {
+                    return Err(format!(
+                        "locale {locale} references unknown binding slot '{name}'"
+                    ));
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -485,5 +585,20 @@ mod tests {
             ..Item::default()
         };
         assert_eq!(item.lineage.len(), 2);
+    }
+
+    #[test]
+    fn canvas_role_is_controlled_and_ui_schema_remains_optional() {
+        let schema: NodeUiSchema = serde_json::from_value(serde_json::json!({})).unwrap();
+        assert!(schema.canvas.is_none());
+        let appearance: CanvasAppearance =
+            serde_json::from_value(serde_json::json!({"role": "sub_workflow"})).unwrap();
+        assert_eq!(appearance.role, CanvasNodeRole::SubWorkflow);
+        assert!(
+            serde_json::from_value::<CanvasAppearance>(serde_json::json!({
+                "role": "unknown"
+            }))
+            .is_err()
+        );
     }
 }
