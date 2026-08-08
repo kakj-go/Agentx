@@ -1,4 +1,4 @@
-import type { CanvasNodeRole, NodeManifest, ResourceType } from '../model/types'
+import type { CanvasNodeFamily, CanvasNodeRole, NodeManifest, ResourceType } from '../model/types'
 
 export type NodeCategory = 'triggers' | 'flow' | 'ai' | 'data' | 'integrations' | 'code' | 'other'
 
@@ -21,6 +21,10 @@ export function canvasNodeRole(manifest?: NodeManifest): CanvasNodeRole {
 
 export function nodeShape(manifest?: NodeManifest) {
   return canvasNodeRole(manifest)
+}
+
+export function canvasNodeFamily(role: CanvasNodeRole): CanvasNodeFamily {
+  return role === 'agent' ? 'agent' : 'compact'
 }
 
 export type CanvasNodePorts = {
@@ -98,25 +102,12 @@ function rectangleInsideBounds(rect: CanvasPlacementRect, bounds: CanvasPlacemen
 }
 
 export function canvasNodeMetrics(role: CanvasNodeRole, ports: CanvasNodePorts = {}, collapsed = false) {
-  if (ports.kind === 'binding') return { width: 80, height: 80, labelBelow: false }
+  if (ports.kind === 'binding') return { width: 96, height: 96, labelBelow: true }
   if (ports.kind === 'group') return collapsed
     ? { width: 240, height: 64, labelBelow: false }
     : { width: 240, height: 160, labelBelow: false }
-  const richHeight = Math.max(160, ports.richHeight ?? 160)
-  switch (role) {
-    case 'trigger': return { width: 112, height: 96, labelBelow: true }
-    case 'branch': return { width: 96, height: 96, labelBelow: true }
-    case 'merge': return { width: 112, height: 88, labelBelow: true }
-    case 'loop': return { width: 112, height: 88, labelBelow: true }
-    case 'suspend': return { width: 160, height: 72, labelBelow: false }
-    case 'approval': return { width: 176, height: 88, labelBelow: false }
-    case 'sub_workflow': return { width: 112, height: 88, labelBelow: true }
-    case 'agent': return { width: 320, height: richHeight, labelBelow: false }
-    case 'code': return { width: 112, height: 88, labelBelow: true }
-    case 'error_handler': return { width: 144, height: 72, labelBelow: false }
-    case 'flow': return { width: 96, height: 96, labelBelow: true }
-    default: return { width: 96, height: 96, labelBelow: true }
-  }
+  if (role === 'agent') return { width: 224, height: 96, labelBelow: true }
+  return { width: 96, height: 96, labelBelow: true }
 }
 
 export function categoryLabel(category: NodeCategory, translate: (key: string) => string) {

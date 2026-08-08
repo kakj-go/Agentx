@@ -20,6 +20,11 @@ export type JsonSchemaProperty = {
 }
 export type ParameterSchema = { type?: string; required?: string[]; properties?: Record<string, JsonSchemaProperty>; additionalProperties?: boolean }
 export type CanvasNodeRole = 'default' | 'trigger' | 'branch' | 'flow' | 'merge' | 'loop' | 'suspend' | 'approval' | 'sub_workflow' | 'agent' | 'code' | 'error_handler'
+export type CanvasNodeFamily = 'compact' | 'agent' | 'attachment' | 'editor'
+export type ConnectionInteractionState =
+  | { status: 'idle' | 'cancelled' | 'committed' }
+  | { status: 'source-hover' | 'connecting'; nodeId: string; handleId?: string | null }
+  | { status: 'compatible' | 'incompatible' | 'occupied'; reason?: string }
 export type UiField = {
   control: string
   label?: string
@@ -126,12 +131,12 @@ export type BindingNodeData = {
   label: string
 }
 export type GroupNodeData = { editorKind: 'group'; groupId: string; label: string; collapsed: boolean; color?: string; memberCount: number; onToggle: () => void; onRemove: () => void }
-export type AnnotationNodeData = { editorKind: 'annotation'; annotationId: string; text: string; color?: string; onChange: (patch: Partial<EditorDocument['annotations'][number]>) => void; onRemove: () => void; onResizeStart: () => void; onResize: (frame: { x: number; y: number; width: number; height: number }) => void }
+export type AnnotationNodeData = { editorKind: 'annotation'; annotationId: string; text: string; color?: string; onChange: (patch: Partial<EditorDocument['annotations'][number]>) => void; onRemove: () => void; onResizeStart: () => void; onResize: (frame: { x: number; y: number; width: number; height: number }) => void; onResizeEnd: () => void }
 export type StudioNodeData = ActionNodeData | BindingNodeData
 export type StudioNode = Node<StudioNodeData, 'manifest' | 'attachment'>
 export type CanvasNodeData = StudioNodeData | GroupNodeData | AnnotationNodeData
 export type CanvasNode = Node<CanvasNodeData, 'manifest' | 'attachment' | 'group' | 'annotation'>
-export type StudioEdgeData = { edgeKind: 'execution' | 'binding'; order?: number; targetSlot?: string; sourcePortKind?: PortKind }
+export type StudioEdgeData = { edgeKind: 'execution' | 'binding'; order?: number; targetSlot?: string; sourcePortKind?: PortKind; runtimeStatus?: string }
 export type StudioEdge = Edge<StudioEdgeData>
 
 export type StudioDocument = { nodes: StudioNode[]; edges: StudioEdge[]; viewport: Viewport; annotations: EditorDocument['annotations']; groups: EditorDocument['groups']; settings: WorkflowSettings }

@@ -23,27 +23,27 @@ describe('workflow node appearance', () => {
 
   it('uses a declared role and shared role metrics', () => {
     expect(nodeShape(manifest({ category: 'actions', uiSchema: { canvas: { role: 'code' } } }))).toBe('code')
-    expect(canvasNodeMetrics('trigger')).toMatchObject({ width: 112, height: 96 })
+    expect(canvasNodeMetrics('trigger')).toMatchObject({ width: 96, height: 96 })
     expect(canvasNodeMetrics('branch')).toMatchObject({ width: 96, height: 96 })
-    expect(canvasNodeMetrics('merge')).toMatchObject({ width: 112, height: 88 })
-    expect(canvasNodeMetrics('approval')).toMatchObject({ width: 176, height: 88 })
-    expect(canvasNodeMetrics('error_handler')).toMatchObject({ width: 144, height: 72 })
-    expect(canvasNodeMetrics('agent', { richHeight: 220 })).toMatchObject({ width: 320, height: 220 })
-    expect(canvasNodeMetrics('default', { kind: 'binding' })).toMatchObject({ width: 80, height: 80 })
+    expect(canvasNodeMetrics('merge')).toMatchObject({ width: 96, height: 96 })
+    expect(canvasNodeMetrics('approval')).toMatchObject({ width: 96, height: 96 })
+    expect(canvasNodeMetrics('error_handler')).toMatchObject({ width: 96, height: 96 })
+    expect(canvasNodeMetrics('agent', { richHeight: 220 })).toMatchObject({ width: 224, height: 96 })
+    expect(canvasNodeMetrics('default', { kind: 'binding' })).toMatchObject({ width: 96, height: 96 })
     expect(canvasNodeMetrics('default', { kind: 'group' }, true)).toMatchObject({ width: 240, height: 64 })
     expect(Object.fromEntries((['default', 'flow', 'trigger', 'branch', 'merge', 'loop', 'suspend', 'approval', 'sub_workflow', 'agent', 'code', 'error_handler'] as const).map((role) => [role, canvasNodeMetrics(role)]))).toEqual({
       default: { width: 96, height: 96, labelBelow: true },
       flow: { width: 96, height: 96, labelBelow: true },
-      trigger: { width: 112, height: 96, labelBelow: true },
+      trigger: { width: 96, height: 96, labelBelow: true },
       branch: { width: 96, height: 96, labelBelow: true },
-      merge: { width: 112, height: 88, labelBelow: true },
-      loop: { width: 112, height: 88, labelBelow: true },
-      suspend: { width: 160, height: 72, labelBelow: false },
-      approval: { width: 176, height: 88, labelBelow: false },
-      sub_workflow: { width: 112, height: 88, labelBelow: true },
-      agent: { width: 320, height: 160, labelBelow: false },
-      code: { width: 112, height: 88, labelBelow: true },
-      error_handler: { width: 144, height: 72, labelBelow: false },
+      merge: { width: 96, height: 96, labelBelow: true },
+      loop: { width: 96, height: 96, labelBelow: true },
+      suspend: { width: 96, height: 96, labelBelow: true },
+      approval: { width: 96, height: 96, labelBelow: true },
+      sub_workflow: { width: 96, height: 96, labelBelow: true },
+      agent: { width: 224, height: 96, labelBelow: true },
+      code: { width: 96, height: 96, labelBelow: true },
+      error_handler: { width: 96, height: 96, labelBelow: true },
     })
   })
 

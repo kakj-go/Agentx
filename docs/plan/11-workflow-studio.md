@@ -17,13 +17,13 @@ M6 完成后，Studio 本身必须是完整闭环；M7 不再补画布、节点�
 
 ### 1.1 n8n 风格画布重构（Agentx 原生）
 
-画布采用 n8n 的紧凑节点语言和工作区节奏，但不复制其源码、许可证实现或 JSON 协议。Catalog Manifest 的 `uiSchema.canvas.role` 是唯一视觉角色来源；缺失角色的旧 Manifest 仅在前端回退到 `default`，未知角色由 Catalog 校验拒绝。普通/Flow 节点以图标为主并在下方显示最多两行标签，Trigger、Branch、Merge、Loop、Suspend、Approval、Sub-workflow、Agent、Code 和 Error Handler 使用受控内部形状，AI/Binding 端口使用菱形提示。Manifest `localizations` 统一驱动画布、节点栏、搜索、详情和 Tooltip 的中英文显示。
+画布采用 n8n 的紧凑节点语言和工作区节奏，但不复制其源码、许可证实现或 JSON 协议。Catalog Manifest 的 `uiSchema.canvas.role` 是唯一视觉角色来源；前端将角色映射到 `compact|agent|attachment|editor` 视觉族。普通、Trigger、Branch、Merge、Loop、Suspend、Approval、Sub-workflow、Code 和 Error Handler 统一为 96×96，Agent 为 224×96，图标区为 48×48；删除旧菱形、箭头、六边形和不对称轮廓。主输入固定左侧，全部执行输出分布在右侧并保持普通输出在上、Error 输出在下，Agent 资源端口固定底边。Manifest `localizations` 统一驱动画布、创建器、搜索、详情、端口和 Tooltip 的中英文显示。
 
 Workflow Definition 的 `primaryOutputNodeId` 固化 Application/Playground 主要输出。普通调试和版本化允许多个正常终点；Application Deployment 对零终点和未指定的多终点执行门禁。Runtime 按 Activation 元组稳定选取主要节点的最后一次成功输出，绝不依赖画布坐标或墙钟时间。
 
-左侧 Node Creator 默认折叠为 56px 工具栏，搜索或从输出端口打开 320px 覆盖创建器，支持自动聚焦、Manifest 分类、键盘导航、拖拽和合法连接过滤。无节点画布只提供 Add Trigger/Search Nodes。右侧 Node Details 为 480px 全高视图，固定 Parameters、Input、Output、Trace 四个 Tab；单节点运行仍复用 `single_node` Debug Plan。底部 Runtime Panel 是 40px 折叠、默认 220px 展开的全局 Execution Rail，可调整到 160px–65vh，节点结果不在画布和轨道重复复制。
+画布左上角只保留圆形 `+`，搜索或从输出端口打开 320px 覆盖创建器，支持自动聚焦、Manifest 折叠分组、键盘导航、拖拽和合法连接过滤；默认只展开第一个分组，搜索时展开匹配分组。正常缩放时，未占用或可重复连接的输出/资源槽常驻显示 `+`；已占用且不可重复连接的槽隐藏，低缩放统一降级。无节点画布只提供 Add Trigger/Search Nodes。右侧 Node Details 为 480px 全高视图，固定 Parameters、Input、Output、Trace 四个 Tab；单节点运行仍复用 `single_node` Debug Plan。底部 Runtime Panel 是 40px 折叠、默认 220px 展开的全局 Execution Rail，可调整到 160px–65vh，节点结果不在画布和轨道重复复制。
 
-Sticky Note（默认 240×160，最小 150×80）和非嵌套 Group（`collapsed=false`）只写入 Editor Document。便签支持双击编辑、语义色和缩放；Group 可移动成员、折叠为 240×64 代理并临时聚合外部连线，删除仅解除分组。Undo/Redo Snapshot 同时包含 nodes、edges、viewport、annotations 和 groups；`canvasNodeMetrics` 是渲染、ELK、对齐、粘贴和 Minimap 的唯一尺寸来源。
+Sticky Note（默认 240×160，最小 150×80）和非嵌套 Group（`collapsed=false`）只写入 Editor Document。便签支持双击编辑、语义色和缩放；Group 可移动成员、折叠为 240×64 代理并临时聚合外部连线，删除仅解除分组。Undo/Redo 只包含 nodes、edges、annotations、groups 和 Definition settings；viewport、selection、Hover 和临时连线不进入历史。拖动、Group 移动和便签缩放均在手势结束时提交单一事务；`canvasNodeMetrics` 是渲染、ELK、对齐、粘贴和 Minimap 的唯一尺寸来源。
 
 ## 2. 实施前基线与必须修正的问题
 
@@ -100,15 +100,16 @@ Debug Plan 必须记录包含/跳过节点、种子数据来源、目标节点�
 
 ### 3.5 前端状态边界
 
-Studio 使用固定工作区布局：左侧 Node Palette、中央无限画布、右侧 Node Inspector、底部可调整高度的 Input/Output/Trace 面板；顶栏承载保存状态、Undo/Redo、运行、版本和发布动作。
+Studio 使用固定工作区布局：中央无限画布左上角提供按需 Node Creator，右侧为 Node Inspector，底部为可调整高度的 Input/Output/Trace 面板；顶栏承载保存状态、Undo/Redo、运行、版本和发布动作。
 
 状态分层：
 
 - TanStack Query：Draft、Catalog、资源、Execution、Trace 等服务端状态。
-- Zustand Editor Store：规范化 nodes/edges、viewport、selection 和本地 dirty 状态。
-- History Store：仅保存可逆编辑 Command/Patch，不保存 Query 结果和运行高亮。
+- Zustand Editor Store：Document、Interaction、History 三个逻辑 slice；viewport、selection、Hover、临时连接和拖动中坐标不触发文档历史。
+- History Store：按实体 ID 保存节点、边、便签和 Group 的可逆前后 Patch；手势结束只提交受影响实体，不保存 Query 结果和运行高亮。
+- Canvas Render Store：维护 `IncrementalGraphIndex`、Group 视图索引以及稳定 Node/Edge 引用；位置变化不重建端口和连接索引。
 - React Hook Form：当前节点参数草稿；提交后形成一个 History Command。
-- Runtime Overlay Store：按 `executionId + nodeId + runIndex` 保存短期高亮和选中结果，切换 Execution 时整体替换。
+- Runtime Overlay Store：按 `executionId + nodeId + runIndex` 保存短期高亮和选中结果，非终态最多每 100ms 合并、终态立即提交，切换 Execution 时整体替换。
 
 前端目录按 `canvas/nodes/edges/panels/forms/store/model/api/utils` 拆分，任何文件不得超过 2000 行。共享 Button、Input、Select、Tabs、Dialog、Tooltip、Resize Panel 和主题 Token 进入统一组件层，不在 Studio 建第二套视觉系统。
 
@@ -164,7 +165,7 @@ Studio 使用固定工作区布局：左侧 Node Palette、中央无限画布、
 | 编号 | 状态 | 依赖 | 交付物 | 验收条件 |
 |---|---|---|---|---|
 | STU-004 | done | STU-001–002 | 前端 Domain Model、Serializer/Deserializer 和 Query Adapter | Definition/Editor 往返不丢字段，纯 UI 字段不会进入 Definition/IR |
-| STU-005 | done | STU-004 | 三栏 Studio Shell、Palette、通用 Node/Handle/Edge、搜索和拖放 | main/error/AI 端口视觉与 Manifest 一致，非法方向/类型/重复连接被拒绝 |
+| STU-005 | done | STU-004 | Studio Shell、按需 Node Creator、通用 Node/Handle/Edge、搜索和拖放 | main/error/AI 端口视觉与 Manifest 一致，非法方向/类型/重复连接被拒绝 |
 | STU-006 | done | STU-004–005 | 多选、复制粘贴、删除、框选、对齐、自动布局、Undo/Redo 和快捷键 | 每次用户动作形成单一可逆 Command；跨 Workflow 粘贴重新校验资源和节点版本 |
 | STU-007 | done | STU-004、WCP-002 | 防抖自动保存、保存状态、Revision 冲突、离线恢复和离开保护 | 不显示虚假已保存；冲突可载入服务器、保留本地副本或显式覆盖 |
 
@@ -220,9 +221,9 @@ STU-005..014 --> STU-015 Quality --> STU-016 E2E
 ## 8. 测试策略
 
 - Rust：Definition 3.0、Catalog Reconcile、Manifest Hash、Draft Debug Snapshot、资源快照和四类 Debug Plan 单元/集成测试。
-- 前端：Serializer、Connection Validator、History Command、Schema Form、Autosave 状态机和 Runtime Overlay Store 测试。
+- 前端：Serializer、增量 GraphIndex、Connection 状态机与显式多输入选择、实体 Patch History、引用隔离、Schema Form、Autosave 和 100ms Runtime 批处理测试。
 - 契约：OpenAPI 生成、runtime gRPC、Node/Sandbox Context 中可选 Version 与必填 Snapshot ID 的兼容测试。
-- E2E：按项目标准创建临时 Kubernetes Namespace；Fixture 只准备账号和外部依赖，不能通过 API/SQL 写入被测 Workflow。
+- E2E：按项目标准创建临时 Kubernetes Namespace；Fixture 只准备账号和外部依赖，不能通过 API/SQL 写入被测 Workflow。17 项本地 Builtin 必须通过 Studio UI 创建、配置、Handle 连线、保存和运行三条覆盖变换、多输入与正式错误结果的 Workflow。
 - 故障：Revision 冲突、保存超时、事件断线、资源撤权、Worker 重启、Sandbox 超时、Artifact 延迟和重复命令。
 - 视觉：三种桌面分辨率、中英文、浅深主题；Node Inspector、底部结果面板和 Dialog 不得遮挡顶栏或画布命令。
 

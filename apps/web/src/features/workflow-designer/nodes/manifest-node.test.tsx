@@ -1,8 +1,10 @@
 import { ReactFlowProvider, type NodeProps } from '@xyflow/react'
-import { render, screen } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import { act, fireEvent, render, screen } from '@testing-library/react'
+import { Profiler } from 'react'
+import { describe, expect, it, vi } from 'vitest'
 
 import type { CanvasNodeRole, NodeManifest, StudioNode } from '../model/types'
+import { useCanvasRenderStore } from '../store/canvas-render-store'
 import { ManifestNode } from './manifest-node'
 
 const roles: CanvasNodeRole[] = ['default', 'trigger', 'branch', 'flow', 'merge', 'loop', 'suspend', 'approval', 'sub_workflow', 'agent', 'code', 'error_handler']
@@ -19,16 +21,77 @@ const props = (role: CanvasNodeRole): NodeProps<StudioNode> => ({
 
 describe('ManifestNode roles', () => {
   for (const role of roles) it(`renders the controlled ${role} role`, () => {
-    render(<ReactFlowProvider><ManifestNode {...props(role)} manifest={manifest(role)} /></ReactFlowProvider>)
+    const value = manifest(role)
+    useCanvasRenderStore.setState({ manifests: new Map([[`${role}@1`, value]]), runtimeStatuses: new Map(), bindingSummaries: new Map(), occupiedHandlesByNodeId: new Map(), zoomTier: 'full' })
+    render(<ReactFlowProvider><ManifestNode {...props(role)} /></ReactFlowProvider>)
     expect(screen.getByTestId(`studio-node-node-${role}`)).toHaveAttribute('data-role', role)
   })
 
   it('keeps handles interactive at low zoom and shows actual Agent bindings', () => {
-    render(<ReactFlowProvider><ManifestNode {...props('agent')} bindingSummaries={[{ role: 'ai_model', resourceType: 'model', label: 'Production model' }]} manifest={manifest('agent')} onQuickAdd={() => undefined} zoom={0.5} /></ReactFlowProvider>)
+    const onSourceHover = vi.fn()
+    useCanvasRenderStore.setState({
+      manifests: new Map([['agent@1', manifest('agent')]]), runtimeStatuses: new Map(),
+      bindingSummaries: new Map([['node-agent', [{ role: 'ai_model', resourceType: 'model', label: 'Production model' }]]]),
+      occupiedHandlesByNodeId: new Map(),
+      zoomTier: 'compact', onQuickAdd: () => undefined, onSourceHover,
+    })
+    render(<ReactFlowProvider><ManifestNode {...props('agent')} /></ReactFlowProvider>)
     const node = screen.getByTestId('studio-node-node-agent')
-    expect(node).toHaveClass('studio-node-low-zoom')
-    expect(screen.getByText(/Production model/)).toBeInTheDocument()
+    expect(node).toHaveClass('studio-node-zoom-compact')
+    expect(screen.getByTitle(/Production model/)).toBeInTheDocument()
     expect(node.querySelectorAll('.react-flow__handle')).toHaveLength(3)
     expect(screen.getByRole('button', { name: /Add node after error|在错误后添加节点/i })).toBeInTheDocument()
+    const source = node.querySelector('.react-flow__handle.source')!
+    fireEvent.mouseEnter(source)
+    fireEvent.mouseLeave(source)
+    expect(onSourceHover).toHaveBeenNthCalledWith(1, 'node-agent', 'error', true)
+    expect(onSourceHover).toHaveBeenNthCalledWith(2, 'node-agent', 'error', false)
+  })
+
+  it('places error outputs on the right below normal outputs', () => {
+    const value = manifest('default')
+    value.outputPorts = [
+      { name: 'error', kind: 'error', required: false, variadic: false },
+      { name: 'main', kind: 'main', required: false, variadic: false },
+    ]
+    useCanvasRenderStore.setState({ manifests: new Map([['default@1', value]]), runtimeStatuses: new Map(), bindingSummaries: new Map(), occupiedHandlesByNodeId: new Map(), zoomTier: 'full' })
+    render(<ReactFlowProvider><ManifestNode {...props('default')} /></ReactFlowProvider>)
+    const node = screen.getByTestId('studio-node-node-default')
+    const main = node.querySelector<HTMLElement>('.react-flow__handle.source[data-handleid="main"]')!
+    const error = node.querySelector<HTMLElement>('.react-flow__handle.source[data-handleid="error"]')!
+    expect(main).toHaveClass('react-flow__handle-right')
+    expect(error).toHaveClass('react-flow__handle-right')
+    expect(Number.parseFloat(error.style.top)).toBeGreaterThan(Number.parseFloat(main.style.top))
+  })
+
+  it('keeps quick add visible only for unoccupied or repeatable ports', () => {
+    const single = manifest('agent')
+    useCanvasRenderStore.setState({
+      manifests: new Map([['agent@1', single]]), runtimeStatuses: new Map(), bindingSummaries: new Map(),
+      occupiedHandlesByNodeId: new Map([['node-agent', 'binding:ai_model\u0001error']]), zoomTier: 'full', onQuickAdd: () => undefined,
+    })
+    render(<ReactFlowProvider><ManifestNode {...props('agent')} /></ReactFlowProvider>)
+    const node = screen.getByTestId('studio-node-node-agent')
+    expect(node.querySelectorAll('.studio-port-add')).toHaveLength(0)
+
+    const repeatable = manifest('agent')
+    repeatable.outputPorts[0].variadic = true
+    repeatable.bindingSlots[0].multiple = true
+    act(() => useCanvasRenderStore.setState({ manifests: new Map([['agent@1', repeatable]]) }))
+    expect(node.querySelectorAll('.studio-port-add')).toHaveLength(2)
+  })
+
+  it('rerenders only the node whose runtime status changes', () => {
+    const value = manifest('default')
+    useCanvasRenderStore.setState({ manifests: new Map([['default@1', value]]), runtimeStatuses: new Map(), bindingSummaries: new Map(), occupiedHandlesByNodeId: new Map(), zoomTier: 'full' })
+    const first = vi.fn()
+    const second = vi.fn()
+    render(<ReactFlowProvider><Profiler id="first" onRender={first}><ManifestNode {...props('default')} id="first" /></Profiler><Profiler id="second" onRender={second}><ManifestNode {...props('default')} id="second" /></Profiler></ReactFlowProvider>)
+    first.mockClear()
+    second.mockClear()
+
+    act(() => useCanvasRenderStore.setState({ runtimeStatuses: new Map([['first', 'running']]) }))
+    expect(first).toHaveBeenCalledOnce()
+    expect(second).not.toHaveBeenCalled()
   })
 })

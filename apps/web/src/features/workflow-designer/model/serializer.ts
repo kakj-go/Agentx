@@ -47,7 +47,7 @@ export function serializeStudio(document: StudioDocument): { definition: Workflo
   }
   const connections = document.edges.filter((edge) => edge.data?.edgeKind !== 'binding').map((edge) => ({ id: edge.id, sourceNodeId: edge.source, sourceHandle: edge.sourceHandle ?? 'main', targetNodeId: edge.target, targetHandle: edge.targetHandle ?? 'main', order: edge.data?.order ?? 0 }))
   const grouped = new Map<string, typeof connections>()
-  for (const connection of connections) { const values = grouped.get(connection.sourceNodeId) ?? []; values.push(connection); grouped.set(connection.sourceNodeId, values) }
+  for (const connection of connections) { const key = `${connection.sourceNodeId}\u0000${connection.sourceHandle}`; const values = grouped.get(key) ?? []; values.push(connection); grouped.set(key, values) }
   for (const values of grouped.values()) values.sort((a, b) => a.order - b.order || a.id.localeCompare(b.id)).forEach((value, index) => { value.order = index })
   return {
     definition: {

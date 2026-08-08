@@ -33,13 +33,16 @@ export async function autoLayout(nodes: StudioNode[], edges: StudioEdge[], manif
 
 export function largeGraphLayout(nodes: StudioNode[], edges: StudioEdge[], manifests?: Map<string, NodeManifest>) {
   const actions = nodes.filter((node) => node.data.editorKind === 'action')
+  const actionById = new Map(actions.map((node) => [node.id, node]))
   const actionIds = new Set(actions.map((node) => node.id))
   const outgoing = new Map<string, string[]>()
   const indegree = new Map(actions.map((node) => [node.id, 0]))
   const levels = new Map(actions.map((node) => [node.id, 0]))
   for (const edge of edges) {
     if (edge.data?.edgeKind === 'binding' || !actionIds.has(edge.source) || !actionIds.has(edge.target)) continue
-    outgoing.set(edge.source, [...(outgoing.get(edge.source) ?? []), edge.target])
+    const targets = outgoing.get(edge.source)
+    if (targets) targets.push(edge.target)
+    else outgoing.set(edge.source, [edge.target])
     indegree.set(edge.target, (indegree.get(edge.target) ?? 0) + 1)
   }
   const queue = actions.filter((node) => indegree.get(node.id) === 0).map((node) => node.id)
@@ -55,11 +58,13 @@ export function largeGraphLayout(nodes: StudioNode[], edges: StudioEdge[], manif
   const buckets = new Map<number, string[]>()
   for (const node of actions) {
     const level = levels.get(node.id) ?? 0
-    buckets.set(level, [...(buckets.get(level) ?? []), node.id])
+    const bucket = buckets.get(level)
+    if (bucket) bucket.push(node.id)
+    else buckets.set(level, [node.id])
   }
   const positions = new Map<string, { x: number; y: number }>()
   for (const [level, ids] of buckets) for (const [index, id] of ids.entries()) {
-    const node = actions.find((item) => item.id === id)
+    const node = actionById.get(id)
     const manifest = node?.data.editorKind === 'action' ? manifests?.get(`${node.data.nodeType}@${node.data.typeVersion}`) : undefined
     const metrics = canvasNodeMetrics(canvasNodeRole(manifest), {
       inputs: manifest?.inputPorts.length,
@@ -75,9 +80,11 @@ export function largeGraphLayout(nodes: StudioNode[], edges: StudioEdge[], manif
 
 function placeBindingsBelowTargets(nodes: StudioNode[], edges: StudioEdge[], positions: Map<string, { x: number; y: number }>, manifests?: Map<string, NodeManifest>) {
   const bindingIndex = new Map<string, number>()
+  const nodeById = new Map(nodes.map((node) => [node.id, node]))
+  const bindingEdgeBySource = new Map(edges.filter((edge) => edge.data?.edgeKind === 'binding').map((edge) => [edge.source, edge]))
   for (const node of nodes.filter((item) => item.data.editorKind === 'binding')) {
-    const edge = edges.find((item) => item.data?.edgeKind === 'binding' && item.source === node.id)
-    const targetNode = edge ? nodes.find((item) => item.id === edge.target) : undefined
+    const edge = bindingEdgeBySource.get(node.id)
+    const targetNode = edge ? nodeById.get(edge.target) : undefined
     const target = edge ? positions.get(edge.target) : undefined
     const key = target && edge ? edge.target : 'unbound'
     const index = bindingIndex.get(key) ?? 0

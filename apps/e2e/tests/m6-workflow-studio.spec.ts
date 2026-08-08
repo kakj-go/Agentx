@@ -22,6 +22,7 @@ type StudioDraft = {
     schemaVersion: string
     settings: { primaryOutputNodeId?: string | null }
     nodes: Array<{ id: string; type: string; name: string; resourceReferences: Array<{ bindingRole?: string }>; settings: { onError?: string } }>
+    connections: Array<{ id: string; sourceNodeId: string; sourceHandle: string; targetNodeId: string; targetHandle: string; order: number }>
   }
   editorDocument: { bindingEdges: unknown[] }
 }
@@ -102,8 +103,9 @@ function studioRun(page: Page) {
 }
 
 async function addFromCreator(page: Page, testId: string) {
-  if (!await page.getByTestId('node-creator').isVisible()) await page.getByTestId('node-creator-rail').getByRole('button', { name: '搜索节点' }).click()
+  if (!await page.getByTestId('node-creator').isVisible()) await page.getByTestId('node-creator-trigger').click()
   await expect(page.getByTestId('node-creator')).toBeVisible()
+  await page.getByRole('textbox', { name: '搜索节点' }).fill(testId.replace(/^palette-(action|binding)-/, ''))
   await page.getByTestId(testId).click()
   await expect(page.getByTestId('node-creator')).toBeHidden()
 }
@@ -134,8 +136,27 @@ async function connect(page: Page, source: Locator, sourceHandle: string, target
   await page.mouse.move(fromBox!.x + fromBox!.width / 2, fromBox!.y + fromBox!.height / 2)
   await page.mouse.down()
   await page.mouse.move(toBox!.x + toBox!.width / 2, toBox!.y + toBox!.height / 2, { steps: 12 })
+  await page.waitForTimeout(75)
   await page.mouse.up()
   await expect(edges).toHaveCount(edgeCount + 1)
+}
+
+async function hoverEdge(page: Page, edge: Locator, toolbar: Locator) {
+  const points = await edge.locator('path[stroke="transparent"]').evaluate((element) => {
+    const path = element as SVGPathElement
+    const matrix = path.getScreenCTM()
+    if (!matrix) return []
+    const length = path.getTotalLength()
+    return [0.05, 0.1, 0.2, 0.8, 0.9, 0.95].map((ratio) => {
+      const point = path.getPointAtLength(length * ratio).matrixTransform(matrix)
+      return { x: point.x, y: point.y }
+    })
+  })
+  for (const point of points) {
+    await page.mouse.move(point.x, point.y)
+    if (await toolbar.evaluate((element) => getComputedStyle(element).opacity === '1')) return
+  }
+  throw new Error('No unobstructed hover point was found on the connection path')
 }
 
 async function choose(page: Page, scope: Locator, option: string | RegExp) {
@@ -238,16 +259,12 @@ test('M6 Studio creates, debugs, versions and publishes a manifest-driven Workfl
   await page.goto(`/workflows/${workflowId}/editor`)
   await expect(page.getByTestId('workflow-canvas')).toBeVisible()
   await expect(page.getByTestId('node-creator')).toBeHidden()
-  const rail = page.getByTestId('node-creator-rail')
-  await expect(rail.getByRole('button', { name: '搜索节点' })).toBeVisible()
-  await expect(rail.getByRole('button', { name: '便签' })).toBeVisible()
-  await expect(rail.getByRole('button', { name: '分组' })).toBeVisible()
-  await expect(rail.getByTestId('rail-action-agent')).toBeVisible()
-  await expect(rail.getByTestId('rail-action-error_handler')).toBeVisible()
-  expect(await rail.locator('[data-testid^="rail-action-"]').count()).toBeGreaterThan(8)
+  await expect(page.getByTestId('node-creator-trigger')).toBeVisible()
+  await expect(page.getByTestId('node-creator-rail')).toHaveCount(0)
   const initialTrigger = flowNode(page, 'trigger')
   await initialTrigger.hover()
   await initialTrigger.getByRole('button', { name: /后添加节点/ }).click({ force: true })
+  await page.getByRole('textbox', { name: '搜索节点' }).fill('agent')
   await page.getByTestId('palette-action-agent').click()
   await expect(page.locator('.react-flow__edge')).toHaveCount(1)
   for (const type of ['code', 'approval']) await addFromCreator(page, `palette-action-${type}`)
@@ -257,8 +274,8 @@ test('M6 Studio creates, debugs, versions and publishes a manifest-driven Workfl
   const agent = flowNode(page, 'agent')
   const code = flowNode(page, 'code')
   const approval = flowNode(page, 'approval')
-  const model = page.locator('.react-flow__node-attachment').filter({ hasText: /model|模型/i }).first()
-  const tool = page.locator('.react-flow__node-attachment').filter({ hasText: /mcp[ _]tool|工具/i }).first()
+  const model = page.locator('.react-flow__node-attachment').nth(0)
+  const tool = page.locator('.react-flow__node-attachment').nth(1)
   await expect(approval).toBeVisible()
 
   await openNodeDetails(page, model)
@@ -281,6 +298,10 @@ test('M6 Studio creates, debugs, versions and publishes a manifest-driven Workfl
 
   await page.getByTestId('node-details-view').getByRole('button', { name: /^(关闭|Close)$/ }).click()
   await page.getByRole('button', { name: 'Fit View' }).click()
+  await agent.locator('.react-flow__handle.source[data-handleid="main"]').hover()
+  await expect(page.getByTestId('workflow-canvas')).toHaveAttribute('data-connection-state', 'source-hover')
+  await page.getByRole('button', { name: 'Fit View' }).hover()
+  await expect(page.getByTestId('workflow-canvas')).toHaveAttribute('data-connection-state', 'idle')
   await connect(page, agent, 'main', code, 'main')
   await connect(page, code, 'main', approval, 'main')
   await connect(page, model, 'resource', agent, 'binding:ai_model')
@@ -306,7 +327,8 @@ test('M6 Studio creates, debugs, versions and publishes a manifest-driven Workfl
   await openNodeDetails(page, code)
   await page.getByRole('button', { name: '关闭' }).click()
 
-  await page.getByTestId('node-creator-rail').getByRole('button', { name: '便签' }).click()
+  await page.getByTestId('node-creator-trigger').click()
+  await page.getByTestId('node-creator').getByRole('button', { name: '便签' }).click()
   const note = page.locator('[data-testid^="studio-note-"]').first()
   await expect(note).toBeVisible()
   await note.dispatchEvent('dblclick')
@@ -318,7 +340,8 @@ test('M6 Studio creates, debugs, versions and publishes a manifest-driven Workfl
   await page.keyboard.down('Shift')
   await approval.click()
   await page.keyboard.up('Shift')
-  await page.getByTestId('node-creator-rail').getByRole('button', { name: '分组' }).click()
+  await page.getByTestId('node-creator-trigger').click()
+  await page.getByTestId('node-creator').getByRole('button', { name: '分组' }).click()
   const group = page.locator('[data-testid^="studio-group-"]').first()
   await expect(group).toBeVisible()
   await group.getByRole('button', { name: '折叠分组' }).click()
@@ -478,6 +501,7 @@ test('M6 Studio makes dual-Agent output selection explicit across serial, parall
   const trigger = flowNode(page, 'trigger')
   await trigger.hover()
   await trigger.getByRole('button', { name: /后添加节点/ }).click({ force: true })
+  await page.getByRole('textbox', { name: '搜索节点' }).fill('agent')
   await page.getByTestId('palette-action-agent').click()
   await addFromCreator(page, 'palette-action-agent')
   await addFromCreator(page, 'palette-binding-model')
@@ -506,9 +530,21 @@ test('M6 Studio makes dual-Agent output selection explicit across serial, parall
   const serialExecution = await startDebug(page, () => studioRun(page).click())
   await waitExecution(page, token, serialExecution, ['succeeded'], 180_000)
 
-  const serialEdge = page.locator('.react-flow__edge').last()
-  await serialEdge.click({ force: true })
-  await page.keyboard.press('Delete')
+  const firstAgentId = serialDraft.definition.nodes.find((node) => node.name === 'Agent A')!.id
+  const secondAgentId = serialDraft.definition.nodes.find((node) => node.name === 'Agent B')!.id
+  const serialConnection = serialDraft.definition.connections.find((connection) => connection.sourceNodeId === firstAgentId && connection.targetNodeId === secondAgentId)!
+  const serialEdge = page.locator(`.react-flow__edge[data-testid="rf__edge-${serialConnection.id}"]`)
+  await expect(serialEdge).toHaveCount(1)
+  const serialToolbar = page.locator(`.studio-edge-toolbar[data-edge-id="${serialConnection.id}"]`)
+  await hoverEdge(page, serialEdge, serialToolbar)
+  await expect(serialToolbar).toHaveCSS('opacity', '1')
+  await serialToolbar.getByRole('button', { name: /重新连接|Reconnect/ }).click()
+  await expect(serialEdge).toHaveClass(/selected/)
+  await expect(serialEdge.locator('.react-flow__edgeupdater')).toHaveCount(2)
+  await hoverEdge(page, serialEdge, serialToolbar)
+  const deleteConnection = serialToolbar.getByRole('button', { name: /删除连线|Delete connection/ })
+  await expect(deleteConnection).toBeVisible()
+  await deleteConnection.click()
   await expect(page.locator('.react-flow__edge')).toHaveCount(3)
   await page.getByRole('button', { name: 'Fit View' }).click()
   await connect(page, trigger, 'main', secondAgent, 'main')

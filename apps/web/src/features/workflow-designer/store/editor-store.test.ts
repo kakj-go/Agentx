@@ -54,14 +54,14 @@ describe('editor store node creation', () => {
     expect(useEditorStore.getState().annotations[0]).toMatchObject({ width: 300, height: 180 })
   })
 
-  it('undoes viewport navigation from the checkpoint created at move start', () => {
+  it('keeps viewport navigation outside document history', () => {
     useEditorStore.getState().beginEdit()
     useEditorStore.getState().setViewport({ x: -180, y: 90, zoom: 0.7 })
     expect(useEditorStore.getState().viewport).toEqual({ x: -180, y: 90, zoom: 0.7 })
 
+    useEditorStore.getState().commitEdit()
+    expect(useEditorStore.getState().past).toHaveLength(0)
     useEditorStore.getState().undo()
-    expect(useEditorStore.getState().viewport).toEqual({ x: 0, y: 0, zoom: 1 })
-    useEditorStore.getState().redo()
     expect(useEditorStore.getState().viewport).toEqual({ x: -180, y: 90, zoom: 0.7 })
   })
 
@@ -90,6 +90,7 @@ describe('editor store node creation', () => {
     useEditorStore.setState({ past: [], future: [] })
     useEditorStore.getState().beginEdit()
     useEditorStore.getState().moveGroup(groupId, { x: 40, y: 25 })
+    useEditorStore.getState().commitEdit()
     expect(useEditorStore.getState().nodes.map((node) => node.position)).toEqual([{ x: 120, y: 65 }, { x: 300, y: 65 }])
     useEditorStore.getState().undo()
     expect(useEditorStore.getState().nodes.map((node) => node.position)).toEqual([{ x: 80, y: 40 }, { x: 260, y: 40 }])
@@ -97,8 +98,9 @@ describe('editor store node creation', () => {
     useEditorStore.getState().addAnnotation({ x: 20, y: 20 })
     const annotationId = useEditorStore.getState().annotations[0].id
     useEditorStore.setState({ past: [], future: [] })
-    useEditorStore.getState().beginEdit()
+    useEditorStore.getState().beginEdit({ annotationIds: [annotationId] })
     useEditorStore.getState().updateAnnotationFrame(annotationId, { width: 360, height: 220 })
+    useEditorStore.getState().commitEdit()
     useEditorStore.getState().undo()
     expect(useEditorStore.getState().annotations[0]).toMatchObject({ width: 240, height: 160 })
   })
@@ -136,5 +138,37 @@ describe('editor store node creation', () => {
     expect(useEditorStore.getState().past).toHaveLength(1)
     useEditorStore.getState().undo()
     expect(useEditorStore.getState().edges).toHaveLength(1)
+  })
+
+  it('keeps position frames out of GraphIndex revisions and reconnects as one command', () => {
+    const data = { editorKind: 'action' as const, nodeType: 'set', typeVersion: 1, label: 'Set', parameters: {}, resourceReferences: [], settings: {}, disabled: false }
+    const sourceId = useEditorStore.getState().addAction(data)
+    const firstTarget = useEditorStore.getState().addAction(data)
+    const secondTarget = useEditorStore.getState().addAction(data)
+    useEditorStore.getState().connect({ source: sourceId, sourceHandle: 'main', target: firstTarget, targetHandle: 'main' }, { edgeKind: 'execution', sourcePortKind: 'main' })
+    const edgeId = useEditorStore.getState().edges[0].id
+    const revision = useEditorStore.getState().graphRevision
+
+    useEditorStore.getState().onNodesChange([{ id: sourceId, type: 'position', position: { x: 420, y: 120 }, dragging: true }])
+    expect(useEditorStore.getState().graphRevision).toBe(revision)
+    useEditorStore.setState({ past: [], future: [] })
+    useEditorStore.getState().reconnectEdge(edgeId, { source: sourceId, sourceHandle: 'main', target: secondTarget, targetHandle: 'main' })
+    expect(useEditorStore.getState().edges[0].target).toBe(secondTarget)
+    expect(useEditorStore.getState().past).toHaveLength(1)
+    useEditorStore.getState().undo()
+    expect(useEditorStore.getState().edges[0].target).toBe(firstTarget)
+  })
+
+  it('stores only the dragged node in a large-document history patch', () => {
+    const data = { editorKind: 'action' as const, nodeType: 'set', typeVersion: 1, label: 'Set', parameters: {}, resourceReferences: [], settings: {}, disabled: false }
+    const nodes: import('../model/types').StudioNode[] = Array.from({ length: 1_000 }, (_, index) => ({ id: `node-${index}`, type: 'manifest', position: { x: index, y: 0 }, data }))
+    useEditorStore.setState({ nodes, past: [], future: [], graphRevision: 7 })
+    useEditorStore.getState().beginEdit({ nodeIds: ['node-500'] })
+    useEditorStore.getState().onNodesChange([{ id: 'node-500', type: 'position', position: { x: 900, y: 100 }, dragging: true }])
+    useEditorStore.getState().commitEdit()
+
+    expect(useEditorStore.getState().past[0].nodes).toHaveLength(1)
+    expect(useEditorStore.getState().past[0].nodes[0].id).toBe('node-500')
+    expect(useEditorStore.getState().graphRevision).toBe(7)
   })
 })

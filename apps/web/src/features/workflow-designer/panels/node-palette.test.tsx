@@ -17,12 +17,24 @@ function renderPalette(props: Partial<React.ComponentProps<typeof NodePalette>> 
 }
 
 describe('NodePalette', () => {
-  it('starts as a 56px rail and opens an auto-focused overlay creator', () => {
+  it('starts as a single circular add button and opens an auto-focused overlay creator', () => {
     renderPalette()
     expect(screen.queryByTestId('node-creator')).not.toBeInTheDocument()
+    expect(screen.getByTestId('node-creator-trigger')).toHaveClass('rounded-full')
+    expect(screen.queryByTestId('node-creator-rail')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Search nodes' }))
     expect(screen.getByTestId('node-creator')).toBeInTheDocument()
     expect(screen.getByRole('textbox', { name: 'Search nodes' })).toHaveFocus()
+  })
+
+  it('collapses every group except the first one by default', () => {
+    renderPalette({ open: true })
+    expect(screen.getByTestId('palette-group-integrations')).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByTestId('palette-group-attachments')).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.getByTestId('palette-action-source')).toBeInTheDocument()
+    expect(screen.queryByTestId('palette-binding-model')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('palette-group-attachments'))
+    expect(screen.getByTestId('palette-binding-model')).toBeInTheDocument()
   })
 
   it('filters by the exact source handle kind and hides binding attachments', () => {
@@ -55,5 +67,22 @@ describe('NodePalette', () => {
     expect(screen.getByTestId('palette-action-localized')).toBeInTheDocument()
     fireEvent.change(search, { target: { value: 'English-only purpose' } })
     expect(screen.getByTestId('palette-action-localized')).toBeInTheDocument()
+  })
+
+  it('requires an explicit target handle when several inputs are compatible', () => {
+    const source = manifest('source', 'main')
+    const target = manifest('multi-input', 'main')
+    target.inputPorts = [
+      { name: 'left', kind: 'main', required: true, variadic: false },
+      { name: 'right', kind: 'main', required: true, variadic: false },
+    ]
+    const onAddAction = vi.fn()
+    render(<Tooltip.Provider><NodePalette manifests={[target]} onAddAction={onAddAction} onAddBinding={vi.fn()} open sourceConnection={{ manifest: source, handleId: 'main' }} /></Tooltip.Provider>)
+
+    fireEvent.click(screen.getByTestId('palette-action-multi-input'))
+    expect(onAddAction).not.toHaveBeenCalled()
+    expect(screen.getByTestId('node-port-choice')).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('port-choice-right'))
+    expect(onAddAction).toHaveBeenCalledWith(target, 'right')
   })
 })

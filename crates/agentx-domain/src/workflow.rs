@@ -437,12 +437,16 @@ pub fn validate_definition(definition: &WorkflowDefinition) -> Vec<DefinitionIss
                 "Connection handles are required",
             );
         }
-        if !connection_orders.insert((connection.source_node_id.as_str(), connection.order)) {
+        if !connection_orders.insert((
+            connection.source_node_id.as_str(),
+            connection.source_handle.as_str(),
+            connection.order,
+        )) {
             issue(
                 &mut issues,
                 "DUPLICATE_CONNECTION_ORDER",
                 &format!("connections[{index}].order"),
-                "Connection order must be unique for each source node",
+                "Connection order must be unique for each source node and source handle",
             );
         }
         if !ids.contains(&connection.source_node_id) || !ids.contains(&connection.target_node_id) {
@@ -768,5 +772,30 @@ mod tests {
             ]
         })).unwrap();
         assert!(validate_definition(&definition).is_empty());
+    }
+
+    #[test]
+    fn connection_order_is_scoped_to_the_source_port() {
+        let definition: WorkflowDefinition = serde_json::from_value(json!({
+            "schemaVersion":"3.0",
+            "nodes":[
+                {"id":"source","type":"switch","typeVersion":1,"name":"Source"},
+                {"id":"left","type":"set","typeVersion":1,"name":"Left"},
+                {"id":"right","type":"set","typeVersion":1,"name":"Right"}
+            ],
+            "connections":[
+                {"id":"left-edge","sourceNodeId":"source","sourceHandle":"case:0","targetNodeId":"left","targetHandle":"main","order":0},
+                {"id":"right-edge","sourceNodeId":"source","sourceHandle":"case:1","targetNodeId":"right","targetHandle":"main","order":0}
+            ]
+        })).unwrap();
+        assert!(validate_definition(&definition).is_empty());
+
+        let mut duplicate = definition;
+        duplicate.connections[1].source_handle = "case:0".into();
+        assert!(
+            validate_definition(&duplicate)
+                .iter()
+                .any(|issue| issue.code == "DUPLICATE_CONNECTION_ORDER")
+        );
     }
 }

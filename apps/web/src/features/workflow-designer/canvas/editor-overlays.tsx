@@ -23,7 +23,7 @@ export function AnnotationNode({ id, data, selected }: NodeProps<CanvasNode>) {
     if (text !== note.text) note.onChange({ text })
   }
   return <article className={cn('studio-note relative h-full w-full overflow-hidden border shadow-sm', `studio-note-${note.color ?? 'yellow'}`, selected && 'ring-2 ring-primary/40')} data-testid={`studio-note-${note.annotationId}`} onDoubleClick={(event) => { event.stopPropagation(); setEditing(true) }}>
-    <NodeResizer color="var(--ui-primary)" isVisible={selected} minHeight={80} minWidth={150} onResize={(_, frame) => note.onResize(frame)} onResizeEnd={() => updateNodeInternals(id)} onResizeStart={note.onResizeStart} />
+    <NodeResizer color="var(--ui-primary)" isVisible={selected} minHeight={80} minWidth={150} onResize={(_, frame) => note.onResize(frame)} onResizeEnd={() => { note.onResizeEnd(); updateNodeInternals(id) }} onResizeStart={note.onResizeStart} />
     <header className="drag-handle flex h-8 items-center gap-1 border-b border-black/10 px-2">
       <span className="flex-1 text-[9px] font-semibold uppercase text-black/55">{t('studio.note.title')}</span>
       <div className="nodrag flex items-center gap-1">{NOTE_COLORS.map((color) => <button aria-label={t('studio.note.color', { color })} className={cn('size-3 rounded-full border border-black/15', `studio-note-swatch-${color}`, note.color === color && 'ring-1 ring-black/40')} key={color} onClick={() => note.onChange({ color })} type="button" />)}<button aria-label={t('studio.note.delete')} className="ml-1 grid size-5 place-items-center rounded text-black/50 hover:bg-black/10 hover:text-black" onClick={note.onRemove} type="button"><Trash2 className="size-3" /></button></div>

@@ -1,6 +1,7 @@
 use std::{collections::BTreeMap, env, sync::Arc, time::Duration};
 
 mod agent;
+mod builtins;
 mod resources;
 
 use agentx_application::{
@@ -457,6 +458,9 @@ async fn issue_runtime_credentials(
 }
 
 async fn execute_builtin(state: &WorkerState, task: &RuntimeTask) -> Result<TaskResult> {
+    if let Some(result) = builtins::execute(task)? {
+        return Ok(result);
+    }
     let items = flatten_inputs(&task.inputs);
     match task.node_type.as_str() {
         "manual_trigger" => Ok(completed("main", items)),
@@ -557,19 +561,6 @@ async fn execute_builtin(state: &WorkerState, task: &RuntimeTask) -> Result<Task
                 }
             }
             Ok(TaskResult::Completed(outputs))
-        }
-        "merge" => {
-            let mode = task
-                .node_parameters
-                .get("mode")
-                .and_then(Value::as_str)
-                .unwrap_or("append");
-            let output = if mode == "combine_by_position" {
-                combine_by_position(&task.inputs)
-            } else {
-                flatten_inputs(&task.inputs)
-            };
-            Ok(completed("main", output))
         }
         "loop_over_items" => execute_loop(task, items),
         "wait" => Ok(TaskResult::Suspended(wait_contract(task)?)),
@@ -967,29 +958,6 @@ fn expression_context(task: &RuntimeTask, item: &Item, index: usize) -> Expressi
         linked_nodes: task.linked_nodes.clone(),
     }
 }
-fn combine_by_position(inputs: &BTreeMap<String, Vec<Item>>) -> Vec<Item> {
-    let groups = inputs.values().collect::<Vec<_>>();
-    let length = groups.iter().map(|items| items.len()).max().unwrap_or(0);
-    (0..length)
-        .map(|index| {
-            let mut json = Map::new();
-            let mut lineage = Vec::new();
-            for items in &groups {
-                if let Some(item) = items.get(index) {
-                    if let Some(values) = item.json.as_object() {
-                        json.extend(values.clone());
-                    }
-                    lineage.extend(item.lineage.clone());
-                }
-            }
-            Item {
-                json: Value::Object(json),
-                lineage,
-                ..Item::default()
-            }
-        })
-        .collect()
-}
 fn execute_loop(task: &RuntimeTask, mut items: Vec<Item>) -> Result<TaskResult> {
     let batch = task
         .node_parameters
@@ -1225,23 +1193,6 @@ mod tests {
             format_optional_time(Some(value)).unwrap(),
             Some("2023-11-14T22:13:20Z".into())
         );
-    }
-
-    #[test]
-    fn merge_by_position_preserves_multiple_lineage_sources() {
-        let left = Item {
-            json: json!({"a":1}),
-            ..Item::default()
-        };
-        let right = Item {
-            json: json!({"b":2}),
-            ..Item::default()
-        };
-        let output = combine_by_position(&BTreeMap::from([
-            ("main:0".into(), vec![left]),
-            ("main:1".into(), vec![right]),
-        ]));
-        assert_eq!(output[0].json, json!({"a":1,"b":2}));
     }
 
     #[test]

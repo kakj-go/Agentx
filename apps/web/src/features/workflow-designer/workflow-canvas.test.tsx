@@ -47,6 +47,7 @@ describe('workflow studio shell', () => {
     render(<QueryClientProvider client={queryClient}><Tooltip.Provider><ToastProvider><MemoryRouter initialEntries={['/workflows/workflow-1/editor']}><Routes><Route element={<WorkflowCanvas />} path="/workflows/:workflowId/editor" /></Routes></MemoryRouter></ToastProvider></Tooltip.Provider></QueryClientProvider>)
 
     fireEvent.click(await screen.findByRole('button', { name: 'Search nodes' }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search nodes' }), { target: { value: 'agent' } })
     fireEvent.click(screen.getByTestId('palette-action-agent'))
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
 
@@ -63,6 +64,7 @@ describe('workflow studio shell', () => {
     render(<QueryClientProvider client={queryClient}><Tooltip.Provider><ToastProvider><MemoryRouter initialEntries={['/workflows/workflow-1/editor']}><Routes><Route element={<WorkflowCanvas />} path="/workflows/:workflowId/editor" /></Routes></MemoryRouter></ToastProvider></Tooltip.Provider></QueryClientProvider>)
 
     fireEvent.click(await screen.findByRole('button', { name: 'Search nodes' }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search nodes' }), { target: { value: 'agent' } })
     fireEvent.click(screen.getByTestId('palette-action-agent'))
     await new Promise((resolve) => window.setTimeout(resolve, 1600))
     expect(screen.queryByRole('dialog', { name: 'Validation failed' })).not.toBeInTheDocument()
@@ -76,6 +78,7 @@ describe('workflow studio shell', () => {
     render(<QueryClientProvider client={queryClient}><Tooltip.Provider><ToastProvider><MemoryRouter initialEntries={['/workflows/workflow-1/editor']}><Routes><Route element={<WorkflowCanvas />} path="/workflows/:workflowId/editor" /></Routes></MemoryRouter></ToastProvider></Tooltip.Provider></QueryClientProvider>)
 
     fireEvent.click(await screen.findByRole('button', { name: 'Search nodes' }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search nodes' }), { target: { value: 'agent' } })
     fireEvent.click(screen.getByTestId('palette-action-agent'))
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
     const issue = await screen.findByText('AI_BINDING_REQUIRED')
@@ -114,5 +117,30 @@ describe('workflow studio serializer', () => {
     expect(serialized.definition.nodes[0].resourceReferences[0]).toMatchObject({ bindingId: 'binding-1', bindingRole: 'ai_model', resourceId: 'model-1' })
     expect(serialized.editorDocument.bindingLayouts[0]).toMatchObject({ bindingId: 'binding-1', x: 390, y: 410 })
     expect(serialized.editorDocument.bindingEdges[0]).toMatchObject({ targetSlot: 'ai_model' })
+  })
+
+  it('normalizes connection order independently for every source port', () => {
+    const document = deserializeDraft({
+      ...draft,
+      definition: {
+        ...draft.definition,
+        nodes: [
+          ...draft.definition.nodes,
+          { ...draft.definition.nodes[0], id: 'a' },
+          { ...draft.definition.nodes[0], id: 'b' },
+          { ...draft.definition.nodes[0], id: 'c' },
+        ],
+        connections: [
+          { id: 'main-b', sourceNodeId: 'trigger', sourceHandle: 'main', targetNodeId: 'b', targetHandle: 'main', order: 8 },
+          { id: 'error-a', sourceNodeId: 'trigger', sourceHandle: 'error', targetNodeId: 'a', targetHandle: 'main', order: 9 },
+          { id: 'main-c', sourceNodeId: 'trigger', sourceHandle: 'main', targetNodeId: 'c', targetHandle: 'main', order: 2 },
+        ],
+      },
+      editorDocument: { ...editorDocument, nodeLayouts: ['trigger', 'a', 'b', 'c'].map((nodeId, index) => ({ nodeId, x: index * 100, y: 100 })) },
+    })
+    const connections = serializeStudio(document).definition.connections
+    expect(connections.find((edge) => edge.id === 'main-c')?.order).toBe(0)
+    expect(connections.find((edge) => edge.id === 'main-b')?.order).toBe(1)
+    expect(connections.find((edge) => edge.id === 'error-a')?.order).toBe(0)
   })
 })

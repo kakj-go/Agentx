@@ -8,7 +8,7 @@ import { AnnotationNode, GroupNode } from './editor-overlays'
 describe('editor overlay nodes', () => {
   it('edits and colors a Sticky Note without entering the Workflow Definition', () => {
     const onChange = vi.fn()
-    const props = { id: 'annotation:note', selected: true, data: { editorKind: 'annotation', annotationId: 'note', text: 'Initial note', color: 'yellow', onChange, onRemove: vi.fn(), onResizeStart: vi.fn(), onResize: vi.fn() } } as unknown as NodeProps<CanvasNode>
+    const props = { id: 'annotation:note', selected: true, data: { editorKind: 'annotation', annotationId: 'note', text: 'Initial note', color: 'yellow', onChange, onRemove: vi.fn(), onResizeStart: vi.fn(), onResize: vi.fn(), onResizeEnd: vi.fn() } } as unknown as NodeProps<CanvasNode>
     render(<ReactFlowProvider><AnnotationNode {...props} /></ReactFlowProvider>)
 
     fireEvent.doubleClick(screen.getByTestId('studio-note-note'))

@@ -84,7 +84,7 @@ impl NodeRegistry {
     }
 }
 
-fn port(name: &str, kind: PortKind, required: bool, variadic: bool) -> NodePort {
+pub(crate) fn port(name: &str, kind: PortKind, required: bool, variadic: bool) -> NodePort {
     NodePort {
         name: name.into(),
         kind,
@@ -276,7 +276,7 @@ fn chinese_port_label(name: &str, input: bool) -> &'static str {
     }
 }
 
-fn manifest(
+pub(crate) fn manifest(
     node_type: &str,
     style: ExecutionStyle,
     capability: NodeCapability,
@@ -497,9 +497,22 @@ fn canvas_role(
 
 fn category(node_type: &str) -> &'static str {
     match node_type {
-        "manual_trigger" | "remote_trigger" => "triggers",
+        "manual_trigger" | "remote_trigger" | "item_generator" => "triggers",
         "if" | "switch" | "merge" | "loop_over_items" | "wait" | "approval" | "sub_workflow"
-        | "error_handler" => "flow",
+        | "error_handler" | "no_op" | "stop_and_error" => "flow",
+        "filter"
+        | "limit"
+        | "sort"
+        | "remove_duplicates"
+        | "split_out"
+        | "aggregate"
+        | "rename_fields"
+        | "json_transform"
+        | "date_time"
+        | "base64"
+        | "hash"
+        | "compare_datasets"
+        | "structured_validator" => "data",
         "agent" | "model" | "mcp_tool" | "skill" | "rag" | "memory" => "ai",
         "code" => "code",
         _ => "actions",
@@ -523,6 +536,22 @@ fn icon_key(node_type: &str) -> &'static str {
         "loop_over_items" => "repeat-2",
         "wait" => "clock-3",
         "error_handler" => "shield-alert",
+        "filter" => "filter",
+        "limit" => "list-end",
+        "sort" => "arrow-down-a-z",
+        "remove_duplicates" => "copy-minus",
+        "split_out" => "rows-3",
+        "aggregate" => "sigma",
+        "rename_fields" => "replace",
+        "json_transform" => "braces",
+        "no_op" => "circle",
+        "stop_and_error" => "octagon-x",
+        "item_generator" => "list-plus",
+        "date_time" => "calendar-clock",
+        "base64" => "binary",
+        "hash" => "hash",
+        "compare_datasets" => "git-compare",
+        "structured_validator" => "shield-check",
         _ => "box",
     }
 }
@@ -544,7 +573,7 @@ fn default_manifests() -> Vec<NodeManifestVersion> {
         manifest.ui_schema.canvas = canvas;
         manifest
     };
-    vec![
+    let mut manifests = vec![
         manifest(
             "manual_trigger",
             ExecutionStyle::Trigger,
@@ -641,12 +670,16 @@ fn default_manifests() -> Vec<NodeManifestVersion> {
                 ExecutionStyle::Action,
                 NodeCapability::Builtin,
                 ReadinessPolicy::Required,
-                vec![port("main", PortKind::Main, true, true)],
+                vec![
+                    port("main", PortKind::Main, false, true),
+                    port("left", PortKind::Main, false, false),
+                    port("right", PortKind::Main, false, false),
+                ],
                 main_out(),
                 SideEffectLevel::None,
             ),
-            json!({"type":"object","properties":{"mode":{"type":"string","enum":["append","combine_by_position"],"default":"append"}},"additionalProperties":false}),
-            json!({"fields":{"mode":{"control":"select"}}}),
+            json!({"type":"object","properties":{"mode":{"type":"string","enum":["append","combine_by_position","combine_by_key"],"default":"append"},"leftField":{"type":"string","default":"id"},"rightField":{"type":"string","default":"id"},"joinType":{"type":"string","enum":["inner","left","right","full"],"default":"inner"},"conflictStrategy":{"type":"string","enum":["prefer_left","prefer_right","suffix"],"default":"prefer_right"}},"additionalProperties":false}),
+            json!({"fields":{"mode":{"control":"select"},"leftField":{"control":"text"},"rightField":{"control":"text"},"joinType":{"control":"select"},"conflictStrategy":{"control":"select"}}}),
         ),
         configured(
             manifest(
@@ -869,7 +902,9 @@ fn default_manifests() -> Vec<NodeManifestVersion> {
             }),
             SideEffectLevel::Irreversible,
         ),
-    ]
+    ];
+    manifests.extend(crate::builtin_catalog::manifests());
+    manifests
 }
 
 #[cfg(test)]
@@ -937,5 +972,34 @@ mod tests {
             target.register(invalid),
             Err(RegistryError::InvalidManifest { .. })
         ));
+    }
+
+    #[test]
+    fn local_data_catalog_contains_all_new_capabilities() {
+        let registry = NodeRegistry::m5_defaults();
+        for node_type in crate::builtin_catalog::NODE_TYPES {
+            let manifest = registry.get(node_type, 1).expect("local data manifest");
+            assert_eq!(manifest.capability, NodeCapability::Builtin);
+            assert!(manifest.providers.is_empty());
+            assert!(manifest.credentials.is_empty());
+            assert!(manifest.localizations.contains_key("en-US"));
+            assert!(manifest.localizations.contains_key("zh-CN"));
+        }
+        let merge = registry.get("merge", 1).expect("merge manifest");
+        assert_eq!(
+            merge
+                .input_ports
+                .iter()
+                .map(|port| port.name.as_str())
+                .collect::<Vec<_>>(),
+            ["main", "left", "right"]
+        );
+        assert!(
+            merge.parameter_schema["properties"]["mode"]["enum"]
+                .as_array()
+                .expect("merge modes")
+                .iter()
+                .any(|value| value == "combine_by_key")
+        );
     }
 }

@@ -3,6 +3,7 @@ import { AlertTriangle } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useParams } from 'react-router-dom'
+import { useShallow } from 'zustand/react/shallow'
 
 import { ApiClientError, apiRequest, jsonBody } from '../../shared/api/client'
 import type { Workflow, WorkflowDeployment, WorkflowDraft, WorkflowEnvironment, WorkflowVersion } from '../../shared/api/types'
@@ -54,7 +55,7 @@ export function WorkflowCanvas() {
   const [debugDialogOpen, setDebugDialogOpen] = useState(false)
   const [detailsOpen, setDetailsOpen] = useState(false)
   const [creatorOpen, setCreatorOpen] = useState(false)
-  const [creatorSource, setCreatorSource] = useState<{ nodeId: string; handleId: string }>()
+  const [creatorSource, setCreatorSource] = useState<{ nodeId: string; handleId: string; mode: 'output' | 'binding' }>()
   const flowRef = useRef<WorkflowFlowHandle>(null)
   const previousPrimaryRef = useRef<string>()
 
@@ -68,10 +69,24 @@ export function WorkflowCanvas() {
   const manifests = useMemo(() => (catalog.data ?? []).map((item) => item.manifest), [catalog.data])
   const manifestMap = useMemo(() => new Map(manifests.map((manifest) => [`${manifest.nodeType}@${manifest.version}`, manifest])), [manifests])
 
-  const editor = useEditorStore()
-  const selected = editor.nodes.find((node) => node.id === editor.selectedId)
+  const editor = useEditorStore(useShallow((state) => ({
+    hydrate: state.hydrate, markSaved: state.markSaved, alignSelected: state.alignSelected, replaceNodes: state.replaceNodes,
+    undo: state.undo, redo: state.redo, addAction: state.addAction, addConnectedAction: state.addConnectedAction,
+    insertActionOnEdge: state.insertActionOnEdge, clearEdgeInsertRequest: state.clearEdgeInsertRequest,
+    addBinding: state.addBinding, addConnectedBinding: state.addConnectedBinding, addAnnotation: state.addAnnotation,
+    addGroup: state.addGroup, select: state.select, updateNode: state.updateNode, removeSelected: state.removeSelected,
+    setPrimaryOutput: state.setPrimaryOutput,
+  })))
+  const selected = useEditorStore((state) => state.nodes.find((node) => node.id === state.selectedId))
+  const dirty = useEditorStore((state) => state.dirty)
+  const canUndo = useEditorStore((state) => state.past.length > 0)
+  const canRedo = useEditorStore((state) => state.future.length > 0)
+  const selectedCount = useEditorStore((state) => state.nodes.filter((node) => node.selected || node.id === state.selectedId).length)
+  const primaryOutputNodeId = useEditorStore((state) => state.settings.primaryOutputNodeId ?? undefined)
+  const edgeInsertRequest = useEditorStore((state) => state.edgeInsertRequest)
   const selectedManifest = selected?.data.editorKind === 'action' ? manifestMap.get(`${selected.data.nodeType}@${selected.data.typeVersion}`) : undefined
-  const creatorSourceManifest = creatorSource ? (() => { const node = editor.nodes.find((item) => item.id === creatorSource.nodeId); return node?.data.editorKind === 'action' ? manifestMap.get(`${node.data.nodeType}@${node.data.typeVersion}`) : undefined })() : undefined
+  const creatorSourceManifest = creatorSource ? (() => { const node = useEditorStore.getState().nodes.find((item) => item.id === creatorSource.nodeId); return node?.data.editorKind === 'action' ? manifestMap.get(`${node.data.nodeType}@${node.data.typeVersion}`) : undefined })() : undefined
+  const creatorBindingSlot = creatorSource?.mode === 'binding' ? creatorSourceManifest?.bindingSlots.find((slot) => `binding:${slot.name}` === creatorSource.handleId) : undefined
   const runtime = useExecutionEvents(executionId)
   const revalidatePaste = useCallback(async (nodes: StudioDocument['nodes'], edges: StudioDocument['edges']) => {
     const state = useEditorStore.getState()
@@ -109,33 +124,46 @@ export function WorkflowCanvas() {
   }, [draft.data, editor, workflowId])
 
   useEffect(() => {
-    if (!editor.dirty) return
-    const timer = window.setTimeout(() => writeRecovery(workflowId, revision, studioDocument(useEditorStore.getState())), 250)
-    return () => window.clearTimeout(timer)
-  }, [editor.nodes, editor.edges, editor.viewport, editor.annotations, editor.groups, editor.settings, editor.dirty, revision, workflowId])
+    const edge = edgeInsertRequest
+    if (!edge?.sourceHandle) return
+    setCreatorSource({ nodeId: edge.source, handleId: edge.sourceHandle, mode: 'output' })
+    setCreatorOpen(true)
+  }, [edgeInsertRequest])
 
   useEffect(() => {
-    const beforeUnload = (event: BeforeUnloadEvent) => { if (editor.dirty) event.preventDefault() }
+    let timer: number | undefined
+    const unsubscribe = useEditorStore.subscribe((state, previous) => {
+      const documentChanged = state.nodes !== previous.nodes || state.edges !== previous.edges || state.viewport !== previous.viewport || state.annotations !== previous.annotations || state.groups !== previous.groups || state.settings !== previous.settings
+      if (!state.dirty || !documentChanged) return
+      if (timer) window.clearTimeout(timer)
+      timer = window.setTimeout(() => writeRecovery(workflowId, revision, studioDocument(useEditorStore.getState())), 750)
+    })
+    return () => { unsubscribe(); if (timer) window.clearTimeout(timer) }
+  }, [revision, workflowId])
+
+  useEffect(() => {
+    const beforeUnload = (event: BeforeUnloadEvent) => { if (useEditorStore.getState().dirty) event.preventDefault() }
     window.addEventListener('beforeunload', beforeUnload)
     return () => window.removeEventListener('beforeunload', beforeUnload)
-  }, [editor.dirty])
+  }, [])
 
   useEffect(() => {
     const previous = previousPrimaryRef.current
-    const current = editor.settings.primaryOutputNodeId ?? undefined
+    const current = primaryOutputNodeId
     if (previous && !current) {
-      const node = editor.nodes.find((item) => item.id === previous)
+      const state = useEditorStore.getState()
+      const node = state.nodes.find((item) => item.id === previous)
       const message = !node
         ? 'studio.toasts.primaryClearedDeleted'
         : node.data.editorKind === 'action' && node.data.disabled
           ? 'studio.toasts.primaryClearedDisabled'
-          : editor.edges.some((edge) => edge.source === previous && edge.data?.edgeKind === 'execution' && edge.data.sourcePortKind === 'main')
+          : state.edges.some((edge) => edge.source === previous && edge.data?.edgeKind === 'execution' && edge.data.sourcePortKind === 'main')
             ? 'studio.toasts.primaryClearedConnection'
             : undefined
       if (message) showToast(t(message))
     }
     previousPrimaryRef.current = current
-  }, [editor.edges, editor.nodes, editor.settings.primaryOutputNodeId, showToast, t])
+  }, [primaryOutputNodeId, showToast, t])
 
   const saveMutation = useMutation({
     mutationFn: ({ expectedRevision, document }: { expectedRevision: number; document: StudioDocument }) => {
@@ -169,10 +197,18 @@ export function WorkflowCanvas() {
   const saveNow = useCallback(() => saveDocument(true), [saveDocument])
 
   useEffect(() => {
-    if (!editor.dirty || saveMutation.isPending || conflictOpen || recovery) return
-    const timer = window.setTimeout(() => saveDocument(false), 1400)
-    return () => window.clearTimeout(timer)
-  }, [editor.nodes, editor.edges, editor.viewport, editor.annotations, editor.groups, editor.settings, editor.dirty, saveMutation.isPending, conflictOpen, recovery, saveDocument])
+    let timer: number | undefined
+    const schedule = () => {
+      if (timer) window.clearTimeout(timer)
+      if (!useEditorStore.getState().dirty || saveMutation.isPending || conflictOpen || recovery) return
+      timer = window.setTimeout(() => saveDocument(false), 1400)
+    }
+    const unsubscribe = useEditorStore.subscribe((state, previous) => {
+      if (state.nodes !== previous.nodes || state.edges !== previous.edges || state.viewport !== previous.viewport || state.annotations !== previous.annotations || state.groups !== previous.groups || state.settings !== previous.settings || state.dirty !== previous.dirty) schedule()
+    })
+    schedule()
+    return () => { unsubscribe(); if (timer) window.clearTimeout(timer) }
+  }, [conflictOpen, recovery, saveDocument, saveMutation.isPending])
 
   const validateCurrent = async () => {
     const document = studioDocument(useEditorStore.getState())
@@ -186,12 +222,13 @@ export function WorkflowCanvas() {
   }
 
   const executeRun = async (inputSource?: DebugInputSource, input: unknown = {}, debugMode: DebugMode = mode) => {
-    if (editor.dirty || saveMutation.isPending) return showToast(t('studio.toasts.saveBeforeRun'))
+    if (dirty || saveMutation.isPending) return showToast(t('studio.toasts.saveBeforeRun'))
     const target = selected?.data.editorKind === 'action' ? selected.id : undefined
     try {
       if (!await validateCurrent()) return
-      const included = includedActionNodeIds(studioDocument(editor), debugMode, target)
-      const irreversible = editor.nodes.filter((node) => included.has(node.id) && node.data.editorKind === 'action' && manifestMap.get(`${node.data.nodeType}@${node.data.typeVersion}`)?.sideEffectLevel === 'irreversible')
+      const document = studioDocument(useEditorStore.getState())
+      const included = includedActionNodeIds(document, debugMode, target)
+      const irreversible = document.nodes.filter((node) => included.has(node.id) && node.data.editorKind === 'action' && manifestMap.get(`${node.data.nodeType}@${node.data.typeVersion}`)?.sideEffectLevel === 'irreversible')
       if (irreversible.length && !window.confirm(t('studio.confirmIrreversible', { count: irreversible.length }))) return
       const accepted = await startDebugExecution(workflowId, {
         expectedRevision: revision,
@@ -210,7 +247,7 @@ export function WorkflowCanvas() {
   }
 
   const run = () => {
-    if (editor.dirty || saveMutation.isPending) return showToast(t('studio.toasts.saveBeforeRun'))
+    if (dirty || saveMutation.isPending) return showToast(t('studio.toasts.saveBeforeRun'))
     const target = selected?.data.editorKind === 'action' ? selected.id : undefined
     if (mode !== 'full' && !target) return showToast(t('studio.toasts.partialSelect'))
     if (mode === 'single_node' || mode === 'from_node') return setDebugDialogOpen(true)
@@ -223,7 +260,7 @@ export function WorkflowCanvas() {
   }
 
   const createVersion = async () => {
-    if (editor.dirty || saveMutation.isPending) return showToast(t('studio.toasts.saveBeforeRun'))
+    if (dirty || saveMutation.isPending) return showToast(t('studio.toasts.saveBeforeRun'))
     if (!await validateCurrent()) return
     try {
       await apiRequest<WorkflowVersion>(`/workflows/${workflowId}/versions`, { method: 'POST', headers: { 'Idempotency-Key': crypto.randomUUID() }, body: jsonBody({ draftRevision: revision }) })
@@ -251,7 +288,7 @@ export function WorkflowCanvas() {
 
   const actionData = (manifest: NodeManifest) => ({ editorKind: 'action' as const, nodeType: manifest.nodeType, typeVersion: manifest.version, label: manifest.displayName, parameters: defaults(manifest), resourceReferences: [], settings: {}, disabled: false })
   const occupiedCanvasRects = (): CanvasPlacementRect[] => [
-    ...editor.nodes.map((node) => {
+    ...useEditorStore.getState().nodes.map((node) => {
       const nodeManifest = node.data.editorKind === 'action' ? manifestMap.get(`${node.data.nodeType}@${node.data.typeVersion}`) : undefined
       const metrics = node.data.editorKind === 'binding'
         ? canvasNodeMetrics('default', { kind: 'binding' })
@@ -263,7 +300,7 @@ export function WorkflowCanvas() {
         })
       return { x: node.position.x, y: node.position.y, width: node.width ?? node.measured?.width ?? metrics.width, height: node.height ?? node.measured?.height ?? metrics.height }
     }),
-    ...editor.annotations.map((annotation) => ({ x: annotation.x, y: annotation.y, width: annotation.width ?? 240, height: annotation.height ?? 160 })),
+    ...useEditorStore.getState().annotations.map((annotation) => ({ x: annotation.x, y: annotation.y, width: annotation.width ?? 240, height: annotation.height ?? 160 })),
   ]
   const defaultCanvasPosition = (size: { width: number; height: number }, keepVisible = false) => {
     const center = flowRef.current?.getViewportCenter()
@@ -273,11 +310,25 @@ export function WorkflowCanvas() {
     const metrics = canvasNodeMetrics(canvasNodeRole(manifest), { inputs: manifest.inputPorts.length, outputs: manifest.outputPorts.length, bindings: manifest.bindingSlots.length })
     return editor.addAction(actionData(manifest), position ?? defaultCanvasPosition(metrics))
   }
-  const addActionFromCreator = (manifest: NodeManifest, position?: { x: number; y: number }) => {
+  const addActionFromCreator = (manifest: NodeManifest, position?: { x: number; y: number }, targetHandle?: string) => {
+    const state = useEditorStore.getState()
+    const insertion = state.edgeInsertRequest
+    if (insertion) {
+      const sourceNode = state.nodes.find((node) => node.id === insertion.source)
+      const targetNode = state.nodes.find((node) => node.id === insertion.target)
+      const sourceManifest = sourceNode?.data.editorKind === 'action' ? manifestMap.get(`${sourceNode.data.nodeType}@${sourceNode.data.typeVersion}`) : undefined
+      const targetManifest = targetNode?.data.editorKind === 'action' ? manifestMap.get(`${targetNode.data.nodeType}@${targetNode.data.typeVersion}`) : undefined
+      const sourceKind = sourceManifest?.outputPorts.find((port) => port.name === insertion.sourceHandle)?.kind ?? insertion.data?.sourcePortKind
+      const targetKind = targetManifest?.inputPorts.find((port) => port.name === insertion.targetHandle || (port.name === 'main' && insertion.targetHandle?.startsWith('main:')))?.kind ?? sourceKind
+      const input = manifest.inputPorts.find((port) => port.name === targetHandle && port.kind === sourceKind) ?? manifest.inputPorts.find((port) => port.kind === sourceKind)
+      const output = manifest.outputPorts.find((port) => port.kind === targetKind)
+      if (sourceNode && targetNode && input && output) return editor.insertActionOnEdge(actionData(manifest), insertion.id, { input: input.name, output: output.name }, position ?? { x: (sourceNode.position.x + targetNode.position.x) / 2, y: (sourceNode.position.y + targetNode.position.y) / 2 })
+      editor.clearEdgeInsertRequest()
+    }
     if (!creatorSource || !creatorSourceManifest) return addAction(manifest, position)
-    const sourceNode = editor.nodes.find((node) => node.id === creatorSource.nodeId)
+    const sourceNode = state.nodes.find((node) => node.id === creatorSource.nodeId)
     const sourcePort = creatorSourceManifest.outputPorts.find((port) => port.name === creatorSource.handleId)
-    const targetPort = sourcePort ? manifest.inputPorts.find((port) => port.kind === sourcePort.kind) : undefined
+    const targetPort = sourcePort ? manifest.inputPorts.find((port) => port.name === targetHandle && port.kind === sourcePort.kind) ?? manifest.inputPorts.find((port) => port.kind === sourcePort.kind) : undefined
     if (!sourceNode || !targetPort) return addAction(manifest, position)
     const sourceMetrics = canvasNodeMetrics(canvasNodeRole(creatorSourceManifest), {
       inputs: creatorSourceManifest.inputPorts.length,
@@ -288,6 +339,13 @@ export function WorkflowCanvas() {
     return editor.addConnectedAction(actionData(manifest), { nodeId: sourceNode.id, handleId: creatorSource.handleId, targetHandle: targetPort.name }, position ?? { x: sourceNode.position.x + sourceMetrics.width + 160, y: sourceNode.position.y })
   }
   const addBinding = (resourceType: ResourceType, role: string, position?: { x: number; y: number }) => editor.addBinding({ editorKind: 'binding', bindingId: crypto.randomUUID(), bindingRole: role, resourceType, operation: resourceType === 'rag' || resourceType === 'memory' ? 'read' : 'use', label: resourceType.replaceAll('_', ' ') }, position ?? defaultCanvasPosition(canvasNodeMetrics('default', { kind: 'binding' })))
+  const addBindingFromCreator = (resourceType: ResourceType, role: string) => {
+    const data = { editorKind: 'binding' as const, bindingId: crypto.randomUUID(), bindingRole: role, resourceType, operation: resourceType === 'rag' || resourceType === 'memory' ? 'read' as const : 'use' as const, label: resourceType.replaceAll('_', ' ') }
+    if (creatorSource?.mode !== 'binding') return editor.addBinding(data, defaultCanvasPosition(canvasNodeMetrics('default', { kind: 'binding' })))
+    const target = useEditorStore.getState().nodes.find((node) => node.id === creatorSource.nodeId)
+    if (!target) return editor.addBinding(data)
+    return editor.addConnectedBinding(data, { nodeId: target.id, handleId: creatorSource.handleId }, { x: target.position.x + 64, y: target.position.y + 190 })
+  }
   const addFirstTrigger = () => {
     const trigger = manifests.find((manifest) => manifest.uiSchema.canvas?.role === 'trigger') ?? manifests.find((manifest) => manifest.executionStyle === 'trigger')
     if (trigger) addAction(trigger)
@@ -326,14 +384,14 @@ export function WorkflowCanvas() {
   if (draft.isLoading || catalog.isLoading) return <div className="grid h-full place-items-center text-sm text-muted-foreground">{t('studio.loading')}</div>
   if (!draft.data || catalog.error) return <div className="grid h-full place-items-center px-8 text-sm text-danger">{String(draft.error ?? catalog.error ?? t('studio.unavailable'))}</div>
   return <div className="flex h-full min-h-[calc(100vh-64px)] flex-col overflow-hidden">
-    <StudioToolbar canRedo={editor.future.length > 0} canUndo={editor.past.length > 0} dirty={editor.dirty} mode={mode} name={workflow.data?.name ?? t('studio.workflow')} onAlign={editor.alignSelected} onLayout={() => void autoLayout(editor.nodes, editor.edges, manifestMap).then(editor.replaceNodes)} onMode={(value) => setMode(value as DebugMode)} onPublish={() => setPublishOpen(true)} onRedo={editor.redo} onRun={() => void run()} onSave={saveNow} onStop={() => void stop()} onUndo={editor.undo} onVersion={() => setVersionsOpen(true)} revision={revision} running={runtime.running} saving={saveMutation.isPending} selectedCount={editor.nodes.filter((node) => node.selected || node.id === editor.selectedId).length} workflowId={workflowId} />
-    <main className="flex min-h-0 flex-1"><NodePalette manifests={manifests} onAddAction={(manifest) => { addActionFromCreator(manifest); setCreatorSource(undefined); setDetailsOpen(true) }} onAddAnnotation={() => { editor.addAnnotation(defaultCanvasPosition({ width: 240, height: 160 }, true), t('studio.note.default')); setCreatorSource(undefined) }} onAddBinding={(type, role) => { addBinding(type, role); setCreatorSource(undefined); setDetailsOpen(true) }} onAddGroup={() => { editor.addGroup(t('studio.group.default')); setCreatorSource(undefined) }} onOpenChange={(open) => { setCreatorOpen(open); if (!open) setCreatorSource(undefined) }} open={creatorOpen} sourceConnection={creatorSourceManifest && creatorSource ? { manifest: creatorSourceManifest, handleId: creatorSource.handleId } : undefined} /><div className="flex min-w-0 flex-1 flex-col"><WorkflowFlow ref={flowRef} manifests={manifestMap} onAddTrigger={addFirstTrigger} onDropAction={(manifest, position) => { addActionFromCreator(manifest, position); setCreatorSource(undefined); setCreatorOpen(false); setDetailsOpen(true) }} onDropBinding={(type, role, position) => { addBinding(type, role, position); setDetailsOpen(true) }} onNodeOpen={(nodeId) => { editor.select(nodeId); setDetailsOpen(true) }} onPaneClear={() => setDetailsOpen(false)} onSearchNodes={(source) => { setCreatorSource(source); setCreatorOpen(true) }} runtimeStatuses={runtime.nodeStatuses} /><RuntimePanel events={runtime.events} executionId={executionId} onExecutionChange={setExecutionId} workflowId={workflowId} /></div><NodeInspector data={selected?.data.editorKind === 'action' || selected?.data.editorKind === 'binding' ? selected.data : undefined} executionId={executionId} fieldErrors={Object.fromEntries([...issues, ...(locatedIssue ? [locatedIssue] : [])].filter((issue) => issue.nodeId === selected?.id && issue.fieldPath).map((issue) => [issue.fieldPath!, issue.message]))} manifest={selectedManifest} nodeId={selected?.id} onChange={(patch) => { setLocatedIssue(undefined); if (selected) editor.updateNode(selected.id, patch) }} onClose={() => setDetailsOpen(false)} onDelete={() => { editor.removeSelected(); setDetailsOpen(false) }} onOverlayChange={(nodeId, id) => setOverlayIds((current) => { const next = { ...current }; if (id) next[nodeId] = id; else delete next[nodeId]; return next })} onPrimaryToggle={() => selected && editor.setPrimaryOutput(editor.settings.primaryOutputNodeId === selected.id ? undefined : selected.id)} onRun={() => void executeRun(undefined, {}, 'single_node')} open={detailsOpen} primary={Boolean(selected && editor.settings.primaryOutputNodeId === selected.id)} resources={resources.options} workflowId={workflowId} /></main>
+    <StudioToolbar canRedo={canRedo} canUndo={canUndo} dirty={dirty} mode={mode} name={workflow.data?.name ?? t('studio.workflow')} onAlign={editor.alignSelected} onLayout={() => { const state = useEditorStore.getState(); void autoLayout(state.nodes, state.edges, manifestMap).then(editor.replaceNodes) }} onMode={(value) => setMode(value as DebugMode)} onPublish={() => setPublishOpen(true)} onRedo={editor.redo} onRun={() => void run()} onSave={saveNow} onStop={() => void stop()} onUndo={editor.undo} onVersion={() => setVersionsOpen(true)} revision={revision} running={runtime.running} saving={saveMutation.isPending} selectedCount={selectedCount} workflowId={workflowId} />
+    <main className="relative flex min-h-0 flex-1"><NodePalette bindingSlot={creatorBindingSlot} manifests={manifests} onAddAction={(manifest, targetHandle) => { addActionFromCreator(manifest, undefined, targetHandle); setCreatorSource(undefined); setDetailsOpen(true) }} onAddAnnotation={() => { editor.addAnnotation(defaultCanvasPosition({ width: 240, height: 160 }, true), t('studio.note.default')); setCreatorSource(undefined) }} onAddBinding={(type, role) => { addBindingFromCreator(type, role); setCreatorSource(undefined); setDetailsOpen(true) }} onAddGroup={() => { editor.addGroup(t('studio.group.default')); setCreatorSource(undefined) }} onOpenChange={(open) => { setCreatorOpen(open); if (!open) { setCreatorSource(undefined); editor.clearEdgeInsertRequest() } }} open={creatorOpen} sourceConnection={creatorSourceManifest && creatorSource?.mode === 'output' ? { manifest: creatorSourceManifest, handleId: creatorSource.handleId } : undefined} /><div className="flex min-w-0 flex-1 flex-col"><WorkflowFlow ref={flowRef} manifests={manifestMap} onAddTrigger={addFirstTrigger} onDropAction={(manifest, position) => { addActionFromCreator(manifest, position); setCreatorSource(undefined); setCreatorOpen(false); setDetailsOpen(true) }} onDropBinding={(type, role, position) => { addBinding(type, role, position); setDetailsOpen(true) }} onNodeOpen={(nodeId) => { editor.select(nodeId); setDetailsOpen(true) }} onPaneClear={() => setDetailsOpen(false)} onSearchNodes={(source) => { setCreatorSource(source); setCreatorOpen(true) }} runtimeStatuses={runtime.nodeStatuses} /><RuntimePanel events={runtime.events} executionId={executionId} onExecutionChange={setExecutionId} workflowId={workflowId} /></div><NodeInspector data={selected?.data.editorKind === 'action' || selected?.data.editorKind === 'binding' ? selected.data : undefined} executionId={executionId} fieldErrors={Object.fromEntries([...issues, ...(locatedIssue ? [locatedIssue] : [])].filter((issue) => issue.nodeId === selected?.id && issue.fieldPath).map((issue) => [issue.fieldPath!, issue.message]))} manifest={selectedManifest} nodeId={selected?.id} onChange={(patch) => { setLocatedIssue(undefined); if (selected) editor.updateNode(selected.id, patch) }} onClose={() => setDetailsOpen(false)} onDelete={() => { editor.removeSelected(); setDetailsOpen(false) }} onOverlayChange={(nodeId, id) => setOverlayIds((current) => { const next = { ...current }; if (id) next[nodeId] = id; else delete next[nodeId]; return next })} onPrimaryToggle={() => selected && editor.setPrimaryOutput(primaryOutputNodeId === selected.id ? undefined : selected.id)} onRun={() => void executeRun(undefined, {}, 'single_node')} open={detailsOpen} primary={Boolean(selected && primaryOutputNodeId === selected.id)} resources={resources.options} workflowId={workflowId} /></main>
     <ConflictDialog onClose={() => setConflictOpen(false)} onLoad={() => void loadServer()} onOverwrite={() => void overwriteServer()} open={conflictOpen} />
     <RecoveryDialog onDiscard={() => { clearRecovery(workflowId); setRecovery(undefined) }} onRestore={() => { if (recovery) { editor.hydrate(recovery.document); setRevision(recovery.revision) } setRecovery(undefined) }} open={Boolean(recovery)} />
     <IssuesDialog issues={issues} onClose={() => setIssues([])} onLocate={locateIssue} />
     {selected?.data.editorKind === 'action' && (mode === 'single_node' || mode === 'from_node') && <DebugRunDialog executionId={executionId} mode={mode} onClose={() => setDebugDialogOpen(false)} onRun={(source, input) => void executeRun(source, input)} open={debugDialogOpen} running={runtime.running} targetName={selected.data.label} />}
     <PublishDialog deployments={deployments.data ?? []} environment={publishEnvironment} environments={environments.data ?? []} onClose={() => setPublishOpen(false)} onEnvironment={setPublishEnvironment} onPublish={() => void publish()} onRollback={(deployment) => void rollback(deployment)} onVersion={setPublishVersion} open={publishOpen} version={publishVersion} versions={versions.data ?? []} />
-    {(() => { const current = serializeStudio(studioDocument(editor)); return <VersionDialog creating={false} definition={current.definition} editorDocument={current.editorDocument} onClose={() => setVersionsOpen(false)} onCreate={() => void createVersion()} open={versionsOpen} versions={versions.data ?? []} /> })()}
+    {(() => { const current = serializeStudio(studioDocument(useEditorStore.getState())); return <VersionDialog creating={false} definition={current.definition} editorDocument={current.editorDocument} onClose={() => setVersionsOpen(false)} onCreate={() => void createVersion()} open={versionsOpen} versions={versions.data ?? []} /> })()}
   </div>
 }
 

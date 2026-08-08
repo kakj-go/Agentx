@@ -432,7 +432,7 @@ try {
     kubectl apply -f "$root/deploy/k8s/stacks/e2e/m5-fixture-job.yaml"
     kubectl -n $namespace wait --for=condition=complete job/m5-fixture --timeout=180s
     Invoke-Playwright -Suite "m5-agent-sandbox" -Tests @("tests/m5-agent-sandbox.spec.ts")
-    Invoke-Playwright -Suite "m6-workflow-studio" -Tests @("tests/m6-workflow-studio.spec.ts")
+    Invoke-Playwright -Suite "m6-workflow-studio" -Tests @("tests/m6-workflow-studio.spec.ts", "tests/m6-local-builtins.spec.ts", "tests/workflow-canvas-performance.spec.ts")
     Invoke-Playwright -Suite "m7-business-closure" -Tests @("tests/m7-business-closure.spec.ts")
     Wait-MySqlValue "SELECT b.status FROM trigger_bindings b JOIN applications a ON a.id=b.application_id AND a.tenant_id=b.tenant_id WHERE a.name LIKE 'M7 Remote Trigger %' AND b.trigger_kind='lifecycle' ORDER BY b.created_at DESC LIMIT 1" @("disabled") "M7 Trigger Lifecycle deactivate" 60 | Out-Null
     Assert-MySqlScalar "SELECT COUNT(*) FROM trigger_bindings b JOIN applications a ON a.id=b.application_id AND a.tenant_id=b.tenant_id WHERE a.status='disabled' AND b.status IN ('active','activating','deactivating')" 0 "Disabled Application retained active Trigger Bindings"

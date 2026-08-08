@@ -1,86 +1,130 @@
 import { Handle, Position, useUpdateNodeInternals, type NodeProps } from '@xyflow/react'
-import { AlertTriangle, Plus, Star } from 'lucide-react'
-import { useEffect } from 'react'
+import { AlertTriangle, Plus, Star, Zap } from 'lucide-react'
+import { memo, useEffect, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { cn } from '../../../shared/lib/cn'
 import { localizedNodeLabel, localizeManifest } from '../model/manifest-localization'
-import type { CanvasNodeRole, NodeManifest, PortKind, StudioNode } from '../model/types'
-import { canvasNodeMetrics, canvasNodeRole } from './node-appearance'
+import type { CanvasNodeFamily, CanvasNodeRole, NodeManifest, PortKind, ResourceType, StudioNode } from '../model/types'
+import { useCanvasRenderStore } from '../store/canvas-render-store'
+import type { NodeBindingSummary } from '../utils/graph-index'
+import { canvasNodeFamily, canvasNodeMetrics, canvasNodeRole } from './node-appearance'
 import { NodeIcon } from './node-icon'
 
-export type NodeBindingSummary = { role: string; resourceType: string; label: string }
+export type { NodeBindingSummary } from '../utils/graph-index'
 
-export function ManifestNode({ id, data, selected, manifest, runtimeStatus, zoom = 1, primary = false, onQuickAdd, bindingSummaries = [] }: NodeProps<StudioNode> & { manifest?: NodeManifest; runtimeStatus?: string; zoom?: number; primary?: boolean; onQuickAdd?: (nodeId: string, handleId: string) => void; bindingSummaries?: NodeBindingSummary[] }) {
+export const ManifestNode = memo(function ManifestNode({ id, data, selected }: NodeProps<StudioNode>) {
   const { t, i18n } = useTranslation()
+  const manifestKey = data.editorKind === 'action' ? `${data.nodeType}@${data.typeVersion}` : ''
+  const manifest = useCanvasRenderStore((state) => state.manifests.get(manifestKey))
+  const runtimeStatus = useCanvasRenderStore((state) => state.runtimeStatuses.get(id))
+  const bindingSummaries = useCanvasRenderStore((state) => state.bindingSummaries.get(id) ?? EMPTY_BINDINGS)
+  const occupiedHandleSignature = useCanvasRenderStore((state) => state.occupiedHandlesByNodeId.get(id) ?? '')
+  const primary = useCanvasRenderStore((state) => state.primaryOutputNodeId === id)
+  const zoomTier = useCanvasRenderStore((state) => state.zoomTier)
+  const onQuickAdd = useCanvasRenderStore((state) => state.onQuickAdd)
+  const onSourceHover = useCanvasRenderStore((state) => state.onSourceHover)
   const updateNodeInternals = useUpdateNodeInternals()
-  useEffect(() => updateNodeInternals(id), [bindingSummaries, data.label, id, updateNodeInternals])
+  const portSignature = useMemo(() => manifest ? JSON.stringify([
+    manifest.inputPorts.map((port) => [port.name, port.kind]),
+    manifest.outputPorts.map((port) => [port.name, port.kind]),
+    manifest.bindingSlots.map((slot) => [slot.name, slot.resourceType]),
+  ]) : '', [manifest])
+  const occupiedHandles = useMemo(() => new Set(occupiedHandleSignature ? occupiedHandleSignature.split('\u0001') : []), [occupiedHandleSignature])
+  useEffect(() => scheduleNodeInternalsUpdate(id, updateNodeInternals), [id, portSignature, updateNodeInternals])
   if (data.editorKind !== 'action') return null
+
   const role = canvasNodeRole(manifest)
-  const metrics = canvasNodeMetrics(role, { inputs: manifest?.inputPorts.length, outputs: manifest?.outputPorts.length, bindings: manifest?.bindingSlots.length })
+  const family = canvasNodeFamily(role)
+  const metrics = canvasNodeMetrics(role)
   const localized = manifest ? localizeManifest(manifest, i18n.language) : undefined
-  const statusClass = selected
-    ? 'studio-node-selected'
-    : runtimeStatus === 'running' ? 'studio-node-running'
-      : runtimeStatus === 'succeeded' ? 'studio-node-succeeded'
-        : runtimeStatus === 'failed' ? 'studio-node-failed' : undefined
   const label = manifest ? localizedNodeLabel(manifest, data.label, i18n.language) : data.label || data.nodeType
-  return <div className={cn('studio-node relative shrink-0', `studio-node-${role}`, zoom < 0.65 && 'studio-node-low-zoom')} data-role={role} data-testid={`studio-node-${id}`} style={{ width: metrics.width, height: metrics.height }}>
-    {manifest?.inputPorts.map((port, index) => <PortHandle id={port.name} key={`in-${port.name}`} kind={port.kind} label={localized?.inputPortLabel(port.name) ?? port.name} placement={portPlacement(role, 'input', port.kind, port.name, index, manifest.inputPorts.length)} type="target" />)}
-    <NodeSurface bindingSummaries={bindingSummaries} data={data} label={label} localizedDescription={localized?.description} manifest={manifest} role={role} statusClass={statusClass} />
-    {metrics.labelBelow && <NodeLabel label={label} subtitle={localized?.displayName ?? data.nodeType} />}
-    {manifest?.outputPorts.map((port, index) => <PortHandle addLabel={t('studio.ports.addAfter', { label: localized?.outputPortLabel(port.name) ?? port.name })} id={port.name} key={`out-${port.name}`} kind={port.kind} label={localized?.outputPortLabel(port.name) ?? port.name} onQuickAdd={onQuickAdd ? () => onQuickAdd(id, port.name) : undefined} placement={portPlacement(role, 'output', port.kind, port.name, index, manifest.outputPorts.length)} type="source" />)}
-    {manifest?.bindingSlots.map((slot, index) => <PortHandle id={`binding:${slot.name}`} key={slot.name} kind="binding" label={localized?.bindingSlotLabel(slot.name) ?? slot.name} placement={{ position: Position.Bottom, axis: ((index + 1) / (manifest.bindingSlots.length + 1)) * 100 }} type="target" />)}
-    {primary && <span className="absolute -left-2 -top-2 z-30 grid size-5 place-items-center rounded-full bg-primary text-primary-foreground shadow" title={t('studio.primaryOutput')}><Star className="size-3 fill-current" /></span>}
-    {data.disabled && <AlertTriangle className="absolute -right-2 -top-2 z-30 size-5 rounded-full bg-surface p-0.5 text-warning shadow" />}
+  const statusClass = selected ? 'studio-node-selected' : runtimeStatus ? `studio-node-${runtimeStatus}` : undefined
+  return <div className={cn('studio-node relative shrink-0', `studio-node-${family}`, `studio-node-role-${role}`, `studio-node-zoom-${zoomTier}`)} data-role={role} data-testid={`studio-node-${id}`} style={{ width: metrics.width, height: metrics.height }}>
+    {manifest?.inputPorts.map((port, index) => <PortHandle id={port.name} key={`in-${port.name}`} kind={port.kind} label={localized?.inputPortLabel(port.name) ?? port.name} placement={portPlacement('input', port.kind, port.name, index, manifest.inputPorts)} type="target" />)}
+    <NodeSurface bindingSummaries={bindingSummaries} label={label} manifest={manifest} role={role} statusClass={statusClass} />
+    <NodeLabel family={family} label={label} />
+    {manifest?.outputPorts.map((port, index) => <PortHandle addLabel={t('studio.ports.addAfter', { label: localized?.outputPortLabel(port.name) ?? port.name })} id={port.name} key={`out-${port.name}`} kind={port.kind} label={localized?.outputPortLabel(port.name) ?? port.name} onHover={onSourceHover ? (active) => onSourceHover(id, port.name, active) : undefined} onQuickAdd={!data.disabled && onQuickAdd && (!occupiedHandles.has(port.name) || port.variadic) ? () => onQuickAdd(id, port.name, 'output') : undefined} placement={portPlacement('output', port.kind, port.name, index, manifest.outputPorts)} type="source" />)}
+    {manifest?.bindingSlots.map((slot, index) => <PortHandle addLabel={t('studio.ports.addAfter', { label: localized?.bindingSlotLabel(slot.name) ?? slot.name })} id={`binding:${slot.name}`} key={slot.name} kind="binding" label={localized?.bindingSlotLabel(slot.name) ?? slot.name} onQuickAdd={!data.disabled && onQuickAdd && (!occupiedHandles.has(`binding:${slot.name}`) || slot.multiple) ? () => onQuickAdd(id, `binding:${slot.name}`, 'binding') : undefined} placement={bindingPlacement(index, manifest.bindingSlots.length)} resourceType={slot.resourceType} type="target" />)}
+    {primary && <span className="absolute -left-2 -top-2 z-30 grid size-5 place-items-center rounded-full bg-primary text-primary-foreground" title={t('studio.primaryOutput')}><Star className="size-3 fill-current" /></span>}
+    {data.disabled && <AlertTriangle className="absolute -right-2 -top-2 z-30 size-5 rounded-full bg-surface p-0.5 text-warning" />}
+  </div>
+})
+
+const EMPTY_BINDINGS: NodeBindingSummary[] = []
+let pendingInternals = new Set<string>()
+let internalsUpdateScheduled = false
+
+function scheduleNodeInternalsUpdate(id: string, update: (ids: string[]) => void) {
+  pendingInternals.add(id)
+  if (internalsUpdateScheduled) return
+  internalsUpdateScheduled = true
+  queueMicrotask(() => {
+    const ids = [...pendingInternals]
+    pendingInternals = new Set()
+    internalsUpdateScheduled = false
+    update(ids)
+  })
+}
+
+function NodeSurface({ label, manifest, role, bindingSummaries, statusClass }: { label: string; manifest?: NodeManifest; role: CanvasNodeRole; bindingSummaries: NodeBindingSummary[]; statusClass?: string }) {
+  return <div className={cn('studio-node-surface relative flex size-full items-center justify-center', statusClass)} title={bindingSummaries.map((binding) => `${binding.role}: ${binding.label}`).join('\n') || label}>
+    {role === 'trigger' && <span className="studio-node-trigger-mark absolute -left-3 top-1/2 grid size-5 -translate-y-1/2 place-items-center rounded-full bg-warning text-background"><Zap className="size-3 fill-current" /></span>}
+    <span className="studio-node-icon grid size-12 place-items-center rounded-md bg-muted text-foreground"><NodeIcon className="size-7" iconKey={manifest?.iconKey ?? roleIcon(role)} /></span>
   </div>
 }
 
-function NodeSurface({ data, label, manifest, role, bindingSummaries, localizedDescription, statusClass }: { data: Extract<StudioNode['data'], { editorKind: 'action' }>; label: string; manifest?: NodeManifest; role: CanvasNodeRole; bindingSummaries: NodeBindingSummary[]; localizedDescription?: string; statusClass?: string }) {
-  const { t } = useTranslation()
-  const rich = role === 'agent' || role === 'suspend' || role === 'approval' || role === 'error_handler'
-  return <div className={cn('studio-node-surface relative grid size-full place-items-center overflow-hidden', rich ? 'p-3' : 'p-2', statusClass)}>
-    <span className={cn('studio-node-icon grid place-items-center text-primary', role === 'trigger' ? 'rounded-full bg-success/12 text-success' : role === 'branch' || role === 'loop' ? 'rounded-lg bg-warning/15 text-warning' : role === 'code' || role === 'error_handler' ? 'rounded-md bg-danger/10 text-danger' : 'rounded-xl bg-primary/10')}><NodeIcon className={rich ? 'size-7' : 'size-8'} iconKey={manifest?.iconKey ?? roleIcon(role)} /></span>
-    {rich && <div className="mt-1 min-w-0 max-w-full text-center"><strong className="block truncate text-xs font-semibold">{label}</strong><span className="mt-0.5 block truncate text-[10px] text-muted-foreground">{localizedDescription || manifest?.displayName || data.nodeType}</span>{role === 'agent' && <div className="mt-2 flex flex-wrap justify-center gap-1">{bindingSummaries.length ? bindingSummaries.slice(0, 5).map((binding) => <span className="max-w-28 truncate rounded bg-warning/10 px-1.5 py-0.5 text-[8px] text-warning" key={`${binding.role}-${binding.label}`}>{binding.label}</span>) : <span className="text-[8px] text-muted-foreground">{t('studio.node.noBindings')}</span>}</div>}</div>}
-  </div>
+function NodeLabel({ label, family = 'compact' }: { label: string; family?: CanvasNodeFamily }) {
+  return <div className={cn('studio-node-label pointer-events-none absolute left-1/2 z-10 w-40 -translate-x-1/2 text-center', family === 'agent' ? 'bottom-full mb-2' : 'top-full mt-2')}><strong className="block line-clamp-2 text-[12px] font-medium leading-4">{label}</strong></div>
 }
-
-function NodeLabel({ label, subtitle }: { label: string; subtitle: string }) { return <div className="studio-node-label pointer-events-none absolute left-1/2 top-full z-10 mt-2 w-36 -translate-x-1/2 text-center"><strong className="block line-clamp-2 text-[11px] font-semibold leading-4">{label}</strong><span className="block truncate text-[9px] leading-3 text-muted-foreground">{subtitle}</span></div> }
 
 type Placement = { position: Position; axis: number }
 
-function PortHandle({ id, kind, label, placement, type, onQuickAdd, addLabel }: { id: string; kind: PortKind | 'binding'; label: string; placement: Placement; type: 'source' | 'target'; onQuickAdd?: () => void; addLabel?: string }) {
+function PortHandle({ id, kind, label, placement, type, onQuickAdd, onHover, addLabel, resourceType }: { id: string; kind: PortKind | 'binding'; label: string; placement: Placement; type: 'source' | 'target'; onQuickAdd?: () => void; onHover?: (active: boolean) => void; addLabel?: string; resourceType?: ResourceType }) {
   const vertical = placement.position === Position.Left || placement.position === Position.Right
   const handleStyle = vertical ? { top: `${placement.axis}%` } : { left: `${placement.axis}%` }
-  const labelClass = placement.position === Position.Left ? 'right-full mr-2 -translate-y-1/2' : placement.position === Position.Right ? 'left-full ml-2 -translate-y-1/2' : placement.position === Position.Bottom ? 'top-full mt-2 -translate-x-1/2' : 'bottom-full mb-2 -translate-x-1/2'
+  const labelClass = placement.position === Position.Left
+    ? 'right-full mr-3 -translate-y-1/2'
+    : placement.position === Position.Right
+      ? 'left-full ml-3 -translate-y-1/2'
+      : kind === 'error'
+        ? 'top-full ml-2 -translate-y-1/2'
+        : 'top-full mt-3 -translate-x-1/2'
   const labelStyle = vertical ? { top: `${placement.axis}%` } : { left: `${placement.axis}%` }
+  const colorClass = kind === 'binding' ? `studio-port-${resourceType ?? 'binding'}` : kind === 'error' ? 'studio-port-error' : type === 'target' ? 'studio-port-input' : 'studio-port-output'
   return <>
-    <Handle className={cn('studio-handle !absolute !z-30 !size-3 !border-2 !border-background shadow-sm', kind === 'binding' ? '!rotate-45 !rounded-[2px] !bg-warning' : kind === 'error' ? '!bg-danger' : type === 'target' ? '!bg-muted-foreground' : '!bg-primary')} id={id} position={placement.position} style={handleStyle} title={label} type={type} />
-    <span className={cn('studio-port-label pointer-events-none absolute z-20 max-w-20 truncate text-[8px] font-medium text-muted-foreground', labelClass)} style={labelStyle}>{label}</span>
-    {onQuickAdd && <button aria-label={addLabel} className={cn('studio-port-add nodrag absolute z-40 grid size-5 place-items-center rounded-full border border-border bg-surface text-primary shadow-sm hover:bg-primary hover:text-primary-foreground', placement.position === Position.Bottom ? 'top-full mt-5 -translate-x-1/2' : 'left-full ml-6 -translate-y-1/2')} onClick={(event) => { event.stopPropagation(); onQuickAdd() }} style={labelStyle} title={addLabel} type="button"><Plus className="size-3" /></button>}
+    <Handle className={cn('studio-handle !absolute !z-30 !size-4 !border-0 !bg-transparent', colorClass)} id={id} onMouseEnter={() => onHover?.(true)} onMouseLeave={() => onHover?.(false)} position={placement.position} style={handleStyle} title={label} type={type}><span className={cn('studio-handle-mark block size-2.5 border-2 border-background', kind === 'binding' ? 'rotate-45 rounded-[2px]' : 'rounded-full')} /></Handle>
+    <span className={cn('studio-port-label pointer-events-none absolute z-20 max-w-24 truncate text-[9px] font-medium text-muted-foreground', labelClass)} style={labelStyle}>{label}</span>
+    {onQuickAdd && <button aria-label={addLabel} className={cn('studio-port-add nodrag absolute z-40 grid size-6 place-items-center rounded-full border border-border bg-surface text-muted-foreground hover:border-primary hover:text-primary', placement.position === Position.Bottom ? 'top-full mt-7 -translate-x-1/2' : 'left-full ml-7 -translate-y-1/2')} onClick={(event) => { event.stopPropagation(); onQuickAdd() }} style={labelStyle} title={addLabel} type="button"><Plus className="size-3.5" /></button>}
   </>
 }
 
-function portPlacement(role: CanvasNodeRole, direction: 'input' | 'output', kind: PortKind, name: string, index: number, count: number): Placement {
-  if (direction === 'input') return { position: Position.Left, axis: ((index + 1) / (count + 1)) * 100 }
-  if (kind === 'error' || name === 'error') return { position: Position.Bottom, axis: role === 'agent' ? 90 : 50 }
-  return { position: Position.Right, axis: ((index + 1) / (count + 1)) * 100 }
+function bindingPlacement(index: number, count: number): Placement {
+  return { position: Position.Bottom, axis: ((index + 1) / (count + 1)) * 100 }
+}
+
+function portPlacement(direction: 'input' | 'output', kind: PortKind, name: string, index: number, ports: { name: string; kind: PortKind }[]): Placement {
+  if (direction === 'input') return { position: Position.Left, axis: ((index + 1) / (ports.length + 1)) * 100 }
+  const orderedPorts = [...ports].sort((left, right) => Number(left.kind === 'error' || left.name === 'error') - Number(right.kind === 'error' || right.name === 'error'))
+  const orderedIndex = orderedPorts.findIndex((port) => port.name === name && port.kind === kind)
+  return { position: Position.Right, axis: ((orderedIndex + 1) / (ports.length + 1)) * 100 }
 }
 
 function roleIcon(role: CanvasNodeRole) {
   return ({ trigger: 'mouse-pointer-click', branch: 'split', merge: 'git-merge', loop: 'repeat-2', agent: 'bot', code: 'code-2', suspend: 'clock-3', approval: 'badge-check', sub_workflow: 'git-merge', error_handler: 'triangle-alert' } as Partial<Record<CanvasNodeRole, string>>)[role] ?? 'box'
 }
 
-export function AttachmentNode({ id, data, selected }: NodeProps<StudioNode>) {
+export const AttachmentNode = memo(function AttachmentNode({ id, data, selected }: NodeProps<StudioNode>) {
   const { t } = useTranslation()
+  const zoomTier = useCanvasRenderStore((state) => state.zoomTier)
+  const onSourceHover = useCanvasRenderStore((state) => state.onSourceHover)
   if (data.editorKind !== 'binding') return null
   const metrics = canvasNodeMetrics('default', { kind: 'binding' })
-  return <div className={cn('studio-node-attachment relative flex shrink-0 flex-col items-center justify-center bg-surface shadow-sm', selected && 'studio-node-selected')} data-testid={`studio-node-${id}`} style={{ width: metrics.width, height: metrics.height }}>
-    <span className="grid size-9 place-items-center rounded-full bg-warning/10 text-warning"><NodeIcon className="size-4" iconKey={attachmentIcon(data.resourceType)} /></span>
-    <span className="mt-1 max-w-16 truncate text-[9px] font-medium">{data.resourceName ?? data.label}</span>
-    <span className="max-w-16 truncate text-[8px] text-muted-foreground">{t(`resourceTypes.${data.resourceType}`)}</span>
-    <Handle className="!top-[-6px] !size-3 !border-2 !border-background !bg-warning" id="resource" position={Position.Top} type="source" />
+  return <div className={cn('studio-node studio-node-attachment relative shrink-0', `studio-node-zoom-${zoomTier}`)} data-testid={`studio-node-${id}`} style={{ width: metrics.width, height: metrics.height }}>
+    <div className={cn('studio-node-surface flex size-full items-center justify-center', selected && 'studio-node-selected')}><span className={cn('studio-node-icon grid size-12 place-items-center rounded-md bg-muted', `studio-resource-${data.resourceType}`)}><NodeIcon className="size-6" iconKey={attachmentIcon(data.resourceType)} /></span></div>
+    <NodeLabel label={data.resourceName ?? data.label ?? t(`resourceTypes.${data.resourceType}`)} />
+    <Handle className={cn('studio-handle studio-port-binding !absolute !top-[-8px] !size-4 !border-0 !bg-transparent')} id="resource" onMouseEnter={() => onSourceHover?.(id, 'resource', true)} onMouseLeave={() => onSourceHover?.(id, 'resource', false)} position={Position.Top} type="source"><span className="studio-handle-mark block size-2.5 rotate-45 rounded-[2px] border-2 border-background" /></Handle>
   </div>
-}
+})
 
 function attachmentIcon(resourceType: string) { return ({ model: 'brain-circuit', mcp_tool: 'wrench', memory: 'memory-stick', rag: 'database', skill: 'sparkles' } as Record<string, string>)[resourceType] ?? 'box' }

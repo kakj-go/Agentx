@@ -75,9 +75,10 @@ export const resources = {
       studio: {
         loading: '正在加载 Workflow Studio…', unavailable: 'Workflow Studio 暂不可用', workflow: '工作流', back: '返回', close: '关闭', save: '保存', version: '版本', publish: '发布', run: '运行', stop: '停止', undo: '撤销', redo: '重做', align: '对齐', alignLeft: '左对齐', alignTop: '顶对齐', autoLayout: '自动布局', revisionSaved: 'Revision {{revision}} · 已保存', revisionUnsaved: 'Revision {{revision}} · 未保存', primaryOutput: '主要输出', setPrimaryOutput: '设为主要输出', unsetPrimaryOutput: '取消主要输出',
         modes: { full: '完整流程', single: '单节点', toNode: '运行到节点', fromNode: '从节点继续' },
-        palette: { search: '搜索节点', actionNodes: '执行节点', attachments: 'AI 附件', note: '便签', group: '分组', ai: 'AI', dragHint: '点击添加，或拖到画布', categories: { triggers: '触发器', flow: '流程控制', ai: 'AI 与智能体', data: '数据与记忆', integrations: '动作与集成', code: '代码与沙箱', other: '其他节点' } },
+        palette: { search: '搜索节点', actionNodes: '执行节点', attachments: 'AI 附件', note: '便签', group: '分组', ai: 'AI', back: '返回节点列表', chooseInput: '选择 {{node}} 的输入端口', dragHint: '点击添加，或拖到画布', categories: { triggers: '触发器', flow: '流程控制', ai: 'AI 与智能体', data: '数据与记忆', integrations: '动作与集成', code: '代码与沙箱', other: '其他节点' } },
         inspector: { title: '节点检查器', noSelection: '请选择节点', name: '名称', disabled: '禁用', attachment: '附件', resource: '资源', required: '必填', multiple: '多选', optional: '可选', delete: '删除节点', noResource: '没有可见资源。', errorPolicy: '错误处理策略', errorStop: '停止工作流', errorOutput: '发送到错误输出' },
         ports: { flow: '流程', error: '错误', resource: '资源', addAfter: '在 {{label}} 后添加节点' },
+        edges: { insert: '在线上插入节点', reconnect: '重新连接', delete: '删除连线' },
         details: { parameters: '参数', input: '输入', output: '输出', trace: 'Trace', more: '更多节点操作' },
         empty: { addTrigger: '添加 Trigger', search: '搜索节点' },
         note: { title: '便签', default: '新便签', color: '便签颜色：{{color}}', delete: '删除便签' },
@@ -236,9 +237,10 @@ export const resources = {
       studio: {
         loading: 'Loading Workflow Studio…', unavailable: 'Workflow Studio is unavailable', workflow: 'Workflow', back: 'Back', close: 'Close', save: 'Save', version: 'Version', publish: 'Publish', run: 'Run', stop: 'Stop', undo: 'Undo', redo: 'Redo', align: 'Align', alignLeft: 'Align left', alignTop: 'Align top', autoLayout: 'Auto layout', revisionSaved: 'Revision {{revision}} · Saved', revisionUnsaved: 'Revision {{revision}} · Unsaved', primaryOutput: 'Primary output', setPrimaryOutput: 'Set as primary output', unsetPrimaryOutput: 'Unset primary output',
         modes: { full: 'Full flow', single: 'Single node', toNode: 'To node', fromNode: 'From node' },
-        palette: { search: 'Search nodes', actionNodes: 'Action nodes', attachments: 'AI attachments', note: 'Sticky note', group: 'Group', ai: 'AI', dragHint: 'Click to add or drag onto the canvas', categories: { triggers: 'Triggers', flow: 'Flow control', ai: 'AI & agents', data: 'Data & memory', integrations: 'Actions & integrations', code: 'Code & sandbox', other: 'Other nodes' } },
+        palette: { search: 'Search nodes', actionNodes: 'Action nodes', attachments: 'AI attachments', note: 'Sticky note', group: 'Group', ai: 'AI', back: 'Back to nodes', chooseInput: 'Choose an input for {{node}}', dragHint: 'Click to add or drag onto the canvas', categories: { triggers: 'Triggers', flow: 'Flow control', ai: 'AI & agents', data: 'Data & memory', integrations: 'Actions & integrations', code: 'Code & sandbox', other: 'Other nodes' } },
         inspector: { title: 'Node inspector', noSelection: 'Select a node', name: 'Name', disabled: 'Disabled', attachment: 'Attachment', resource: 'Resource', required: 'Required', multiple: 'Multiple', optional: 'Optional', delete: 'Delete node', noResource: 'No visible resource is available.', errorPolicy: 'Error handling policy', errorStop: 'Stop workflow', errorOutput: 'Send to Error output' },
         ports: { flow: 'Flow', error: 'Error', resource: 'Resource', addAfter: 'Add node after {{label}}' },
+        edges: { insert: 'Insert node on connection', reconnect: 'Reconnect', delete: 'Delete connection' },
         details: { parameters: 'Parameters', input: 'Input', output: 'Output', trace: 'Trace', more: 'More node actions' },
         empty: { addTrigger: 'Add Trigger', search: 'Search nodes' },
         note: { title: 'Sticky note', default: 'New note', color: 'Note color: {{color}}', delete: 'Delete note' },
