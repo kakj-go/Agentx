@@ -54,13 +54,3 @@ Use Addon lightrag or mem0 to manage only one service. Set the model and embeddi
     ./scripts/e2e.ps1
 
 The script creates a temporary agentx-e2e Namespace, deploys clean storage and Echo MCP, runs Playwright through the Web UI, saves reports under apps/e2e, and removes the Namespace. Use KeepNamespace only when debugging a failure.
-
-
-
-1. 上下文和压缩帮我继续深度优化
-2. 真实 Host 验收暂时没有这个环境，可以先忽略 host 验收
-3. 继续完善
-4. Plugin 暂时不考虑深入，界面还是保持开发中
-5. Heartbeat 产品语义是啥意思讨论下
-6. 文档同步一下
-
