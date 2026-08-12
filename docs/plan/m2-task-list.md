@@ -35,7 +35,7 @@ M2 不产生真实 Execution。运行、测试执行、Agent 调用和节点调�
 
 - Workflow 元数据、成员、Service Identity、Draft、Revision、Version、Environment、Deployment、发布和回滚。
 - Credential 安全存储或外部 Secret Reference、轮换元数据和脱敏展示。
-- Model Provider、Deployment、Alias 和不可变 Price Version。
+- 完整 Model Deployment Revision、Alias 和不可变 Price Version；连接参数不作为独立 Provider 资源。
 - Tool Definition 和不可变 Tool Version。
 - Skill Definition、不可变 Skill Version、Artifact、Manifest 和依赖图。
 - LightRAG Connection/Resource 与 Mem0 Connection/Namespace。
@@ -133,7 +133,7 @@ M2-0 契约、权限与 Migration
 
 | 编号 | 状态 | 映射 | 依赖 | 交付物 | 可验证验收条件 |
 |---|---|---|---|---|---|
-| M2-040 | done | RES-002 | M2-032 | Model Provider、Deployment、Alias、Price Version 领域与 Repository | Alias 可原子切换 Deployment，历史 Price Version 不可更新 |
+| M2-040 | done | RES-002 | M2-032 | 完整 Model Deployment Revision、Alias、Price Version 领域与 Repository | 新建模型原子写入连接与模型配置，Alias 可切换 Deployment，历史 Price Version 不可更新 |
 | M2-041 | done | RES-002、RES-009 | M2-040 | Model REST API、分页筛选、权限和审计 | API 不展开 Credential Secret，跨部门不可见模型不能被引用 |
 | M2-042 | done | RES-003 | M2-032 | Tool Definition、Tool Version、输入输出 Schema、副作用等级、超时和 Runner 类型 | 已发布 Tool Version 不可变，无效 JSON Schema 被拒绝 |
 | M2-043 | done | RES-003、RES-009 | M2-042 | Tool REST API、版本创建、停用和审计 | 重复 Content Hash 幂等，历史版本仍可被快照读取 |
@@ -267,7 +267,7 @@ M2 至少追加以下权限：
    - environments、workflow_deployments、deployment_history
 2. `0005_credentials_and_models.sql`
    - credentials、credential_secret_versions
-   - model_providers、model_deployments、model_aliases、model_price_versions
+   - model_deployments、model_aliases、model_alias_deployment_history、model_price_versions
 3. `0006_tools_and_skills.sql`
    - tools、tool_versions
    - skills、skill_versions、skill_dependencies 和 Artifact 引用
@@ -314,7 +314,7 @@ Testcontainers 或受控容器负责自动集成测试，测试不得依赖开�
 - M2 继续使用 Platform API 模块化单体，不新增 Worker、Coordinator 或 Sandbox Deployment。
 - Migration Job 使用同一 Platform API 镜像执行 `migrate`，并覆盖 `0004`～`0007`。
 - Readiness 仍以 MySQL 为必需依赖；MinIO 在 Skill Artifact 用例中不可用时，相关接口返回明确依赖错误，不伪造成功。
-- LightRAG、Mem0 和 Model Provider 是用户配置的外部连接，不作为 Platform API 全局 Readiness 的必需依赖。
+- LightRAG、Mem0 和模型 Deployment 中的外部连接是用户配置，不作为 Platform API 全局 Readiness 的必需依赖。
 
 ## 13. M2 验收门禁
 

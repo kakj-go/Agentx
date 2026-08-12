@@ -75,13 +75,22 @@ impl RuntimeCoordinator for CoordinatorService {
                 requested_by: optional_uuid(request.requested_by, "requested_by")?,
                 trigger_type: request.trigger_type,
                 input: parse_json(&request.input_json, "input_json")?,
+                context_overlay: parse_json(&request.context_json, "context_json")?,
                 idempotency_key: request.idempotency_key,
                 caller_execution_id: optional_uuid(
                     request.caller_execution_id,
                     "caller_execution_id",
                 )?,
                 execution_type: execution_type.into(),
-                parent_execution_id: None,
+                parent_execution_id: optional_uuid(
+                    request.parent_execution_id,
+                    "parent_execution_id",
+                )?,
+                caller_node_execution_id: optional_uuid(
+                    request.caller_node_execution_id,
+                    "caller_node_execution_id",
+                )?,
+                trace_id: optional_uuid(request.trace_id, "trace_id")?,
                 fork_checkpoint_id: None,
                 fork_mode: None,
                 runtime_settings,
@@ -375,6 +384,9 @@ async fn reaper_loop(repository: RuntimeRepository, quota_admission: QuotaAdmiss
     loop {
         if let Err(error) = repository.reap_expired_leases().await {
             error!(%error, "runtime lease reaper failed");
+        }
+        if let Err(error) = repository.finalize_error_collections().await {
+            error!(%error, "End.error collection finalizer failed");
         }
         if let Err(error) = repository.resume_due_waits().await {
             error!(%error, "runtime wait scanner failed");

@@ -11,7 +11,7 @@
 - M3.1 已将评测器/Profile 合并为不可变评测方案版本，并统一依赖型按钮的前置条件引导，为 M4 Runtime 接入提供了稳定依赖。
 - M4 可靠运行已经完成：Definition 2.0、Node Protocol、确定性 Runtime、Coordinator/Worker、Checkpoint/Fork、Wait/Approval、Execution Workbench 和 Kubernetes 故障门禁均已交付；见 [M4 验收证据](m4-acceptance-evidence.md)。
 - M5 Agent 运行功能和当前 Kubernetes 部署基线已经完成：AGT-001～013、Runtime Port、资源 Adapter、Agent Ledger/循环、Rust OpenSandbox Adapter、Sandbox Manager、Agent/Code Workbench、固定版本 LightRAG/Mem0 和 Runtime Kubernetes E2E 均已通过。AGT-010 的生产强化子项暂不重试，已明确归入 M7 INT-006/010/011/014；Agent/Code 的完整 Studio 编排归入 M6，见 [M5 验收证据](m5-acceptance-evidence.md)。
-- M6 Workflow Studio 已完成：Definition 3.0、Editor/Overlay 分离、Manifest 驱动画布和表单、Draft Revision 调试、Trace、Version/Deployment 及全 UI Kubernetes E2E 均已通过；见 [M6 验收证据](m6-acceptance-evidence.md)。
+- M6 Workflow Studio 已完成：Definition 4.0、Editor/Overlay 分离、Manifest 驱动画布和表单、Draft Revision 调试、Trace、Version/Deployment 及全 UI Kubernetes E2E 均已通过；见 [M6 验收证据](m6-acceptance-evidence.md)。
 
 因此后续不能以“逐页替换 Mock”的方式推进。所有业务先建立稳定契约和权威数据，再接入页面；M7 尚未绑定真实 Execution 的外围入口必须返回明确的 `RUNTIME_UNAVAILABLE`，不得伪造成功记录。
 
@@ -35,7 +35,7 @@
             ↓
     全链路集成、加固和发布
 
-完整引擎和 Studio 后置，但 Workflow、Draft、Version、Deployment、Execution、Resource Reference 和运行命令必须前置冻结。M6 已完成 Definition 3.0、Editor Document、Node Catalog 和 Draft Revision Debug Source 的架构收敛；M7 只消费这些稳定契约。
+完整引擎和 Studio 后置，但 Workflow、Draft、Version、Deployment、Execution、Resource Reference 和运行命令必须前置冻结。M6 已完成 Definition 4.0、Editor Document、Node Catalog 和 Draft Revision Debug Source 的架构收敛；M7 只消费这些稳定契约。
 
 ## 3. 阶段状态
 
@@ -54,10 +54,12 @@
 | 08 | [Workflow 运行内核](08-workflow-runtime-core.md) | done | 非 AI JSON Fixture 可分布式可靠执行 |
 | 09 | [恢复、等待和审批运行](09-checkpoint-wait-recovery.md) | done | Checkpoint、Fork、Wait 和审批恢复可用 |
 | 10 | [Agent 与 OpenSandbox](10-agent-opensandbox.md) | done | AGT-001～013、当前 Kubernetes 部署、真实 OpenSandbox Runtime 链路和临时 E2E 已通过；AGT-010 生产强化暂不重试并归入 M7；见 [M5 验收证据](m5-acceptance-evidence.md) |
-| 11 | [Workflow Studio](11-workflow-studio.md) | done | Agentx 原生 Definition 3.0、Manifest 驱动画布、Draft Revision 调试、版本和发布真实 Workflow；见 [M6 验收证据](m6-acceptance-evidence.md) |
+| 11 | [Workflow Studio](11-workflow-studio.md) | done | Agentx 原生 Definition 4.0、Manifest 驱动画布、Draft Revision 调试、版本和发布真实 Workflow；见 [M6 验收证据](m6-acceptance-evidence.md) |
 | 12 | [集成、加固和发布](12-integration-hardening-release.md) | in_progress | 业务 Runtime 闭环已通过；生产安全、容量、升级和最终发布证据仍需完成，见 [M7 验收证据](m7-acceptance-evidence.md) |
 
 功能覆盖和验收证据统一维护在 [功能追踪矩阵](99-feature-traceability.md)。
+
+业务域国际化与跨模块安全删除作为横切控制面能力已经完成，统一契约、权限、并发边界和测试见 [安全删除验收证据](safe-deletion-acceptance-evidence.md)。
 
 当前 Kubernetes 的 Full/Custom Profile、外部分散依赖、独立 OpenSandbox 和自动化部署验收已经完成，见 [可组合部署实施计划](composable-deployment.md)。
 

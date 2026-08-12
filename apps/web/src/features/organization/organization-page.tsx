@@ -1,13 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { ColumnDef } from '@tanstack/react-table'
 import { Building2, ChevronDown, ChevronRight, Pencil, Plus, UserPlus, UsersRound } from 'lucide-react'
-import { useMemo, useState, type FormEvent } from 'react'
+import { useMemo, useRef, useState, type FormEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { useAuth } from '../../app/providers/auth-provider'
-import { apiRequest, jsonBody } from '../../shared/api/client'
+import { apiFieldErrors, apiRequest, jsonBody } from '../../shared/api/client'
 import type { Department, PageResponse, Role, User } from '../../shared/api/types'
 import { DataTable } from '../../shared/components/data-table'
+import { EntityDeleteButton } from '../../shared/components/entity-delete-button'
 import { EntityCell } from '../../shared/components/entity-cell'
 import { PageContainer } from '../../shared/components/page-container'
 import { PageHeader } from '../../shared/components/page-header'
@@ -96,13 +97,13 @@ export function OrganizationPage() {
     return [item.id, userList.filter((user) => ids.has(user.departmentId)).length]
   })), [departmentList, userList])
   const columns = useMemo<Array<ColumnDef<User>>>(() => [
-    { accessorKey: 'displayName', header: t('pages.organization.users'), cell: ({ row }) => <EntityCell detail={row.original.username} icon={UsersRound} name={row.original.displayName} /> },
-    { accessorKey: 'departmentName', header: t('pages.organization.department') },
-    { id: 'roles', header: t('pages.organization.roles'), cell: ({ row }) => row.original.roles.map((role) => roleLabel(t, role)).join(', ') },
+    { accessorKey: 'displayName', header: t('organization.users'), cell: ({ row }) => <EntityCell detail={row.original.username} icon={UsersRound} name={row.original.displayName} /> },
+    { accessorKey: 'departmentName', header: t('organization.department') },
+    { id: 'roles', header: t('organization.roles'), cell: ({ row }) => row.original.roles.map((role) => roleLabel(t, role)).join(', ') },
     { accessorKey: 'status', header: t('common.status'), cell: ({ row }) => <StatusBadge status={row.original.status === 'active' ? 'active' : row.original.status === 'invited' ? 'invited' : 'inactive'} /> },
     { id: 'actions', header: t('common.actions'), cell: ({ row }) => <div className="flex gap-1">
       {row.original.status !== 'disabled' && auth.hasPermission('user:update') && <Button onClick={() => { setEditingUser(row.original); setUserOpen(true) }} size="sm" variant="ghost">{t('common.edit')}</Button>}
-      {row.original.status !== 'disabled' && auth.hasPermission('user:disable') && <Button disabled={row.original.id === auth.user?.id || disable.isPending} onClick={() => disable.mutate(row.original.id)} size="sm" variant="ghost">{t('pages.organization.disable')}</Button>}
+      {row.original.status !== 'disabled' && auth.hasPermission('user:disable') && <Button disabled={row.original.id === auth.user?.id || disable.isPending} onClick={() => disable.mutate(row.original.id)} size="sm" variant="ghost">{t('organization.disable')}</Button>}
     </div> },
   ], [auth, disable, t])
 
@@ -118,18 +119,18 @@ export function OrganizationPage() {
   return <PageContainer>
     <PageHeader
       action={<div className="flex gap-2">
-        {auth.hasPermission('department:manage') && <Button disabled={!rootDepartment} onClick={createDepartment} variant="secondary"><Plus className="size-4" />{t('pages.organization.addDepartment')}</Button>}
-        {auth.hasPermission('user:create') && <Button onClick={createUser}><UserPlus className="size-4" />{t('pages.organization.createUser')}</Button>}
+        {auth.hasPermission('department:manage') && <Button disabled={!rootDepartment} onClick={createDepartment} variant="secondary"><Plus className="size-4" />{t('organization.addDepartment')}</Button>}
+        {auth.hasPermission('user:create') && <Button onClick={createUser}><UserPlus className="size-4" />{t('organization.createUser')}</Button>}
       </div>}
-      description={t('pages.organization.description')}
-      title={t('pages.organization.title')}
+      description={t('organization.description')}
+      title={t('organization.title')}
     />
     {(departments.error || users.error) && <p className="mt-5 rounded-lg border border-danger/20 bg-danger/10 p-3 text-xs text-danger">{String(departments.error ?? users.error)}</p>}
     <div className="mt-6 grid grid-cols-[280px_minmax(0,1fr)] gap-5">
       <Card className="h-fit overflow-hidden">
-        <div className="flex h-14 items-center gap-2 border-b border-border px-4 text-sm font-semibold"><Building2 className="size-4 text-primary" />{t('pages.organization.departments')}</div>
+        <div className="flex h-14 items-center gap-2 border-b border-border px-4 text-sm font-semibold"><Building2 className="size-4 text-primary" />{t('organization.departments')}</div>
         <div className="p-2">
-          <DepartmentRow active={selectedDepartment === 'all'} count={users.data?.total ?? 0} label={t('pages.organization.allDepartments')} onSelect={() => setSelectedDepartment('all')} />
+          <DepartmentRow active={selectedDepartment === 'all'} count={users.data?.total ?? 0} label={t('organization.allDepartments')} onSelect={() => setSelectedDepartment('all')} />
           {buildDepartmentTree(departmentList).map((node) => <DepartmentTreeRow
             activeId={selectedDepartment}
             canEdit={auth.hasPermission('department:manage')}
@@ -167,6 +168,9 @@ export function OrganizationPage() {
 
 function DepartmentTreeRow({ node, activeId, counts, canEdit, onSelect, onEdit }: { node: DepartmentNode; activeId: string; counts: Map<string, number>; canEdit: boolean; onSelect: (id: string) => void; onEdit: (department: Department) => void }) {
   const { t } = useTranslation()
+  const auth = useAuth()
+  const queryClient = useQueryClient()
+  const { showToast } = useToast()
   const [expanded, setExpanded] = useState(true)
   return <div>
     <DepartmentRow
@@ -176,20 +180,22 @@ function DepartmentTreeRow({ node, activeId, counts, canEdit, onSelect, onEdit }
       expanded={expanded}
       label={node.name}
       onEdit={!node.isRoot && canEdit ? () => onEdit(node) : undefined}
+      deleteAction={<EntityDeleteButton canDelete={auth.hasPermission('department:delete')} deletePath={`/departments/${node.id}`} entityId={node.id} entityName={node.name} entityType="department" immutableReason={node.isRoot ? t('common.deletion.immutable') : undefined} onDeleted={async () => { await queryClient.invalidateQueries({ queryKey: ['departments'] }); showToast(t('organization.deleted')) }} />}
       onSelect={() => onSelect(node.id)}
       onToggle={() => setExpanded((value) => !value)}
-      toggleLabel={t(expanded ? 'pages.organization.collapse' : 'pages.organization.expand')}
+      toggleLabel={t(expanded ? 'organization.collapse' : 'organization.expand')}
     />
     {expanded && node.children.length > 0 && <div className="ml-4 border-l border-border pl-1">{node.children.map((child) => <DepartmentTreeRow activeId={activeId} canEdit={canEdit} counts={counts} key={child.id} node={child} onEdit={onEdit} onSelect={onSelect} />)}</div>}
   </div>
 }
 
-function DepartmentRow({ active, count, label, onSelect, onEdit, expandable, expanded, onToggle, toggleLabel }: { active: boolean; count: number; label: string; onSelect: () => void; onEdit?: () => void; expandable?: boolean; expanded?: boolean; onToggle?: () => void; toggleLabel?: string }) {
+function DepartmentRow({ active, count, label, onSelect, onEdit, deleteAction, expandable, expanded, onToggle, toggleLabel }: { active: boolean; count: number; label: string; onSelect: () => void; onEdit?: () => void; deleteAction?: React.ReactNode; expandable?: boolean; expanded?: boolean; onToggle?: () => void; toggleLabel?: string }) {
   const ToggleIcon = expanded ? ChevronDown : ChevronRight
   return <div className={cn('group flex h-10 items-center rounded-lg text-xs text-muted-foreground hover:bg-muted hover:text-foreground', active && 'bg-primary/10 font-semibold text-primary hover:bg-primary/10 hover:text-primary')}>
     {expandable ? <button aria-label={toggleLabel} className="ml-1 grid size-7 shrink-0 place-items-center rounded-md hover:bg-background/70" onClick={onToggle}><ToggleIcon className="size-3.5" /></button> : <span className="ml-1 size-7 shrink-0" />}
     <button className="flex min-w-0 flex-1 items-center gap-2 pr-2 text-left" onClick={onSelect}><span className="flex-1 truncate">{label}</span><span className="text-[10px]">{count}</span></button>
     {onEdit && <button aria-label={label} className="mr-1 rounded p-1 opacity-0 hover:bg-background group-hover:opacity-100 focus-visible:opacity-100" onClick={onEdit}><Pencil className="size-3" /></button>}
+    {deleteAction}
   </div>
 }
 
@@ -198,28 +204,36 @@ function DepartmentDialog({ department, departments, parentId, open, onClose, on
   const [name, setName] = useState(department?.name ?? '')
   const [parent, setParent] = useState(department?.parentId ?? parentId ?? '')
   const [error, setError] = useState('')
+  const [fieldError, setFieldError] = useState('')
   const [pending, setPending] = useState(false)
+  const formRef = useRef<HTMLFormElement>(null)
   const excluded = department ? descendantIds(departments, department.id) : new Set<string>()
   const options = departmentOptions(departments, excluded)
   const parentName = departments.find((item) => item.id === parent)?.name
-  const title = department ? t('pages.organization.editDepartment') : parentName ? t('pages.organization.addChildDepartment', { name: parentName }) : t('pages.organization.addDepartment')
+  const title = department ? t('organization.editDepartment') : parentName ? t('organization.addChildDepartment', { name: parentName }) : t('organization.addDepartment')
   const submit = async (event: FormEvent) => {
     event.preventDefault()
     setPending(true)
     setError('')
+    setFieldError('')
     try {
       if (department) await apiRequest(`/departments/${department.id}`, { method: 'PATCH', body: jsonBody({ name, parentId: parent || null, version: department.version }) })
       else await apiRequest('/departments', { method: 'POST', body: jsonBody({ name, parentId: parent }) })
       onClose()
       void onSaved()
-    } catch (value) { setError(String(value)) } finally { setPending(false) }
+    } catch (value) {
+      const fields = apiFieldErrors(value)
+      setFieldError(fields.name ?? '')
+      if (!fields.name) setError(String(value))
+      if (fields.name) requestAnimationFrame(() => formRef.current?.querySelector<HTMLElement>('[name="name"]')?.focus())
+    } finally { setPending(false) }
   }
   return <Dialog onOpenChange={(value) => { if (!value) onClose() }} open={open}>
     <DialogContent className="p-6" title={title}>
       <h3 className="text-lg font-semibold">{title}</h3>
-      <form className="mt-5 space-y-4" onSubmit={(event) => void submit(event)}>
-        <Field label={t('common.name')} onChange={setName} value={name} />
-        <label className="block text-xs"><span className="mb-2 block">{t('pages.organization.parentDepartment')}</span><Select className="w-full" onValueChange={setParent} options={options} value={parent} /></label>
+      <form className="mt-5 space-y-4" onSubmit={(event) => void submit(event)} ref={formRef}>
+        <Field error={fieldError} label={t('common.name')} name="name" onChange={(value) => { setName(value); setFieldError('') }} value={name} />
+        <label className="block text-xs"><span className="mb-2 block">{t('organization.parentDepartment')}</span><Select className="w-full" onValueChange={setParent} options={options} value={parent} /></label>
         {error && <p className="text-xs text-danger">{error}</p>}
         <div className="flex justify-end gap-2"><Button onClick={onClose} type="button" variant="ghost">{t('common.cancel')}</Button><Button disabled={pending || !parent} type="submit">{t('common.save')}</Button></div>
       </form>
@@ -234,29 +248,37 @@ function UserDialog({ user, departments, roles, initialDepartmentId, open, onClo
   const [department, setDepartment] = useState(user?.departmentId ?? initialDepartmentId ?? '')
   const [role, setRole] = useState(roles.find((item) => item.code === user?.roles[0])?.id ?? roles.find((item) => item.code === 'member')?.id ?? '')
   const [error, setError] = useState('')
+  const [fieldError, setFieldError] = useState('')
   const [pending, setPending] = useState(false)
+  const formRef = useRef<HTMLFormElement>(null)
   const selectableRoles = roles.filter((item) => item.code !== 'company_admin' || user?.roles.includes('company_admin'))
   const submit = async (event: FormEvent) => {
     event.preventDefault()
     setPending(true)
     setError('')
+    setFieldError('')
     try {
       if (user) await apiRequest(`/users/${user.id}`, { method: 'PATCH', body: jsonBody({ displayName: name, departmentId: department, roleId: role, version: user.version }) })
       else await apiRequest('/users', { method: 'POST', body: jsonBody({ username, displayName: name, departmentId: department, roleId: role }) })
       onClose()
       void onSaved()
-    } catch (value) { setError(String(value)) } finally { setPending(false) }
+    } catch (value) {
+      const fields = apiFieldErrors(value)
+      setFieldError(fields.username ?? '')
+      if (!fields.username) setError(String(value))
+      if (fields.username) requestAnimationFrame(() => formRef.current?.querySelector<HTMLElement>('[name="username"]')?.focus())
+    } finally { setPending(false) }
   }
-  const title = user ? t('pages.organization.editUser') : t('pages.organization.createUser')
+  const title = user ? t('organization.editUser') : t('organization.createUser')
   return <Dialog onOpenChange={(value) => { if (!value) onClose() }} open={open}>
     <DialogContent className="p-6" title={title}>
       <h3 className="text-lg font-semibold">{title}</h3>
-      <form className="mt-5 grid grid-cols-2 gap-4" onSubmit={(event) => void submit(event)}>
-        <Field disabled={Boolean(user)} label={t('auth.username')} onChange={setUsername} value={username} />
-        <Field label={t('pages.organization.userName')} onChange={setName} value={name} />
-        <label className="text-xs"><span className="mb-2 block">{t('pages.organization.department')}</span><Select className="w-full" onValueChange={setDepartment} options={departmentOptions(departments)} value={department} /></label>
-        <label className="text-xs"><span className="mb-2 block">{t('pages.organization.roles')}</span><Select className="w-full" onValueChange={setRole} options={selectableRoles.map((item) => ({ value: item.id, label: roleLabel(t, item.code, item.name) }))} value={role} /></label>
-        {!user && <div className="col-span-2 rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-xs"><strong>{t('pages.organization.initialPassword')}: 123456</strong><p className="mt-1 text-[11px] text-muted-foreground">{t('pages.organization.initialPasswordHint')}</p></div>}
+      <form className="mt-5 grid grid-cols-2 gap-4" onSubmit={(event) => void submit(event)} ref={formRef}>
+        <Field disabled={Boolean(user)} error={fieldError} label={t('auth.username')} name="username" onChange={(value) => { setUsername(value); setFieldError('') }} value={username} />
+        <Field label={t('organization.userName')} onChange={setName} value={name} />
+        <label className="text-xs"><span className="mb-2 block">{t('organization.department')}</span><Select className="w-full" onValueChange={setDepartment} options={departmentOptions(departments)} value={department} /></label>
+        <label className="text-xs"><span className="mb-2 block">{t('organization.roles')}</span><Select className="w-full" onValueChange={setRole} options={selectableRoles.map((item) => ({ value: item.id, label: roleLabel(t, item.code, item.name) }))} value={role} /></label>
+        {!user && <div className="col-span-2 rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-xs"><strong>{t('organization.initialPassword')}: 123456</strong><p className="mt-1 text-[11px] text-muted-foreground">{t('organization.initialPasswordHint')}</p></div>}
         {error && <p className="col-span-2 text-xs text-danger">{error}</p>}
         <div className="col-span-2 flex justify-end gap-2"><Button onClick={onClose} type="button" variant="ghost">{t('common.cancel')}</Button><Button disabled={pending || !department || !role} type="submit">{t('common.save')}</Button></div>
       </form>
@@ -264,6 +286,6 @@ function UserDialog({ user, departments, roles, initialDepartmentId, open, onClo
   </Dialog>
 }
 
-function Field({ label, value, onChange, disabled = false }: { label: string; value: string; onChange: (value: string) => void; disabled?: boolean }) {
-  return <label className="text-xs"><span className="mb-2 block">{label}</span><Input disabled={disabled} onChange={(event) => onChange(event.target.value)} required value={value} /></label>
+function Field({ label, value, onChange, disabled = false, error, name }: { label: string; value: string; onChange: (value: string) => void; disabled?: boolean; error?: string; name?: string }) {
+  return <label className="text-xs"><span className="mb-2 block">{label}</span><Input aria-describedby={error ? `${name}-error` : undefined} aria-invalid={Boolean(error)} disabled={disabled} name={name} onChange={(event) => onChange(event.target.value)} required value={value} />{error && <span className="mt-1.5 block text-danger" id={`${name}-error`}>{error}</span>}</label>
 }

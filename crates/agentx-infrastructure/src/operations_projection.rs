@@ -28,7 +28,7 @@ impl MySqlOperationsProjection {
 #[async_trait]
 impl ExecutionProjectionPort for MySqlOperationsProjection {
     async fn create(&self, value: &ExecutionSummary) -> Result<()> {
-        sqlx::query("INSERT INTO workflow_executions(id,tenant_id,workflow_id,workflow_version_id,invocation_id,session_id,trace_id,trigger_type,status,started_at,ended_at,duration_ms,cost_micros,error_code,error_message) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+        sqlx::query("INSERT INTO workflow_executions(id,tenant_id,workflow_id,workflow_version_id,invocation_id,session_id,trace_id,trigger_type,status,input_json,context_json,context_base_json,context_version,session_context_version,started_at,ended_at,duration_ms,cost_micros,error_code,error_message) VALUES(?,?,?,?,?,?,?,?,?,JSON_OBJECT(),JSON_OBJECT(),JSON_OBJECT(),0,0,?,?,?,?,?,?)")
             .bind(value.id.as_uuid()).bind(value.tenant_id.as_uuid()).bind(value.workflow_id.as_uuid()).bind(value.workflow_version_id.map(|id| id.as_uuid()))
             .bind(value.invocation_id.map(|id| id.as_uuid())).bind(value.session_id.map(|id| id.as_uuid())).bind(value.trace_id.as_uuid())
             .bind(&value.trigger_type).bind(status_name(&value.status)).bind(value.started_at).bind(value.ended_at).bind(value.duration_ms)

@@ -4,7 +4,7 @@ async function login(page:Page){await page.goto('/login');await page.getByLabel(
 
 test('M3 fixture is visible through approval, notification, execution, trace, and runtime pages', async ({ page }) => {
   await login(page)
-  await page.getByRole('button',{name:'通知'}).click()
+  await page.getByRole('button',{name:'消息中心'}).click()
   await expect(page.getByText('有一项审批已指派给你')).toBeVisible()
   await page.getByText('有一项审批已指派给你').click()
   await expect(page.getByRole('heading',{name:'M3 E2E 发布审批'})).toBeVisible()
@@ -26,7 +26,7 @@ test('M3 fixture is visible through approval, notification, execution, trace, an
   await page.getByRole('button',{name:'通过'}).click()
   approve=page.getByRole('dialog',{name:'通过'})
   await approve.getByRole('button',{name:'通过'}).click()
-  await expect(page.getByText(/blocked_runtime/)).toBeVisible()
+  await expect(page.getByText('Runtime 阻塞')).toBeVisible()
 
   await page.getByRole('link',{name:'消息中心'}).click()
   await expect(page.getByText('执行出现工具错误')).toBeVisible()
@@ -46,7 +46,7 @@ test('M3 fixture is visible through approval, notification, execution, trace, an
   expect(await artifact.createReadStream()).toBeTruthy()
 
   await page.getByRole('link',{name:'运行状态'}).click()
-  await expect(page.getByText('trace_writer')).toBeVisible()
+  await expect(page.getByText('Trace 写入器')).toBeVisible()
   await page.getByRole('link',{name:'总览'}).click()
   await expect(page.getByText('MCP Echo Workflow')).toBeVisible()
 })

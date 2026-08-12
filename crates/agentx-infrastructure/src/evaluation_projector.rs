@@ -90,7 +90,8 @@ async fn project_target_result(
     }
 
     let result = execution_result.context("Evaluation target Execution has no result")?;
-    let actual = terminal_output(result);
+    let actual =
+        workflow_output(result).context("Evaluation target Execution has no End outputs")?;
     let dataset_version_id: Uuid = case.try_get("dataset_version_id")?;
     let expected: Option<Value> = sqlx::query_scalar("SELECT expected_output_json FROM dataset_version_cases WHERE tenant_id=? AND dataset_version_id=? AND source_case_id=?")
         .bind(event.tenant_id.as_uuid())
@@ -418,18 +419,12 @@ async fn finalize_run(
     Ok(())
 }
 
-fn terminal_output(result: &Value) -> Value {
-    result
-        .get("terminalNodes")
-        .and_then(Value::as_array)
-        .and_then(|nodes| nodes.last())
-        .and_then(|node| node.get("outputs"))
-        .cloned()
-        .unwrap_or_else(|| result.clone())
+fn workflow_output(result: &Value) -> Option<Value> {
+    result.get("outputs").cloned()
 }
 
 fn evaluator_output(result: &Value) -> Option<Value> {
-    let output = terminal_output(result);
+    let output = workflow_output(result)?;
     if output.get("passed").is_some() {
         return Some(output);
     }
@@ -482,8 +477,8 @@ mod tests {
     use serde_json::{Value, json};
 
     #[test]
-    fn evaluator_output_reads_item_json() {
-        let result = json!({"terminalNodes":[{"outputs":{"main":[{"json":{"passed":true,"score":0.8,"detail":{}}}]}}]});
+    fn evaluator_output_reads_explicit_end_outputs() {
+        let result = json!({"schemaVersion":"4.0","outputs":{"main":[{"json":{"passed":true,"score":0.8,"detail":{}}}]}});
         assert_eq!(evaluator_output(&result).unwrap()["score"], 0.8);
     }
 

@@ -4,13 +4,14 @@ use axum::{
     extract::DefaultBodyLimit,
     routing::{get, patch, post},
 };
+use utoipa::Modify;
 use utoipa::OpenApi;
 
 use crate::{
-    applications, auth, catalog, connection_test, credentials, datasets, external_resources,
-    governance, grants, iam, mcp_control, models::*, models_control, operations,
-    runtime_operations, sandbox_profiles, skills_control, state::AppState, workflow_studio,
-    workflows,
+    applications, auth, catalog, connection_test, credentials, datasets, deletion,
+    external_resources, governance, grants, iam, mcp_control, models::*, models_control,
+    operations, resource_access, runtime_operations, sandbox_profiles, skills_control,
+    state::AppState, workflow_packages, workflow_studio, workflows,
 };
 
 #[derive(OpenApi)]
@@ -19,7 +20,7 @@ use crate::{
     paths(
         auth::bootstrap_status, auth::bootstrap, auth::login, auth::refresh, auth::change_password,
         auth::logout, auth::me, iam::list_departments, iam::create_department,
-        iam::update_department, iam::delete_department, iam::list_users, iam::create_user,
+        iam::update_department, iam::list_users, iam::create_user,
         iam::update_user, iam::disable_user, iam::list_roles, iam::create_role, iam::update_role,
         iam::list_permissions,
         workflows::list_workflows, workflows::create_workflow, workflows::get_workflow,
@@ -29,16 +30,15 @@ use crate::{
         workflows::delete_member, workflows::list_environments, workflows::create_environment,
         workflows::update_environment, workflows::list_deployments, workflows::publish,
         workflows::rollback, workflows::run_workflow,
+        workflow_packages::export_workflow_package, workflow_packages::import_workflow_package,
         catalog::list_node_definitions, catalog::get_node_definition,
         catalog::list_node_provider_options,
         workflow_studio::validate_draft, workflow_studio::preview_expression, workflow_studio::get_debug_overlay,
         workflow_studio::save_debug_overlay, workflow_studio::delete_debug_overlay,
         credentials::list_credentials, credentials::create_credential, credentials::get_credential,
         credentials::update_credential, credentials::rotate_credential,
-        models_control::list_models, models_control::get_model, models_control::list_providers,
-        models_control::create_provider, models_control::list_deployments,
-        models_control::create_deployment, models_control::create_alias, models_control::update_alias,
-        models_control::update_provider, models_control::create_deployment_revision,
+        models_control::list_models, models_control::get_model, models_control::create_model,
+        models_control::update_model,
         models_control::list_deployment_history, models_control::create_price,
         models_control::list_prices, models_control::test_model,
         mcp_control::list_servers, mcp_control::create_server, mcp_control::get_server,
@@ -63,6 +63,10 @@ use crate::{
         sandbox_profiles::create_version,
         grants::list_grantable_resources, grants::list_grants, grants::create_grant, grants::delete_grant,
         grants::validate_workflow_resources,
+        resource_access::list_resource_options, resource_access::authorize_resource,
+        resource_access::create_resource_grant_request, resource_access::list_resource_grant_requests,
+        resource_access::get_resource_grant_request, resource_access::approve_resource_grant_request,
+        resource_access::reject_resource_grant_request, resource_access::cancel_resource_grant_request,
         applications::list_applications, applications::create_application,
         applications::get_application, applications::update_application,
         applications::list_deployments, applications::create_deployment,
@@ -77,6 +81,13 @@ use crate::{
         datasets::update_dataset, datasets::list_cases, datasets::create_case,
         datasets::update_case, datasets::delete_case, datasets::import_cases,
         datasets::export_cases, datasets::list_versions, datasets::publish_version,
+        deletion::get_deletion_impact, deletion::delete_workflow,
+        deletion::delete_environment, deletion::delete_application, deletion::delete_credential,
+        deletion::delete_model, deletion::delete_mcp_server, deletion::delete_skill,
+        deletion::delete_knowledge, deletion::delete_memory, deletion::delete_sandbox_profile,
+        deletion::delete_dataset, deletion::delete_evaluation_profile,
+        deletion::delete_department, deletion::delete_role,
+        deletion::delete_application_webhook, deletion::delete_application_schedule,
         datasets::list_profiles, datasets::create_profile,
         datasets::list_evaluations, datasets::create_evaluation,
         datasets::start_evaluation, datasets::cancel_evaluation, datasets::get_report,
@@ -106,6 +117,7 @@ use crate::{
         UpdateRoleRequest, PermissionResponse, agentx_api_types::ApiErrorResponse,
         agentx_api_types::FieldError,
         agentx_api_types::HealthResponse, agentx_api_types::DependencyHealth
+        ,deletion::DeletionReference, deletion::DeletionImpactResponse
         ,workflows::WorkflowResponse, workflows::CreateWorkflowRequest,
         workflows::UpdateWorkflowRequest, workflows::DraftResponse, workflows::SaveDraftRequest,
         workflows::RevisionResponse, workflows::WorkflowVersionResponse,
@@ -115,6 +127,10 @@ use crate::{
         workflows::DeploymentResponse,
         workflows::PublishWorkflowRequest, workflows::QueuedWorkflowRunResponse,
         workflows::RollbackWorkflowRequest, workflows::RunWorkflowRequest,
+        workflow_packages::WorkflowPackageManifest, workflow_packages::NodeLock,
+        workflow_packages::ResourceBindingPlaceholder, workflow_packages::WorkflowPackage,
+        workflow_packages::ResourceBindingTarget, workflow_packages::ImportWorkflowPackageRequest,
+        workflow_packages::ImportedWorkflowResponse,
         catalog::NodeDefinitionQuery, catalog::NodeDefinitionSummary,
         catalog::NodeDefinitionDetail, catalog::NodeProviderQuery,
         catalog::NodeProviderOption, catalog::NodeProviderOptionsResponse,
@@ -124,12 +140,9 @@ use crate::{
         workflow_studio::SaveDebugOverlayRequest,
         credentials::CredentialResponse, credentials::CreateCredentialRequest,
         credentials::UpdateCredentialRequest, credentials::RotateCredentialRequest,
-        models_control::ModelResponse, models_control::ModelProviderResponse,
-        models_control::CreateModelProviderRequest, models_control::ModelDeploymentResponse,
-        models_control::CreateModelDeploymentRequest, models_control::CreateModelAliasRequest,
-        models_control::UpdateModelAliasRequest, models_control::ModelPriceResponse,
-        models_control::CreateModelPriceRequest, models_control::UpdateModelProviderRequest,
-        models_control::CreateDeploymentRevisionRequest,
+        models_control::ModelResponse, models_control::CreateModelRequest,
+        models_control::UpdateModelRequest, models_control::ModelPriceResponse,
+        models_control::CreateModelPriceRequest,
         models_control::ModelDeploymentHistoryResponse,
         mcp_control::McpServerResponse, mcp_control::CreateMcpServerRequest,
         mcp_control::UpdateMcpServerRequest, mcp_control::McpToolResponse,
@@ -153,6 +166,12 @@ use crate::{
         connection_test::HealthCheckResponse, grants::GrantableResourceResponse, grants::GrantResponse,
         grants::CreateGrantRequest, grants::ResourceValidationResponse,
         grants::MissingGrantResponse,
+        resource_access::ResourceOptionQuery, resource_access::WorkflowResourceOptionResponse,
+        resource_access::ResourceAuthorizationInput, resource_access::ResourceAuthorizationResponse,
+        resource_access::CreateResourceGrantRequest, resource_access::ReviewResourceGrantRequest,
+        resource_access::CancelResourceGrantRequest, resource_access::ResourceGrantRequestResponse,
+        resource_access::ResourceGrantRequestAuditResponse,
+        resource_access::ResourceGrantRequestReviewResponse, resource_access::ResourceRequirementResponse,
         applications::ApplicationResponse, applications::CreateApplicationRequest,
         applications::UpdateApplicationRequest, applications::ApplicationDeploymentResponse,
         applications::CreateApplicationDeploymentRequest, applications::ApiKeyResponse,
@@ -194,6 +213,7 @@ use crate::{
         governance::CreateRetentionRunRequest, governance::RetentionRunResponse,
         governance::RetentionItemResponse
     )),
+    modifiers(&UniquenessErrorExamples),
     tags(
         (name = "Agentx M1", description = "Bootstrap, authentication and IAM control plane"),
         (name = "Agentx M2", description = "Workflow and resource control plane"),
@@ -201,6 +221,85 @@ use crate::{
     )
 )]
 struct ApiDoc;
+
+struct UniquenessErrorExamples;
+
+impl Modify for UniquenessErrorExamples {
+    fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
+        let Some(components) = openapi.components.as_mut() else {
+            return;
+        };
+        let mut examples = serde_json::Map::new();
+        for (name, code, field) in UNIQUENESS_ERROR_EXAMPLES {
+            examples.insert(
+                (*name).to_owned(),
+                serde_json::json!({
+                    "summary": format!("{code} uniqueness conflict"),
+                    "value": {
+                        "code": code,
+                        "message": "The submitted value already exists",
+                        "requestId": "019ff3e3-3c2b-7ad0-902f-1f5c34644ed9",
+                        "fieldErrors": [{
+                            "field": field,
+                            "code": code,
+                            "message": "The submitted value already exists"
+                        }]
+                    }
+                }),
+            );
+        }
+        examples.insert(
+            "DatasetImportCaseKeyExists".to_owned(),
+            serde_json::json!({
+                "summary": "Dataset import duplicate with source line",
+                "value": {
+                    "code": "DATASET_CASE_KEY_EXISTS",
+                    "message": "A Test Case with this key already exists",
+                    "requestId": "019ff3e3-3c2b-7ad0-902f-1f5c34644ed9",
+                    "fieldErrors": [{
+                        "field": "file",
+                        "code": "DATASET_CASE_KEY_EXISTS",
+                        "message": "A Test Case with this key already exists"
+                    }],
+                    "details": { "caseKey": "support-001", "line": 3 }
+                }
+            }),
+        );
+        components
+            .extensions
+            .get_or_insert_default()
+            .insert("x-uniqueness-error-examples".to_owned(), examples.into());
+    }
+}
+
+const UNIQUENESS_ERROR_EXAMPLES: &[(&str, &str, &str)] = &[
+    ("ModelNameExists", "MODEL_NAME_EXISTS", "alias"),
+    ("DepartmentNameExists", "DEPARTMENT_NAME_EXISTS", "name"),
+    ("UsernameExists", "USERNAME_EXISTS", "username"),
+    ("RoleCodeExists", "ROLE_CODE_EXISTS", "code"),
+    ("ApplicationSlugExists", "APPLICATION_SLUG_EXISTS", "slug"),
+    ("EnvironmentCodeExists", "ENVIRONMENT_CODE_EXISTS", "code"),
+    ("McpServerNameExists", "MCP_SERVER_NAME_EXISTS", "name"),
+    ("SkillNameExists", "SKILL_NAME_EXISTS", "name"),
+    ("SkillAliasExists", "SKILL_ALIAS_EXISTS", "alias"),
+    ("SkillPathExists", "SKILL_PATH_EXISTS", "name"),
+    (
+        "SandboxProfileNameExists",
+        "SANDBOX_PROFILE_NAME_EXISTS",
+        "name",
+    ),
+    ("DatasetCaseKeyExists", "DATASET_CASE_KEY_EXISTS", "caseKey"),
+    (
+        "KnowledgeExternalResourceIdExists",
+        "KNOWLEDGE_EXTERNAL_RESOURCE_ID_EXISTS",
+        "externalResourceId",
+    ),
+    (
+        "MemoryExternalNamespaceExists",
+        "MEMORY_EXTERNAL_NAMESPACE_EXISTS",
+        "externalNamespace",
+    ),
+];
 
 pub(crate) fn openapi_json() -> Result<String> {
     serde_json::to_string_pretty(&ApiDoc::openapi()).context("failed to serialize OpenAPI")
@@ -221,13 +320,16 @@ pub(crate) fn build_api_router(state: AppState) -> Router {
         )
         .route(
             "/departments/{id}",
-            patch(iam::update_department).delete(iam::delete_department),
+            patch(iam::update_department).delete(deletion::delete_department),
         )
         .route("/users", get(iam::list_users).post(iam::create_user))
         .route("/users/{id}", patch(iam::update_user))
         .route("/users/{id}/disable", post(iam::disable_user))
         .route("/roles", get(iam::list_roles).post(iam::create_role))
-        .route("/roles/{id}", patch(iam::update_role))
+        .route(
+            "/roles/{id}",
+            patch(iam::update_role).delete(deletion::delete_role),
+        )
         .route("/permissions", get(iam::list_permissions));
     let api = api
         .route("/node-definitions", get(catalog::list_node_definitions))
@@ -245,7 +347,9 @@ pub(crate) fn build_api_router(state: AppState) -> Router {
         )
         .route(
             "/sandbox-profiles/{id}",
-            get(sandbox_profiles::get_profile).patch(sandbox_profiles::update_profile),
+            get(sandbox_profiles::get_profile)
+                .patch(sandbox_profiles::update_profile)
+                .delete(deletion::delete_sandbox_profile),
         )
         .route(
             "/sandbox-profiles/{id}/versions",
@@ -258,7 +362,9 @@ pub(crate) fn build_api_router(state: AppState) -> Router {
         )
         .route(
             "/workflows/{id}",
-            get(workflows::get_workflow).patch(workflows::update_workflow),
+            get(workflows::get_workflow)
+                .patch(workflows::update_workflow)
+                .delete(deletion::delete_workflow),
         )
         .route("/workflows/{id}/archive", post(workflows::archive_workflow))
         .route(
@@ -304,7 +410,27 @@ pub(crate) fn build_api_router(state: AppState) -> Router {
             "/workflows/{id}/resource-validation",
             get(grants::validate_workflow_resources),
         )
+        .route(
+            "/workflows/{id}/resource-options",
+            get(resource_access::list_resource_options),
+        )
+        .route(
+            "/workflows/{id}/resource-authorizations",
+            post(resource_access::authorize_resource),
+        )
+        .route(
+            "/workflows/{id}/resource-grant-requests",
+            post(resource_access::create_resource_grant_request),
+        )
         .route("/workflows/{id}/run", post(workflows::run_workflow))
+        .route(
+            "/workflows/{id}/export",
+            get(workflow_packages::export_workflow_package),
+        )
+        .route(
+            "/workflows/import",
+            post(workflow_packages::import_workflow_package),
+        )
         .route(
             "/workflows/{id}/debug-executions",
             post(runtime_operations::start_debug_execution),
@@ -313,14 +439,19 @@ pub(crate) fn build_api_router(state: AppState) -> Router {
             "/environments",
             get(workflows::list_environments).post(workflows::create_environment),
         )
-        .route("/environments/{id}", patch(workflows::update_environment))
+        .route(
+            "/environments/{id}",
+            patch(workflows::update_environment).delete(deletion::delete_environment),
+        )
         .route(
             "/credentials",
             get(credentials::list_credentials).post(credentials::create_credential),
         )
         .route(
             "/credentials/{id}",
-            get(credentials::get_credential).patch(credentials::update_credential),
+            get(credentials::get_credential)
+                .patch(credentials::update_credential)
+                .delete(deletion::delete_credential),
         )
         .route(
             "/credentials/{id}/rotate",
@@ -328,35 +459,21 @@ pub(crate) fn build_api_router(state: AppState) -> Router {
         )
         .route(
             "/models/aliases",
-            get(models_control::list_models).post(models_control::create_alias),
+            get(models_control::list_models).post(models_control::create_model),
         )
         .route(
             "/models/aliases/{id}",
-            get(models_control::get_model).patch(models_control::update_alias),
-        )
-        .route(
-            "/models/providers",
-            get(models_control::list_providers).post(models_control::create_provider),
-        )
-        .route(
-            "/models/providers/{id}",
-            patch(models_control::update_provider),
+            get(models_control::get_model)
+                .patch(models_control::update_model)
+                .delete(deletion::delete_model),
         )
         .route(
             "/models/aliases/{id}/test-connection",
             post(models_control::test_model),
         )
         .route(
-            "/models/deployments",
-            get(models_control::list_deployments).post(models_control::create_deployment),
-        )
-        .route(
             "/models/deployments/{id}/prices",
             get(models_control::list_prices).post(models_control::create_price),
-        )
-        .route(
-            "/models/aliases/{id}/deployment-revisions",
-            post(models_control::create_deployment_revision),
         )
         .route(
             "/models/aliases/{id}/deployment-history",
@@ -368,7 +485,9 @@ pub(crate) fn build_api_router(state: AppState) -> Router {
         )
         .route(
             "/mcp/servers/{id}",
-            get(mcp_control::get_server).patch(mcp_control::update_server),
+            get(mcp_control::get_server)
+                .patch(mcp_control::update_server)
+                .delete(deletion::delete_mcp_server),
         )
         .route(
             "/mcp/servers/{id}/test-connection",
@@ -394,7 +513,9 @@ pub(crate) fn build_api_router(state: AppState) -> Router {
         )
         .route(
             "/skills/{id}",
-            get(skills_control::get_skill).patch(skills_control::update_skill),
+            get(skills_control::get_skill)
+                .patch(skills_control::update_skill)
+                .delete(deletion::delete_skill),
         )
         .route("/skills/{id}/workspace", get(skills_control::get_workspace))
         .route(
@@ -434,7 +555,9 @@ pub(crate) fn build_api_router(state: AppState) -> Router {
         )
         .route(
             "/knowledge/resources/{id}",
-            get(external_resources::get_knowledge).patch(external_resources::update_knowledge),
+            get(external_resources::get_knowledge)
+                .patch(external_resources::update_knowledge)
+                .delete(deletion::delete_knowledge),
         )
         .route(
             "/memory/connections",
@@ -451,7 +574,9 @@ pub(crate) fn build_api_router(state: AppState) -> Router {
         )
         .route(
             "/memory/namespaces/{id}",
-            get(external_resources::get_memory).patch(external_resources::update_memory),
+            get(external_resources::get_memory)
+                .patch(external_resources::update_memory)
+                .delete(deletion::delete_memory),
         )
         .route(
             "/resources/grantable",
@@ -471,7 +596,9 @@ pub(crate) fn build_api_router(state: AppState) -> Router {
         )
         .route(
             "/applications/{id}",
-            get(applications::get_application).patch(applications::update_application),
+            get(applications::get_application)
+                .patch(applications::update_application)
+                .delete(deletion::delete_application),
         )
         .route(
             "/applications/{id}/deployments",
@@ -495,7 +622,7 @@ pub(crate) fn build_api_router(state: AppState) -> Router {
         )
         .route(
             "/applications/{id}/webhooks/{webhook_id}",
-            patch(applications::update_webhook),
+            patch(applications::update_webhook).delete(deletion::delete_application_webhook),
         )
         .route(
             "/applications/{id}/schedules",
@@ -503,7 +630,7 @@ pub(crate) fn build_api_router(state: AppState) -> Router {
         )
         .route(
             "/applications/{id}/schedules/{schedule_id}",
-            patch(applications::update_schedule),
+            patch(applications::update_schedule).delete(deletion::delete_application_schedule),
         )
         .route(
             "/applications/{id}/sessions",
@@ -519,7 +646,9 @@ pub(crate) fn build_api_router(state: AppState) -> Router {
         )
         .route(
             "/datasets/{id}",
-            get(datasets::get_dataset).patch(datasets::update_dataset),
+            get(datasets::get_dataset)
+                .patch(datasets::update_dataset)
+                .delete(deletion::delete_dataset),
         )
         .route(
             "/datasets/{id}/cases",
@@ -538,6 +667,14 @@ pub(crate) fn build_api_router(state: AppState) -> Router {
         .route(
             "/evaluation-profiles",
             get(datasets::list_profiles).post(datasets::create_profile),
+        )
+        .route(
+            "/evaluation-profiles/{id}",
+            axum::routing::delete(deletion::delete_evaluation_profile),
+        )
+        .route(
+            "/deletion-impact/{entity_type}/{id}",
+            get(deletion::get_deletion_impact),
         )
         .route(
             "/evaluations",
@@ -574,6 +711,26 @@ pub(crate) fn build_api_router(state: AppState) -> Router {
         .route(
             "/approvals/{id}/timeout",
             post(operations::timeout_approval),
+        )
+        .route(
+            "/resource-grant-requests",
+            get(resource_access::list_resource_grant_requests),
+        )
+        .route(
+            "/resource-grant-requests/{id}",
+            get(resource_access::get_resource_grant_request),
+        )
+        .route(
+            "/resource-grant-requests/{id}/reviews/{department_id}/approve",
+            post(resource_access::approve_resource_grant_request),
+        )
+        .route(
+            "/resource-grant-requests/{id}/reviews/{department_id}/reject",
+            post(resource_access::reject_resource_grant_request),
+        )
+        .route(
+            "/resource-grant-requests/{id}/cancel",
+            post(resource_access::cancel_resource_grant_request),
         )
         .route("/notifications", get(operations::list_notifications))
         .route(

@@ -1,7 +1,11 @@
 param(
+    [ValidatePattern('^[a-z0-9]([-a-z0-9]*[a-z0-9])?$')]
+    [string]$Namespace = "agentx-e2e",
     [switch]$KeepNamespace,
     [switch]$KeepDevelopmentRunning,
     [switch]$SkipBuild,
+    [ValidateSet('', 'm2.1', 'm6', 'm7', 'start-input', 'deletion', 'resource-grants', 'uniqueness')]
+    [string]$OnlySuite = '',
     [switch]$Headed,
     [int]$Port = 18081,
     [string]$OpenSandboxEndpoint = "http://127.0.0.1:18080",
@@ -11,7 +15,6 @@ param(
 $ErrorActionPreference = "Stop"
 $PSNativeCommandUseErrorActionPreference = $true
 $root = Split-Path -Parent $PSScriptRoot
-$namespace = "agentx-e2e"
 $e2eRunId = [DateTimeOffset]::UtcNow.ToString("yyyyMMddTHHmmssfffZ")
 $env:AGENTX_E2E_STAGE = "kubernetes"
 $env:AGENTX_E2E_RUN_ID = $e2eRunId
@@ -115,12 +118,15 @@ function Wait-TcpPort([int]$TargetPort) {
     throw "Timed out waiting for local port $TargetPort."
 }
 
-function Invoke-Playwright([string]$Suite, [string[]]$Tests) {
+function Invoke-Playwright([string]$Suite, [string[]]$Tests, [string]$Grep) {
     $arguments = @("--filter", "@agentx/e2e", "exec", "playwright", "test")
     if ($Headed) {
         $arguments += "--headed"
     }
     $arguments += $Tests
+    if ($Grep) {
+        $arguments += @("--grep", $Grep)
+    }
     $env:AGENTX_E2E_SUITE = $Suite
     try {
         & pnpm @arguments
@@ -227,14 +233,18 @@ function Start-M4Execution([string]$WorkflowName, [string]$IdempotencyKey) {
     return [string]$response.executionId
 }
 
+function Set-E2EAccessToken {
+    $loginBody = @{ username = "admin"; password = "agentx-e2e-admin-password" } | ConvertTo-Json -Compress
+    $login = Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:$Port/api/v1/auth/login" -ContentType "application/json" -Body $loginBody
+    $script:accessToken = [string]$login.accessToken
+}
+
 function Wait-RemoteLease([string]$ExecutionId) {
     Wait-MySqlScalar "SELECT COUNT(*) FROM worker_leases l JOIN node_attempts a ON a.id=l.node_attempt_id JOIN node_executions n ON n.id=a.node_execution_id WHERE a.execution_id=UUID_TO_BIN('$ExecutionId') AND n.node_type='remote_action' AND l.released_at IS NULL" 1 "Remote node lease for $ExecutionId"
 }
 
 function Invoke-M4FaultSuite {
-    $loginBody = @{ username = "admin"; password = "agentx-e2e-admin-password" } | ConvertTo-Json -Compress
-    $login = Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:$Port/api/v1/auth/login" -ContentType "application/json" -Body $loginBody
-    $script:accessToken = [string]$login.accessToken
+    Set-E2EAccessToken
 
     $workerExecution = Start-M4Execution "M4 Fault Fixture" "m4-fault-worker"
     Wait-RemoteLease $workerExecution
@@ -290,6 +300,7 @@ function Invoke-M4FaultSuite {
 }
 
 function Invoke-M5SandboxFaultSuite {
+    Set-E2EAccessToken
     $headers = @{ Authorization = "Bearer $script:accessToken" }
     $memoryExecution = Start-M4Execution "M5 Memory Limit Fixture" "m5-memory-limit"
     Wait-MySqlValue "SELECT status FROM workflow_executions WHERE id=UUID_TO_BIN('$memoryExecution')" @("failed") "M5 Sandbox memory limit" 120 | Out-Null
@@ -374,12 +385,20 @@ try {
     $existing = kubectl get namespace $namespace --ignore-not-found -o name
     if ($existing) {
         kubectl delete namespace $namespace --wait=true --timeout=300s
+        for ($attempt = 0; $attempt -lt 60; $attempt++) {
+            if (-not (kubectl get namespace $namespace --ignore-not-found -o name)) { break }
+            Start-Sleep -Seconds 1
+        }
+        if (kubectl get namespace $namespace --ignore-not-found -o name) {
+            throw "Namespace $namespace is still terminating after deletion timeout."
+        }
     }
     kubectl create namespace $namespace | Out-Null
     $openSandboxCidrs = @(Resolve-ClusterEndpointCidrs -HostName $clusterOpenSandbox.Host)
-    $profile = Get-Content "$root/deploy/profiles/full-local.json" -Raw | ConvertFrom-Json -Depth 30
+    # Windows PowerShell 5.1 does not expose ConvertFrom-Json -Depth; parsing already preserves the object tree.
+    $profile = Get-Content "$root/deploy/profiles/full-local.json" -Raw | ConvertFrom-Json
     $profile.namespace = $namespace
-    $profile.ingress.host = "agentx-e2e.localhost"
+    $profile.ingress.host = "$Namespace.localhost"
     $profile.components.sandbox.mode = "remote"
     $profile.components.sandbox.endpoint = $clusterOpenSandbox.Uri.AbsoluteUri.TrimEnd('/')
     $profile.components.sandbox.allowedHosts = @($clusterOpenSandbox.Host)
@@ -414,26 +433,49 @@ try {
     $forward = Start-Process kubectl -ArgumentList @("-n", $namespace, "port-forward", "service/web", "${Port}:80") -PassThru -WindowStyle Hidden -RedirectStandardOutput $forwardOut -RedirectStandardError $forwardError
     Wait-TcpPort $Port
     $env:AGENTX_E2E_BASE_URL = "http://127.0.0.1:$Port"
-    Invoke-Playwright -Suite "m2.1-control-plane" -Tests @("tests/m2.1-control-plane.spec.ts")
-    Invoke-Playwright -Suite "m3-control-plane" -Tests @("tests/m3-control-plane.spec.ts")
-    Wait-MySqlScalar "SELECT COUNT(*) FROM runtime_commands WHERE status IN ('pending','processing')" 0 "M7 Runtime Commands after M3 control-plane execution"
-    kubectl -n $namespace delete job/m3-fixture --ignore-not-found --wait=true
-    kubectl apply -f "$root/deploy/k8s/stacks/e2e/m3-fixture-job.yaml"
-    kubectl -n $namespace wait --for=condition=complete job/m3-fixture --timeout=180s
-    Wait-MySqlScalar "SELECT COUNT(*) FROM trace_delivery_outbox WHERE status<>'delivered'" 0 "Trace delivery outbox before UI verification"
-    Invoke-Playwright -Suite "m3-observability" -Tests @("tests/m3-observability.spec.ts")
-    Wait-MySqlScalar "SELECT COUNT(*) FROM trace_delivery_outbox WHERE status<>'delivered'" 0 "Trace delivery outbox"
-    kubectl -n $namespace delete job/m4-fixture --ignore-not-found --wait=true
-    kubectl apply -f "$root/deploy/k8s/stacks/e2e/m4-fixture-job.yaml"
-    kubectl -n $namespace wait --for=condition=complete job/m4-fixture --timeout=180s
-    Invoke-Playwright -Suite "m4-runtime-recovery" -Tests @("tests/m4-runtime.spec.ts", "tests/m4-recovery.spec.ts")
-    Invoke-M4FaultSuite
-    kubectl -n $namespace delete job/m5-fixture --ignore-not-found --wait=true
-    kubectl apply -f "$root/deploy/k8s/stacks/e2e/m5-fixture-job.yaml"
-    kubectl -n $namespace wait --for=condition=complete job/m5-fixture --timeout=180s
-    Invoke-Playwright -Suite "m5-agent-sandbox" -Tests @("tests/m5-agent-sandbox.spec.ts")
-    Invoke-Playwright -Suite "m6-workflow-studio" -Tests @("tests/m6-workflow-studio.spec.ts", "tests/m6-local-builtins.spec.ts", "tests/workflow-canvas-performance.spec.ts")
-    Invoke-Playwright -Suite "m7-business-closure" -Tests @("tests/m7-business-closure.spec.ts")
+    if ($OnlySuite -ne "start-input") {
+        Invoke-Playwright -Suite "m2.1-control-plane" -Tests @("tests/m2.1-control-plane.spec.ts")
+    }
+    if (-not $OnlySuite -or $OnlySuite -eq "deletion") {
+        Invoke-Playwright -Suite "safe-deletion" -Tests @("tests/safe-deletion.spec.ts")
+    }
+    if (-not $OnlySuite) {
+        Invoke-Playwright -Suite "m3-control-plane" -Tests @("tests/m3-control-plane.spec.ts")
+        Wait-MySqlScalar "SELECT COUNT(*) FROM runtime_commands WHERE status IN ('pending','processing')" 0 "M7 Runtime Commands after M3 control-plane execution"
+        kubectl -n $namespace delete job/m3-fixture --ignore-not-found --wait=true
+        kubectl apply -f "$root/deploy/k8s/stacks/e2e/m3-fixture-job.yaml"
+        kubectl -n $namespace wait --for=condition=complete job/m3-fixture --timeout=180s
+        Wait-MySqlScalar "SELECT COUNT(*) FROM trace_delivery_outbox WHERE status<>'delivered'" 0 "Trace delivery outbox before UI verification"
+        Invoke-Playwright -Suite "m3-observability" -Tests @("tests/m3-observability.spec.ts")
+        Wait-MySqlScalar "SELECT COUNT(*) FROM trace_delivery_outbox WHERE status<>'delivered'" 0 "Trace delivery outbox"
+        kubectl -n $namespace delete job/m4-fixture --ignore-not-found --wait=true
+        kubectl apply -f "$root/deploy/k8s/stacks/e2e/m4-fixture-job.yaml"
+        kubectl -n $namespace wait --for=condition=complete job/m4-fixture --timeout=180s
+        Invoke-Playwright -Suite "m4-runtime-recovery" -Tests @("tests/m4-runtime.spec.ts", "tests/m4-recovery.spec.ts")
+        Invoke-M4FaultSuite
+    }
+    if ($OnlySuite -notin @("deletion", "m2.1", "start-input", "uniqueness")) {
+        kubectl -n $namespace delete job/m5-fixture --ignore-not-found --wait=true
+        kubectl apply -f "$root/deploy/k8s/stacks/e2e/m5-fixture-job.yaml"
+        kubectl -n $namespace wait --for=condition=complete job/m5-fixture --timeout=180s
+        if (-not $OnlySuite) { Invoke-Playwright -Suite "m5-agent-sandbox" -Tests @("tests/m5-agent-sandbox.spec.ts") }
+        if ($OnlySuite -eq "resource-grants") {
+            Invoke-Playwright -Suite "resource-grant-requests" -Tests @("tests/resource-grant-requests.spec.ts")
+        }
+        else {
+            Invoke-Playwright -Suite "m6-workflow-studio" -Tests @("tests/m6-workflow-studio.spec.ts", "tests/m6-local-builtins.spec.ts", "tests/workflow-canvas-performance.spec.ts")
+        }
+    }
+    if ($OnlySuite -eq "start-input") {
+        Invoke-Playwright -Suite "workflow4-start-input" -Tests @("tests/workflow4-closure.spec.ts") -Grep "closes Composite"
+    }
+    elseif (-not $OnlySuite -or $OnlySuite -eq "m7") {
+        Invoke-Playwright -Suite "m7-business-closure" -Tests @("tests/m7-business-closure.spec.ts")
+        Invoke-Playwright -Suite "workflow4-closure" -Tests @("tests/workflow4-closure.spec.ts")
+    Assert-MySqlScalar "SELECT COUNT(*) FROM workflow_context_patches p JOIN workflow_executions e ON e.id=p.execution_id AND e.tenant_id=p.tenant_id JOIN workflows w ON w.id=e.workflow_id AND w.tenant_id=e.tenant_id WHERE w.name LIKE 'W4 Parent %' AND p.operation_key='merge_overlay'" 1 "Workflow 4.0 Composite Context overlay patch"
+    Assert-MySqlScalar "SELECT COUNT(*) FROM workflows WHERE name LIKE 'W4 Imported %'" 1 "Workflow 4.0 Package import"
+    Assert-MySqlScalar "SELECT COUNT(*) FROM workflow_executions c JOIN workflow_executions p ON p.id=c.parent_execution_id AND p.tenant_id=c.tenant_id JOIN workflows w ON w.id=p.workflow_id AND w.tenant_id=p.tenant_id WHERE w.name LIKE 'W4 Slow Parent %' AND c.status='cancelled'" 1 "Workflow 4.0 parent timeout did not cancel Child"
+    Assert-MySqlScalar "SELECT COUNT(*) FROM node_executions n JOIN workflow_executions e ON e.id=n.execution_id AND e.tenant_id=n.tenant_id JOIN workflows w ON w.id=e.workflow_id AND w.tenant_id=e.tenant_id WHERE w.name LIKE 'W4 Session CAS %' AND n.error_code='SESSION_CONTEXT_VERSION_CONFLICT'" 1 "Workflow 4.0 Session Context CAS conflict"
     Wait-MySqlValue "SELECT b.status FROM trigger_bindings b JOIN applications a ON a.id=b.application_id AND a.tenant_id=b.tenant_id WHERE a.name LIKE 'M7 Remote Trigger %' AND b.trigger_kind='lifecycle' ORDER BY b.created_at DESC LIMIT 1" @("disabled") "M7 Trigger Lifecycle deactivate" 60 | Out-Null
     Assert-MySqlScalar "SELECT COUNT(*) FROM trigger_bindings b JOIN applications a ON a.id=b.application_id AND a.tenant_id=b.tenant_id WHERE a.status='disabled' AND b.status IN ('active','activating','deactivating')" 0 "Disabled Application retained active Trigger Bindings"
     Assert-MySqlScalar "SELECT COUNT(*) FROM application_invocations i JOIN applications a ON a.id=i.application_id AND a.tenant_id=i.tenant_id WHERE a.name LIKE 'M7 Remote Trigger %' AND i.caller_type='poll'" 1 "Repeated Poll scanning was not idempotent"
@@ -443,7 +485,7 @@ try {
     Start-Sleep -Seconds 3
     Assert-MySqlScalar "SELECT COUNT(*) FROM application_invocations i JOIN applications a ON a.id=i.application_id AND a.tenant_id=i.tenant_id WHERE a.name LIKE 'M7 Remote Trigger %' AND i.caller_type='schedule'" ([long]$scheduleCount) "Schedule skip misfire created an Execution"
     Invoke-MySqlEvidenceQuery "UPDATE applications SET status='disabled' WHERE name LIKE 'M7 Remote Trigger %'" | Out-Null
-    Invoke-M5SandboxFaultSuite
+        Invoke-M5SandboxFaultSuite
     Wait-MySqlScalar "SELECT COUNT(*) FROM outbox_events WHERE published_at IS NULL" 0 "M7 Business Outbox relay"
     Assert-MySqlScalar "SELECT COUNT(*) FROM sandbox_leases WHERE status<>'terminated'" 0 "M5 terminal Sandbox leases"
     Assert-MySqlScalar "SELECT COUNT(*) FROM node_invocation_handles WHERE sandbox_lease_id IS NOT NULL AND revoked_at IS NULL" 0 "M5 Sandbox Credential Handles were not revoked"
@@ -460,7 +502,11 @@ try {
         "remotePollInvocations=$(Get-MySqlValue "SELECT COUNT(*) FROM application_invocations i JOIN applications a ON a.id=i.application_id AND a.tenant_id=i.tenant_id WHERE a.name LIKE 'M7 Remote Trigger %' AND i.caller_type='poll'")"
         "remoteScheduleInvocations=$(Get-MySqlValue "SELECT COUNT(*) FROM application_invocations i JOIN applications a ON a.id=i.application_id AND a.tenant_id=i.tenant_id WHERE a.name LIKE 'M7 Remote Trigger %' AND i.caller_type='schedule'")"
         "activeBindingsForDisabledApplications=$(Get-MySqlValue "SELECT COUNT(*) FROM trigger_bindings b JOIN applications a ON a.id=b.application_id AND a.tenant_id=b.tenant_id WHERE a.status='disabled' AND b.status IN ('active','activating','deactivating')")"
-    ) | Out-File -LiteralPath (Join-Path $results "m7-database-evidence.txt") -Encoding utf8
+        "workflow4ContextPatches=$(Get-MySqlValue "SELECT COUNT(*) FROM workflow_context_patches")"
+        "workflow4ChildExecutions=$(Get-MySqlValue "SELECT COUNT(*) FROM workflow_executions WHERE parent_execution_id IS NOT NULL")"
+        "workflow4PackageImports=$(Get-MySqlValue "SELECT COUNT(*) FROM workflows WHERE name LIKE 'W4 Imported %'")"
+        ) | Out-File -LiteralPath (Join-Path $results "m7-database-evidence.txt") -Encoding utf8
+    }
 }
 finally {
     if ($forward -and -not $forward.HasExited) {

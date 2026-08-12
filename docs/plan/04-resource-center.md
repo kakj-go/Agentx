@@ -18,7 +18,7 @@
 ## 4. 领域对象、状态和不变量
 
 - Credential 是 Secret 或外部 Secret Reference，API 永不返回可恢复明文。
-- Model Alias 是 Workflow 推荐引用，Model Deployment 保存 Provider、Endpoint 和 Credential Reference。
+- Model Alias 是 Workflow 推荐引用并在界面中显示为模型名称；Model Deployment 是完整且不可变的配置修订，直接保存连接名称、API 格式（当前仅 OpenAI Chat Completions）、Endpoint、Credential Reference、所属部门、上游模型 ID 和输入输出 Token 上限，不设置独立 Deployment 名称或 Provider 表。
 - Model Price Version 不可变，历史成本按调用发生时版本计算。
 - MCP Server 配置可版本化；MCP Tool 只由发现流程创建，Tool Version 固化 Schema，Tool Policy 保存启停、调试、超时和副作用等级。
 - Skill 具有租户内唯一且可修改的必填 `name`、`alias` 和 `description` 元数据；Workspace 可变且使用乐观锁 Revision，根 `SKILL.md` 仍使用 `name`、`description` frontmatter，界面将描述与富文本正文分栏编辑；Skill Version 不可变并固化每个文件、引用、Content Hash、Artifact 和依赖。
@@ -30,7 +30,7 @@
 主要表：
 
 - credentials、credential_secret_versions
-- model_providers、model_deployments、model_aliases、model_price_versions
+- model_deployments、model_aliases、model_alias_deployment_history、model_price_versions
 - mcp_servers、mcp_server_versions、mcp_discovery_runs、mcp_tools、mcp_tool_versions、mcp_tool_policies
 - skills、skill_workspace_entries、skill_file_revisions、skill_versions、skill_version_files、skill_file_references、skill_dependencies
 - rag_connections、rag_resources
@@ -42,7 +42,7 @@ Secret 使用版本化密文或 Kubernetes/外部 Secret Reference；本地密�
 ## 6. REST API、Port 和事件
 
 - `/api/v1/credentials`
-- `/api/v1/models/providers|deployments|aliases|prices`
+- `/api/v1/models/aliases`、`/api/v1/models/aliases/{id}/deployment-history`、`/api/v1/models/deployments/{id}/prices`
 - /api/v1/mcp/servers、/discover、/tools、/policy 和 /debug-invoke
 - /api/v1/skills、/workspace、/entries、/files、/versions 和 Workspace ZIP 导入导出
 - `/api/v1/knowledge/connections|resources`
@@ -65,7 +65,7 @@ Secret 使用版本化密文或 Kubernetes/外部 Secret Reference；本地密�
 | 编号 | 状态 | 依赖 | 交付物 | 验收条件 |
 |---|---|---|---|---|
 | RES-001 | done | FND-005、IAM-005 | Credential Schema、加密、外部引用和轮换 | API 与日志均不暴露明文，旧版本可受控轮换 |
-| RES-002 | done | RES-001、WCP-006 | Model Provider、Deployment、Alias 和 Price Version | Alias 可切换 Deployment，历史价格版本不可改 |
+| RES-002 | done | RES-001、WCP-006 | 完整 Model Deployment Revision、Alias 和 Price Version | 新建模型单次提交连接与模型配置，Alias 可原子切换 Deployment，历史价格版本不可改 |
 | RES-003 | done | RES-001 | MCP Server、自动发现 Tool Version、Policy 和受控调试 | Tool Schema 不能人工修改，Echo MCP 两种传输测试通过 |
 | RES-004 | done | RES-003、FND-005 | Skill 在线 Workspace、文件 Revision、引用、Version 和 Artifact | 根 `SKILL.md` 描述与正文可视化编辑，Content Hash 可复现，缺失引用与循环依赖被拒绝 |
 | RES-005 | done | RES-001 | LightRAG Connection、Resource 和读写范围 | Connection Test 不保存查询内容到日志 |
@@ -107,3 +107,10 @@ Secret 使用版本化密文或 Kubernetes/外部 Secret Reference；本地密�
 - Credential Resolver 与 Resource Authorizer。
 - 模型、MCP Server/Tool、Skill Workspace、RAG 和 Memory 控制面对象。
 - 运行 Adapter 所需的不可变配置和授权检查入口。
+
+## 13. 安全删除补充
+
+- Credential 检查 Model、全部 MCP Server Version、RAG/Memory Connection、Draft/Workflow Version、Skill Dependency、Grant 和 Runtime 历史引用。
+- Model、Skill、Knowledge、Memory 与 Sandbox 检查 Draft、Workflow Version、Skill Dependency、Grant 和对应运行历史；Resource Grant 本身是阻塞引用，不能由资源删除级联撤销。
+- MCP Server 将所属全部 MCP Tool 作为同一删除影响聚合；任一 Tool 被引用即阻止删除，无引用时清理 Discovery、Tool、Version 和 Policy。
+- Knowledge/Memory 只在最后一个 Resource/Namespace 删除后清理孤立 Connection。资源列表使用独立 `credential/model/mcp/skill/knowledge/memory/sandbox:delete` 权限。

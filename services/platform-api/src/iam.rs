@@ -11,7 +11,7 @@ use sqlx::{MySql, Row, Transaction};
 use uuid::Uuid;
 
 use crate::{
-    error::{AppError, AppResult},
+    error::{AppError, AppResult, UniqueConstraint, map_unique},
     models::{
         CreateDepartmentRequest, CreateRoleRequest, CreateUserRequest, DepartmentResponse,
         PermissionResponse, RolePage, RoleResponse, UpdateDepartmentRequest, UpdateRoleRequest,
@@ -19,6 +19,25 @@ use crate::{
     },
     security::{AuthActor, hash_initial_temporary_password},
     state::AppState,
+};
+
+pub(crate) const DEPARTMENT_NAME: UniqueConstraint = UniqueConstraint {
+    index: "uq_departments_sibling_name",
+    code: "DEPARTMENT_NAME_EXISTS",
+    field: "name",
+    message: "A department with this name already exists under the selected parent",
+};
+pub(crate) const USERNAME: UniqueConstraint = UniqueConstraint {
+    index: "uq_users_tenant_username",
+    code: "USERNAME_EXISTS",
+    field: "username",
+    message: "This username is already in use",
+};
+pub(crate) const ROLE_CODE: UniqueConstraint = UniqueConstraint {
+    index: "uq_roles_tenant_code",
+    code: "ROLE_CODE_EXISTS",
+    field: "code",
+    message: "A role with this code already exists",
 };
 
 #[derive(Deserialize)]
@@ -67,6 +86,14 @@ pub async fn create_department(
     actor.require("department:manage")?;
     validate_name(&input.name)?;
     require_department_scope(&state, &actor, input.parent_id).await?;
+    ensure_department_name_available(
+        &state,
+        actor.tenant_id,
+        Some(input.parent_id),
+        &normalize(&input.name),
+        None,
+    )
+    .await?;
     let id = Uuid::now_v7();
     let mut tx = state.pool.begin().await?;
     sqlx::query(
@@ -78,7 +105,8 @@ pub async fn create_department(
     .bind(input.name.trim())
     .bind(normalize(&input.name))
     .execute(&mut *tx)
-    .await?;
+    .await
+    .map_err(|error| map_unique(error, &[DEPARTMENT_NAME]))?;
     sqlx::query("INSERT INTO department_closure(tenant_id,ancestor_id,descendant_id,depth) SELECT tenant_id,ancestor_id,?,depth+1 FROM department_closure WHERE tenant_id=? AND descendant_id=? UNION ALL SELECT ?,?,?,0")
         .bind(id).bind(actor.tenant_id).bind(input.parent_id).bind(actor.tenant_id).bind(id).bind(id).execute(&mut *tx).await?;
     audit(
@@ -136,9 +164,17 @@ pub async fn update_department(
             ));
         }
     }
+    ensure_department_name_available(
+        &state,
+        actor.tenant_id,
+        input.parent_id,
+        &normalize(&input.name),
+        Some(id),
+    )
+    .await?;
     let mut tx = state.pool.begin().await?;
     let result = sqlx::query("UPDATE departments SET name=?,normalized_name=?,parent_id=?,version=version+1 WHERE id=? AND tenant_id=? AND version=?")
-        .bind(input.name.trim()).bind(normalize(&input.name)).bind(input.parent_id).bind(id).bind(actor.tenant_id).bind(input.version).execute(&mut *tx).await?;
+        .bind(input.name.trim()).bind(normalize(&input.name)).bind(input.parent_id).bind(id).bind(actor.tenant_id).bind(input.version).execute(&mut *tx).await.map_err(|error| map_unique(error, &[DEPARTMENT_NAME]))?;
     if result.rows_affected() != 1 {
         return Err(AppError::conflict(
             "VERSION_CONFLICT",
@@ -162,60 +198,6 @@ pub async fn update_department(
             .fetch_one(&state.pool)
             .await?;
     Ok(Json(department_from_row(row)?))
-}
-
-#[utoipa::path(delete, path = "/api/v1/departments/{id}", params(("id" = Uuid, Path)))]
-pub async fn delete_department(
-    State(state): State<AppState>,
-    actor: AuthActor,
-    Path(id): Path<Uuid>,
-) -> AppResult<StatusCode> {
-    actor.require("department:manage")?;
-    require_department_scope(&state, &actor, id).await?;
-    let mut tx = state.pool.begin().await?;
-    let row = sqlx::query("SELECT is_root FROM departments WHERE id=? AND tenant_id=? FOR UPDATE")
-        .bind(id)
-        .bind(actor.tenant_id)
-        .fetch_optional(&mut *tx)
-        .await?
-        .ok_or_else(|| AppError::not_found("Department"))?;
-    if row.try_get::<bool, _>("is_root")? {
-        return Err(AppError::bad_request(
-            "ROOT_DEPARTMENT_IMMUTABLE",
-            "Root department cannot be deleted",
-        ));
-    }
-    let used:i64=sqlx::query_scalar("SELECT (SELECT COUNT(*) FROM departments WHERE parent_id=?)+(SELECT COUNT(*) FROM user_departments WHERE department_id=?)").bind(id).bind(id).fetch_one(&mut *tx).await?;
-    if used > 0 {
-        return Err(AppError::conflict(
-            "DEPARTMENT_NOT_EMPTY",
-            "Department still contains users or child departments",
-        ));
-    }
-    sqlx::query(
-        "DELETE FROM department_closure WHERE tenant_id=? AND (ancestor_id=? OR descendant_id=?)",
-    )
-    .bind(actor.tenant_id)
-    .bind(id)
-    .bind(id)
-    .execute(&mut *tx)
-    .await?;
-    sqlx::query("DELETE FROM departments WHERE id=? AND tenant_id=?")
-        .bind(id)
-        .bind(actor.tenant_id)
-        .execute(&mut *tx)
-        .await?;
-    audit(
-        &mut tx,
-        &actor,
-        "department.delete",
-        "department",
-        id,
-        serde_json::json!({}),
-    )
-    .await?;
-    tx.commit().await?;
-    Ok(StatusCode::NO_CONTENT)
 }
 
 #[utoipa::path(get, path = "/api/v1/users")]
@@ -293,9 +275,19 @@ pub async fn create_user(
     require_department_scope(&state, &actor, input.department_id).await?;
     let password_hash = hash_initial_temporary_password()?;
     let role = validate_assignable_role(&state, &actor, input.role_id).await?;
+    let normalized_username = normalize(&input.username);
+    ensure_simple_unique(
+        &state,
+        "users",
+        "username_normalized",
+        actor.tenant_id,
+        &normalized_username,
+        USERNAME,
+    )
+    .await?;
     let id = Uuid::now_v7();
     let mut tx = state.pool.begin().await?;
-    sqlx::query("INSERT INTO users(id,tenant_id,username,username_normalized,display_name,status,password_change_required) VALUES(?,?,?,?,?,'invited',TRUE)").bind(id).bind(actor.tenant_id).bind(input.username.trim()).bind(normalize(&input.username)).bind(input.display_name.trim()).execute(&mut *tx).await?;
+    sqlx::query("INSERT INTO users(id,tenant_id,username,username_normalized,display_name,status,password_change_required) VALUES(?,?,?,?,?,'invited',TRUE)").bind(id).bind(actor.tenant_id).bind(input.username.trim()).bind(normalized_username).bind(input.display_name.trim()).execute(&mut *tx).await.map_err(|error| map_unique(error, &[USERNAME]))?;
     sqlx::query("INSERT INTO user_credentials(user_id,password_hash) VALUES(?,?)")
         .bind(id)
         .bind(password_hash)
@@ -535,9 +527,19 @@ pub async fn create_role(
         &input.permissions,
         &actor,
     )?;
+    let normalized_code = normalize_code(&input.code);
+    ensure_simple_unique(
+        &state,
+        "roles",
+        "code",
+        actor.tenant_id,
+        &normalized_code,
+        ROLE_CODE,
+    )
+    .await?;
     let id = Uuid::now_v7();
     let mut tx = state.pool.begin().await?;
-    sqlx::query("INSERT INTO roles(id,tenant_id,code,name,description,data_scope,is_builtin) VALUES(?,?,?,?,?,?,FALSE)").bind(id).bind(actor.tenant_id).bind(normalize_code(&input.code)).bind(input.name.trim()).bind(&input.description).bind(&input.data_scope).execute(&mut *tx).await?;
+    sqlx::query("INSERT INTO roles(id,tenant_id,code,name,description,data_scope,is_builtin) VALUES(?,?,?,?,?,?,FALSE)").bind(id).bind(actor.tenant_id).bind(normalized_code.clone()).bind(input.name.trim()).bind(&input.description).bind(&input.data_scope).execute(&mut *tx).await.map_err(|error| map_unique(error, &[ROLE_CODE]))?;
     replace_permissions(&mut tx, actor.tenant_id, id, &input.permissions).await?;
     audit(
         &mut tx,
@@ -553,7 +555,7 @@ pub async fn create_role(
         StatusCode::CREATED,
         Json(RoleResponse {
             id,
-            code: normalize_code(&input.code),
+            code: normalized_code,
             name: input.name.trim().to_owned(),
             description: input.description,
             data_scope: input.data_scope,
@@ -650,6 +652,46 @@ async fn require_department_scope(
         Err(AppError::forbidden(
             "Department is outside your management scope",
         ))
+    }
+}
+
+async fn ensure_department_name_available(
+    state: &AppState,
+    tenant: Uuid,
+    parent: Option<Uuid>,
+    normalized_name: &str,
+    exclude: Option<Uuid>,
+) -> AppResult<()> {
+    let exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM departments WHERE tenant_id=? AND parent_id <=> ? AND normalized_name=? AND (? IS NULL OR id<>?))",
+    )
+    .bind(tenant).bind(parent).bind(normalized_name).bind(exclude).bind(exclude)
+    .fetch_one(&state.pool).await?;
+    if exists {
+        Err(AppError::unique(DEPARTMENT_NAME))
+    } else {
+        Ok(())
+    }
+}
+
+async fn ensure_simple_unique(
+    state: &AppState,
+    table: &'static str,
+    column: &'static str,
+    tenant: Uuid,
+    value: &str,
+    constraint: UniqueConstraint,
+) -> AppResult<()> {
+    let sql = format!("SELECT EXISTS(SELECT 1 FROM {table} WHERE tenant_id=? AND {column}=?)");
+    let exists: bool = sqlx::query_scalar(&sql)
+        .bind(tenant)
+        .bind(value)
+        .fetch_one(&state.pool)
+        .await?;
+    if exists {
+        Err(AppError::unique(constraint))
+    } else {
+        Ok(())
     }
 }
 async fn visible_departments(state: &AppState, actor: &AuthActor) -> AppResult<Vec<Uuid>> {

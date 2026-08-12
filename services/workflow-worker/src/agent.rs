@@ -756,9 +756,10 @@ impl AgentRunner {
         response: ModelResponse,
     ) -> RuntimeResult<TaskResult> {
         sqlx::query("UPDATE agent_runs SET status='succeeded',stop_reason=?,ended_at=CURRENT_TIMESTAMP(6) WHERE id=?").bind(&response.stop_reason).bind(run.id).execute(&self.pool).await.map_err(storage_error)?;
+        let final_answer = model_message_text(&response.message);
         Ok(completed(
             task,
-            json!({"message":response.message,"stopReason":response.stop_reason,"iterations":run.iteration+1,"modelCalls":run.model_calls,"toolCalls":run.tool_calls,"inputOutputTokens":run.tokens,"costMicros":run.cost}),
+            json!({"finalAnswer":final_answer,"message":response.message,"messages":run.messages,"artifacts":[],"citations":[],"stopReason":response.stop_reason,"iterations":run.iteration+1,"modelCalls":run.model_calls,"toolCalls":run.tool_calls,"inputOutputTokens":run.tokens,"costMicros":run.cost,"usage":{"modelCalls":run.model_calls,"toolCalls":run.tool_calls,"tokens":run.tokens,"costMicros":run.cost}}),
         ))
     }
     async fn stop(
@@ -925,6 +926,15 @@ impl Budget {
 fn number(value: &Value, key: &str, default: u64) -> u64 {
     value.get(key).and_then(Value::as_u64).unwrap_or(default)
 }
+
+fn model_message_text(message: &Value) -> String {
+    message
+        .get("content")
+        .and_then(Value::as_str)
+        .or_else(|| message.as_str())
+        .map(str::to_owned)
+        .unwrap_or_else(|| message.to_string())
+}
 async fn initial_messages(
     task: &RuntimeTask,
     context: &RuntimeContext,
@@ -951,12 +961,26 @@ async fn initial_messages(
     if !system.is_empty() {
         result.push(json!({"role":"system","content":system}));
     }
-    if let Some(messages) = parameters.get("messages").and_then(Value::as_array) {
-        result.extend(messages.clone())
-    } else {
+    let configured_messages = configured_messages(parameters);
+    if configured_messages.is_empty() {
         result.push(json!({"role":"user","content":first_input(task)}));
+    } else {
+        result.extend(configured_messages);
     }
     Ok(result)
+}
+
+fn configured_messages(parameters: &Value) -> Vec<Value> {
+    let mut result = Vec::new();
+    if let Some(question) = parameters
+        .get("userQuestion")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|question| !question.is_empty())
+    {
+        result.push(json!({"role":"user","content":question}));
+    }
+    result
 }
 fn tool_catalog(task: &RuntimeTask) -> RuntimeResult<BTreeMap<String, (ResourceReference, Value)>> {
     let mut result = BTreeMap::new();
@@ -1216,6 +1240,26 @@ mod tests {
     use agentx_application::RuntimeResourceSnapshot;
     use agentx_domain::{ResourceOperation, ResourceType};
 
+    #[test]
+    fn final_answer_uses_the_model_message_content() {
+        assert_eq!(
+            model_message_text(&json!({"role":"assistant","content":"done"})),
+            "done"
+        );
+        assert_eq!(model_message_text(&json!("plain text")), "plain text");
+    }
+
+    #[test]
+    fn configured_user_question_becomes_one_user_message() {
+        assert_eq!(
+            configured_messages(&json!({
+                "userQuestion": "First question"
+            })),
+            vec![json!({"role":"user","content":"First question"})]
+        );
+        assert!(configured_messages(&json!({"userQuestion": " "})).is_empty());
+    }
+
     fn task_with_model_price(price: Value) -> RuntimeTask {
         let reference = ResourceReference {
             binding_id: None,
@@ -1237,6 +1281,9 @@ mod tests {
             node_type: "agent".into(),
             node_version: 1,
             node_parameters: json!({}),
+            workflow_inputs: json!({}),
+            contexts: json!({}),
+            context_version: 0,
             inputs: BTreeMap::new(),
             run_index: 0,
             iteration_index: 0,
@@ -1735,11 +1782,11 @@ mod tests {
             .bind(user).bind(task.tenant_id).execute(pool).await.unwrap();
         sqlx::query("INSERT INTO workflows(id,tenant_id,name,owner_user_id,owner_department_id) VALUES(?,?,'Agent Ledger',?,?)")
             .bind(task.workflow_id).bind(task.tenant_id).bind(user).bind(department).execute(pool).await.unwrap();
-        sqlx::query("INSERT INTO workflow_versions(id,tenant_id,workflow_id,version_number,source_revision,schema_version,definition_json,content_hash,created_by) VALUES(?,?,?,1,1,'2.0',JSON_OBJECT(),'agent-ledger',?)")
+        sqlx::query("INSERT INTO workflow_versions(id,tenant_id,workflow_id,version_number,source_revision,schema_version,definition_json,content_hash,created_by) VALUES(?,?,?,1,1,'4.0',JSON_OBJECT('schemaVersion','4.0','start',JSON_OBJECT('inputs',JSON_OBJECT(),'contexts',JSON_OBJECT()),'nodes',JSON_ARRAY(),'connections',JSON_ARRAY(),'end',JSON_OBJECT('outputs',JSON_OBJECT())),'agent-ledger',?)")
             .bind(task.workflow_version_id).bind(task.tenant_id).bind(task.workflow_id).bind(user).execute(pool).await.unwrap();
-        sqlx::query("INSERT INTO workflow_executions(id,tenant_id,workflow_id,workflow_version_id,trace_id,trigger_type,status,started_at) VALUES(?,?,?,?,?,'manual','running',CURRENT_TIMESTAMP(6))")
+        sqlx::query("INSERT INTO workflow_executions(id,tenant_id,workflow_id,workflow_version_id,trace_id,trigger_type,status,input_json,context_json,context_base_json,context_version,session_context_version,started_at) VALUES(?,?,?,?,?,'manual','running',JSON_OBJECT(),JSON_OBJECT(),JSON_OBJECT(),0,0,CURRENT_TIMESTAMP(6))")
             .bind(task.execution_id).bind(task.tenant_id).bind(task.workflow_id).bind(task.workflow_version_id).bind(task.trace_id).execute(pool).await.unwrap();
-        sqlx::query("INSERT INTO node_executions(id,tenant_id,execution_id,node_id,node_name,node_type,node_version,generation,activation_slot,run_index,status,capability) VALUES(?,?,?,'agent','Agent','agent',1,0,0,0,'running','agent')")
+        sqlx::query("INSERT INTO node_executions(id,tenant_id,execution_id,node_id,node_key,node_name,node_type,node_version,generation,activation_slot,run_index,status,capability) VALUES(?,?,?,'agent','agent','Agent','agent',1,0,0,0,'running','agent')")
             .bind(task.node_execution_id).bind(task.tenant_id).bind(task.execution_id).execute(pool).await.unwrap();
         sqlx::query("INSERT INTO node_attempts(id,tenant_id,execution_id,node_execution_id,attempt_number,status,idempotency_key,lease_token,deadline_at) VALUES(?,?,?,?,1,'running','agent-ledger-attempt-1',?,DATE_ADD(CURRENT_TIMESTAMP(6),INTERVAL 5 MINUTE))")
             .bind(task.attempt_id).bind(task.tenant_id).bind(task.execution_id).bind(task.node_execution_id).bind(Uuid::now_v7()).execute(pool).await.unwrap();

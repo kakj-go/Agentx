@@ -108,3 +108,9 @@ Message Part 支持 text、json、image、audio、file、tool_call 和 tool_resu
 - Trigger Gateway 认证、幂等和 SSE 协议。
 - `ExecutionRuntime` Port 和运行接入点。
 - Playground 的正式调用路径。
+
+## 13. 安全删除补充
+
+- Application 被 Session、Invocation、Execution 等历史业务记录阻止；无外部引用时，API Key、Webhook、Schedule 和 Deployment 作为聚合子数据清理。
+- Webhook 或 Schedule 已产生 Invocation 时不可删除，影响响应定位到对应 Application 和调用记录；没有调用记录时允许独立删除。
+- Application、Webhook 和 Schedule 统一使用 `application:delete`。API Key 不提供物理删除，继续使用撤销和轮换。

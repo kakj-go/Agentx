@@ -1,11 +1,15 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { i18n } from '../../../app/i18n'
 import { ToastProvider } from '../../../shared/ui/toast'
 import { RuntimePanel } from './runtime-panel'
 
 describe('RuntimePanel execution rail', () => {
+  beforeEach(async () => { await i18n.changeLanguage('zh-CN') })
+  afterEach(async () => { await i18n.changeLanguage('zh-CN') })
+
   it('collapses to 40px, expands, and switches between Workflow executions', async () => {
     const onExecutionChange = vi.fn()
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ items: [{ id: 'execution-1', workflowId: 'workflow-1', workflowName: 'Workflow', status: 'succeeded', startedAt: '2026-08-07T01:00:00Z' }], page: 1, pageSize: 100, total: 1 }), { headers: { 'Content-Type': 'application/json' } })))
@@ -16,10 +20,10 @@ describe('RuntimePanel execution rail', () => {
     expect(expand.closest('section')).toHaveClass('h-10')
     fireEvent.click(expand)
     expect(screen.getByRole('tab', { name: /Events|事件/ })).toBeInTheDocument()
-    const select = await screen.findByRole('combobox', { name: /Switch execution|切换 Execution/ })
+    const select = await screen.findByRole('combobox', { name: /切换执行/ })
     await waitFor(() => expect(select).not.toBeDisabled())
     fireEvent.click(select)
-    fireEvent.click(await screen.findByRole('option', { name: /succeeded/ }))
+    fireEvent.click(await screen.findByRole('option', { name: /成功/ }))
     expect(onExecutionChange).toHaveBeenCalledWith('execution-1')
   })
 })

@@ -70,6 +70,9 @@ mod tests {
             node_type: node_type.into(),
             node_version: 1,
             node_parameters: parameters,
+            workflow_inputs: json!({}),
+            contexts: json!({}),
+            context_version: 0,
             inputs,
             run_index: 0,
             iteration_index: 0,
@@ -109,7 +112,7 @@ mod tests {
         let cases = [
             (
                 "filter",
-                json!({"condition":"=$json.value > 1"}),
+                json!({"condition":"${{ item.value > 1 }}"}),
                 vec![json!({"value":1}), json!({"value":2})],
             ),
             (
@@ -275,7 +278,7 @@ mod tests {
 
         let expression = execute(&task(
             "stop_and_error",
-            json!({"code":"=$json.code","message":"=$json.message"}),
+            json!({"code":"${{ item.code }}","message":"${{ item.message }}"}),
             main_inputs(vec![
                 json!({"code":"EXPRESSION_ERROR","message":"from item"}),
             ]),

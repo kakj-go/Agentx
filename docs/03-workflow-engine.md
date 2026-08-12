@@ -11,23 +11,22 @@
 - 节点可以在循环中执行多次。
 - 手动运行保存每个节点的完整输入输出。
 - 发布版本固定节点类型及其版本。
-- Trigger 创建一次独立 Execution。
+- Trigger Binding 把外部事件映射为 Start Inputs，并创建一次独立 Execution。
 - Wait、审批和外部事件可以挂起并恢复 Execution。
 
 这些是 Agentx 自己冻结的运行语义。Studio 可以采用 n8n 式拖拽、配置和调试交互，但不以 n8n Workflow JSON、表达式、npm 社区节点或插件协议作为兼容目标。
 
 ## 2. Workflow Definition
 
-M6 将运行定义升级为 `WorkflowDefinition 3.0`。项目尚未发布，不保留 2.0 双读；开发数据、Fixture、Schema 和编译测试一次性迁移。
+当前运行定义为不兼容旧版本的 `WorkflowDefinition 4.0`。项目尚未发布，不保留 2.0/3.0 双读；开发数据、Fixture、Schema 和编译测试一次性迁移。完整契约见 [Workflow 4.0](12-workflow-4.md)。
 
 Workflow Definition 包含：
 
-- 标识和名称
+- 固定虚拟 Start，以及不可变 Inputs Schema 和 Context Contract
 - Nodes
 - Connections
-- Variables
+- 固定虚拟 End，以及唯一正式 Outputs Contract
 - Settings
-- Trigger 配置
 - 错误策略
 - 默认超时和重试策略
 - Execution Order
@@ -36,6 +35,7 @@ Workflow Definition 包含：
 Node Instance 包含：
 
 - Node ID
+- Workflow 内唯一且发布后稳定的 Node Key
 - 显示名称
 - Node Type
 - Node Type Version
@@ -100,7 +100,7 @@ Connection 包含：
 - executeOnce：对整批 Items 执行一次
 - executeForEachItem：逐 Item 执行
 - executeBatch：按批次执行
-- trigger：产生初始 Items
+- action root：没有普通入边的业务节点消费 Start 创建的初始 Items
 - waitAndResume：持久化等待
 - agent：运行模型和工具循环
 - subWorkflow：创建子 Execution
@@ -126,17 +126,14 @@ branchIndex/outputIndex 属于 Item 来源和 Edge Delivery，不属于 Node Exe
 
 ## 5. 表达式系统
 
-表达式可以读取：
+Expression 2.0 只能读取以下命名空间：
 
-- 当前 Item
-- 当前节点的全部输入
-- 已执行上游节点的输出
-- Workflow 变量
-- Execution 信息
-- Session 和用户信息
-- 循环上下文
-- 环境配置
-- Credential 的受控字段
+- `inputs`：Start 校验后的不可变输入。
+- `outputs`：按 Node Key、端口和显式 Item/run 选择器读取可达前置节点输出。
+- `contexts`：声明的 Execution 或 Session Context。
+- `execution`：受控 Execution 元数据。
+- `item`：当前 Item。
+- `loop`：显式循环上下文。
 
 服务端不得直接执行任意 JavaScript 表达式。建议：
 
@@ -148,7 +145,7 @@ branchIndex/outputIndex 属于 Item 来源和 Edge Delivery，不属于 Node Exe
 
 表达式解析错误属于节点配置错误，应明确区分于节点业务错误。
 
-表达式由平台按 Item 和运行上下文求值，远程节点不直接读取 Execution 历史。远程 Action 接收公共参数和按 Item 解析后的参数；`all(branchIndex, runIndex)`、linked item、节点参数、当前 item/run 索引和 Workflow/Execution 元数据均由平台侧解释器提供。
+表达式使用 `${{ ... }}`，完整表达式保留 JSON 类型，嵌入普通字符串时才转成文本。旧 `$json`、`$input`、`node()` 和前导 `=` 不被接受。表达式由平台按 Item 和运行上下文求值，远程节点不直接读取 Execution 历史。
 
 ## 6. Node Definition
 
@@ -198,13 +195,14 @@ Draft Revision 调试或保存为 Version 前编译为内部 IR。两种来源�
 - 必填参数
 - 端口类型
 - 不可达节点
-- 没有 Trigger
+- Start/End Contract、Node Key 唯一性和旧 Trigger 节点禁用
 - 图连接和强连通分量
 - 节点 Readiness Policy
 - 表达式引用
 - Credential 是否存在
 - Model、MCP Tool、Skill、RAG、Memory 和独立 Credential 授权
 - Sub-workflow 版本
+- Context 读写能力、Patch 路径、Schema 和隐藏依赖环
 - 副作用节点配置
 - 运行预算
 
@@ -303,6 +301,7 @@ Sub-workflow：
 - 创建独立子 Execution，并记录 parentExecutionId 和 callerNodeExecutionId
 - 支持等待子 Execution 或异步触发
 - 输入遵循子 Workflow 声明的 Schema；同步调用返回子 Workflow 终止输出
+- Context 使用 Overlay，只有子流程成功后才按字段 Merge Policy 提交
 - 父子 Execution 的状态、Trace、成本和取消传播规则必须明确，不把子节点直接展开为父 Execution 的 Node Execution
 
 ## 10. Scheduler
@@ -390,4 +389,4 @@ Node Action 请求至少携带 protocol/node version、executionId、nodeExecuti
 
 Node API 至少分为 Action Execute、动态 Provider 和 Lifecycle 三组版本化 Endpoint。接入文档必须说明认证、租户/运行身份、协议协商、幂等、超时取消、Artifact、Credential、错误分类、重试责任和 Fixture 验证方式。
 
-首期不发布 Rust、Python 或 JavaScript Node SDK。平台提供 OpenAPI/JSON Schema、认证和幂等规范、接入文档、Fixture 与协议一致性测试；内部 Rust `NodeRunner` 只是 builtin Adapter。Trigger 生命周期在阶段 08 冻结契约，在阶段 12 接入 Trigger Gateway；完整节点配置 UI 在阶段 11 使用同一 Node Manifest，不再定义第二套节点描述。
+首期不发布 Rust、Python 或 JavaScript Node SDK。平台提供 OpenAPI/JSON Schema、认证和幂等规范、接入文档、Fixture 与协议一致性测试；内部 Rust `NodeRunner` 只是 builtin Adapter。外部启动生命周期属于 Trigger Binding 和 Trigger Gateway，不进入 Node Catalog；完整节点配置 UI 使用同一 Node Manifest，不再定义第二套节点描述。

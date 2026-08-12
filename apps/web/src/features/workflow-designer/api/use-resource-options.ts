@@ -1,23 +1,44 @@
 import { useQueries } from '@tanstack/react-query'
 
 import { apiRequest } from '../../../shared/api/client'
-import type { PageResponse } from '../../../shared/api/types'
 import type { ResourceOption, ResourceType } from '../model/types'
 
-type ResourceRecord = { id: string; name?: string; alias?: string; title?: string; modelName?: string; versionId?: string | null; currentVersionId?: string | null; currentDeploymentId?: string | null; enabled?: boolean; availability?: string; status?: string }
+export type ResourceOptionOperation = NonNullable<ResourceOption['operation']>
+export type ResourceOptionRequest = { resourceType: ResourceType; operation: ResourceOptionOperation }
 
-const endpoints: Partial<Record<ResourceType, string>> = {
-  credential: '/credentials?pageSize=100&status=active', model: '/models/aliases?pageSize=100&status=active', mcp_tool: '/mcp/tools', skill: '/skills?pageSize=100&status=active', rag: '/knowledge/resources?pageSize=100&status=active', memory: '/memory/namespaces?pageSize=100&status=active', sandbox_profile: '/sandbox-profiles?pageSize=100&status=active',
-}
+type ResourceOptionPage = { items: Array<{ id: string; name: string; detail: string; status: string; resourceVersionId?: string | null; accessState: ResourceOption['accessState']; pendingRequestId?: string | null; requirements?: ResourceOption['requirements'] }>; page: number; pageSize: number; total: number }
 
-export function useResourceOptions() {
-  const keys = Object.keys(endpoints) as ResourceType[]
-  const queries = useQueries({ queries: keys.map((resourceType) => ({ queryKey: ['studio-resources', resourceType], queryFn: async () => normalize(await apiRequest<unknown>(endpoints[resourceType]!), resourceType), staleTime: 30_000, retry: false })) })
-  const options = Object.fromEntries(keys.map((key, index) => [key, queries[index].data ?? []])) as Partial<Record<ResourceType, ResourceOption[]>>
+export function useResourceOptions(workflowId: string, requests: ResourceOptionRequest[]) {
+  const normalized = deduplicateRequests(requests)
+  const queries = useQueries({ queries: normalized.map(({ resourceType, operation }) => ({
+    queryKey: ['studio-resource-options', workflowId, resourceType, operation],
+    queryFn: () => loadResourceOptions(workflowId, { resourceType, operation }),
+    enabled: Boolean(workflowId),
+    staleTime: 10_000,
+    refetchInterval: (query: { state: { data?: ResourceOption[] } }) => query.state.data?.some((item: ResourceOption) => item.accessState === 'pending') ? 5_000 : false,
+    refetchOnWindowFocus: 'always' as const,
+    retry: false,
+  })) })
+  const options = normalized.reduce<Partial<Record<ResourceType, ResourceOption[]>>>((result, request, index) => {
+    result[request.resourceType] = [...(result[request.resourceType] ?? []), ...(queries[index].data ?? [])]
+    return result
+  }, {})
   return { options, loading: queries.some((query) => query.isLoading), errors: queries.filter((query) => query.error).map((query) => query.error) }
 }
 
-function normalize(value: unknown, resourceType: ResourceType): ResourceOption[] {
-  const items = Array.isArray(value) ? value : ((value as PageResponse<ResourceRecord> | undefined)?.items ?? [])
-  return (items as ResourceRecord[]).filter((item) => item.enabled !== false && item.availability !== 'unavailable' && item.status !== 'disabled').map((item) => ({ value: item.id, label: item.alias ? `${item.alias}${item.modelName ? ` · ${item.modelName}` : ''}` : item.title ? `${item.title}${item.name ? ` · ${item.name}` : ''}` : item.name ?? item.id, versionId: item.currentVersionId ?? item.versionId ?? (resourceType === 'model' ? item.currentDeploymentId : undefined) }))
+export async function loadResourceOptions(workflowId: string, { resourceType, operation }: ResourceOptionRequest) {
+  const items: ResourceOption[] = []
+  let page = 1
+  let hasMore = true
+  while (hasMore) {
+    const response = await apiRequest<ResourceOptionPage>(`/workflows/${workflowId}/resource-options?resourceType=${resourceType}&operation=${operation}&page=${page}&pageSize=100`)
+    items.push(...response.items.map((item) => ({ resourceType, operation, value: item.id, label: item.name, detail: item.detail, status: item.status, versionId: item.resourceVersionId, accessState: item.accessState, pendingRequestId: item.pendingRequestId, requirements: item.requirements })))
+    hasMore = items.length < response.total && response.items.length > 0
+    if (hasMore) page += 1
+  }
+  return items
+}
+
+function deduplicateRequests(requests: ResourceOptionRequest[]) {
+  return [...new Map(requests.map((request) => [`${request.resourceType}:${request.operation}`, request])).values()]
 }

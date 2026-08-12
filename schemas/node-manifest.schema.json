@@ -78,6 +78,35 @@
       ],
       "type": "string"
     },
+    "ExpressionCapabilities": {
+      "additionalProperties": false,
+      "properties": {
+        "namespaces": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "supportsAll": {
+          "default": false,
+          "type": "boolean"
+        },
+        "supportsCurrent": {
+          "default": false,
+          "type": "boolean"
+        },
+        "supportsFirstLast": {
+          "default": false,
+          "type": "boolean"
+        },
+        "supportsRunSelection": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
     "LifecycleOperation": {
       "enum": [
         "activate",
@@ -132,6 +161,33 @@
           "type": "array"
         },
         "outputPortLabels": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "parameterDescriptions": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "parameterEnumOptions": {
+          "additionalProperties": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "type": "object"
+        },
+        "parameterLabels": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "parameterPlaceholders": {
           "additionalProperties": {
             "type": "string"
           },
@@ -229,6 +285,15 @@
       },
       "type": "object"
     },
+    "OutputCardinality": {
+      "enum": [
+        "zero_or_one",
+        "exactly_one",
+        "zero_or_many",
+        "many"
+      ],
+      "type": "string"
+    },
     "PortKind": {
       "enum": [
         "main",
@@ -270,6 +335,9 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "properties": {
+    "artifactOutputSchema": {
+      "default": null
+    },
     "bindingSlots": {
       "default": [],
       "items": {
@@ -283,6 +351,14 @@
     "category": {
       "default": "",
       "type": "string"
+    },
+    "contextReadCapability": {
+      "default": false,
+      "type": "boolean"
+    },
+    "contextWriteCapability": {
+      "default": false,
+      "type": "boolean"
     },
     "credentials": {
       "default": [],
@@ -308,6 +384,16 @@
     },
     "executionStyle": {
       "$ref": "#/$defs/ExecutionStyle"
+    },
+    "expressionCapabilities": {
+      "$ref": "#/$defs/ExpressionCapabilities",
+      "default": {
+        "namespaces": [],
+        "supportsAll": false,
+        "supportsCurrent": false,
+        "supportsFirstLast": false,
+        "supportsRunSelection": false
+      }
     },
     "iconKey": {
       "default": "",
@@ -342,11 +428,29 @@
     "nodeType": {
       "type": "string"
     },
+    "outputCardinality": {
+      "additionalProperties": {
+        "$ref": "#/$defs/OutputCardinality"
+      },
+      "default": {},
+      "type": "object"
+    },
+    "outputPortSchemas": {
+      "additionalProperties": true,
+      "description": "Optional schema overrides for individual output ports. The default\noutput_schema remains the native main-port schema.",
+      "type": "object"
+    },
     "outputPorts": {
       "items": {
         "$ref": "#/$defs/NodePort"
       },
       "type": "array"
+    },
+    "outputProjectionSchema": {
+      "default": null
+    },
+    "outputSchema": {
+      "default": null
     },
     "parameterSchema": true,
     "protocolVersion": {

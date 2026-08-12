@@ -72,6 +72,8 @@ Sandbox Manager 只解析 MySQL 和 OpenSandbox Settings；Worker/Coordinator �
 
 Profile 必须提供 Host，可选择已有 TLS Secret 和 `LoadBalancer/NodePort`。卸载前会扫描其他 Namespace；仍有 Ingress 使用 `agentx-nginx` 时保留 Controller。
 
+`network.allowedEgressCidrs` 是核心服务访问外部模型供应商、外部依赖和远程 Sandbox 的显式出口白名单。Docker Desktop 会把公网 DNS 映射到 `198.18.0.0/15`，本地 Sandbox Profile 因此允许该保留网段；生产 Profile 必须改为供应商实际出口 CIDR，不能照搬本地范围。
+
 ## 6. Addon 边界
 
 LightRAG/Mem0 是可选业务 Addon，不是 Agentx 权威状态存储。bundled 模式由 Profile 提供 Provider Base URL、模型和 Embedding 配置，由独立 Secret 提供 API Key；local Full 可以使用 Echo MCP，test/production 必须使用真实 Provider。

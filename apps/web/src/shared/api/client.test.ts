@@ -1,9 +1,27 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { apiRequest, setAccessToken, setRefreshHandler } from './client'
+import { ApiClientError, apiRequest, setAccessToken, setApiErrorTranslator, setRefreshHandler } from './client'
 
 describe('api client', () => {
-  afterEach(() => { vi.unstubAllGlobals(); setAccessToken() })
+  afterEach(() => { vi.unstubAllGlobals(); setAccessToken(); setApiErrorTranslator() })
+
+  it('uses the registered locale-aware API error translator', () => {
+    setApiErrorTranslator((detail) => `localized:${detail.code}`)
+    const error = new ApiClientError(422, { code: 'INVALID_WORKFLOW_DEFINITION', message: 'Workflow definition is invalid', requestId: 'request-1' })
+
+    expect(error.message).toBe('localized:INVALID_WORKFLOW_DEFINITION')
+    expect(error.detail.message).toBe('Workflow definition is invalid')
+  })
+
+  it('normalizes network failures into a translatable API error', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('Failed to fetch') }))
+    setApiErrorTranslator((detail) => `localized:${detail.code}`)
+
+    await expect(apiRequest('/offline')).rejects.toMatchObject({
+      message: 'localized:NETWORK_ERROR',
+      detail: { code: 'NETWORK_ERROR' },
+    })
+  })
 
   it('coalesces concurrent unauthorized responses into one refresh', async () => {
     let requests = 0

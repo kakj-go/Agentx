@@ -1,0 +1,50 @@
+const translations = {
+  "operation": "操作",
+  "use": "使用",
+  "view": "查看",
+  "read": "读取",
+  "write": "写入",
+  "department": "部门",
+  "description": "集中管理全部资源对部门和工作流运行身份的授权。",
+  "manage": "管理授权",
+  "grantAdded": "授权已添加",
+  "select": "请选择",
+  "resourceType": "资源类型",
+  "grantCount": "授权数量",
+  "grantCountValue": "{{count}} 项",
+  "manageTitle": "管理“{{name}}”的授权",
+  "manageDescription": "部门授权控制管理界面的可见和使用范围；工作流授权控制发布和运行身份可用范围。",
+  "subjectType": "授权对象类型",
+  "subject": "授权对象",
+  "workflow": "工作流运行身份",
+  "add": "添加授权",
+  "subjectRequired": "请选择授权对象",
+  "revoked": "授权已撤销",
+  "empty": "该资源尚无授权",
+  "revoke": "撤销授权",
+  "revokeTitle": "确认撤销授权",
+  "revokeDescription": "撤销后，新的工作流发布或运行可能被阻止。",
+  "revokeConfirm": "确认撤销",
+  "title": "资源授权",
+  "search": "搜索资源名称、类型或连接信息",
+  "resourceTypes": {
+    "credential": "凭证",
+    "model": "模型",
+    "mcp_server": "MCP 服务",
+    "mcp_tool": "MCP 工具",
+    "skill": "技能",
+    "rag": "知识库",
+    "memory": "记忆",
+    "sandbox_profile": "沙箱配置"
+  },
+  "operations": {
+    "use": "使用", "view": "查看", "read": "读取", "write": "写入", "execute": "执行", "manage": "管理"
+  },
+  "validationReasons": {
+    "resource_missing_or_disabled": "资源不存在或已停用",
+    "grant_revoked": "授权已撤销",
+    "workflow_grant_missing": "工作流运行身份缺少授权"
+  }
+} as const
+
+export default translations

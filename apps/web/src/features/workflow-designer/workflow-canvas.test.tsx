@@ -1,22 +1,24 @@
 import * as Tooltip from '@radix-ui/react-tooltip'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ToastProvider } from '../../shared/ui/toast'
+import { i18n } from '../../app/i18n'
 import { deserializeDraft, serializeStudio } from './model/serializer'
 import type { NodeManifest, WorkflowDefinition } from './model/types'
 import { useEditorStore } from './store/editor-store'
 import { WorkflowCanvas } from './workflow-canvas'
 
-const editorDocument = { nodeLayouts: [{ nodeId: 'trigger', x: 100, y: 100 }], bindingLayouts: [], edges: [], bindingEdges: [], annotations: [], groups: [], viewport: { x: 0, y: 0, zoom: 1 } }
+const editorDocument = { nodeLayouts: [{ nodeId: 'trigger', x: 100, y: 100 }], boundaryLayouts: [], bindingLayouts: [], edges: [], bindingEdges: [], annotations: [], groups: [], viewport: { x: 0, y: 0, zoom: 1 } }
 const draft = {
-  id: 'draft-1', workflowId: 'workflow-1', revision: 1, schemaVersion: '3.0', definitionHash: 'sha256:def', editorHash: 'sha256:editor', updatedAt: '2026-08-02T10:00:00Z', editorDocument,
-  definition: { schemaVersion: '3.0', settings: { executionOrder: 'deterministic', activationBudget: 10000 }, nodes: [{ id: 'trigger', type: 'manual_trigger', typeVersion: 1, name: 'Manual Trigger', disabled: false, parameters: {}, resourceReferences: [], settings: {} }], connections: [] },
+  id: 'draft-1', workflowId: 'workflow-1', revision: 1, schemaVersion: '4.0', definitionHash: 'sha256:def', editorHash: 'sha256:editor', updatedAt: '2026-08-02T10:00:00Z', editorDocument,
+  definition: { schemaVersion: '4.0', start: { inputs: {}, contexts: {} }, settings: { executionOrder: 'deterministic', activationBudget: 10000 }, nodes: [{ id: 'trigger', key: 'source', type: 'set', typeVersion: 1, name: 'Set', disabled: false, parameters: {}, outputProjection: {}, contextWrites: [], resourceReferences: [], settings: {} }], connections: [], end: { outputs: {}, error: { strategy: 'fail_fast', collectWindowMs: 5000, outputs: {} } } },
 }
 
 let requiredAgentBinding = false
+let saveConflict = false
 
 const manifest = (nodeType: string, executionStyle = 'action'): NodeManifest => ({
   protocolVersion: '1.0', nodeType, version: 1, displayName: nodeType === 'agent' ? 'Agent' : 'Manual Trigger', description: '', category: nodeType === 'agent' ? 'ai' : 'triggers', keywords: [nodeType], iconKey: nodeType === 'agent' ? 'bot' : 'mouse-pointer-click', executionStyle: executionStyle as NodeManifest['executionStyle'], capability: nodeType === 'agent' ? 'agent' : 'builtin', readiness: 'any', inputPorts: nodeType === 'agent' ? [{ name: 'main', kind: 'main', required: true, variadic: false }] : [], outputPorts: [{ name: 'main', kind: 'main', required: false, variadic: false }], bindingSlots: nodeType === 'agent' ? [{ name: 'ai_model', resourceType: 'model', required: requiredAgentBinding, multiple: false }] : [], parameterSchema: { type: 'object', properties: {} }, uiSchema: { canvas: { role: nodeType === 'agent' ? 'agent' : 'trigger' } }, providers: [], credentials: [], retryPolicy: { retryable: false, maxAttempts: 1, initialBackoffMs: 0, maxBackoffMs: 0 }, sandboxRequired: false, supportsMock: true, sideEffectLevel: 'none',
@@ -27,14 +29,18 @@ function json(value: unknown, status = 200) { return new Response(JSON.stringify
 describe('workflow studio shell', () => {
   beforeEach(() => {
     requiredAgentBinding = false
+    saveConflict = false
     localStorage.clear()
     useEditorStore.setState({ nodes: [], edges: [], viewport: { x: 0, y: 0, zoom: 1 }, annotations: [], groups: [], settings: { executionOrder: 'deterministic', activationBudget: 10_000 }, dirty: false, past: [], future: [], selectedId: undefined })
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = new URL(String(input), 'http://agentx.test').pathname
-      if (path.endsWith('/draft') && init?.method === 'PUT') return json({ code: 'DRAFT_REVISION_CONFLICT', message: 'Draft changed', requestId: 'request-1' }, 409)
+      if (path.endsWith('/draft') && init?.method === 'PUT') {
+        if (saveConflict) return json({ code: 'DRAFT_REVISION_CONFLICT', message: 'Draft changed', requestId: 'request-1' }, 409)
+        return json({ ...draft, revision: draft.revision + 1 })
+      }
       if (path.endsWith('/draft')) return json(draft)
-      if (path.endsWith('/node-definitions')) return json({ items: [{ nodeType: 'manual_trigger', version: 1 }, { nodeType: 'agent', version: 1 }] })
-      if (path.includes('/node-definitions/manual_trigger/')) return json({ nodeType: 'manual_trigger', version: 1, manifest: manifest('manual_trigger', 'trigger') })
+      if (path.endsWith('/node-definitions')) return json({ items: [{ nodeType: 'set', version: 1 }, { nodeType: 'agent', version: 1 }] })
+      if (path.includes('/node-definitions/set/')) return json({ nodeType: 'set', version: 1, manifest: manifest('set') })
       if (path.includes('/node-definitions/agent/')) return json({ nodeType: 'agent', version: 1, manifest: manifest('agent') })
       if (path.endsWith('/workflows/workflow-1')) return json({ id: 'workflow-1', name: 'Conflict Workflow' })
       if (path.endsWith('/environments') || path.endsWith('/versions') || path.endsWith('/mcp/tools')) return json([])
@@ -43,6 +49,7 @@ describe('workflow studio shell', () => {
   })
 
   it('keeps local edits and offers all explicit conflict choices', async () => {
+    saveConflict = true
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
     render(<QueryClientProvider client={queryClient}><Tooltip.Provider><ToastProvider><MemoryRouter initialEntries={['/workflows/workflow-1/editor']}><Routes><Route element={<WorkflowCanvas />} path="/workflows/:workflowId/editor" /></Routes></MemoryRouter></ToastProvider></Tooltip.Provider></QueryClientProvider>)
 
@@ -58,7 +65,7 @@ describe('workflow studio shell', () => {
     await waitFor(() => expect(screen.getByText(/Unsaved/)).toBeInTheDocument())
   })
 
-  it('keeps incomplete autosave validation non-blocking but reports it on explicit save', async () => {
+  it('saves an incomplete draft and defers strict validation until execution', async () => {
     requiredAgentBinding = true
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
     render(<QueryClientProvider client={queryClient}><Tooltip.Provider><ToastProvider><MemoryRouter initialEntries={['/workflows/workflow-1/editor']}><Routes><Route element={<WorkflowCanvas />} path="/workflows/:workflowId/editor" /></Routes></MemoryRouter></ToastProvider></Tooltip.Provider></QueryClientProvider>)
@@ -66,10 +73,9 @@ describe('workflow studio shell', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Search nodes' }))
     fireEvent.change(screen.getByRole('textbox', { name: 'Search nodes' }), { target: { value: 'agent' } })
     fireEvent.click(screen.getByTestId('palette-action-agent'))
-    await new Promise((resolve) => window.setTimeout(resolve, 1600))
-    expect(screen.queryByRole('dialog', { name: 'Validation failed' })).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
-    expect(await screen.findByRole('dialog', { name: 'Validation failed' })).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByText(/Saved|已保存/)).toBeInTheDocument())
+    expect(screen.queryByRole('dialog', { name: 'Validation failed' })).not.toBeInTheDocument()
   })
 
   it('locates a validation issue in the selected node details', async () => {
@@ -81,37 +87,33 @@ describe('workflow studio shell', () => {
     fireEvent.change(screen.getByRole('textbox', { name: 'Search nodes' }), { target: { value: 'agent' } })
     fireEvent.click(screen.getByTestId('palette-action-agent'))
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(screen.getByText(/Saved|已保存/)).toBeInTheDocument())
+    fireEvent.click(screen.getAllByRole('button', { name: 'Run' })[0])
     const issue = await screen.findByText('AI_BINDING_REQUIRED')
+    expect(issue.closest('button')).toHaveTextContent('Connect the required ai_model attachment.')
+
+    await i18n.changeLanguage('zh-CN')
+    await waitFor(() => expect(issue.closest('button')).toHaveTextContent('请连接必需的 ai_model 附件。'))
     fireEvent.click(issue.closest('button')!)
 
     const field = document.querySelector<HTMLElement>('[data-field-path="resourceReferences.ai_model"]')
     await waitFor(() => expect(field).toHaveFocus())
     expect(field).toHaveClass('studio-field-located')
+    await i18n.changeLanguage('en-US')
   })
 
-  it('explains why an invalid primary output was cleared', async () => {
-    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
-    render(<QueryClientProvider client={queryClient}><Tooltip.Provider><ToastProvider><MemoryRouter initialEntries={['/workflows/workflow-1/editor']}><Routes><Route element={<WorkflowCanvas />} path="/workflows/:workflowId/editor" /></Routes></MemoryRouter></ToastProvider></Tooltip.Provider></QueryClientProvider>)
-    await screen.findByTestId('workflow-canvas')
-
-    act(() => useEditorStore.getState().setPrimaryOutput('trigger'))
-    await waitFor(() => expect(useEditorStore.getState().settings.primaryOutputNodeId).toBe('trigger'))
-    act(() => useEditorStore.getState().updateNode('trigger', { disabled: true }))
-
-    expect(await screen.findByText('Primary output cleared because the node was disabled')).toBeInTheDocument()
-  })
 })
 
 describe('workflow studio serializer', () => {
-  it('keeps layouts outside Definition 3.0 and compiles AI attachments into agent references', () => {
+  it('keeps layouts outside Definition 4.0 and compiles AI attachments into agent references', () => {
     const definition: WorkflowDefinition = {
-      schemaVersion: '3.0', settings: { executionOrder: 'deterministic', activationBudget: 10000 }, connections: [],
-      nodes: [{ id: 'agent-1', type: 'agent', typeVersion: 1, name: 'Agent', disabled: false, parameters: {}, settings: {}, resourceReferences: [{ bindingId: 'binding-1', bindingRole: 'ai_model', resourceType: 'model', resourceId: 'model-1', resourceVersionId: 'model-version-1', operation: 'use' }] }],
+      schemaVersion: '4.0', start: { inputs: {}, contexts: {} }, settings: { executionOrder: 'deterministic', activationBudget: 10000 }, connections: [], end: { outputs: {}, error: { strategy: 'fail_fast', collectWindowMs: 5000, outputs: {} } },
+      nodes: [{ id: 'agent-1', key: 'agent', type: 'agent', typeVersion: 1, name: 'Agent', disabled: false, parameters: {}, outputProjection: {}, contextWrites: [], settings: {}, resourceReferences: [{ bindingId: 'binding-1', bindingRole: 'ai_model', resourceType: 'model', resourceId: 'model-1', resourceVersionId: 'model-version-1', operation: 'use' }] }],
     }
     const source = { ...draft, definition, editorDocument: { ...editorDocument, nodeLayouts: [{ nodeId: 'agent-1', x: 410, y: 230 }], bindingLayouts: [{ bindingId: 'binding-1', x: 390, y: 410 }], bindingEdges: [{ edgeId: 'binding-edge-1', sourceBindingId: 'binding-1', targetNodeId: 'agent-1', targetSlot: 'ai_model' }] } }
     const serialized = serializeStudio(deserializeDraft(source))
 
-    expect(serialized.definition.schemaVersion).toBe('3.0')
+    expect(serialized.definition.schemaVersion).toBe('4.0')
     expect(serialized.definition.nodes).toHaveLength(1)
     expect(serialized.definition.nodes[0]).not.toHaveProperty('position')
     expect(serialized.definition.nodes[0].resourceReferences[0]).toMatchObject({ bindingId: 'binding-1', bindingRole: 'ai_model', resourceId: 'model-1' })

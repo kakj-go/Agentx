@@ -14,16 +14,23 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use sqlx::Row;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use time::OffsetDateTime;
 use utoipa::ToSchema;
 use uuid::Uuid;
 
 use crate::{
     control_common::{audit, require_department_scope, require_workflow_access, validate_name},
-    error::{AppError, AppResult},
+    error::{AppError, AppResult, UniqueConstraint, map_unique},
     security::AuthActor,
     state::AppState,
+};
+
+pub(crate) const DATASET_CASE_KEY: UniqueConstraint = UniqueConstraint {
+    index: "uq_dataset_case_key",
+    code: "DATASET_CASE_KEY_EXISTS",
+    field: "caseKey",
+    message: "A Test Case with this key already exists in the Dataset",
 };
 
 #[derive(Deserialize)]
@@ -431,9 +438,34 @@ pub async fn create_case(
     actor.require("dataset:manage")?;
     require_dataset_access(&state, &actor, id, true).await?;
     validate_case(&input.case)?;
+    ensure_case_key_available(
+        &state,
+        actor.tenant_id,
+        id,
+        &input.case.case_key,
+        None,
+        "caseKey",
+        None,
+    )
+    .await?;
     let case_id = Uuid::now_v7();
     let mut tx = state.pool.begin().await?;
-    advance_revision(&mut tx, actor.tenant_id, id, input.expected_revision).await?;
+    if let Err(error) =
+        advance_revision(&mut tx, actor.tenant_id, id, input.expected_revision).await
+    {
+        drop(tx);
+        ensure_case_key_available(
+            &state,
+            actor.tenant_id,
+            id,
+            &input.case.case_key,
+            None,
+            "caseKey",
+            None,
+        )
+        .await?;
+        return Err(error);
+    }
     let order:u64=sqlx::query_scalar("SELECT CAST(COALESCE(MAX(sort_order),0)+1 AS UNSIGNED) FROM dataset_cases WHERE tenant_id=? AND dataset_id=?").bind(actor.tenant_id).bind(id).fetch_one(&mut *tx).await?;
     insert_case(&mut tx, actor.tenant_id, id, case_id, order, &input.case).await?;
     audit(
@@ -462,9 +494,34 @@ pub async fn update_case(
     actor.require("dataset:manage")?;
     require_dataset_access(&state, &actor, id, true).await?;
     validate_case(&input.case)?;
+    ensure_case_key_available(
+        &state,
+        actor.tenant_id,
+        id,
+        &input.case.case_key,
+        Some(case_id),
+        "caseKey",
+        None,
+    )
+    .await?;
     let mut tx = state.pool.begin().await?;
-    advance_revision(&mut tx, actor.tenant_id, id, input.expected_revision).await?;
-    let changed=sqlx::query("UPDATE dataset_cases SET case_key=?,name=?,input_json=?,expected_output_json=?,context_json=?,tags_json=?,evaluator_override_json=?,version=version+1 WHERE id=? AND dataset_id=? AND tenant_id=? AND version=?").bind(&input.case.case_key).bind(&input.case.name).bind(&input.case.input).bind(&input.case.expected_output).bind(&input.case.context).bind(json!(input.case.tags)).bind(&input.case.evaluator_override).bind(case_id).bind(id).bind(actor.tenant_id).bind(input.version).execute(&mut *tx).await?;
+    if let Err(error) =
+        advance_revision(&mut tx, actor.tenant_id, id, input.expected_revision).await
+    {
+        drop(tx);
+        ensure_case_key_available(
+            &state,
+            actor.tenant_id,
+            id,
+            &input.case.case_key,
+            Some(case_id),
+            "caseKey",
+            None,
+        )
+        .await?;
+        return Err(error);
+    }
+    let changed=sqlx::query("UPDATE dataset_cases SET case_key=?,name=?,input_json=?,expected_output_json=?,context_json=?,tags_json=?,evaluator_override_json=?,version=version+1 WHERE id=? AND dataset_id=? AND tenant_id=? AND version=?").bind(&input.case.case_key).bind(&input.case.name).bind(&input.case.input).bind(&input.case.expected_output).bind(&input.case.context).bind(json!(input.case.tags)).bind(&input.case.evaluator_override).bind(case_id).bind(id).bind(actor.tenant_id).bind(input.version).execute(&mut *tx).await.map_err(|error| map_unique(error, &[DATASET_CASE_KEY]))?;
     if changed.rows_affected() != 1 {
         return Err(AppError::conflict(
             "CASE_VERSION_CONFLICT",
@@ -534,8 +591,58 @@ pub async fn import_cases(
             "Import contains no Test Cases",
         ));
     }
+    let mut first_lines = HashMap::new();
+    for (index, case) in cases.iter().enumerate() {
+        if let Some(first) = first_lines.insert(case.case_key.clone(), index + 1) {
+            return Err(case_key_error(
+                "file",
+                &case.case_key,
+                Some(index + 1),
+                Some(first),
+            ));
+        }
+    }
     let mut tx = state.pool.begin().await?;
-    advance_revision(&mut tx, actor.tenant_id, id, input.expected_revision).await?;
+    if let Err(error) =
+        advance_revision(&mut tx, actor.tenant_id, id, input.expected_revision).await
+    {
+        drop(tx);
+        for (index, case) in cases.iter().enumerate() {
+            ensure_case_key_available(
+                &state,
+                actor.tenant_id,
+                id,
+                &case.case_key,
+                None,
+                "file",
+                Some(index + 1),
+            )
+            .await?;
+        }
+        return Err(error);
+    }
+    let existing: Vec<String> = sqlx::query_scalar(
+        "SELECT case_key FROM dataset_cases WHERE tenant_id=? AND dataset_id=? FOR UPDATE",
+    )
+    .bind(actor.tenant_id)
+    .bind(id)
+    .fetch_all(&mut *tx)
+    .await?;
+    let existing = existing
+        .into_iter()
+        .collect::<std::collections::HashSet<_>>();
+    if let Some((index, case)) = cases
+        .iter()
+        .enumerate()
+        .find(|(_, case)| existing.contains(&case.case_key))
+    {
+        return Err(case_key_error(
+            "file",
+            &case.case_key,
+            Some(index + 1),
+            None,
+        ));
+    }
     let start: u64 = sqlx::query_scalar(
         "SELECT CAST(COALESCE(MAX(sort_order),0) AS UNSIGNED) FROM dataset_cases WHERE tenant_id=? AND dataset_id=?",
     )
@@ -1175,8 +1282,37 @@ async fn insert_case(
     order: u64,
     c: &CaseInput,
 ) -> AppResult<()> {
-    sqlx::query("INSERT INTO dataset_cases(id,tenant_id,dataset_id,case_key,name,input_json,expected_output_json,context_json,tags_json,evaluator_override_json,sort_order) VALUES(?,?,?,?,?,?,?,?,?,?,?)").bind(id).bind(tenant).bind(dataset).bind(&c.case_key).bind(&c.name).bind(&c.input).bind(&c.expected_output).bind(&c.context).bind(json!(c.tags)).bind(&c.evaluator_override).bind(order).execute(&mut **tx).await?;
+    sqlx::query("INSERT INTO dataset_cases(id,tenant_id,dataset_id,case_key,name,input_json,expected_output_json,context_json,tags_json,evaluator_override_json,sort_order) VALUES(?,?,?,?,?,?,?,?,?,?,?)").bind(id).bind(tenant).bind(dataset).bind(&c.case_key).bind(&c.name).bind(&c.input).bind(&c.expected_output).bind(&c.context).bind(json!(c.tags)).bind(&c.evaluator_override).bind(order).execute(&mut **tx).await.map_err(|error| map_unique(error, &[DATASET_CASE_KEY]))?;
     Ok(())
+}
+
+async fn ensure_case_key_available(
+    state: &AppState,
+    tenant: Uuid,
+    dataset: Uuid,
+    case_key: &str,
+    exclude: Option<Uuid>,
+    field: &str,
+    line: Option<usize>,
+) -> AppResult<()> {
+    let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM dataset_cases WHERE tenant_id=? AND dataset_id=? AND case_key=? AND (? IS NULL OR id<>?))")
+        .bind(tenant).bind(dataset).bind(case_key).bind(exclude).bind(exclude).fetch_one(&state.pool).await?;
+    if exists {
+        Err(case_key_error(field, case_key, line, None))
+    } else {
+        Ok(())
+    }
+}
+
+fn case_key_error(
+    field: &str,
+    case_key: &str,
+    line: Option<usize>,
+    first_line: Option<usize>,
+) -> AppError {
+    AppError::conflict(DATASET_CASE_KEY.code, DATASET_CASE_KEY.message)
+        .with_field(field, DATASET_CASE_KEY.code, DATASET_CASE_KEY.message)
+        .with_details(json!({"caseKey":case_key,"line":line,"firstLine":first_line}))
 }
 fn dataset_version_from_row(r: sqlx::mysql::MySqlRow) -> AppResult<DatasetVersionResponse> {
     Ok(DatasetVersionResponse {

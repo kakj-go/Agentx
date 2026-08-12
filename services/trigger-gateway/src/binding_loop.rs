@@ -404,7 +404,7 @@ mod tests {
                 LifecycleOperation::Activate,
                 Uuid::from_u128(1),
                 Uuid::from_u128(2),
-                &json!({"nodeType":"remote_trigger","nodeVersion":1}),
+                &json!({"nodeType":"remote_action","nodeVersion":1}),
                 json!({"endpoint":"http://echo-node:8080"}),
             )
             .unwrap(),
@@ -415,7 +415,7 @@ mod tests {
             json!({
                 "protocolVersion":"1.0",
                 "operation":"activate",
-                "nodeType":"remote_trigger",
+                "nodeType":"remote_action",
                 "nodeVersion":1,
                 "tenantId":"00000000-0000-0000-0000-000000000001",
                 "workflowVersionId":"00000000-0000-0000-0000-000000000002",

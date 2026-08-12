@@ -9,7 +9,7 @@
     "pullPolicy": "IfNotPresent",
     "digests": {}
   },
-  "network": { "allowedEgressCidrs": ["192.168.65.254/32"] },
+  "network": { "allowedEgressCidrs": ["192.168.65.254/32", "198.18.0.0/15"] },
   "ingress": {
     "host": "agentx.localhost",
     "controllerServiceType": "LoadBalancer",

@@ -33,8 +33,8 @@ use agentx_node_protocol::{
 };
 use agentx_runtime::{COMPILER_VERSION, ExpressionContext, ExpressionEngine};
 use agentx_runtime_rpc::v1::{
-    HeartbeatLeaseRequest, ReportNodeResultRequest, RequestExecutionRequest,
-    runtime_coordinator_client::RuntimeCoordinatorClient,
+    CancelExecutionRequest, HeartbeatLeaseRequest, ReportNodeResultRequest,
+    RequestExecutionRequest, runtime_coordinator_client::RuntimeCoordinatorClient,
 };
 use anyhow::{Context, Result};
 use axum::{
@@ -307,7 +307,7 @@ async fn process_queue_item(state: &WorkerState, item: &QueueItem) -> Result<()>
 fn supports_dispatch(message: &agentx_infrastructure::runtime_repository::DispatchMessage) -> bool {
     message.node_protocol_version == NODE_PROTOCOL_VERSION
         && message.compiler_version == COMPILER_VERSION
-        && message.ir_schema_version == "3.0"
+        && message.ir_schema_version == "4.0"
 }
 
 async fn execute_with_heartbeat(state: &WorkerState, claimed: &ClaimedTask) -> TaskResult {
@@ -358,7 +358,7 @@ async fn execute_task(
 ) -> Result<TaskResult> {
     let task = &claimed.task;
     match task.capability.as_str() {
-        "builtin" => execute_builtin(state, task).await,
+        "builtin" => execute_builtin(state, task, cancellation).await,
         "declarative_http" => execute_http(state, task).await,
         "remote_action" => execute_remote(state, task, claimed.lease_token).await,
         "model" | "mcp_tool" | "skill" | "rag" | "memory" | "sandbox" => {
@@ -457,13 +457,19 @@ async fn issue_runtime_credentials(
     Ok((runtime_handles, sandbox_handles))
 }
 
-async fn execute_builtin(state: &WorkerState, task: &RuntimeTask) -> Result<TaskResult> {
+async fn execute_builtin(
+    state: &WorkerState,
+    task: &RuntimeTask,
+    cancellation: CancellationToken,
+) -> Result<TaskResult> {
     if let Some(result) = builtins::execute(task)? {
         return Ok(result);
     }
     let items = flatten_inputs(&task.inputs);
+    if task.node_type.starts_with("workflow.") {
+        return execute_subworkflow(state, task, items, cancellation).await;
+    }
     match task.node_type.as_str() {
-        "manual_trigger" => Ok(completed("main", items)),
         "set" => {
             let mut output = Vec::with_capacity(items.len());
             for (index, mut item) in items.into_iter().enumerate() {
@@ -565,7 +571,7 @@ async fn execute_builtin(state: &WorkerState, task: &RuntimeTask) -> Result<Task
         "loop_over_items" => execute_loop(task, items),
         "wait" => Ok(TaskResult::Suspended(wait_contract(task)?)),
         "approval" => Ok(TaskResult::Suspended(approval_contract(task)?)),
-        "sub_workflow" => execute_subworkflow(state, task, items).await,
+        "sub_workflow" => execute_subworkflow(state, task, items, cancellation).await,
         other => Ok(TaskResult::Failed {
             code: "BUILTIN_NOT_IMPLEMENTED".into(),
             message: format!("Builtin node {other} is not implemented"),
@@ -653,7 +659,7 @@ async fn execute_http(state: &WorkerState, task: &RuntimeTask) -> Result<TaskRes
     Ok(completed(
         "main",
         vec![Item {
-            json: json!({"statusCode":status.as_u16(),"headers":headers,"body":body}),
+            json: json!({"status":status.as_u16(),"statusCode":status.as_u16(),"headers":headers,"body":body,"responseArtifact":null}),
             ..Item::default()
         }],
     ))
@@ -827,12 +833,25 @@ async fn execute_subworkflow(
     state: &WorkerState,
     task: &RuntimeTask,
     items: Vec<Item>,
+    cancellation: CancellationToken,
 ) -> Result<TaskResult> {
-    let version = task
-        .node_parameters
+    let parameters = ExpressionEngine.resolve_parameters(
+        &task.node_parameters,
+        &expression_context(task, items.first().unwrap_or(&Item::default()), 0),
+    )?;
+    let version = parameters
         .get("workflowVersionId")
         .and_then(Value::as_str)
         .context("Sub-workflow version is required")?;
+    let parent = sqlx::query(
+        "SELECT session_id,requested_by,status FROM workflow_executions WHERE tenant_id=? AND id=?",
+    )
+    .bind(task.tenant_id)
+    .bind(task.execution_id)
+    .fetch_one(state.repository.pool())
+    .await?;
+    let session_id: Option<Uuid> = parent.try_get("session_id")?;
+    let requested_by: Option<Uuid> = parent.try_get("requested_by")?;
     let accepted = state
         .coordinator
         .clone()
@@ -846,20 +865,26 @@ async fn execute_subworkflow(
                 ),
             ),
             invocation_id: None,
-            session_id: None,
-            requested_by: None,
+            session_id: session_id.map(|value| value.to_string()),
+            requested_by: requested_by.map(|value| value.to_string()),
             trigger_type: "sub_workflow".into(),
             input_json: serde_json::to_string(
-                &items.iter().map(|item| &item.json).collect::<Vec<_>>(),
+                parameters
+                    .get("inputs")
+                    .unwrap_or(&Value::Object(Default::default())),
             )?,
             debug_plan_json: "{}".into(),
             debug_overlay_json: "{}".into(),
             resource_snapshots_json: "[]".into(),
+            context_json: serde_json::to_string(&task.contexts)?,
             idempotency_key: Some(format!(
                 "sub:{}:{}",
                 task.execution_id, task.node_execution_id
             )),
             caller_execution_id: Some(task.execution_id.to_string()),
+            parent_execution_id: Some(task.execution_id.to_string()),
+            trace_id: Some(task.trace_id.to_string()),
+            caller_node_execution_id: Some(task.node_execution_id.to_string()),
         })
         .await?
         .into_inner();
@@ -873,17 +898,82 @@ async fn execute_subworkflow(
         let status: String = row.try_get("status")?;
         match status.as_str() {
             "succeeded" => {
-                let output=sqlx::query_scalar::<_,Value>("SELECT output_json FROM node_executions WHERE tenant_id=? AND execution_id=? AND status='succeeded' AND output_json IS NOT NULL ORDER BY ended_at DESC,run_index DESC LIMIT 1").bind(task.tenant_id).bind(child).fetch_optional(state.repository.pool()).await?.unwrap_or_else(||json!({"main":[]}));
-                return Ok(TaskResult::Completed(serde_json::from_value(output)?));
+                let result = sqlx::query_scalar::<_, Value>(
+                    "SELECT result_json FROM workflow_executions WHERE tenant_id=? AND id=?",
+                )
+                .bind(task.tenant_id)
+                .bind(child)
+                .fetch_one(state.repository.pool())
+                .await?;
+                let output = result.get("outputs").cloned().unwrap_or(Value::Null);
+                return Ok(completed(
+                    "main",
+                    vec![Item {
+                        json: output,
+                        ..Item::default()
+                    }],
+                ));
             }
             "failed" | "cancelled" | "timed_out" => {
-                return Ok(TaskResult::Failed {
-                    code: "SUBWORKFLOW_FAILED".into(),
-                    message: format!("Sub-workflow ended with {status}"),
-                    retryable: false,
+                let result = sqlx::query_scalar::<_, Value>(
+                    "SELECT result_json FROM workflow_executions WHERE tenant_id=? AND id=?",
+                )
+                .bind(task.tenant_id)
+                .bind(child)
+                .fetch_optional(state.repository.pool())
+                .await?
+                .unwrap_or(Value::Null);
+                let primary = result
+                    .get("error")
+                    .and_then(|error| error.get("primaryError"))
+                    .cloned()
+                    .unwrap_or_else(|| {
+                        json!({
+                            "code": "SUBWORKFLOW_FAILED",
+                            "message": format!("Sub-workflow ended with {status}"),
+                            "details": {"childExecutionId": child},
+                            "retryable": false
+                        })
+                    });
+                let item = json!({
+                    "code": primary.get("code").and_then(Value::as_str).unwrap_or("SUBWORKFLOW_FAILED"),
+                    "message": primary.get("message").and_then(Value::as_str).unwrap_or("Sub-workflow failed"),
+                    "details": {
+                        "childExecutionId": child,
+                        "childError": primary.get("details").cloned().unwrap_or(Value::Null)
+                    },
+                    "sourceNodeId": task.node_execution_id,
+                    "sourceNodeKey": "sub_workflow",
+                    "nodeExecutionId": task.node_execution_id,
+                    "runIndex": 0,
+                    "iterationIndex": 0,
+                    "retryable": primary.get("retryable").and_then(Value::as_bool).unwrap_or(false)
                 });
+                return Ok(completed(
+                    "error",
+                    vec![Item {
+                        json: item,
+                        ..Item::default()
+                    }],
+                ));
             }
-            _ => tokio::time::sleep(Duration::from_millis(250)).await,
+            _ => {
+                tokio::select! {
+                    _ = cancellation.cancelled() => {
+                        let _ = state.coordinator.clone().cancel_execution(CancelExecutionRequest {
+                            tenant_id: task.tenant_id.to_string(),
+                            execution_id: child.to_string(),
+                            actor_user_id: requested_by.map(|value| value.to_string()),
+                        }).await;
+                        return Ok(TaskResult::Failed {
+                            code: "SUBWORKFLOW_CANCELLED".into(),
+                            message: "Parent execution was cancelled or timed out".into(),
+                            retryable: false,
+                        });
+                    }
+                    _ = tokio::time::sleep(Duration::from_millis(250)) => {}
+                }
+            }
         }
     }
 }
@@ -956,6 +1046,17 @@ fn expression_context(task: &RuntimeTask, item: &Item, index: usize) -> Expressi
         item_index: index,
         run_index: task.run_index,
         linked_nodes: task.linked_nodes.clone(),
+        inputs: task.workflow_inputs.clone(),
+        outputs: task.linked_nodes.clone(),
+        contexts: task.contexts.clone(),
+        loop_context: serde_json::json!({"iteration": task.iteration_index, "itemIndex": index}),
+        execution: serde_json::json!({
+            "executionId": task.execution_id,
+            "nodeExecutionId": task.node_execution_id,
+            "runIndex": task.run_index,
+            "iterationIndex": task.iteration_index,
+            "contextVersion": task.context_version,
+        }),
     }
 }
 fn execute_loop(task: &RuntimeTask, mut items: Vec<Item>) -> Result<TaskResult> {
@@ -1158,7 +1259,7 @@ async fn heartbeat_service_loop(state: WorkerState, health: agentx_service_kit::
                 .bind(&state.instance_id)
                 .bind(capability)
                 .bind(NODE_PROTOCOL_VERSION)
-                .bind(json!(["3.0"]))
+                .bind(json!(["4.0"]))
                 .bind(COMPILER_VERSION)
                 .bind(COMPILER_VERSION)
                 .bind(&manifest_hashes)
@@ -1209,6 +1310,9 @@ mod tests {
             node_type: "loop_over_items".into(),
             node_version: 1,
             node_parameters: json!({"batchSize":1}),
+            workflow_inputs: json!({}),
+            contexts: json!({}),
+            context_version: 0,
             inputs: BTreeMap::new(),
             run_index: 0,
             iteration_index: 0,

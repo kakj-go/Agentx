@@ -105,3 +105,10 @@ Application Port：`WorkflowRepository`、`DraftRepository`、`VersionRepository
 - Workflow Service Identity 和 Resource Grant 绑定点。
 - 不可变 Definition 与 Resource Snapshot。
 - 发布、回滚和归档事件。
+
+## 13. 安全删除补充
+
+- Workflow 由 Application、Execution、Approval、Evaluation Run 以及其他 Workflow 的 Draft/Version 子工作流引用阻止；其自身 Draft、Version、Deployment、Member 和 Service Identity 是聚合子数据，在无外部引用时随父实体删除。
+- Environment 由任意 Workflow Deployment 或 Application Deployment 阻止；内置 Environment 永久不可删除。
+- Draft 保存同步维护 `workflow_draft_resources`，Version 创建继续固化 `workflow_version_resources`。引用创建和删除共用稳定目标锁顺序，防止并发悬空引用。
+- Workflow 与 Environment 使用 `workflow:delete`，归档仍是独立业务操作。

@@ -69,7 +69,7 @@ function Read-DeploymentProfile {
     if (Get-Command Test-Json -ErrorAction SilentlyContinue) {
         if (-not ($json | Test-Json -SchemaFile $schema)) { throw "Deployment profile does not match $schema." }
     }
-    $value = $json | ConvertFrom-Json -Depth 30
+    $value = $json | ConvertFrom-Json
     if ($Namespace) { $value.namespace = $Namespace }
     return $value
 }
@@ -77,7 +77,7 @@ function Read-DeploymentProfile {
 function New-InteractiveProfile {
     param([string]$Namespace)
     $root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
-    $base = Get-Content (Join-Path $root "deploy/profiles/full-local.json") -Raw | ConvertFrom-Json -Depth 30
+    $base = Get-Content (Join-Path $root "deploy/profiles/full-local.json") -Raw | ConvertFrom-Json
     $base.namespace = $Namespace
     $base.environment = Read-Choice "Environment" @("local", "test", "production") "local"
     $base.secrets.provider = Read-Choice "Secret provider" @("local_encrypted", "vault_kv_v2") $(if ($base.environment -eq "production") { "vault_kv_v2" } else { $base.secrets.provider })
@@ -239,7 +239,7 @@ function Assert-IsolationEvidence {
     if (-not $path -or -not [IO.Path]::IsPathRooted($path) -or -not (Test-Path -LiteralPath $path -PathType Leaf)) {
         throw "Strong isolation requires an absolute isolationEvidence file produced by verify-runtime-isolation.ps1."
     }
-    $evidence = Get-Content -Raw -LiteralPath $path | ConvertFrom-Json -Depth 20
+    $evidence = Get-Content -Raw -LiteralPath $path | ConvertFrom-Json
     $expected = if ($Sandbox.runtimeClass -eq "custom") { [string]$Sandbox.runtimeClassName } else { [string]$Sandbox.runtimeClass }
     if ($evidence.status -ne "passed" -or $evidence.isolationLevel -ne "strong" -or $evidence.runtimeClass -ne $expected -or [int]$evidence.podCount -lt 1) {
         throw "Sandbox isolationEvidence does not prove the selected strong RuntimeClass."
@@ -457,7 +457,12 @@ function Get-OptionalDeploySecretValue {
     return $null
 }
 function Get-AddonProviderSecret { param([string]$Name, [bool]$Local) if (Test-Path "Env:$Name") { return (Get-Item "Env:$Name").Value }; if ($Local) { return "m5-model-secret" }; throw "$Name is required." }
-function New-RandomBytes { param([int]$Length) $bytes = [byte[]]::new($Length); [Security.Cryptography.RandomNumberGenerator]::Fill($bytes); return $bytes }
+function New-RandomBytes {
+    param([int]$Length)
+    $bytes = [byte[]]::new($Length)
+    $generator = [Security.Cryptography.RandomNumberGenerator]::Create()
+    try { $generator.GetBytes($bytes); return $bytes } finally { $generator.Dispose() }
+}
 function New-RandomSecret {
     param([int]$Length)
     return [Convert]::ToBase64String((New-RandomBytes $Length)).TrimEnd('=').Replace('+', '-').Replace('/', '_')
@@ -593,7 +598,7 @@ function Invoke-ComponentRender {
     $temp = Join-Path $RepoRoot ("deploy/k8s/.agentx-render-" + [Guid]::NewGuid().ToString("N")); New-Item -ItemType Directory -Path $temp | Out-Null
     try {
         $resolvedComponent = (Resolve-Path (Join-Path $RepoRoot "deploy/k8s/$Component")).Path
-        $componentPath = [IO.Path]::GetRelativePath($temp, $resolvedComponent).Replace('\', '/')
+        $componentPath = Get-RelativePathCompat -BaseDirectory $temp -TargetPath $resolvedComponent
         $lines = @("apiVersion: kustomize.config.k8s.io/v1beta1", "kind: Kustomization", "namespace: $($Profile.namespace)", "resources:", "  - $componentPath", "images:")
         foreach ($name in $script:ServiceImages) {
             $newName = if ($Profile.images.mode -eq "registry") { "$($Profile.images.registry.TrimEnd('/'))/$name" } else { "agentx/$name" }
@@ -614,6 +619,13 @@ function Invoke-ComponentRender {
         [IO.File]::WriteAllLines((Join-Path $temp "kustomization.yaml"), $lines, [Text.UTF8Encoding]::new($false))
         return (kubectl kustomize $temp --load-restrictor LoadRestrictionsNone)
     } finally { Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue }
+}
+
+function Get-RelativePathCompat {
+    param([string]$BaseDirectory, [string]$TargetPath)
+    $base = [Uri]((Resolve-Path -LiteralPath $BaseDirectory).Path.TrimEnd('\') + '\')
+    $target = [Uri]((Resolve-Path -LiteralPath $TargetPath).Path)
+    return [Uri]::UnescapeDataString($base.MakeRelativeUri($target).ToString())
 }
 
 function Get-ComponentWorkloads {
@@ -740,7 +752,7 @@ function Save-DeploymentState {
     @{ apiVersion = "v1"; kind = "ConfigMap"; metadata = @{ name = "agentx-deployment-state"; namespace = $Profile.namespace; labels = (Managed-Labels) }; data = $data } | ConvertTo-Json -Depth 30 | kubectl apply -f - | Out-Null
 }
 
-function Get-DeployedProfile { param([string]$Namespace) $json = kubectl -n $Namespace get configmap agentx-deployment-state --ignore-not-found -o json 2>$null; if (-not $json) { return $null }; return (($json | ConvertFrom-Json).data.'profile.json' | ConvertFrom-Json -Depth 30) }
+function Get-DeployedProfile { param([string]$Namespace) $json = kubectl -n $Namespace get configmap agentx-deployment-state --ignore-not-found -o json 2>$null; if (-not $json) { return $null }; return (($json | ConvertFrom-Json).data.'profile.json' | ConvertFrom-Json) }
 function Get-CanonicalValue {
     param($Value)
     if ($null -eq $Value) { return $null }
@@ -749,7 +761,14 @@ function Get-CanonicalValue {
     if ($Value -is [pscustomobject]) { $ordered = [ordered]@{}; foreach ($property in $Value.PSObject.Properties | Sort-Object Name) { $ordered[$property.Name] = Get-CanonicalValue $property.Value }; return $ordered }
     return $Value
 }
-function Get-ProfileHash { param($Profile) $json = (Get-CanonicalValue $Profile | ConvertTo-Json -Depth 30 -Compress); return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($json))).ToLowerInvariant() }
+function Get-ProfileHash {
+    param($Profile)
+    $json = Get-CanonicalValue $Profile | ConvertTo-Json -Depth 30 -Compress
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try {
+        return (-join ($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($json)) | ForEach-Object { $_.ToString('x2') }))
+    } finally { $sha.Dispose() }
+}
 
 function Assert-StatefulModesUnchanged { param($Before, $After) foreach ($name in $script:StatefulModes) { if ($Before.components.$name.mode -ne $After.components.$name.mode) { throw "Upgrade cannot change $name mode. Follow the documented data migration and reinstall procedure." } } }
 function Assert-SandboxDrained { param($Profile) $active = kubectl -n $Profile.namespace get deployment sandbox-manager --ignore-not-found -o name; if (-not $active) { throw "Cannot verify Sandbox leases because the existing Sandbox Manager is unavailable." }; kubectl -n $Profile.namespace exec deployment/sandbox-manager -- /usr/local/bin/agentx-service doctor-drain | Out-Null }

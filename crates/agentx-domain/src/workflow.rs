@@ -7,13 +7,18 @@ use sha2::{Digest, Sha256};
 
 use crate::{ResourceOperation, ResourceReference, ResourceType, WorkflowId, WorkflowVersionId};
 
+pub const WORKFLOW_START_NODE_ID: &str = "__start__";
+pub const WORKFLOW_END_NODE_ID: &str = "__end__";
+
 #[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WorkflowDefinition {
     #[schemars(with = "WorkflowSchemaVersion")]
     pub schema_version: String,
+    pub start: WorkflowStart,
     pub nodes: Vec<WorkflowNode>,
     pub connections: Vec<WorkflowConnection>,
+    pub end: WorkflowEnd,
     #[serde(default)]
     pub settings: WorkflowSettings,
 }
@@ -23,6 +28,8 @@ pub struct WorkflowDefinition {
 pub struct EditorDocument {
     #[serde(default)]
     pub node_layouts: Vec<NodeLayout>,
+    #[serde(default)]
+    pub boundary_layouts: Vec<BoundaryLayout>,
     #[serde(default)]
     pub binding_layouts: Vec<BindingLayout>,
     #[serde(default)]
@@ -35,6 +42,21 @@ pub struct EditorDocument {
     pub groups: Vec<EditorGroup>,
     #[serde(default)]
     pub viewport: EditorViewport,
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BoundaryLayout {
+    pub boundary: WorkflowBoundary,
+    pub x: f64,
+    pub y: f64,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkflowBoundary {
+    Start,
+    End,
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Serialize)]
@@ -162,29 +184,161 @@ pub struct DebugPlan {
 #[derive(JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum WorkflowSchemaVersion {
-    #[serde(rename = "3.0")]
-    V3,
+    #[serde(rename = "4.0")]
+    V4,
 }
 
 impl WorkflowDefinition {
     #[must_use]
     pub fn empty() -> Self {
         Self {
-            schema_version: "3.0".to_owned(),
-            nodes: vec![WorkflowNode {
-                id: "manual-trigger".to_owned(),
-                node_type: "manual_trigger".to_owned(),
-                type_version: 1,
-                name: "Manual Trigger".to_owned(),
-                disabled: false,
-                parameters: Value::Object(Default::default()),
-                resource_references: Vec::new(),
-                settings: NodeSettings::default(),
-            }],
+            schema_version: "4.0".to_owned(),
+            start: WorkflowStart::default(),
+            nodes: Vec::new(),
             connections: Vec::new(),
+            end: WorkflowEnd::default(),
             settings: WorkflowSettings::default(),
         }
     }
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WorkflowStart {
+    #[serde(default)]
+    pub inputs: Value,
+    #[serde(default)]
+    pub contexts: BTreeMap<String, ContextDefinition>,
+}
+
+impl Default for WorkflowStart {
+    fn default() -> Self {
+        Self {
+            inputs: serde_json::json!({"type":"object","properties":{},"additionalProperties":false}),
+            contexts: BTreeMap::new(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ContextDefinition {
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub schema: Value,
+    #[serde(default)]
+    pub default: Value,
+    #[serde(default)]
+    pub mutable: bool,
+    #[serde(default)]
+    pub sensitive: bool,
+    #[serde(default)]
+    pub client_writable: bool,
+    #[serde(default)]
+    pub scope: ContextScope,
+    #[serde(default)]
+    pub max_size: Option<u64>,
+    #[serde(default)]
+    pub merge_policy: ContextMergePolicy,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ContextScope {
+    #[default]
+    ExecutionTree,
+    Session,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ContextMergePolicy {
+    #[default]
+    Replace,
+    Append,
+    MergeObject,
+    Increment,
+    RejectConflict,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WorkflowEnd {
+    #[serde(default)]
+    pub outputs: BTreeMap<String, WorkflowOutput>,
+    #[serde(default)]
+    pub error: WorkflowErrorEnd,
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WorkflowErrorEnd {
+    #[serde(default)]
+    pub strategy: EndErrorStrategy,
+    #[serde(default = "default_error_collect_window_ms")]
+    #[schemars(range(min = 100, max = 60_000))]
+    pub collect_window_ms: u64,
+    #[serde(default)]
+    pub outputs: BTreeMap<String, WorkflowOutput>,
+}
+
+impl Default for WorkflowErrorEnd {
+    fn default() -> Self {
+        Self {
+            strategy: EndErrorStrategy::FailFast,
+            collect_window_ms: default_error_collect_window_ms(),
+            outputs: BTreeMap::new(),
+        }
+    }
+}
+
+const fn default_error_collect_window_ms() -> u64 {
+    5_000
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EndErrorStrategy {
+    #[default]
+    FailFast,
+    Collect,
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WorkflowOutput {
+    pub expression: String,
+    #[serde(default)]
+    pub schema: Value,
+    #[serde(default)]
+    pub required: bool,
+    #[serde(default)]
+    pub sensitive: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ContextWrite {
+    pub operation: ContextWriteOperation,
+    pub path: String,
+    pub value: Value,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ContextWriteOperation {
+    Set,
+    SetIfAbsent,
+    Delete,
+    Append,
+    MergeObject,
+    Increment,
+    Min,
+    Max,
+    CompareAndSet,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
@@ -205,8 +359,6 @@ pub struct WorkflowSettings {
     pub activation_budget: u32,
     #[serde(default)]
     pub timeout_ms: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub primary_output_node_id: Option<String>,
 }
 
 impl Default for WorkflowSettings {
@@ -215,7 +367,6 @@ impl Default for WorkflowSettings {
             execution_order: ExecutionOrder::Deterministic,
             activation_budget: default_activation_budget(),
             timeout_ms: None,
-            primary_output_node_id: None,
         }
     }
 }
@@ -274,6 +425,7 @@ const fn default_max_tries() -> u16 {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WorkflowNode {
     pub id: String,
+    pub key: String,
     #[serde(rename = "type")]
     pub node_type: String,
     #[schemars(range(min = 1))]
@@ -284,9 +436,23 @@ pub struct WorkflowNode {
     #[serde(default)]
     pub parameters: Value,
     #[serde(default)]
+    pub output_projection: BTreeMap<String, BTreeMap<String, OutputProjectionField>>,
+    #[serde(default)]
+    pub context_writes: Vec<ContextWrite>,
+    #[serde(default)]
     pub resource_references: Vec<ResourceReference>,
     #[serde(default)]
     pub settings: NodeSettings,
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct OutputProjectionField {
+    pub expression: String,
+    #[serde(default)]
+    pub schema: Value,
+    #[serde(default)]
+    pub sensitive: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
@@ -312,12 +478,12 @@ pub struct DefinitionIssue {
 #[must_use]
 pub fn validate_definition(definition: &WorkflowDefinition) -> Vec<DefinitionIssue> {
     let mut issues = Vec::new();
-    if definition.schema_version != "3.0" {
+    if definition.schema_version != "4.0" {
         issue(
             &mut issues,
             "UNSUPPORTED_SCHEMA",
             "schemaVersion",
-            "Only schema version 3.0 is supported",
+            "Only schema version 4.0 is supported",
         );
     }
     if definition.settings.activation_budget == 0 {
@@ -328,9 +494,68 @@ pub fn validate_definition(definition: &WorkflowDefinition) -> Vec<DefinitionIss
             "Activation budget must be greater than zero",
         );
     }
+    if !definition.start.inputs.is_object() {
+        issue(
+            &mut issues,
+            "INVALID_INPUT_SCHEMA",
+            "start.inputs",
+            "Start inputs must be a JSON Schema object",
+        );
+    }
+    for (name, context) in &definition.start.contexts {
+        if !valid_reference_key(name) {
+            issue(
+                &mut issues,
+                "INVALID_CONTEXT_KEY",
+                &format!("start.contexts.{name}"),
+                "Context keys must use lowercase ASCII letters, digits and underscores",
+            );
+        }
+        if !context.schema.is_object() {
+            issue(
+                &mut issues,
+                "INVALID_CONTEXT_SCHEMA",
+                &format!("start.contexts.{name}.schema"),
+                "Context schema must be an object",
+            );
+        }
+        if context.max_size == Some(0) {
+            issue(
+                &mut issues,
+                "INVALID_CONTEXT_MAX_SIZE",
+                &format!("start.contexts.{name}.maxSize"),
+                "Context maxSize must be greater than zero",
+            );
+        }
+    }
+    validate_workflow_outputs("end.outputs", &definition.end.outputs, &mut issues);
+    validate_workflow_outputs(
+        "end.error.outputs",
+        &definition.end.error.outputs,
+        &mut issues,
+    );
+    if !(100..=60_000).contains(&definition.end.error.collect_window_ms) {
+        issue(
+            &mut issues,
+            "INVALID_ERROR_COLLECT_WINDOW",
+            "end.error.collectWindowMs",
+            "Error collectWindowMs must be between 100 and 60000 milliseconds",
+        );
+    }
     let mut ids = HashSet::new();
+    let mut keys = HashSet::new();
     for (index, node) in definition.nodes.iter().enumerate() {
-        if node.id.is_empty() || node.id.len() > 128 {
+        if matches!(
+            node.id.as_str(),
+            WORKFLOW_START_NODE_ID | WORKFLOW_END_NODE_ID
+        ) {
+            issue(
+                &mut issues,
+                "RESERVED_NODE_ID",
+                &format!("nodes[{index}].id"),
+                "Node id is reserved for a Workflow boundary",
+            );
+        } else if node.id.is_empty() || node.id.len() > 128 {
             issue(
                 &mut issues,
                 "INVALID_NODE_ID",
@@ -343,6 +568,29 @@ pub fn validate_definition(definition: &WorkflowDefinition) -> Vec<DefinitionIss
                 "DUPLICATE_NODE_ID",
                 &format!("nodes[{index}].id"),
                 "Node id must be unique",
+            );
+        }
+        if !valid_reference_key(&node.key) {
+            issue(
+                &mut issues,
+                "INVALID_NODE_KEY",
+                &format!("nodes[{index}].key"),
+                "Node key must use lowercase ASCII letters, digits and underscores",
+            );
+        } else if !keys.insert(node.key.as_str()) {
+            issue(
+                &mut issues,
+                "DUPLICATE_NODE_KEY",
+                &format!("nodes[{index}].key"),
+                "Node key must be unique within a workflow",
+            );
+        }
+        if matches!(node.node_type.as_str(), "manual_trigger" | "remote_trigger") {
+            issue(
+                &mut issues,
+                "TRIGGER_NODE_REMOVED",
+                &format!("nodes[{index}].type"),
+                "Trigger nodes were removed in Workflow Definition 4.0; configure a Trigger Binding instead",
             );
         }
         if node.node_type.is_empty()
@@ -376,14 +624,6 @@ pub fn validate_definition(definition: &WorkflowDefinition) -> Vec<DefinitionIss
                 "Node type version must be greater than zero",
             );
         }
-        if is_resource_node(&node.node_type) && node.resource_references.is_empty() {
-            issue(
-                &mut issues,
-                "RESOURCE_REQUIRED",
-                &format!("nodes[{index}].resourceReferences"),
-                "Resource nodes require at least one resource reference",
-            );
-        }
         if node.settings.max_tries == 0 {
             issue(
                 &mut issues,
@@ -391,6 +631,43 @@ pub fn validate_definition(definition: &WorkflowDefinition) -> Vec<DefinitionIss
                 &format!("nodes[{index}].settings.maxTries"),
                 "maxTries must be greater than zero",
             );
+        }
+        for (port, fields) in &node.output_projection {
+            if port.trim().is_empty() {
+                issue(
+                    &mut issues,
+                    "INVALID_PROJECTION_PORT",
+                    &format!("nodes[{index}].outputProjection"),
+                    "Projection output port is required",
+                );
+            }
+            for (name, field) in fields {
+                let path = format!("nodes[{index}].outputProjection.{port}.{name}");
+                if !valid_reference_key(name) {
+                    issue(
+                        &mut issues,
+                        "INVALID_PROJECTION_FIELD_KEY",
+                        &path,
+                        "Projection field keys must use lowercase ASCII letters, digits and underscores",
+                    );
+                }
+                if field.expression.trim().is_empty() {
+                    issue(
+                        &mut issues,
+                        "PROJECTION_EXPRESSION_REQUIRED",
+                        &format!("{path}.expression"),
+                        "Projection expression is required",
+                    );
+                }
+                if !field.schema.is_object() {
+                    issue(
+                        &mut issues,
+                        "INVALID_PROJECTION_SCHEMA",
+                        &format!("{path}.schema"),
+                        "Projection field schema must be an object",
+                    );
+                }
+            }
         }
         for (reference_index, reference) in node.resource_references.iter().enumerate() {
             if is_resource_node(&node.node_type)
@@ -404,19 +681,6 @@ pub fn validate_definition(definition: &WorkflowDefinition) -> Vec<DefinitionIss
                 );
             }
         }
-    }
-    if let Some(node_id) = definition.settings.primary_output_node_id.as_deref()
-        && !definition
-            .nodes
-            .iter()
-            .any(|node| node.id == node_id && !node.disabled)
-    {
-        issue(
-            &mut issues,
-            "PRIMARY_OUTPUT_NODE_INVALID",
-            "settings.primaryOutputNodeId",
-            "Primary output must reference an enabled Workflow node",
-        );
     }
     let mut connection_ids = HashSet::new();
     let mut connection_orders = HashSet::new();
@@ -449,7 +713,46 @@ pub fn validate_definition(definition: &WorkflowDefinition) -> Vec<DefinitionIss
                 "Connection order must be unique for each source node and source handle",
             );
         }
-        if !ids.contains(&connection.source_node_id) || !ids.contains(&connection.target_node_id) {
+        let source_is_start = connection.source_node_id == WORKFLOW_START_NODE_ID;
+        let source_is_end = connection.source_node_id == WORKFLOW_END_NODE_ID;
+        let target_is_start = connection.target_node_id == WORKFLOW_START_NODE_ID;
+        let target_is_end = connection.target_node_id == WORKFLOW_END_NODE_ID;
+        if source_is_end || target_is_start {
+            issue(
+                &mut issues,
+                "INVALID_BOUNDARY_DIRECTION",
+                &format!("connections[{index}]"),
+                "Start can only be a connection source and End can only be a connection target",
+            );
+            continue;
+        }
+        if source_is_start && connection.source_handle != "main" {
+            issue(
+                &mut issues,
+                "INVALID_START_PORT",
+                &format!("connections[{index}].sourceHandle"),
+                "Start only exposes the main output port",
+            );
+        }
+        if target_is_end && !matches!(connection.target_handle.as_str(), "main" | "error") {
+            issue(
+                &mut issues,
+                "INVALID_END_PORT",
+                &format!("connections[{index}].targetHandle"),
+                "End only accepts main or error input ports",
+            );
+        }
+        if source_is_start && target_is_end && connection.target_handle != "main" {
+            issue(
+                &mut issues,
+                "INVALID_DIRECT_ERROR_CONNECTION",
+                &format!("connections[{index}]"),
+                "Start can only connect directly to End.main",
+            );
+        }
+        if (!source_is_start && !ids.contains(&connection.source_node_id))
+            || (!target_is_end && !ids.contains(&connection.target_node_id))
+        {
             issue(
                 &mut issues,
                 "DANGLING_CONNECTION",
@@ -460,6 +763,47 @@ pub fn validate_definition(definition: &WorkflowDefinition) -> Vec<DefinitionIss
         }
     }
     issues
+}
+
+fn validate_workflow_outputs(
+    path: &str,
+    outputs: &BTreeMap<String, WorkflowOutput>,
+    issues: &mut Vec<DefinitionIssue>,
+) {
+    for (name, output) in outputs {
+        if !valid_reference_key(name) {
+            issue(
+                issues,
+                "INVALID_END_OUTPUT_KEY",
+                &format!("{path}.{name}"),
+                "End output keys must use lowercase ASCII letters, digits and underscores",
+            );
+        }
+        if output.expression.trim().is_empty() {
+            issue(
+                issues,
+                "END_OUTPUT_EXPRESSION_REQUIRED",
+                &format!("{path}.{name}.expression"),
+                "End output expression is required",
+            );
+        }
+        if !output.schema.is_object() {
+            issue(
+                issues,
+                "INVALID_END_OUTPUT_SCHEMA",
+                &format!("{path}.{name}.schema"),
+                "End output schema must be an object",
+            );
+        }
+    }
+}
+
+fn valid_reference_key(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && value.bytes().enumerate().all(|(index, byte)| {
+            byte.is_ascii_lowercase() || byte == b'_' || (index > 0 && byte.is_ascii_digit())
+        })
 }
 
 #[must_use]
@@ -511,6 +855,25 @@ pub fn validate_editor_document(
                 "INVALID_NODE_LAYOUT",
                 &format!("nodeLayouts[{index}]"),
                 "Node layout coordinates and dimensions must be finite and positive",
+            );
+        }
+    }
+    let mut boundaries = HashSet::new();
+    for (index, layout) in document.boundary_layouts.iter().enumerate() {
+        if !boundaries.insert(layout.boundary) {
+            issue(
+                &mut issues,
+                "DUPLICATE_BOUNDARY_LAYOUT",
+                &format!("boundaryLayouts[{index}].boundary"),
+                "Each Workflow boundary may have only one layout",
+            );
+        }
+        if !layout.x.is_finite() || !layout.y.is_finite() {
+            issue(
+                &mut issues,
+                "INVALID_BOUNDARY_LAYOUT",
+                &format!("boundaryLayouts[{index}]"),
+                "Boundary layout coordinates must be finite",
             );
         }
     }
@@ -694,8 +1057,24 @@ fn canonicalize(value: &Value) -> Value {
                 .into_iter()
                 .collect(),
         ),
+        Value::Number(number) => canonicalize_number(number),
         other => other.clone(),
     }
+}
+
+fn canonicalize_number(number: &serde_json::Number) -> Value {
+    const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
+
+    let Some(value) = number.as_f64() else {
+        return Value::Number(number.clone());
+    };
+    if number.is_f64()
+        && value.fract() == 0.0
+        && (-MAX_SAFE_INTEGER..=MAX_SAFE_INTEGER).contains(&value)
+    {
+        return Value::Number((value as i64).into());
+    }
+    Value::Number(number.clone())
 }
 
 #[cfg(test)]
@@ -713,6 +1092,18 @@ mod tests {
         assert_ne!(
             canonical_content_hash(&json!([1, 2])).unwrap(),
             canonical_content_hash(&json!([2, 1])).unwrap()
+        );
+    }
+
+    #[test]
+    fn canonical_hash_normalizes_json_equivalent_integral_floats() {
+        assert_eq!(
+            canonical_content_hash(&json!({"x": 120.0, "y": -0.0, "zoom": 1.0})).unwrap(),
+            canonical_content_hash(&json!({"x": 120, "y": 0, "zoom": 1})).unwrap()
+        );
+        assert_ne!(
+            canonical_content_hash(&json!({"x": 1.5})).unwrap(),
+            canonical_content_hash(&json!({"x": 1})).unwrap()
         );
     }
 
@@ -736,16 +1127,18 @@ mod tests {
     #[test]
     fn rejects_dangling_cycles_and_mismatched_resources() {
         let definition: WorkflowDefinition = serde_json::from_value(json!({
-            "schemaVersion":"3.0",
+            "schemaVersion":"4.0",
+            "start":{"inputs":{"type":"object","properties":{},"additionalProperties":false},"contexts":{}},
             "nodes":[
-                {"id":"trigger","type":"manual_trigger","typeVersion":1,"name":"Trigger","resourceReferences":[]},
-                {"id":"model","type":"model","typeVersion":1,"name":"Model","resourceReferences":[{"resourceType":"mcp_tool","resourceId":"018f47a0-7e9c-7000-8000-000000000001","operation":"use"}]}
+                {"id":"root","key":"root","type":"no_op","typeVersion":1,"name":"Root","outputProjection":{},"contextWrites":[],"resourceReferences":[]},
+                {"id":"model","key":"model","type":"model","typeVersion":1,"name":"Model","outputProjection":{},"contextWrites":[],"resourceReferences":[{"resourceType":"mcp_tool","resourceId":"018f47a0-7e9c-7000-8000-000000000001","operation":"use"}]}
             ],
             "connections":[
-                {"id":"edge","sourceNodeId":"trigger","sourceHandle":"main","targetNodeId":"model","targetHandle":"main","order":0},
-                {"id":"edge","sourceNodeId":"model","sourceHandle":"main","targetNodeId":"trigger","targetHandle":"main","order":0},
+                {"id":"edge","sourceNodeId":"root","sourceHandle":"main","targetNodeId":"model","targetHandle":"main","order":0},
+                {"id":"edge","sourceNodeId":"model","sourceHandle":"main","targetNodeId":"root","targetHandle":"main","order":0},
                 {"id":"missing","sourceNodeId":"model","sourceHandle":"main","targetNodeId":"absent","targetHandle":"main","order":1}
             ],
+            "end":{"outputs":{}},
             "settings":{}
         })).unwrap();
         let codes: Vec<_> = validate_definition(&definition)
@@ -761,15 +1154,17 @@ mod tests {
     #[test]
     fn accepts_controlled_cycles() {
         let definition: WorkflowDefinition = serde_json::from_value(json!({
-            "schemaVersion":"3.0",
+            "schemaVersion":"4.0",
+            "start":{"inputs":{"type":"object","properties":{},"additionalProperties":false},"contexts":{}},
             "nodes":[
-                {"id":"trigger","type":"manual_trigger","typeVersion":1,"name":"Trigger",},
-                {"id":"loop","type":"set","typeVersion":1,"name":"Loop",}
+                {"id":"root","key":"root","type":"no_op","typeVersion":1,"name":"Root","outputProjection":{},"contextWrites":[]},
+                {"id":"loop","key":"loop","type":"loop_over_items","typeVersion":1,"name":"Loop","outputProjection":{},"contextWrites":[]}
             ],
             "connections":[
-                {"id":"start","sourceNodeId":"trigger","sourceHandle":"main","targetNodeId":"loop","targetHandle":"main","order":0},
+                {"id":"start","sourceNodeId":"root","sourceHandle":"main","targetNodeId":"loop","targetHandle":"main","order":0},
                 {"id":"back","sourceNodeId":"loop","sourceHandle":"loop","targetNodeId":"loop","targetHandle":"main","order":0}
-            ]
+            ],
+            "end":{"outputs":{}}
         })).unwrap();
         assert!(validate_definition(&definition).is_empty());
     }
@@ -777,16 +1172,18 @@ mod tests {
     #[test]
     fn connection_order_is_scoped_to_the_source_port() {
         let definition: WorkflowDefinition = serde_json::from_value(json!({
-            "schemaVersion":"3.0",
+            "schemaVersion":"4.0",
+            "start":{"inputs":{"type":"object","properties":{},"additionalProperties":false},"contexts":{}},
             "nodes":[
-                {"id":"source","type":"switch","typeVersion":1,"name":"Source"},
-                {"id":"left","type":"set","typeVersion":1,"name":"Left"},
-                {"id":"right","type":"set","typeVersion":1,"name":"Right"}
+                {"id":"source","key":"source","type":"switch","typeVersion":1,"name":"Source","outputProjection":{},"contextWrites":[]},
+                {"id":"left","key":"left","type":"set","typeVersion":1,"name":"Left","outputProjection":{},"contextWrites":[]},
+                {"id":"right","key":"right","type":"set","typeVersion":1,"name":"Right","outputProjection":{},"contextWrites":[]}
             ],
             "connections":[
                 {"id":"left-edge","sourceNodeId":"source","sourceHandle":"case:0","targetNodeId":"left","targetHandle":"main","order":0},
                 {"id":"right-edge","sourceNodeId":"source","sourceHandle":"case:1","targetNodeId":"right","targetHandle":"main","order":0}
-            ]
+            ],
+            "end":{"outputs":{}}
         })).unwrap();
         assert!(validate_definition(&definition).is_empty());
 

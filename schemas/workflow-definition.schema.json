@@ -1,5 +1,108 @@
 {
   "$defs": {
+    "ContextDefinition": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "type": ["string", "null"]
+        },
+        "title": {
+          "type": ["string", "null"]
+        },
+        "clientWritable": {
+          "default": false,
+          "type": "boolean"
+        },
+        "default": {
+          "default": null
+        },
+        "maxSize": {
+          "default": null,
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "mergePolicy": {
+          "$ref": "#/$defs/ContextMergePolicy",
+          "default": "replace"
+        },
+        "mutable": {
+          "default": false,
+          "type": "boolean"
+        },
+        "schema": {
+          "default": null
+        },
+        "scope": {
+          "$ref": "#/$defs/ContextScope",
+          "default": "execution_tree"
+        },
+        "sensitive": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "ContextMergePolicy": {
+      "enum": [
+        "replace",
+        "append",
+        "merge_object",
+        "increment",
+        "reject_conflict"
+      ],
+      "type": "string"
+    },
+    "ContextScope": {
+      "enum": [
+        "execution_tree",
+        "session"
+      ],
+      "type": "string"
+    },
+    "ContextWrite": {
+      "additionalProperties": false,
+      "properties": {
+        "operation": {
+          "$ref": "#/$defs/ContextWriteOperation"
+        },
+        "path": {
+          "type": "string"
+        },
+        "value": true
+      },
+      "required": [
+        "operation",
+        "path",
+        "value"
+      ],
+      "type": "object"
+    },
+    "ContextWriteOperation": {
+      "enum": [
+        "set",
+        "set_if_absent",
+        "delete",
+        "append",
+        "merge_object",
+        "increment",
+        "min",
+        "max",
+        "compare_and_set"
+      ],
+      "type": "string"
+    },
+    "EndErrorStrategy": {
+      "enum": [
+        "fail_fast",
+        "collect"
+      ],
+      "type": "string"
+    },
     "ExecutionOrder": {
       "enum": [
         "deterministic",
@@ -57,6 +160,25 @@
           "type": "integer"
         }
       },
+      "type": "object"
+    },
+    "OutputProjectionField": {
+      "additionalProperties": false,
+      "properties": {
+        "expression": {
+          "type": "string"
+        },
+        "schema": {
+          "default": null
+        },
+        "sensitive": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "expression"
+      ],
       "type": "object"
     },
     "ResourceOperation": {
@@ -155,9 +277,61 @@
       ],
       "type": "object"
     },
+    "WorkflowEnd": {
+      "additionalProperties": false,
+      "properties": {
+        "error": {
+          "$ref": "#/$defs/WorkflowErrorEnd",
+          "default": {
+            "collectWindowMs": 5000,
+            "outputs": {},
+            "strategy": "fail_fast"
+          }
+        },
+        "outputs": {
+          "additionalProperties": {
+            "$ref": "#/$defs/WorkflowOutput"
+          },
+          "default": {},
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
+    "WorkflowErrorEnd": {
+      "additionalProperties": false,
+      "properties": {
+        "collectWindowMs": {
+          "default": 5000,
+          "format": "uint64",
+          "maximum": 60000,
+          "minimum": 100,
+          "type": "integer"
+        },
+        "outputs": {
+          "additionalProperties": {
+            "$ref": "#/$defs/WorkflowOutput"
+          },
+          "default": {},
+          "type": "object"
+        },
+        "strategy": {
+          "$ref": "#/$defs/EndErrorStrategy",
+          "default": "fail_fast"
+        }
+      },
+      "type": "object"
+    },
     "WorkflowNode": {
       "additionalProperties": false,
       "properties": {
+        "contextWrites": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/ContextWrite"
+          },
+          "type": "array"
+        },
         "disabled": {
           "default": false,
           "type": "boolean"
@@ -165,8 +339,21 @@
         "id": {
           "type": "string"
         },
+        "key": {
+          "type": "string"
+        },
         "name": {
           "type": "string"
+        },
+        "outputProjection": {
+          "additionalProperties": {
+            "additionalProperties": {
+              "$ref": "#/$defs/OutputProjectionField"
+            },
+            "type": "object"
+          },
+          "default": {},
+          "type": "object"
         },
         "parameters": {
           "default": null
@@ -201,15 +388,39 @@
       },
       "required": [
         "id",
+        "key",
         "type",
         "typeVersion",
         "name"
       ],
       "type": "object"
     },
+    "WorkflowOutput": {
+      "additionalProperties": false,
+      "properties": {
+        "expression": {
+          "type": "string"
+        },
+        "required": {
+          "default": false,
+          "type": "boolean"
+        },
+        "schema": {
+          "default": null
+        },
+        "sensitive": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "expression"
+      ],
+      "type": "object"
+    },
     "WorkflowSchemaVersion": {
       "enum": [
-        "3.0"
+        "4.0"
       ],
       "type": "string"
     },
@@ -226,12 +437,6 @@
           "$ref": "#/$defs/ExecutionOrder",
           "default": "deterministic"
         },
-        "primaryOutputNodeId": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
         "timeoutMs": {
           "default": null,
           "format": "uint64",
@@ -240,6 +445,22 @@
             "integer",
             "null"
           ]
+        }
+      },
+      "type": "object"
+    },
+    "WorkflowStart": {
+      "additionalProperties": false,
+      "properties": {
+        "contexts": {
+          "additionalProperties": {
+            "$ref": "#/$defs/ContextDefinition"
+          },
+          "default": {},
+          "type": "object"
+        },
+        "inputs": {
+          "default": null
         }
       },
       "type": "object"
@@ -253,6 +474,9 @@
         "$ref": "#/$defs/WorkflowConnection"
       },
       "type": "array"
+    },
+    "end": {
+      "$ref": "#/$defs/WorkflowEnd"
     },
     "nodes": {
       "items": {
@@ -270,12 +494,17 @@
         "executionOrder": "deterministic",
         "timeoutMs": null
       }
+    },
+    "start": {
+      "$ref": "#/$defs/WorkflowStart"
     }
   },
   "required": [
     "schemaVersion",
+    "start",
     "nodes",
-    "connections"
+    "connections",
+    "end"
   ],
   "title": "WorkflowDefinition",
   "type": "object"

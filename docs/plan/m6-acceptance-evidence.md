@@ -2,11 +2,11 @@
 
 状态：`done`。最终验收日期：2026-08-08。最终 Kubernetes Run ID：`20260808T051133152Z`。
 
-M6 的 STU-001～016 已全部实现并通过契约、单元、构建、临时 Kubernetes 和真实浏览器闭环验收。Studio 使用 Agentx 原生 Definition 3.0、Editor Document、Debug Overlay、Node Manifest 和 ExecutionRuntime；不兼容 n8n JSON、节点包、Credential 或 JavaScript 表达式。
+M6 的 STU-001～016 已全部实现并通过契约、单元、构建、临时 Kubernetes 和真实浏览器闭环验收。Studio 使用 Agentx 原生 Definition 4.0、Editor Document、Debug Overlay、Node Manifest 和 ExecutionRuntime；不兼容 n8n JSON、节点包、Credential 或 JavaScript 表达式。
 
 ## 1. 已验收能力
 
-- Definition 3.0 不含坐标，Connection 使用显式 `order`；Editor Document 和 Debug Overlay 不进入 Compiler/IR。
+- Definition 4.0 不含坐标，Connection 使用显式 `order`；Editor Document 和 Debug Overlay 不进入 Compiler/IR。
 - Draft 与 Version 分别保存 Definition/Editor Hash；Draft Debug 固化指定 Revision 的 Definition、IR、Manifest、资源、授权和 Debug Plan Snapshot。
 - Catalog、Compiler 和 Studio 共用 Rust Registry Reconcile 后的 Manifest 与 Hash；前端不存在业务 NodeKind 白名单。
 - React Flow Studio 支持 Palette 搜索/拖拽、main/error/AI Handle、框选/多选、复制粘贴、对齐、ELK 自动布局、Undo/Redo、自动保存、离线恢复和显式 Revision Conflict。
@@ -16,7 +16,7 @@ M6 的 STU-001～016 已全部实现并通过契约、单元、构建、临时 K
 - 连接状态机覆盖 source hover、兼容性、占用替换、动态 Handle、每源端口 Connection Order 和 Edge 重连；多个兼容输入必须由用户显式选择，不再静默连接第一个端口。
 - 跨 Workflow 粘贴使用会话级剪贴板，重建 Node/Binding/Edge ID，并在目标 Workflow 通过 Draft Validate 重新校验节点版本、资源可见性和 Service Identity Grant。
 - Inspector 支持 Text、Textarea、Number、Boolean、Select、Collection、Fixed Collection、Mapper、Resource/Credential、Provider、Expression、Prompt、JSON 和 Code；未知 UI 控件阻止保存。
-- Agentx Expression 使用 Monaco 补全，由 Platform API 的同一个 Rust `ExpressionEngine` 做预览和权威校验；预览不读取 Credential，并递归脱敏 Secret/Token/Authorization 等字段。
+- Agentx Expression 使用 Monaco 补全，Prompt 使用原生多行文本输入并共用 Reference Picker；Platform API 的同一个 Rust `ExpressionEngine` 做预览和权威校验，预览不读取 Credential，并递归脱敏 Secret/Token/Authorization 等字段。
 - Full、Single、To、From、Stop、Pin、Mock、Input/Output、事件 Cursor、Attempt、Lineage、Trace、Checkpoint 和 Fork 均走真实 Runtime。
 - Version Dialog 分离 Definition/Editor Diff，提供历史 Version 只读视图；发布/回滚使用不可变 Version，Debug Overlay 不进入 Version。
 - 大图在 150 个节点启用可见区域渲染、250 个节点切换确定性线性复杂度布局、300 个节点隐藏 MiniMap；500/1000 节点 Playwright 基准同时验证首次交互、拖动/缩放 FPS、P95 输入延迟和可见节点裁剪。
@@ -36,7 +36,7 @@ M6 的 STU-001～016 已全部实现并通过契约、单元、构建、临时 K
 | STU-007 | done | 防抖保存、localStorage Recovery、离开保护和三选项 Revision Conflict 测试/E2E |
 | STU-008 | done | Manifest JSON/UI Schema 表单、Collection/Fixed Collection/Mapper 和不支持控件门禁 |
 | STU-009 | done | Model/MCP/Skill/RAG/Memory/Credential/Sandbox Selector、Grant 与递归依赖校验 |
-| STU-010 | done | Monaco Expression/Prompt/JSON/Code、Agentx 补全、Rust AST 校验和脱敏预览测试 |
+| STU-010 | done | Monaco Expression/JSON/Code、普通 Prompt 文本输入、Agentx 补全、Rust AST 校验和脱敏预览测试 |
 | STU-011 | done | Full/Single/To/From/Stop、精确 Revision 和可恢复 Event Cursor E2E |
 | STU-012 | done | 独立 Overlay、Pin/Mock、可信输入来源、Artifact 和 Side Effect Decision E2E |
 | STU-013 | done | 运行高亮、Attempt/Lineage、Agent/Sandbox Trace、Checkpoint/Fork E2E |
@@ -93,7 +93,7 @@ git diff --check -- . ':!README.md'
 | 500 | 509ms | 59.9 | 22.5ms | 77 |
 | 1000 | 783ms | 59.9 | 28.5ms | 77 |
 
-M6 浏览器用例通过 UI 创建 Workflow，使用完整左栏和搜索面板拖入 Manual Trigger、Agent、Code、Approval、Error Handler、Model 和 MCP Tool，完成双语语义形状、边界 Handle、错误策略、主要输出、参数与资源配置、执行/AI/Error 连线、保存 Revision、Full/Single/To/From/Stop、事件断线恢复、Pin/Mock、Trace、Checkpoint/Fork、Version、Deployment 和并发冲突。Fixture 只准备账号、Model、MCP、Credential、Sandbox Profile 和 Approval 依赖，没有通过 API/SQL 写入被测 Workflow。
+M6 浏览器用例通过 UI 创建 Workflow，使用节点创建器拖入 Agent、Code、Approval、Error Handler，并为 Agent 添加 Model 和 MCP Tool 附件，完成双语语义形状、边界 Handle、错误策略、主要输出、参数与资源配置、执行/AI/Error 连线、保存 Revision、Full/Single/To/From/Stop、事件断线恢复、Pin/Mock、Trace、Checkpoint/Fork、Version、Deployment 和并发冲突。Fixture 只准备账号、Model、MCP、Credential、Sandbox Profile 和 Approval 依赖，没有通过 API/SQL 写入被测 Workflow。
 
 本地 Builtin 用例同样只通过 Studio UI 创建并运行三条 Workflow：13 节点数据变换链、Merge/Compare 多输入链、Validator/Stop Error 错误链；API 只读取 Execution 和 Node Run 结果作为断言证据。三条流程共同覆盖新增 16 项 Manifest 与扩展 Merge 的全部 17 项能力。
 

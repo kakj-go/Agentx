@@ -44,6 +44,34 @@
         "responses": {}
       }
     },
+    "/gateway/v1/artifacts": {
+      "post": {
+        "tags": [],
+        "operationId": "upload_artifact",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "string"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtifactUploadResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/gateway/v1/invocations/{id}": {
       "get": {
         "tags": [],
@@ -139,6 +167,28 @@
         "operationId": "webhook_trigger",
         "responses": {}
       }
+    },
+    "/gateway/v1/workflows/{slug}/invoke": {
+      "post": {
+        "tags": [],
+        "operationId": "invoke_workflow",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InvocationRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "type": "string"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {}
+      }
     }
   },
   "components": {
@@ -166,6 +216,28 @@
           "requestId": {
             "type": "string",
             "format": "uuid"
+          }
+        }
+      },
+      "ArtifactUploadResponse": {
+        "type": "object",
+        "required": [
+          "artifactId",
+          "contentType",
+          "sizeBytes"
+        ],
+        "properties": {
+          "artifactId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "contentType": {
+            "type": "string"
+          },
+          "sizeBytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
           }
         }
       },
@@ -244,18 +316,7 @@
             "type": "string",
             "format": "date-time"
           },
-          "errorCode": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "errorMessage": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
+          "error": {},
           "executionId": {
             "type": [
               "string",
@@ -267,6 +328,7 @@
             "type": "string",
             "format": "uuid"
           },
+          "outputs": {},
           "sessionId": {
             "type": [
               "string",

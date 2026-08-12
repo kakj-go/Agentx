@@ -13,6 +13,8 @@ import { EntityFormDialog, type EntityFormField } from '../../shared/components/
 import { PageContainer } from '../../shared/components/page-container'
 import { PageHeader } from '../../shared/components/page-header'
 import { StatusBadge } from '../../shared/components/status-badge'
+import { useLocaleFormat } from '../../shared/lib/locale-format'
+import { localizedValue } from '../../shared/lib/localized-value'
 import { Button } from '../../shared/ui/button'
 import { Badge } from '../../shared/ui/badge'
 import { Card } from '../../shared/ui/card'
@@ -26,6 +28,7 @@ type TerminalAction = 'approve' | 'reject' | 'cancel' | null
 export function ApprovalDetailPage() {
   const { id = '' } = useParams()
   const { t } = useTranslation()
+  const { formatDateTime } = useLocaleFormat()
   const auth = useAuth()
   const { showToast } = useToast()
   const queryClient = useQueryClient()
@@ -42,25 +45,25 @@ export function ApprovalDetailPage() {
   ])
   const act = useMutation({
     mutationFn: ({ action, targetUserId }: { action: ApprovalActionName; targetUserId?: string }) => apiRequest<Approval>(`/approvals/${id}/${action}`, { method: 'POST', body: jsonBody({ version: approval.data?.version, ...(action === 'approve' || action === 'reject' ? { input: null } : {}), ...(action === 'reassign' ? { targetUserId } : {}) }) }),
-    onSuccess: async () => { setTerminalAction(null); setReassignOpen(false); await refresh(); showToast(t('m3.approvalUpdated')) },
+    onSuccess: async () => { setTerminalAction(null); setReassignOpen(false); await refresh(); showToast(t('approvals.approvalUpdated')) },
     onError: async (error: Error) => { showToast(error.message); await refresh() },
   })
-  if (!approval.data) return <PageContainer><EmptyState title={approval.isLoading ? t('m2.loading') : t('m2.loadFailed')} description={String(approval.error ?? '')} /></PageContainer>
+  if (!approval.data) return <PageContainer><EmptyState title={approval.isLoading ? t('common.loading') : t('common.loadFailed')} description={String(approval.error ?? '')} /></PageContainer>
   const value = approval.data
   const mine = value.claimedBy === auth.user?.id
   const active = value.status === 'pending' || value.status === 'claimed'
-  const candidateFields: EntityFormField[] = [{ name: 'targetUserId', label: t('m3.assignee'), type: 'select', required: true, options: (candidates.data ?? []).map((item) => ({ value: item.userId, label: item.displayName })) }]
+  const candidateFields: EntityFormField[] = [{ name: 'targetUserId', label: t('approvals.assignee'), type: 'select', required: true, options: (candidates.data ?? []).map((item) => ({ value: item.userId, label: item.displayName })) }]
   const actionBar = <div className="flex flex-wrap gap-2">
-    {auth.hasPermission('approval:manage') && active && <Button onClick={() => setReassignOpen(true)} variant="secondary"><UserRoundCog className="size-4" />{t('m3.assignee')}</Button>}
+    {auth.hasPermission('approval:manage') && active && <Button onClick={() => setReassignOpen(true)} variant="secondary"><UserRoundCog className="size-4" />{t('approvals.assignee')}</Button>}
     {auth.hasPermission('approval:manage') && active && <Button onClick={() => setTerminalAction('cancel')} variant="secondary"><X className="size-4" />{t('common.cancel')}</Button>}
-    {auth.hasPermission('approval:act') && value.status === 'pending' && <Button onClick={() => act.mutate({ action: 'claim' })}><Hand className="size-4" />{t('m3.claim')}</Button>}
-    {auth.hasPermission('approval:act') && value.status === 'claimed' && mine && <><Button onClick={() => setTerminalAction('approve')}><Check className="size-4" />{t('m3.approve')}</Button><Button onClick={() => setTerminalAction('reject')} variant="danger"><X className="size-4" />{t('m3.reject')}</Button><Button onClick={() => act.mutate({ action: 'release' })} variant="secondary"><RotateCcw className="size-4" />{t('m3.release')}</Button></>}
+    {auth.hasPermission('approval:act') && value.status === 'pending' && <Button onClick={() => act.mutate({ action: 'claim' })}><Hand className="size-4" />{t('approvals.claim')}</Button>}
+    {auth.hasPermission('approval:act') && value.status === 'claimed' && mine && <><Button onClick={() => setTerminalAction('approve')}><Check className="size-4" />{t('approvals.approve')}</Button><Button onClick={() => setTerminalAction('reject')} variant="danger"><X className="size-4" />{t('approvals.reject')}</Button><Button onClick={() => act.mutate({ action: 'release' })} variant="secondary"><RotateCcw className="size-4" />{t('approvals.release')}</Button></>}
   </div>
   return <PageContainer>
     <PageHeader action={active ? actionBar : undefined} description={`${value.workflowName} · ${value.nodeId}`} title={value.title} />
-    <div className="mt-5 flex items-center gap-3"><StatusBadge status={approvalStatus(value.status)} /><span className="text-xs text-muted-foreground">{t('m3.resumeStatus')}</span><Badge tone={value.resumeStatus === 'succeeded' ? 'success' : value.resumeStatus === 'failed' || value.resumeStatus === 'blocked_runtime' ? 'danger' : value.resumeStatus === 'pending' ? 'warning' : 'neutral'}>{value.resumeStatus}</Badge><Button asChild className="ml-auto" size="sm" variant="ghost"><Link to={`/executions/${value.executionId}`}><ExternalLink className="size-3.5" />{t('m3.trace')}</Link></Button></div>
-    <div className="mt-6 grid grid-cols-[minmax(0,1.4fr)_minmax(340px,0.6fr)] gap-5"><Card className="p-5"><h2 className="text-sm font-semibold">{t('m3.request')}</h2><p className="mt-3 text-xs leading-6 text-muted-foreground">{value.description ?? '—'}</p><pre className="mt-5 overflow-auto rounded-lg bg-canvas p-4 text-[11px]">{JSON.stringify(value.requestPayload, null, 2)}</pre></Card><Card className="overflow-hidden"><div className="border-b border-border px-5 py-4"><h2 className="text-sm font-semibold">{t('m3.actionHistory')}</h2></div><div className="divide-y divide-border px-5">{actions.data?.map((item) => <div className="py-4" key={item.id}><div className="flex justify-between text-xs"><strong>{item.actorName}</strong><span className="text-muted-foreground">{item.actionType}</span></div><p className="mt-1 text-[11px] text-muted-foreground">{item.fromStatus} → {item.toStatus} · {new Date(item.createdAt).toLocaleString()}</p></div>)}</div></Card></div>
-    {reassignOpen && <EntityFormDialog cancelLabel={t('common.cancel')} fields={candidateFields} onClose={() => setReassignOpen(false)} onSubmit={(values) => act.mutateAsync({ action: 'reassign', targetUserId: values.targetUserId }).then(() => undefined)} open submitLabel={t('common.save')} title={t('m3.assignee')} />}
-    <ConfirmDialog cancelLabel={t('common.cancel')} confirmLabel={terminalAction ? t(terminalAction === 'cancel' ? 'common.confirm' : `m3.${terminalAction}`) : t('common.confirm')} description={terminalAction === 'reject' ? t('m3.confirmReject') : `${terminalAction === 'approve' ? t('m3.approve') : t('common.cancel')}?`} onClose={() => setTerminalAction(null)} onConfirm={async () => { if (terminalAction) await act.mutateAsync({ action: terminalAction }) }} open={Boolean(terminalAction)} pending={act.isPending} title={terminalAction === 'reject' ? t('m3.reject') : terminalAction === 'approve' ? t('m3.approve') : t('common.cancel')} />
+    <div className="mt-5 flex items-center gap-3"><StatusBadge label={localizedValue(t, 'approvals.statuses', value.status)} status={approvalStatus(value.status)} /><span className="text-xs text-muted-foreground">{t('approvals.resumeStatus')}</span><Badge tone={value.resumeStatus === 'succeeded' ? 'success' : value.resumeStatus === 'failed' || value.resumeStatus === 'blocked_runtime' ? 'danger' : value.resumeStatus === 'pending' ? 'warning' : 'neutral'}>{localizedValue(t, 'approvals.resumeStatuses', value.resumeStatus)}</Badge><Button asChild className="ml-auto" size="sm" variant="ghost"><Link to={`/executions/${value.executionId}`}><ExternalLink className="size-3.5" />{t('approvals.trace')}</Link></Button></div>
+    <div className="mt-6 grid grid-cols-[minmax(0,1.4fr)_minmax(340px,0.6fr)] gap-5"><Card className="p-5"><h2 className="text-sm font-semibold">{t('approvals.request')}</h2><p className="mt-3 text-xs leading-6 text-muted-foreground">{value.description ?? '—'}</p><pre className="mt-5 overflow-auto rounded-lg bg-canvas p-4 text-[11px]">{JSON.stringify(value.requestPayload, null, 2)}</pre></Card><Card className="overflow-hidden"><div className="border-b border-border px-5 py-4"><h2 className="text-sm font-semibold">{t('approvals.actionHistory')}</h2></div><div className="divide-y divide-border px-5">{actions.data?.map((item) => <div className="py-4" key={item.id}><div className="flex justify-between text-xs"><strong>{item.actorName}</strong><span className="text-muted-foreground">{localizedValue(t, 'approvals.actionTypes', item.actionType)}</span></div><p className="mt-1 text-[11px] text-muted-foreground">{localizedValue(t, 'approvals.statuses', item.fromStatus)} → {localizedValue(t, 'approvals.statuses', item.toStatus)} · {formatDateTime(item.createdAt)}</p></div>)}</div></Card></div>
+    {reassignOpen && <EntityFormDialog cancelLabel={t('common.cancel')} fields={candidateFields} onClose={() => setReassignOpen(false)} onSubmit={(values) => act.mutateAsync({ action: 'reassign', targetUserId: values.targetUserId }).then(() => undefined)} open submitLabel={t('common.save')} title={t('approvals.assignee')} />}
+    <ConfirmDialog cancelLabel={t('common.cancel')} confirmLabel={terminalAction ? t(terminalAction === 'cancel' ? 'common.confirm' : `approvals.${terminalAction}`) : t('common.confirm')} description={terminalAction === 'reject' ? t('approvals.confirmReject') : `${terminalAction === 'approve' ? t('approvals.approve') : t('common.cancel')}?`} onClose={() => setTerminalAction(null)} onConfirm={async () => { if (terminalAction) await act.mutateAsync({ action: terminalAction }) }} open={Boolean(terminalAction)} pending={act.isPending} title={terminalAction === 'reject' ? t('approvals.reject') : terminalAction === 'approve' ? t('approvals.approve') : t('common.cancel')} />
   </PageContainer>
 }

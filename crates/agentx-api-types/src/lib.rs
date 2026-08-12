@@ -28,6 +28,8 @@ pub struct ApiErrorResponse {
     pub request_id: Uuid,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub field_errors: Vec<FieldError>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub details: Option<serde_json::Value>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]

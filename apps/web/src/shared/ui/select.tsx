@@ -13,13 +13,19 @@ type SelectProps = {
   className?: string
   disabled?: boolean
   'aria-label'?: string
+  'aria-invalid'?: boolean
+  'aria-describedby'?: string
+  name?: string
 }
 
-export function Select({ value, onValueChange, options, placeholder, className, disabled, 'aria-label': ariaLabel }: SelectProps) {
+export function Select({ value, onValueChange, options, placeholder, className, disabled, name, 'aria-label': ariaLabel, 'aria-invalid': ariaInvalid, 'aria-describedby': ariaDescribedBy }: SelectProps) {
   return (
     <SelectPrimitive.Root disabled={disabled} onValueChange={onValueChange} value={value}>
       <SelectPrimitive.Trigger
         aria-label={ariaLabel}
+        aria-invalid={ariaInvalid}
+        aria-describedby={ariaDescribedBy}
+        name={name}
         className={cn(
           'inline-flex h-9 min-w-36 items-center justify-between gap-3 rounded-lg border border-border bg-surface px-3 text-sm text-foreground outline-none transition-colors',
           'hover:bg-muted/45 focus:border-primary/60 focus:ring-2 focus:ring-primary/15 disabled:cursor-not-allowed disabled:opacity-50',
@@ -32,7 +38,7 @@ export function Select({ value, onValueChange, options, placeholder, className, 
       </SelectPrimitive.Trigger>
       <SelectPrimitive.Portal>
         <SelectPrimitive.Content
-          className="z-[70] min-w-[var(--radix-select-trigger-width)] overflow-hidden rounded-xl border border-border bg-surface p-1 text-foreground shadow-xl"
+          className="z-[230] min-w-[var(--radix-select-trigger-width)] overflow-hidden rounded-xl border border-border bg-surface p-1 text-foreground shadow-xl"
           position="popper"
           sideOffset={6}
         >

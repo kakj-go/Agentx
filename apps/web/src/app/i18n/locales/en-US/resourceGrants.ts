@@ -1,0 +1,50 @@
+const translations = {
+  "operation": "Operation",
+  "use": "Use",
+  "view": "View",
+  "read": "Read",
+  "write": "Write",
+  "department": "Department",
+  "description": "Manage access from departments and Workflow service identities to every resource in one place.",
+  "manage": "Manage grants",
+  "grantAdded": "Grant added",
+  "select": "Select",
+  "resourceType": "Resource type",
+  "grantCount": "Grants",
+  "grantCountValue": "{{count}} grants",
+  "manageTitle": "Manage grants for “{{name}}”",
+  "manageDescription": "Department grants control management visibility and use; Workflow grants control publishing and runtime identity access.",
+  "subjectType": "Subject type",
+  "subject": "Subject",
+  "workflow": "Workflow service identity",
+  "add": "Add grant",
+  "subjectRequired": "Select a grant subject",
+  "revoked": "Grant revoked",
+  "empty": "This resource has no grants",
+  "revoke": "Revoke grant",
+  "revokeTitle": "Revoke grant?",
+  "revokeDescription": "New Workflow publications or runs may be blocked after revocation.",
+  "revokeConfirm": "Revoke",
+  "title": "Resource Grants",
+  "search": "Search resource names, types, or connection details",
+  "resourceTypes": {
+    "credential": "Credential",
+    "model": "Model",
+    "mcp_server": "MCP Server",
+    "mcp_tool": "MCP Tool",
+    "skill": "Skill",
+    "rag": "Knowledge",
+    "memory": "Memory",
+    "sandbox_profile": "Sandbox Profile"
+  },
+  "operations": {
+    "use": "Use", "view": "View", "read": "Read", "write": "Write", "execute": "Execute", "manage": "Manage"
+  },
+  "validationReasons": {
+    "resource_missing_or_disabled": "Resource is missing or disabled",
+    "grant_revoked": "Grant was revoked",
+    "workflow_grant_missing": "Workflow service identity is missing a grant"
+  }
+} as const
+
+export default translations

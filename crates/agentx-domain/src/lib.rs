@@ -13,10 +13,14 @@ pub use resource::{
     ResourceVersionSnapshot,
 };
 pub use workflow::{
-    BindingEdge, BindingLayout, DebugPlan, DefinitionIssue, EditorAnnotation, EditorDocument,
-    EditorEdge, EditorGroup, EditorViewport, ExecutionOrder, ExecutionSource, NodeErrorPolicy,
-    NodeLayout, NodeSettings, WorkflowConnection, WorkflowDefinition, WorkflowNode,
-    WorkflowSettings, canonical_content_hash, validate_definition, validate_editor_document,
+    BindingEdge, BindingLayout, BoundaryLayout, ContextDefinition, ContextMergePolicy,
+    ContextScope, ContextWrite, ContextWriteOperation, DebugPlan, DefinitionIssue,
+    EditorAnnotation, EditorDocument, EditorEdge, EditorGroup, EditorViewport, EndErrorStrategy,
+    ExecutionOrder, ExecutionSource, NodeErrorPolicy, NodeLayout, NodeSettings,
+    OutputProjectionField, WORKFLOW_END_NODE_ID, WORKFLOW_START_NODE_ID, WorkflowBoundary,
+    WorkflowConnection, WorkflowDefinition, WorkflowEnd, WorkflowErrorEnd, WorkflowNode,
+    WorkflowOutput, WorkflowSettings, WorkflowStart, canonical_content_hash, validate_definition,
+    validate_editor_document,
 };
 
 macro_rules! domain_id {

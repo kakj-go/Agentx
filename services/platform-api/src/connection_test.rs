@@ -47,6 +47,29 @@ pub async fn run_http_check(
         url,
         credential_id,
         false,
+        None,
+    )
+    .await
+}
+
+pub async fn run_openai_chat_completions_check(
+    state: &AppState,
+    actor: &AuthActor,
+    resource_type: &str,
+    resource_id: Uuid,
+    url: &str,
+    credential_id: Option<Uuid>,
+    model_name: &str,
+) -> AppResult<Json<HealthCheckResponse>> {
+    run_http_check_mode(
+        state,
+        actor,
+        resource_type,
+        resource_id,
+        url,
+        credential_id,
+        false,
+        Some(model_probe_body(model_name)),
     )
     .await
 }
@@ -59,16 +82,18 @@ async fn run_http_check_mode(
     url: &str,
     credential_id: Option<Uuid>,
     validate_openapi: bool,
+    body: Option<Value>,
 ) -> AppResult<Json<HealthCheckResponse>> {
     let _permit = state.connection_permit(actor.tenant_id).await;
     let parsed = validate_target(state, url).await?;
     let sequence_started_at = time::OffsetDateTime::now_utc();
     let sequence = u64::try_from(sequence_started_at.unix_timestamp_nanos()).unwrap_or(u64::MAX);
     let started = Instant::now();
-    let mut request = state
-        .http
-        .get(parsed)
-        .timeout(Duration::from_secs(state.connections.timeout_seconds));
+    let mut request = match body {
+        Some(body) => state.http.post(parsed).json(&body),
+        None => state.http.get(parsed),
+    }
+    .timeout(Duration::from_secs(state.connections.timeout_seconds));
     if let Some(id) = credential_id {
         request = authorize(
             request,
@@ -141,6 +166,15 @@ async fn run_http_check_mode(
         error_message,
         checked_at,
     }))
+}
+
+fn model_probe_body(model_name: &str) -> Value {
+    serde_json::json!({
+        "model": model_name,
+        "messages": [{"role": "user", "content": "Reply with OK."}],
+        "max_tokens": 1,
+        "stream": false
+    })
 }
 
 async fn read_openapi_document(
@@ -306,7 +340,7 @@ fn secret_string(value: &Value) -> AppResult<&str> {
 mod tests {
     use axum::{Router, response::IntoResponse, routing::get};
 
-    use super::{always_blocked, blocked, read_openapi_document};
+    use super::{always_blocked, blocked, model_probe_body, read_openapi_document};
 
     async fn response(body: &'static str) -> reqwest::Response {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -338,6 +372,19 @@ mod tests {
         assert!(always_blocked("224.0.0.1".parse().unwrap()));
         assert!(!always_blocked("10.0.0.1".parse().unwrap()));
         assert!(!always_blocked("127.0.0.1".parse().unwrap()));
+    }
+
+    #[test]
+    fn model_probe_uses_openai_chat_completions_shape() {
+        assert_eq!(
+            model_probe_body("upstream-model"),
+            serde_json::json!({
+                "model": "upstream-model",
+                "messages": [{"role": "user", "content": "Reply with OK."}],
+                "max_tokens": 1,
+                "stream": false
+            })
+        );
     }
 
     #[tokio::test]

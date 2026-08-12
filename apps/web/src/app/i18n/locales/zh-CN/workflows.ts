@@ -1,0 +1,81 @@
+const translations = {
+  "details": "详情",
+  "overview": "概览",
+  "createVersion": "创建版本",
+  "publish": "发布",
+  "rollback": "回滚",
+  "archive": "归档",
+  "addMember": "添加成员",
+  "noData": "暂无数据",
+  "loading": "正在加载…",
+  "saved": "已保存",
+  "revision": "草稿修订号 {{revision}}",
+  "draftRevision": "草稿修订号",
+  "visibility": "可见范围",
+  "private": "仅成员",
+  "departmentVisible": "部门可见",
+  "companyVisible": "公司可见",
+  "workflowName": "工作流名称",
+  "fields": {
+    "description": "描述"
+  },
+  "description": "设计、测试并发布企业智能体工作流。",
+  "validationPassed": "资源与授权校验通过",
+  "validationFailed": "存在 {{count}} 个资源或授权问题",
+  "versionNumber": "版本 {{version}}",
+  "environment": "环境",
+  "environmentManagement": "环境管理",
+  "environmentDescription": "管理工作流和应用部署使用的环境。",
+  "manageEnvironments": "管理环境",
+  "createEnvironment": "新建环境",
+  "editEnvironment": "编辑环境",
+  "environmentCode": "环境标识",
+  "environmentName": "环境名称",
+  "environmentType": "类型",
+  "builtinEnvironment": "系统内置",
+  "customEnvironment": "自定义",
+  "searchEnvironments": "搜索环境",
+  "environmentSaved": "环境已保存",
+  "environmentDeleted": "环境已删除",
+  "members": "成员",
+  "versions": "版本",
+  "deployments": "部署历史",
+  "resources": "资源检查",
+  "createWorkflow": "新建工作流",
+  "openEditor": "打开画布",
+  "latestVersion": "最新版本",
+  "draftLabel": "草稿",
+  "selectEnvironment": "选择环境",
+  "selectVersion": "选择版本",
+  "confirmArchive": "归档后不能继续编辑和发布。",
+  "created": "创建成功",
+  "loadFailed": "数据加载失败",
+  "title": "工作流",
+  "search": "搜索工作流",
+  "workflowId": "工作流 ID",
+  "serviceIdentity": "运行身份",
+  "sourceRevision": "来源修订号 {{revision}}",
+  "deploymentSources": {
+    "publish": "发布",
+    "rollback": "回滚"
+  },
+  "visibilities": {
+    "private": "仅成员",
+    "department": "部门可见",
+    "company": "公司可见"
+  },
+  "memberRoles": {
+    "owner": "所有者",
+    "editor": "编辑者",
+    "viewer": "查看者",
+    "manager": "管理员"
+  },
+  "prerequisites": {
+    "publishDescription": "发布工作流前需要创建版本，并确保工作流处于启用状态。",
+    "version": "至少一个已发布的工作流版本",
+    "active": "工作流处于启用状态"
+  },
+  "deleted": "删除成功"
+} as const
+
+export default translations

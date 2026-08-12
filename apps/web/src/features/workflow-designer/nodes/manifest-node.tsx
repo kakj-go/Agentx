@@ -1,5 +1,5 @@
 import { Handle, Position, useUpdateNodeInternals, type NodeProps } from '@xyflow/react'
-import { AlertTriangle, Plus, Star, Zap } from 'lucide-react'
+import { AlertTriangle, Plus, Zap } from 'lucide-react'
 import { memo, useEffect, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -20,7 +20,6 @@ export const ManifestNode = memo(function ManifestNode({ id, data, selected }: N
   const runtimeStatus = useCanvasRenderStore((state) => state.runtimeStatuses.get(id))
   const bindingSummaries = useCanvasRenderStore((state) => state.bindingSummaries.get(id) ?? EMPTY_BINDINGS)
   const occupiedHandleSignature = useCanvasRenderStore((state) => state.occupiedHandlesByNodeId.get(id) ?? '')
-  const primary = useCanvasRenderStore((state) => state.primaryOutputNodeId === id)
   const zoomTier = useCanvasRenderStore((state) => state.zoomTier)
   const onQuickAdd = useCanvasRenderStore((state) => state.onQuickAdd)
   const onSourceHover = useCanvasRenderStore((state) => state.onSourceHover)
@@ -46,7 +45,6 @@ export const ManifestNode = memo(function ManifestNode({ id, data, selected }: N
     <NodeLabel family={family} label={label} />
     {manifest?.outputPorts.map((port, index) => <PortHandle addLabel={t('studio.ports.addAfter', { label: localized?.outputPortLabel(port.name) ?? port.name })} id={port.name} key={`out-${port.name}`} kind={port.kind} label={localized?.outputPortLabel(port.name) ?? port.name} onHover={onSourceHover ? (active) => onSourceHover(id, port.name, active) : undefined} onQuickAdd={!data.disabled && onQuickAdd && (!occupiedHandles.has(port.name) || port.variadic) ? () => onQuickAdd(id, port.name, 'output') : undefined} placement={portPlacement('output', port.kind, port.name, index, manifest.outputPorts)} type="source" />)}
     {manifest?.bindingSlots.map((slot, index) => <PortHandle addLabel={t('studio.ports.addAfter', { label: localized?.bindingSlotLabel(slot.name) ?? slot.name })} id={`binding:${slot.name}`} key={slot.name} kind="binding" label={localized?.bindingSlotLabel(slot.name) ?? slot.name} onQuickAdd={!data.disabled && onQuickAdd && (!occupiedHandles.has(`binding:${slot.name}`) || slot.multiple) ? () => onQuickAdd(id, `binding:${slot.name}`, 'binding') : undefined} placement={bindingPlacement(index, manifest.bindingSlots.length)} resourceType={slot.resourceType} type="target" />)}
-    {primary && <span className="absolute -left-2 -top-2 z-30 grid size-5 place-items-center rounded-full bg-primary text-primary-foreground" title={t('studio.primaryOutput')}><Star className="size-3 fill-current" /></span>}
     {data.disabled && <AlertTriangle className="absolute -right-2 -top-2 z-30 size-5 rounded-full bg-surface p-0.5 text-warning" />}
   </div>
 })
@@ -84,17 +82,17 @@ function PortHandle({ id, kind, label, placement, type, onQuickAdd, onHover, add
   const vertical = placement.position === Position.Left || placement.position === Position.Right
   const handleStyle = vertical ? { top: `${placement.axis}%` } : { left: `${placement.axis}%` }
   const labelClass = placement.position === Position.Left
-    ? 'right-full mr-3 -translate-y-1/2'
+    ? 'right-full mr-3 flex h-4 -translate-y-1/2 items-center leading-none'
     : placement.position === Position.Right
-      ? 'left-full ml-3 -translate-y-1/2'
+      ? 'left-full ml-3 flex h-4 -translate-y-1/2 items-center leading-none'
       : kind === 'error'
-        ? 'top-full ml-2 -translate-y-1/2'
-        : 'top-full mt-3 -translate-x-1/2'
+        ? 'top-full ml-2 flex h-4 -translate-y-1/2 items-center leading-none'
+        : 'top-full mt-3 w-16 -translate-x-1/2 text-center leading-none'
   const labelStyle = vertical ? { top: `${placement.axis}%` } : { left: `${placement.axis}%` }
   const colorClass = kind === 'binding' ? `studio-port-${resourceType ?? 'binding'}` : kind === 'error' ? 'studio-port-error' : type === 'target' ? 'studio-port-input' : 'studio-port-output'
   return <>
-    <Handle className={cn('studio-handle !absolute !z-30 !size-4 !border-0 !bg-transparent', colorClass)} id={id} onMouseEnter={() => onHover?.(true)} onMouseLeave={() => onHover?.(false)} position={placement.position} style={handleStyle} title={label} type={type}><span className={cn('studio-handle-mark block size-2.5 border-2 border-background', kind === 'binding' ? 'rotate-45 rounded-[2px]' : 'rounded-full')} /></Handle>
-    <span className={cn('studio-port-label pointer-events-none absolute z-20 max-w-24 truncate text-[9px] font-medium text-muted-foreground', labelClass)} style={labelStyle}>{label}</span>
+    <Handle className={cn('studio-handle !absolute !z-30 !grid !size-4 !place-items-center !border-0 !bg-transparent', colorClass)} id={id} onMouseEnter={() => onHover?.(true)} onMouseLeave={() => onHover?.(false)} position={placement.position} style={handleStyle} title={label} type={type}><span className={cn('studio-handle-mark block size-2.5 border-2 border-background', kind === 'binding' ? 'rotate-45 rounded-[2px]' : 'rounded-full')} /></Handle>
+    <span className={cn('studio-port-label pointer-events-none absolute z-20 max-w-24 truncate text-[9px] font-medium text-muted-foreground', labelClass)} data-port-id={id} data-port-type={type} style={labelStyle}>{label}</span>
     {onQuickAdd && <button aria-label={addLabel} className={cn('studio-port-add nodrag absolute z-40 grid size-6 place-items-center rounded-full border border-border bg-surface text-muted-foreground hover:border-primary hover:text-primary', placement.position === Position.Bottom ? 'top-full mt-7 -translate-x-1/2' : 'left-full ml-7 -translate-y-1/2')} onClick={(event) => { event.stopPropagation(); onQuickAdd() }} style={labelStyle} title={addLabel} type="button"><Plus className="size-3.5" /></button>}
   </>
 }
@@ -122,7 +120,7 @@ export const AttachmentNode = memo(function AttachmentNode({ id, data, selected 
   const metrics = canvasNodeMetrics('default', { kind: 'binding' })
   return <div className={cn('studio-node studio-node-attachment relative shrink-0', `studio-node-zoom-${zoomTier}`)} data-testid={`studio-node-${id}`} style={{ width: metrics.width, height: metrics.height }}>
     <div className={cn('studio-node-surface flex size-full items-center justify-center', selected && 'studio-node-selected')}><span className={cn('studio-node-icon grid size-12 place-items-center rounded-md bg-muted', `studio-resource-${data.resourceType}`)}><NodeIcon className="size-6" iconKey={attachmentIcon(data.resourceType)} /></span></div>
-    <NodeLabel label={data.resourceName ?? data.label ?? t(`resourceTypes.${data.resourceType}`)} />
+    <NodeLabel label={data.resourceName ?? data.label ?? t(`resourceGrants.resourceTypes.${data.resourceType}`)} />
     <Handle className={cn('studio-handle studio-port-binding !absolute !top-[-8px] !size-4 !border-0 !bg-transparent')} id="resource" onMouseEnter={() => onSourceHover?.(id, 'resource', true)} onMouseLeave={() => onSourceHover?.(id, 'resource', false)} position={Position.Top} type="source"><span className="studio-handle-mark block size-2.5 rotate-45 rounded-[2px] border-2 border-background" /></Handle>
   </div>
 })

@@ -65,11 +65,16 @@ Bootstrap Admin 是 Company Admin，可以管理全部部门、用户和角色�
 
 发布时进行完整检查，运行时再次校验。资源授权被撤销后，新执行不能继续使用该资源。MCP Tool 的依赖链固定为 `MCP Tool → MCP Server → Credential`，三类资源必须逐项授权，任一 Grant 都不能隐式传递给下一项。
 
+Workflow Studio 的资源选择器列出当前用户可见的全部有效资源，并按资源对 Workflow Service Identity 的状态显示 `authorized/grantable/requestable/pending/rejected/unavailable`。资源选项按 `resourceType + operation` 独立查询，API 支持搜索和分页；Company 数据范围角色、部门闭包和已有 Department View Grant 使用同一套可见性规则。只有 `authorized` 可选择；有工作流编辑权、`resource:grant` 且能授权完整依赖包的用户可以在画布确认后直接原子授权，其他编辑者可以提交设计期资源授权申请。直接授权和审批通过都只刷新资源状态，不自动修改 Draft 或选择资源。
+
+设计期资源授权申请与运行时 `approval_tasks` 相互独立。申请只接受主资源、操作、来源节点、Draft Revision 和可选说明，完整依赖包必须由服务端展开；Model 与 Credential、MCP Tool 与 MCP Server/Credential、Skill 与递归依赖都逐项授权。同部门资源合并为一个 Review，跨部门必须全部会签；任一部门拒绝则整包拒绝，全部通过后在一个事务内创建全部 Grant。直接授权、申请和审批动作均使用 Idempotency Key；审批还携带预期 Review Version，并重新校验资源状态、依赖指纹、工作流状态和申请人编辑权，变化后标记 `stale`，不得按旧依赖授权。
+
+部门 Review 由其管理范围内同时拥有 `department_admin`、`approval:act` 和 `resource:grant` 的有效用户处理；没有有效部门审批人时由 Company Admin 兜底。审批人不需要目标工作流的管理权限，只看到申请用途与必要的脱敏上下文。待审批中心以“运行审批”和“资源授权”两个页签分别承载两套状态机。
+
 ## 3. 模型管理
 
 模型对象：
 
-- Model Provider
 - Model Deployment
 - Model Alias
 - Credential Reference
@@ -79,9 +84,11 @@ Bootstrap Admin 是 Company Admin，可以管理全部部门、用户和角色�
 
 Workflow 推荐引用 Model Alias，而不是将真实 Endpoint 和 Credential 写入节点参数。
 
-Provider 名称、Endpoint、Credential 和状态可通过乐观锁编辑。Alias 名称和状态可直接修改；Model Name、Endpoint Override、Credential 或默认参数变化时创建新的不可变 Deployment Revision，并在同一事务切换 Alias。历史 Revision、价格和切换操作者始终可查询，不能被编辑覆盖。
+连接不是独立资源。新建模型时在一个表单内同时填写连接名称、API 格式、Endpoint、Credential、模型名称、上游模型 ID、输入输出 Token 上限、所属部门和默认参数；后端在一个事务内创建不可变 Model Deployment Revision 与稳定的 Model Alias。Alias 在界面中作为“模型名称”供 Workflow 选择，供应商实际接收的 Model Name 显示为“上游模型 ID”。任一连接或模型配置变化时创建新的 Deployment Revision，并在同一事务切换 Alias；历史 Revision、价格和切换操作者始终可查询，不能被编辑覆盖。
 
-新建 Model Alias 的连接状态固定为 `untested`。只有用户手动发起 Alias 级连接测试后，状态才更新为 `healthy` 或 `unhealthy`；Provider、Alias 或当前 Deployment Revision 的有效配置发生变化后，旧健康结果立即失效并重新显示 `untested`。
+API 格式描述供应商接受的模型调用协议，不等同于内部 Provider Adapter 类型。当前 Runtime 只支持 OpenAI Chat Completions，因此控制面只允许选择该格式；连接测试使用当前上游模型 ID 发送最小 `POST /chat/completions` 请求，与 Workflow 运行路径一致。实现 Responses Runtime 后再增加 OpenAI Responses 选项。
+
+新建 Model Alias 的连接状态固定为 `untested`。只有用户手动发起 Alias 级连接测试后，状态才更新为 `healthy` 或 `unhealthy`；Alias 或当前 Deployment Revision 的有效配置发生变化后，旧健康结果立即失效并重新显示 `untested`。
 
 模型调用记录：
 
@@ -199,9 +206,11 @@ Session 默认固定 Workflow Version，保证长会话行为稳定。Applicatio
 
 Playground 使用相同的 Application API，不维护另一套运行路径。
 
-Application 的回答由不可变 Workflow Version 决定。正常输出候选是已启用、可执行、具有 Main 输出且没有向外 Main 连线的节点；Error 连线不影响候选资格。唯一候选可自动成为主要输出，多候选 Workflow 仍可调试和版本化，但创建 Application Deployment 前必须在 Definition 的 `primaryOutputNodeId` 中明确选择，否则返回 `APPLICATION_PRIMARY_OUTPUT_REQUIRED`；无候选返回 `APPLICATION_OUTPUT_UNAVAILABLE`。
+Application 的 Request/Response Contract 由不可变 Workflow Version 决定：Start Inputs 生成 Request Schema，End Outputs 生成 Response Schema。Deployment 不保存第二套输入 Schema、输出 Schema 或输出表达式；没有 End Output 的 Version 不能部署为 Application。
 
-Invocation 只读取 `ExecutionResult.primaryOutput`，不按画布位置、完成时间或 `terminalNodes` 数组顺序猜测回答。同一节点多次激活时按 Activation Generation、Slot、Run Index 和 Node Execution ID 选最后一次成功输出。显式主要节点未执行返回 `APPLICATION_PRIMARY_OUTPUT_NOT_REACHED`，不创建 Assistant Message。输出处理顺序为 `outputExpression`、唯一 Main Item 的 `json.message.content/json.output/json.text` 文本推断、原始结构化 outputs、Output Schema 校验；多个 Agent 结果不会被隐式拼接。
+Invocation 只读取 `ExecutionResult.outputs`，不按画布位置、完成时间、终点节点或 Item 顺序猜测回答。Chatbox 默认使用 `answer`、`attachments`、`citations` 和 `metadata` 字段；字段不存在或 Schema 不合法时返回稳定的公开错误，不隐式拼接多个 Agent 结果。
+
+Session Context 按 `tenantId + applicationDeploymentId + sessionId` 隔离，用于历史和连续会话；没有 Session ID 时不创建持久上下文。外部调用默认只能写 Start Inputs，只有 Context Contract 显式标记 `clientWritable` 的字段才可由 Adapter 开放。
 
 ## 10. API
 
@@ -216,6 +225,7 @@ Invocation 只读取 `ExecutionResult.primaryOutput`，不按画布位置、完�
 - 从 Checkpoint Fork
 - 获取 SSE Stream
 - Webhook Trigger
+- 预上传 Artifact 和 Multipart 文字加文件
 
 调用请求需要支持：
 
@@ -278,3 +288,17 @@ Evaluation Profile 是用户唯一需要管理的评测配置。一个 Profile �
 - Agent 达到成本或循环限制
 
 消息可以跳转到 Approval、Execution、Workflow 或 Evaluation Report。
+
+## 14. 安全删除
+
+可管理实体采用统一的“预检 + 事务内复检”删除协议。列表通过 `GET /api/v1/deletion-impact/{entityType}/{id}` 展示引用模块、实体名称、关系和画布节点位置；实际 `DELETE` 携带 `expectedVersion`，服务端锁定目标后再次执行同一检查。新增引用、目标版本变化或系统实体保护分别返回 `ENTITY_IN_USE`、`VERSION_CONFLICT` 或 `SYSTEM_ENTITY_IMMUTABLE`，客户端不能依赖预检结果直接假定删除成功。
+
+Workflow、Environment、Application、Credential、Model Alias、MCP Server、Skill、Knowledge Resource、Memory Namespace、Sandbox Profile、Dataset、Evaluation Profile、Department、自定义 Role、Application Webhook 和 Schedule 支持物理删除。User、API Key、不可变版本和部署、Execution、Approval、Notification、Evaluation Run/Report、Session 与 Message 只允许禁用、撤销、归档或 Retention，不提供物理删除入口。
+
+父实体自有的 Revision、Workspace、Version、Price、Policy 等不是外部引用；没有外部引用时由父实体事务按依赖顺序清理。不可变 Workflow Version、Draft、Skill Dependency、Resource Grant、Session、Invocation、Evaluation Run 和组织归属等外部关系一律阻止删除，用户必须在来源模块解除引用。Artifact 对象不在删除事务中直接移除，由现有 Retention 负责回收。
+
+## 15. 用户输入唯一性与错误契约
+
+用户输入型唯一字段采用统一写入协议：按领域规则规范化，按唯一索引真实作用域前置查询，并保留数据库约束处理并发竞态。前置检查和数据库兜底返回相同的稳定领域错误码、HTTP 409 与 `fieldErrors`，客户端不得展示 SQL 错误。幂等键、版本号、内容 Hash 和执行序号等内部约束仍由业务流程显式处理；未登记的唯一冲突返回 `INTERNAL_ERROR`，日志只记录索引、数据库错误码和 requestId，不记录冲突值。
+
+Dataset 导入先检查文件内重复，再在事务中检查现有 Case，并用 `details.caseKey/line` 定位。Artifact 写入必须位于可执行的业务前检之后；后续事务失败立即补偿对象和配额，补偿失败由 Retention 兜底。

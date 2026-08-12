@@ -36,6 +36,112 @@
         "responses": {}
       }
     },
+    "/api/v1/applications/{application_id}/schedules/{id}": {
+      "delete": {
+        "tags": [
+          "deletion"
+        ],
+        "operationId": "delete_application_schedule",
+        "parameters": [
+          {
+            "name": "application_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "expectedVersion",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/applications/{application_id}/webhooks/{id}": {
+      "delete": {
+        "tags": [
+          "deletion"
+        ],
+        "operationId": "delete_application_webhook",
+        "parameters": [
+          {
+            "name": "application_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "expectedVersion",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/applications/{id}": {
       "get": {
         "tags": [
@@ -54,6 +160,48 @@
           }
         ],
         "responses": {}
+      },
+      "delete": {
+        "tags": [
+          "deletion"
+        ],
+        "operationId": "delete_application",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "expectedVersion",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
       },
       "patch": {
         "tags": [
@@ -719,6 +867,48 @@
         ],
         "responses": {}
       },
+      "delete": {
+        "tags": [
+          "deletion"
+        ],
+        "operationId": "delete_credential",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "expectedVersion",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
       "patch": {
         "tags": [
           "credentials"
@@ -820,6 +1010,48 @@
         ],
         "operationId": "get_dataset",
         "responses": {}
+      },
+      "delete": {
+        "tags": [
+          "deletion"
+        ],
+        "operationId": "delete_dataset",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "expectedVersion",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
       },
       "patch": {
         "tags": [
@@ -945,6 +1177,65 @@
         "responses": {}
       }
     },
+    "/api/v1/deletion-impact/{entity_type}/{id}": {
+      "get": {
+        "tags": [
+          "deletion"
+        ],
+        "operationId": "get_deletion_impact",
+        "parameters": [
+          {
+            "name": "entity_type",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "pageSize",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeletionImpactResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/departments": {
       "get": {
         "tags": [
@@ -974,7 +1265,7 @@
     "/api/v1/departments/{id}": {
       "delete": {
         "tags": [
-          "iam"
+          "deletion"
         ],
         "operationId": "delete_department",
         "parameters": [
@@ -986,9 +1277,33 @@
               "type": "string",
               "format": "uuid"
             }
+          },
+          {
+            "name": "expectedVersion",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
           }
         ],
-        "responses": {}
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
       },
       "patch": {
         "tags": [
@@ -1046,6 +1361,48 @@
       }
     },
     "/api/v1/environments/{id}": {
+      "delete": {
+        "tags": [
+          "deletion"
+        ],
+        "operationId": "delete_environment",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "expectedVersion",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
       "patch": {
         "tags": [
           "workflows"
@@ -1099,6 +1456,50 @@
           "required": true
         },
         "responses": {}
+      }
+    },
+    "/api/v1/evaluation-profiles/{id}": {
+      "delete": {
+        "tags": [
+          "deletion"
+        ],
+        "operationId": "delete_evaluation_profile",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "expectedVersion",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/evaluations": {
@@ -1500,6 +1901,48 @@
         ],
         "responses": {}
       },
+      "delete": {
+        "tags": [
+          "deletion"
+        ],
+        "operationId": "delete_knowledge",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "expectedVersion",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
       "patch": {
         "tags": [
           "external_resources"
@@ -1573,6 +2016,48 @@
           }
         ],
         "responses": {}
+      },
+      "delete": {
+        "tags": [
+          "deletion"
+        ],
+        "operationId": "delete_mcp_server",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "expectedVersion",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
       },
       "patch": {
         "tags": [
@@ -1823,6 +2308,48 @@
         ],
         "responses": {}
       },
+      "delete": {
+        "tags": [
+          "deletion"
+        ],
+        "operationId": "delete_memory",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "expectedVersion",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
       "patch": {
         "tags": [
           "external_resources"
@@ -1864,12 +2391,12 @@
         "tags": [
           "models_control"
         ],
-        "operationId": "create_alias",
+        "operationId": "create_model",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/CreateModelAliasRequest"
+                "$ref": "#/components/schemas/CreateModelRequest"
               }
             }
           },
@@ -1897,11 +2424,53 @@
         ],
         "responses": {}
       },
+      "delete": {
+        "tags": [
+          "deletion"
+        ],
+        "operationId": "delete_model",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "expectedVersion",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
       "patch": {
         "tags": [
           "models_control"
         ],
-        "operationId": "update_alias",
+        "operationId": "update_model",
         "parameters": [
           {
             "name": "id",
@@ -1917,7 +2486,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/UpdateModelAliasRequest"
+                "$ref": "#/components/schemas/UpdateModelRequest"
               }
             }
           },
@@ -1946,36 +2515,6 @@
         "responses": {}
       }
     },
-    "/api/v1/models/aliases/{id}/deployment-revisions": {
-      "post": {
-        "tags": [
-          "models_control"
-        ],
-        "operationId": "create_deployment_revision",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CreateDeploymentRevisionRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {}
-      }
-    },
     "/api/v1/models/aliases/{id}/test-connection": {
       "post": {
         "tags": [
@@ -1993,32 +2532,6 @@
             }
           }
         ],
-        "responses": {}
-      }
-    },
-    "/api/v1/models/deployments": {
-      "get": {
-        "tags": [
-          "models_control"
-        ],
-        "operationId": "list_model_deployments",
-        "responses": {}
-      },
-      "post": {
-        "tags": [
-          "models_control"
-        ],
-        "operationId": "create_deployment",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CreateModelDeploymentRequest"
-              }
-            }
-          },
-          "required": true
-        },
         "responses": {}
       }
     },
@@ -2062,62 +2575,6 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/CreateModelPriceRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {}
-      }
-    },
-    "/api/v1/models/providers": {
-      "get": {
-        "tags": [
-          "models_control"
-        ],
-        "operationId": "list_providers",
-        "responses": {}
-      },
-      "post": {
-        "tags": [
-          "models_control"
-        ],
-        "operationId": "create_provider",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CreateModelProviderRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {}
-      }
-    },
-    "/api/v1/models/providers/{id}": {
-      "patch": {
-        "tags": [
-          "models_control"
-        ],
-        "operationId": "update_provider",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/UpdateModelProviderRequest"
               }
             }
           },
@@ -2311,6 +2768,131 @@
         "responses": {}
       }
     },
+    "/api/v1/resource-grant-requests": {
+      "get": {
+        "tags": [
+          "resource_access"
+        ],
+        "operationId": "list_resource_grant_requests",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "page",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "pageSize",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {}
+      }
+    },
+    "/api/v1/resource-grant-requests/{id}": {
+      "get": {
+        "tags": [
+          "resource_access"
+        ],
+        "operationId": "get_resource_grant_request",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {}
+      }
+    },
+    "/api/v1/resource-grant-requests/{id}/cancel": {
+      "post": {
+        "tags": [
+          "resource_access"
+        ],
+        "operationId": "cancel_resource_grant_request",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CancelResourceGrantRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {}
+      }
+    },
+    "/api/v1/resource-grant-requests/{id}/reviews/{department_id}/approve": {
+      "post": {
+        "tags": [
+          "resource_access"
+        ],
+        "operationId": "approve_resource_grant_request",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewResourceGrantRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {}
+      }
+    },
+    "/api/v1/resource-grant-requests/{id}/reviews/{department_id}/reject": {
+      "post": {
+        "tags": [
+          "resource_access"
+        ],
+        "operationId": "reject_resource_grant_request",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewResourceGrantRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {}
+      }
+    },
     "/api/v1/resources/grantable": {
       "get": {
         "tags": [
@@ -2494,6 +3076,48 @@
       }
     },
     "/api/v1/roles/{id}": {
+      "delete": {
+        "tags": [
+          "deletion"
+        ],
+        "operationId": "delete_role",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "expectedVersion",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
       "patch": {
         "tags": [
           "iam"
@@ -2611,6 +3235,48 @@
           }
         ],
         "responses": {}
+      },
+      "delete": {
+        "tags": [
+          "deletion"
+        ],
+        "operationId": "delete_sandbox_profile",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "expectedVersion",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
       },
       "patch": {
         "tags": [
@@ -2745,6 +3411,48 @@
           }
         ],
         "responses": {}
+      },
+      "delete": {
+        "tags": [
+          "deletion"
+        ],
+        "operationId": "delete_skill",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "expectedVersion",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
       },
       "patch": {
         "tags": [
@@ -3197,6 +3905,25 @@
         "responses": {}
       }
     },
+    "/api/v1/workflows/import": {
+      "post": {
+        "tags": [
+          "workflow_packages"
+        ],
+        "operationId": "import_workflow_package",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImportWorkflowPackageRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {}
+      }
+    },
     "/api/v1/workflows/{id}": {
       "get": {
         "tags": [
@@ -3215,6 +3942,48 @@
           }
         ],
         "responses": {}
+      },
+      "delete": {
+        "tags": [
+          "deletion"
+        ],
+        "operationId": "delete_workflow",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "expectedVersion",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
       },
       "patch": {
         "tags": [
@@ -3561,6 +4330,26 @@
         "responses": {}
       }
     },
+    "/api/v1/workflows/{id}/export": {
+      "get": {
+        "tags": [
+          "workflow_packages"
+        ],
+        "operationId": "export_workflow_package",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {}
+      }
+    },
     "/api/v1/workflows/{id}/expressions/preview": {
       "post": {
         "tags": [
@@ -3662,6 +4451,142 @@
             "schema": {
               "type": "string",
               "format": "uuid"
+            }
+          }
+        ],
+        "responses": {}
+      }
+    },
+    "/api/v1/workflows/{id}/resource-authorizations": {
+      "post": {
+        "tags": [
+          "resource_access"
+        ],
+        "operationId": "authorize_resource",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResourceAuthorizationInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {}
+      }
+    },
+    "/api/v1/workflows/{id}/resource-grant-requests": {
+      "post": {
+        "tags": [
+          "resource_access"
+        ],
+        "operationId": "create_resource_grant_request",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateResourceGrantRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {}
+      }
+    },
+    "/api/v1/workflows/{id}/resource-options": {
+      "get": {
+        "tags": [
+          "resource_access"
+        ],
+        "operationId": "list_resource_options",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "resourceType",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "operation",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "search",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "page",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "pageSize",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32",
+              "minimum": 0
             }
           }
         ],
@@ -3959,6 +4884,7 @@
           "code": {
             "type": "string"
           },
+          "details": {},
           "fieldErrors": {
             "type": "array",
             "items": {
@@ -4058,12 +4984,6 @@
             "format": "uuid"
           },
           "inputSchema": {},
-          "outputExpression": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
           "outputSchema": {},
           "sequenceNumber": {
             "type": "integer",
@@ -4395,6 +5315,19 @@
           }
         }
       },
+      "CancelResourceGrantRequest": {
+        "type": "object",
+        "required": [
+          "expectedVersion"
+        ],
+        "properties": {
+          "expectedVersion": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
       "CaseInput": {
         "type": "object",
         "required": [
@@ -4569,8 +5502,6 @@
         "required": [
           "workflowVersionId",
           "environmentId",
-          "inputSchema",
-          "outputSchema",
           "sessionVersionPolicy"
         ],
         "properties": {
@@ -4578,14 +5509,6 @@
             "type": "string",
             "format": "uuid"
           },
-          "inputSchema": {},
-          "outputExpression": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "outputSchema": {},
           "sessionVersionPolicy": {
             "type": "string"
           },
@@ -4734,57 +5657,6 @@
             "type": "string"
           },
           "parentId": {
-            "type": "string",
-            "format": "uuid"
-          }
-        }
-      },
-      "CreateDeploymentRevisionRequest": {
-        "type": "object",
-        "required": [
-          "providerId",
-          "name",
-          "modelName",
-          "defaultParameters",
-          "expectedAliasVersion"
-        ],
-        "properties": {
-          "credentialId": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "uuid"
-          },
-          "defaultParameters": {},
-          "endpointOverride": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "expectedAliasVersion": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          },
-          "modelName": {
-            "type": "string"
-          },
-          "name": {
-            "type": "string"
-          },
-          "price": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/CreateModelPriceRequest"
-              }
-            ]
-          },
-          "providerId": {
             "type": "string",
             "format": "uuid"
           }
@@ -5016,57 +5888,6 @@
           }
         }
       },
-      "CreateModelAliasRequest": {
-        "type": "object",
-        "required": [
-          "alias",
-          "deploymentId"
-        ],
-        "properties": {
-          "alias": {
-            "type": "string"
-          },
-          "deploymentId": {
-            "type": "string",
-            "format": "uuid"
-          }
-        }
-      },
-      "CreateModelDeploymentRequest": {
-        "type": "object",
-        "required": [
-          "providerId",
-          "name",
-          "modelName",
-          "defaultParameters"
-        ],
-        "properties": {
-          "credentialId": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "uuid"
-          },
-          "defaultParameters": {},
-          "endpointOverride": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "modelName": {
-            "type": "string"
-          },
-          "name": {
-            "type": "string"
-          },
-          "providerId": {
-            "type": "string",
-            "format": "uuid"
-          }
-        }
-      },
       "CreateModelPriceRequest": {
         "type": "object",
         "required": [
@@ -5086,15 +5907,21 @@
           }
         }
       },
-      "CreateModelProviderRequest": {
+      "CreateModelRequest": {
         "type": "object",
         "required": [
-          "name",
+          "connectionName",
           "providerType",
           "endpoint",
           "ownerDepartmentId"
         ],
         "properties": {
+          "alias": {
+            "type": "string"
+          },
+          "connectionName": {
+            "type": "string"
+          },
           "credentialId": {
             "type": [
               "string",
@@ -5102,18 +5929,86 @@
             ],
             "format": "uuid"
           },
+          "defaultParameters": {},
           "endpoint": {
             "type": "string"
           },
-          "name": {
+          "maxInputTokens": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "maxOutputTokens": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "modelName": {
             "type": "string"
           },
           "ownerDepartmentId": {
             "type": "string",
             "format": "uuid"
           },
+          "price": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CreateModelPriceRequest"
+              }
+            ]
+          },
           "providerType": {
             "type": "string"
+          }
+        }
+      },
+      "CreateResourceGrantRequest": {
+        "type": "object",
+        "required": [
+          "resourceType",
+          "resourceId",
+          "operation"
+        ],
+        "properties": {
+          "message": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "operation": {
+            "type": "string"
+          },
+          "resourceId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "resourceType": {
+            "type": "string"
+          },
+          "resourceVersionId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "sourceNodeId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sourceRevision": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
           }
         }
       },
@@ -5544,6 +6439,7 @@
           "mode"
         ],
         "properties": {
+          "context": {},
           "expectedRevision": {
             "type": "integer",
             "format": "int64",
@@ -5698,6 +6594,99 @@
             "type": "integer",
             "format": "int64",
             "minimum": 0
+          }
+        }
+      },
+      "DeletionImpactResponse": {
+        "type": "object",
+        "required": [
+          "deletable",
+          "targetVersion",
+          "total",
+          "page",
+          "pageSize",
+          "references"
+        ],
+        "properties": {
+          "deletable": {
+            "type": "boolean"
+          },
+          "page": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "pageSize": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "references": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DeletionReference"
+            }
+          },
+          "targetVersion": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "DeletionReference": {
+        "type": "object",
+        "required": [
+          "sourceModule",
+          "sourceType",
+          "sourceId",
+          "sourceName",
+          "relation",
+          "immutable"
+        ],
+        "properties": {
+          "immutable": {
+            "type": "boolean"
+          },
+          "nodeId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "nodeName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "parentId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "relation": {
+            "type": "string"
+          },
+          "sourceId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "sourceModule": {
+            "type": "string"
+          },
+          "sourceName": {
+            "type": "string"
+          },
+          "sourceType": {
+            "type": "string"
           }
         }
       },
@@ -6755,6 +7744,61 @@
           }
         }
       },
+      "ImportWorkflowPackageRequest": {
+        "type": "object",
+        "required": [
+          "name",
+          "visibility",
+          "package"
+        ],
+        "properties": {
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "package": {
+            "$ref": "#/components/schemas/WorkflowPackage"
+          },
+          "resourceBindings": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ResourceBindingTarget"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "visibility": {
+            "type": "string"
+          }
+        }
+      },
+      "ImportedWorkflowResponse": {
+        "type": "object",
+        "required": [
+          "workflowId",
+          "draftId",
+          "definitionHash"
+        ],
+        "properties": {
+          "definitionHash": {
+            "type": "string"
+          },
+          "draftId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "workflowId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
       "KnowledgeResponse": {
         "type": "object",
         "required": [
@@ -7212,6 +8256,7 @@
           "id",
           "deploymentId",
           "revisionNumber",
+          "connectionName",
           "modelName",
           "changedBy",
           "changedAt"
@@ -7224,6 +8269,9 @@
           "changedBy": {
             "type": "string",
             "format": "uuid"
+          },
+          "connectionName": {
+            "type": "string"
           },
           "deploymentId": {
             "type": "string",
@@ -7244,69 +8292,6 @@
             "format": "uuid"
           },
           "revisionNumber": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          }
-        }
-      },
-      "ModelDeploymentResponse": {
-        "type": "object",
-        "required": [
-          "id",
-          "providerId",
-          "name",
-          "modelName",
-          "defaultParameters",
-          "status",
-          "revisionNumber",
-          "version"
-        ],
-        "properties": {
-          "credentialId": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "uuid"
-          },
-          "defaultParameters": {},
-          "endpointOverride": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "id": {
-            "type": "string",
-            "format": "uuid"
-          },
-          "modelName": {
-            "type": "string"
-          },
-          "name": {
-            "type": "string"
-          },
-          "providerId": {
-            "type": "string",
-            "format": "uuid"
-          },
-          "revisionNumber": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          },
-          "status": {
-            "type": "string"
-          },
-          "supersedesDeploymentId": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "uuid"
-          },
-          "version": {
             "type": "integer",
             "format": "int64",
             "minimum": 0
@@ -7353,52 +8338,6 @@
           }
         }
       },
-      "ModelProviderResponse": {
-        "type": "object",
-        "required": [
-          "id",
-          "name",
-          "providerType",
-          "endpoint",
-          "status",
-          "ownerDepartmentId",
-          "version"
-        ],
-        "properties": {
-          "credentialId": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "uuid"
-          },
-          "endpoint": {
-            "type": "string"
-          },
-          "id": {
-            "type": "string",
-            "format": "uuid"
-          },
-          "name": {
-            "type": "string"
-          },
-          "ownerDepartmentId": {
-            "type": "string",
-            "format": "uuid"
-          },
-          "providerType": {
-            "type": "string"
-          },
-          "status": {
-            "type": "string"
-          },
-          "version": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          }
-        }
-      },
       "ModelResponse": {
         "type": "object",
         "required": [
@@ -7407,12 +8346,15 @@
           "status",
           "aliasVersion",
           "deploymentId",
-          "deploymentName",
-          "modelName",
-          "providerId",
-          "providerName",
+          "connectionName",
           "providerType",
+          "endpoint",
           "ownerDepartmentId",
+          "modelName",
+          "maxInputTokens",
+          "maxOutputTokens",
+          "defaultParameters",
+          "revisionNumber",
           "connectionStatus",
           "updatedAt"
         ],
@@ -7432,19 +8374,40 @@
             ],
             "format": "date-time"
           },
+          "connectionName": {
+            "type": "string"
+          },
           "connectionStatus": {
             "type": "string"
           },
+          "credentialId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "defaultParameters": {},
           "deploymentId": {
             "type": "string",
             "format": "uuid"
           },
-          "deploymentName": {
+          "endpoint": {
             "type": "string"
           },
           "id": {
             "type": "string",
             "format": "uuid"
+          },
+          "maxInputTokens": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "maxOutputTokens": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
           },
           "modelName": {
             "type": "string"
@@ -7453,15 +8416,13 @@
             "type": "string",
             "format": "uuid"
           },
-          "providerId": {
-            "type": "string",
-            "format": "uuid"
-          },
-          "providerName": {
-            "type": "string"
-          },
           "providerType": {
             "type": "string"
+          },
+          "revisionNumber": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
           },
           "status": {
             "type": "string"
@@ -7792,6 +8753,27 @@
           }
         }
       },
+      "NodeLock": {
+        "type": "object",
+        "required": [
+          "nodeType",
+          "version",
+          "manifestHash"
+        ],
+        "properties": {
+          "manifestHash": {
+            "type": "string"
+          },
+          "nodeType": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
       "NodeProviderOption": {
         "type": "object",
         "required": [
@@ -8069,6 +9051,416 @@
           }
         }
       },
+      "ResourceAuthorizationInput": {
+        "type": "object",
+        "required": [
+          "resourceType",
+          "resourceId",
+          "operation"
+        ],
+        "properties": {
+          "operation": {
+            "type": "string"
+          },
+          "resourceId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "resourceType": {
+            "type": "string"
+          },
+          "resourceVersionId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          }
+        }
+      },
+      "ResourceAuthorizationResponse": {
+        "type": "object",
+        "required": [
+          "workflowId",
+          "resourceType",
+          "resourceId",
+          "grantedCount",
+          "alreadyGrantedCount"
+        ],
+        "properties": {
+          "alreadyGrantedCount": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "grantedCount": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "resourceId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "resourceType": {
+            "type": "string"
+          },
+          "workflowId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "ResourceBindingPlaceholder": {
+        "type": "object",
+        "required": [
+          "id",
+          "nodeId",
+          "referenceIndex",
+          "resourceType",
+          "operation"
+        ],
+        "properties": {
+          "bindingRole": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "nodeId": {
+            "type": "string"
+          },
+          "operation": {
+            "type": "string"
+          },
+          "referenceIndex": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "resourceType": {
+            "type": "string"
+          }
+        }
+      },
+      "ResourceBindingTarget": {
+        "type": "object",
+        "required": [
+          "resourceId"
+        ],
+        "properties": {
+          "resourceId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "resourceVersionId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          }
+        }
+      },
+      "ResourceGrantRequestAuditResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "action",
+          "occurredAt"
+        ],
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "actorName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "occurredAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "ResourceGrantRequestResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "workflowId",
+          "workflowName",
+          "workflowServiceIdentityId",
+          "primaryResourceType",
+          "primaryResourceId",
+          "operation",
+          "status",
+          "requestedBy",
+          "requestedByName",
+          "version",
+          "items",
+          "reviews",
+          "history",
+          "createdAt",
+          "updatedAt"
+        ],
+        "properties": {
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "history": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ResourceGrantRequestAuditResponse"
+            }
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ResourceRequirementResponse"
+            }
+          },
+          "message": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "operation": {
+            "type": "string"
+          },
+          "primaryResourceId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "primaryResourceName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "primaryResourceType": {
+            "type": "string"
+          },
+          "requestedBy": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "requestedByName": {
+            "type": "string"
+          },
+          "reviews": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ResourceGrantRequestReviewResponse"
+            }
+          },
+          "sourceNodeId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sourceRevision": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "status": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "workflowId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "workflowName": {
+            "type": "string"
+          },
+          "workflowServiceIdentityId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "ResourceGrantRequestReviewResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "ownerDepartmentId",
+          "ownerDepartmentName",
+          "status",
+          "version",
+          "canAct"
+        ],
+        "properties": {
+          "canAct": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "ownerDepartmentId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "ownerDepartmentName": {
+            "type": "string"
+          },
+          "reviewComment": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reviewedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "reviewedBy": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "reviewedByName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "ResourceOptionQuery": {
+        "type": "object",
+        "required": [
+          "resourceType"
+        ],
+        "properties": {
+          "operation": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "page": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "pageSize": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "resourceType": {
+            "type": "string"
+          },
+          "search": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "ResourceRequirementResponse": {
+        "type": "object",
+        "required": [
+          "resourceType",
+          "resourceId",
+          "operation",
+          "authorized",
+          "active"
+        ],
+        "properties": {
+          "active": {
+            "type": "boolean"
+          },
+          "authorized": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "operation": {
+            "type": "string"
+          },
+          "ownerDepartmentId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "requiredByResourceId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "resourceId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "resourceType": {
+            "type": "string"
+          },
+          "resourceVersionId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          }
+        }
+      },
       "ResourceValidationResponse": {
         "type": "object",
         "required": [
@@ -8175,6 +9567,25 @@
           },
           "status": {
             "type": "string"
+          }
+        }
+      },
+      "ReviewResourceGrantRequest": {
+        "type": "object",
+        "required": [
+          "expectedVersion"
+        ],
+        "properties": {
+          "comment": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "expectedVersion": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
           }
         }
       },
@@ -9766,36 +11177,28 @@
           }
         }
       },
-      "UpdateModelAliasRequest": {
+      "UpdateModelRequest": {
         "type": "object",
         "required": [
+          "connectionName",
+          "providerType",
+          "endpoint",
+          "ownerDepartmentId",
           "alias",
           "status",
-          "version"
+          "modelName",
+          "maxInputTokens",
+          "maxOutputTokens",
+          "defaultParameters",
+          "expectedAliasVersion"
         ],
         "properties": {
           "alias": {
             "type": "string"
           },
-          "status": {
+          "connectionName": {
             "type": "string"
           },
-          "version": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          }
-        }
-      },
-      "UpdateModelProviderRequest": {
-        "type": "object",
-        "required": [
-          "name",
-          "endpoint",
-          "status",
-          "version"
-        ],
-        "properties": {
           "credentialId": {
             "type": [
               "string",
@@ -9803,19 +11206,47 @@
             ],
             "format": "uuid"
           },
+          "defaultParameters": {},
           "endpoint": {
             "type": "string"
           },
-          "name": {
+          "expectedAliasVersion": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "maxInputTokens": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "maxOutputTokens": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "modelName": {
+            "type": "string"
+          },
+          "ownerDepartmentId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "price": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CreateModelPriceRequest"
+              }
+            ]
+          },
+          "providerType": {
             "type": "string"
           },
           "status": {
             "type": "string"
-          },
-          "version": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
           }
         }
       },
@@ -10376,6 +11807,133 @@
           }
         }
       },
+      "WorkflowPackage": {
+        "type": "object",
+        "required": [
+          "manifest",
+          "workflowDefinition",
+          "editorDocument",
+          "nodeLock",
+          "subWorkflowReferences",
+          "resourceBindingPlaceholders",
+          "apiBinding"
+        ],
+        "properties": {
+          "apiBinding": {},
+          "editorDocument": {},
+          "manifest": {
+            "$ref": "#/components/schemas/WorkflowPackageManifest"
+          },
+          "nodeLock": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NodeLock"
+            }
+          },
+          "resourceBindingPlaceholders": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ResourceBindingPlaceholder"
+            }
+          },
+          "subWorkflowReferences": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "workflowDefinition": {}
+        }
+      },
+      "WorkflowPackageManifest": {
+        "type": "object",
+        "required": [
+          "packageSchemaVersion",
+          "workflowSchemaVersion",
+          "name",
+          "contentHash",
+          "signatureAlgorithm",
+          "signingKeyId",
+          "signature"
+        ],
+        "properties": {
+          "contentHash": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "packageSchemaVersion": {
+            "type": "string"
+          },
+          "signature": {
+            "type": "string"
+          },
+          "signatureAlgorithm": {
+            "type": "string"
+          },
+          "signingKeyId": {
+            "type": "string"
+          },
+          "workflowSchemaVersion": {
+            "type": "string"
+          }
+        }
+      },
+      "WorkflowResourceOptionResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "resourceType",
+          "name",
+          "detail",
+          "status",
+          "accessState",
+          "requirements"
+        ],
+        "properties": {
+          "accessState": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "pendingRequestId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "requirements": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ResourceRequirementResponse"
+            }
+          },
+          "resourceType": {
+            "type": "string"
+          },
+          "resourceVersionId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "status": {
+            "type": "string"
+          }
+        }
+      },
       "WorkflowResponse": {
         "type": "object",
         "required": [
@@ -10499,6 +12057,237 @@
             "type": "string",
             "format": "uuid"
           }
+        }
+      }
+    },
+    "x-uniqueness-error-examples": {
+      "ApplicationSlugExists": {
+        "summary": "APPLICATION_SLUG_EXISTS uniqueness conflict",
+        "value": {
+          "code": "APPLICATION_SLUG_EXISTS",
+          "fieldErrors": [
+            {
+              "code": "APPLICATION_SLUG_EXISTS",
+              "field": "slug",
+              "message": "The submitted value already exists"
+            }
+          ],
+          "message": "The submitted value already exists",
+          "requestId": "019ff3e3-3c2b-7ad0-902f-1f5c34644ed9"
+        }
+      },
+      "DatasetCaseKeyExists": {
+        "summary": "DATASET_CASE_KEY_EXISTS uniqueness conflict",
+        "value": {
+          "code": "DATASET_CASE_KEY_EXISTS",
+          "fieldErrors": [
+            {
+              "code": "DATASET_CASE_KEY_EXISTS",
+              "field": "caseKey",
+              "message": "The submitted value already exists"
+            }
+          ],
+          "message": "The submitted value already exists",
+          "requestId": "019ff3e3-3c2b-7ad0-902f-1f5c34644ed9"
+        }
+      },
+      "DatasetImportCaseKeyExists": {
+        "summary": "Dataset import duplicate with source line",
+        "value": {
+          "code": "DATASET_CASE_KEY_EXISTS",
+          "details": {
+            "caseKey": "support-001",
+            "line": 3
+          },
+          "fieldErrors": [
+            {
+              "code": "DATASET_CASE_KEY_EXISTS",
+              "field": "file",
+              "message": "A Test Case with this key already exists"
+            }
+          ],
+          "message": "A Test Case with this key already exists",
+          "requestId": "019ff3e3-3c2b-7ad0-902f-1f5c34644ed9"
+        }
+      },
+      "DepartmentNameExists": {
+        "summary": "DEPARTMENT_NAME_EXISTS uniqueness conflict",
+        "value": {
+          "code": "DEPARTMENT_NAME_EXISTS",
+          "fieldErrors": [
+            {
+              "code": "DEPARTMENT_NAME_EXISTS",
+              "field": "name",
+              "message": "The submitted value already exists"
+            }
+          ],
+          "message": "The submitted value already exists",
+          "requestId": "019ff3e3-3c2b-7ad0-902f-1f5c34644ed9"
+        }
+      },
+      "EnvironmentCodeExists": {
+        "summary": "ENVIRONMENT_CODE_EXISTS uniqueness conflict",
+        "value": {
+          "code": "ENVIRONMENT_CODE_EXISTS",
+          "fieldErrors": [
+            {
+              "code": "ENVIRONMENT_CODE_EXISTS",
+              "field": "code",
+              "message": "The submitted value already exists"
+            }
+          ],
+          "message": "The submitted value already exists",
+          "requestId": "019ff3e3-3c2b-7ad0-902f-1f5c34644ed9"
+        }
+      },
+      "KnowledgeExternalResourceIdExists": {
+        "summary": "KNOWLEDGE_EXTERNAL_RESOURCE_ID_EXISTS uniqueness conflict",
+        "value": {
+          "code": "KNOWLEDGE_EXTERNAL_RESOURCE_ID_EXISTS",
+          "fieldErrors": [
+            {
+              "code": "KNOWLEDGE_EXTERNAL_RESOURCE_ID_EXISTS",
+              "field": "externalResourceId",
+              "message": "The submitted value already exists"
+            }
+          ],
+          "message": "The submitted value already exists",
+          "requestId": "019ff3e3-3c2b-7ad0-902f-1f5c34644ed9"
+        }
+      },
+      "McpServerNameExists": {
+        "summary": "MCP_SERVER_NAME_EXISTS uniqueness conflict",
+        "value": {
+          "code": "MCP_SERVER_NAME_EXISTS",
+          "fieldErrors": [
+            {
+              "code": "MCP_SERVER_NAME_EXISTS",
+              "field": "name",
+              "message": "The submitted value already exists"
+            }
+          ],
+          "message": "The submitted value already exists",
+          "requestId": "019ff3e3-3c2b-7ad0-902f-1f5c34644ed9"
+        }
+      },
+      "MemoryExternalNamespaceExists": {
+        "summary": "MEMORY_EXTERNAL_NAMESPACE_EXISTS uniqueness conflict",
+        "value": {
+          "code": "MEMORY_EXTERNAL_NAMESPACE_EXISTS",
+          "fieldErrors": [
+            {
+              "code": "MEMORY_EXTERNAL_NAMESPACE_EXISTS",
+              "field": "externalNamespace",
+              "message": "The submitted value already exists"
+            }
+          ],
+          "message": "The submitted value already exists",
+          "requestId": "019ff3e3-3c2b-7ad0-902f-1f5c34644ed9"
+        }
+      },
+      "ModelNameExists": {
+        "summary": "MODEL_NAME_EXISTS uniqueness conflict",
+        "value": {
+          "code": "MODEL_NAME_EXISTS",
+          "fieldErrors": [
+            {
+              "code": "MODEL_NAME_EXISTS",
+              "field": "alias",
+              "message": "The submitted value already exists"
+            }
+          ],
+          "message": "The submitted value already exists",
+          "requestId": "019ff3e3-3c2b-7ad0-902f-1f5c34644ed9"
+        }
+      },
+      "RoleCodeExists": {
+        "summary": "ROLE_CODE_EXISTS uniqueness conflict",
+        "value": {
+          "code": "ROLE_CODE_EXISTS",
+          "fieldErrors": [
+            {
+              "code": "ROLE_CODE_EXISTS",
+              "field": "code",
+              "message": "The submitted value already exists"
+            }
+          ],
+          "message": "The submitted value already exists",
+          "requestId": "019ff3e3-3c2b-7ad0-902f-1f5c34644ed9"
+        }
+      },
+      "SandboxProfileNameExists": {
+        "summary": "SANDBOX_PROFILE_NAME_EXISTS uniqueness conflict",
+        "value": {
+          "code": "SANDBOX_PROFILE_NAME_EXISTS",
+          "fieldErrors": [
+            {
+              "code": "SANDBOX_PROFILE_NAME_EXISTS",
+              "field": "name",
+              "message": "The submitted value already exists"
+            }
+          ],
+          "message": "The submitted value already exists",
+          "requestId": "019ff3e3-3c2b-7ad0-902f-1f5c34644ed9"
+        }
+      },
+      "SkillAliasExists": {
+        "summary": "SKILL_ALIAS_EXISTS uniqueness conflict",
+        "value": {
+          "code": "SKILL_ALIAS_EXISTS",
+          "fieldErrors": [
+            {
+              "code": "SKILL_ALIAS_EXISTS",
+              "field": "alias",
+              "message": "The submitted value already exists"
+            }
+          ],
+          "message": "The submitted value already exists",
+          "requestId": "019ff3e3-3c2b-7ad0-902f-1f5c34644ed9"
+        }
+      },
+      "SkillNameExists": {
+        "summary": "SKILL_NAME_EXISTS uniqueness conflict",
+        "value": {
+          "code": "SKILL_NAME_EXISTS",
+          "fieldErrors": [
+            {
+              "code": "SKILL_NAME_EXISTS",
+              "field": "name",
+              "message": "The submitted value already exists"
+            }
+          ],
+          "message": "The submitted value already exists",
+          "requestId": "019ff3e3-3c2b-7ad0-902f-1f5c34644ed9"
+        }
+      },
+      "SkillPathExists": {
+        "summary": "SKILL_PATH_EXISTS uniqueness conflict",
+        "value": {
+          "code": "SKILL_PATH_EXISTS",
+          "fieldErrors": [
+            {
+              "code": "SKILL_PATH_EXISTS",
+              "field": "name",
+              "message": "The submitted value already exists"
+            }
+          ],
+          "message": "The submitted value already exists",
+          "requestId": "019ff3e3-3c2b-7ad0-902f-1f5c34644ed9"
+        }
+      },
+      "UsernameExists": {
+        "summary": "USERNAME_EXISTS uniqueness conflict",
+        "value": {
+          "code": "USERNAME_EXISTS",
+          "fieldErrors": [
+            {
+              "code": "USERNAME_EXISTS",
+              "field": "username",
+              "message": "The submitted value already exists"
+            }
+          ],
+          "message": "The submitted value already exists",
+          "requestId": "019ff3e3-3c2b-7ad0-902f-1f5c34644ed9"
         }
       }
     }

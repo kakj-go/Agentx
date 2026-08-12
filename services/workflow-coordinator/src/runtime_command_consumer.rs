@@ -55,6 +55,7 @@ pub async fn run(repository: RuntimeRepository) {
 
 fn is_non_retryable_command_error(message: &str) -> bool {
     [
+        "START_INPUT_INVALID",
         "RESOURCE_GRANT_MISSING",
         "RESOURCE_UNAVAILABLE",
         "RESOURCE_SNAPSHOT_MISSING",
@@ -84,10 +85,13 @@ async fn process(
                     requested_by: payload.requested_by,
                     trigger_type: payload.trigger_type,
                     input: payload.input,
+                    context_overlay: json!({}),
                     idempotency_key: Some(format!("runtime-command:{}", claimed.command.id)),
                     caller_execution_id: None,
+                    caller_node_execution_id: None,
                     execution_type: "whole".into(),
                     parent_execution_id: None,
+                    trace_id: None,
                     fork_checkpoint_id: None,
                     fork_mode: None,
                     runtime_settings: payload.runtime_settings,
@@ -151,6 +155,9 @@ mod tests {
 
     #[test]
     fn permanent_resource_errors_do_not_enter_backoff_retry() {
+        assert!(is_non_retryable_command_error(
+            "START_INPUT_INVALID: attachments is not allowed"
+        ));
         assert!(is_non_retryable_command_error(
             "RESOURCE_GRANT_MISSING: model grant was revoked"
         ));

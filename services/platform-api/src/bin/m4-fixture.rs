@@ -25,19 +25,20 @@ async fn main() -> Result<()> {
     let credential_id = ensure_fixture_credential(&pool, tenant_id, user_id, department_id).await?;
 
     let child = create_workflow(&pool, tenant_id, user_id, department_id, "M4 Child Fixture", json!({
-        "schemaVersion":"3.0",
+        "schemaVersion":"4.0",
+        "start":{"inputs":{"type":"object","properties":{},"additionalProperties":false},"contexts":{}},
         "nodes":[
-            node("trigger", "manual_trigger", "Child Trigger", 80, 120, json!({})),
             node("child-output", "set", "Child Output", 320, 120, json!({"values":{"childCompleted":true}}))
         ],
-        "connections":[edge("child-start", "trigger", "main", "child-output", "main")]
+        "connections":[],
+        "end":{"outputs":{}}
     })).await?;
 
     create_workflow(&pool, tenant_id, user_id, department_id, "M4 Runtime Fixture", json!({
-        "schemaVersion":"3.0",
+        "schemaVersion":"4.0",
+        "start":{"inputs":{"type":"object","properties":{},"additionalProperties":false},"contexts":{}},
         "settings":{"executionOrder":"deterministic","activationBudget":100},
         "nodes":[
-            node("trigger", "manual_trigger", "Manual Trigger", 60, 180, json!({})),
             node("left", "set", "Left Branch", 280, 100, json!({"values":{"left":true}})),
             node("right", "set", "Right Branch", 280, 260, json!({"values":{"right":true}})),
             node("merge", "merge", "Required Merge", 500, 180, json!({"mode":"combine_by_position"})),
@@ -46,34 +47,35 @@ async fn main() -> Result<()> {
             node("remote", "remote_action", "Remote Echo", 1110, 180, json!({"endpoint":endpoint,"fixtureMode":"echo"}))
         ],
         "connections":[
-            edge("trigger-left", "trigger", "main", "left", "main"),
-            edge_with_order("trigger-right", "trigger", "main", "right", "main", 1),
             edge("left-merge", "left", "main", "merge", "main:0"),
             edge("right-merge", "right", "main", "merge", "main:1"),
             edge("merge-loop", "merge", "main", "loop", "main"),
             edge("loop-back", "loop", "loop", "loop", "main"),
             edge_with_order("loop-done", "loop", "done", "child", "main", 1),
             edge("child-remote", "child", "main", "remote", "main")
-        ]
+        ],
+        "end":{"outputs":{}}
     })).await?;
 
     let broker_version = create_workflow(&pool, tenant_id, user_id, department_id, "M4 Broker Fixture", json!({
-        "schemaVersion":"3.0",
+        "schemaVersion":"4.0",
+        "start":{"inputs":{"type":"object","properties":{},"additionalProperties":false},"contexts":{}},
         "nodes":[
-            node("trigger", "manual_trigger", "Manual Trigger", 80, 160, json!({})),
-            {"id":"broker","type":"remote_action","typeVersion":1,"name":"Remote Broker Probe","parameters":{"endpoint":endpoint,"fixtureMode":"broker"},"resourceReferences":[{"resourceType":"credential","resourceId":credential_id,"operation":"use"}]}
+            {"id":"broker","key":"broker","type":"remote_action","typeVersion":1,"name":"Remote Broker Probe","parameters":{"endpoint":endpoint,"fixtureMode":"broker"},"resourceReferences":[{"resourceType":"credential","resourceId":credential_id,"operation":"use"}]}
         ],
-        "connections":[edge("broker-start", "trigger", "main", "broker", "main")]
+        "connections":[],
+        "end":{"outputs":{}}
     })).await?;
     ensure_credential_snapshot(&pool, tenant_id, user_id, broker_version, credential_id).await?;
 
     create_workflow(&pool, tenant_id, user_id, department_id, "M4 Fault Fixture", json!({
-        "schemaVersion":"3.0",
+        "schemaVersion":"4.0",
+        "start":{"inputs":{"type":"object","properties":{},"additionalProperties":false},"contexts":{}},
         "nodes":[
-            node("trigger", "manual_trigger", "Manual Trigger", 80, 160, json!({})),
-            {"id":"delayed-remote","type":"remote_action","typeVersion":1,"name":"Delayed Remote Echo","parameters":{"endpoint":endpoint,"fixtureMode":"delay","delayMs":15000},"settings":{"retryOnFail":true,"maxTries":2,"waitBetweenTriesMs":250}}
+            {"id":"delayed-remote","key":"delayed_remote","type":"remote_action","typeVersion":1,"name":"Delayed Remote Echo","parameters":{"endpoint":endpoint,"fixtureMode":"delay","delayMs":15000},"settings":{"retryOnFail":true,"maxTries":2,"waitBetweenTriesMs":250}}
         ],
-        "connections":[edge("fault-start", "trigger", "main", "delayed-remote", "main")]
+        "connections":[],
+        "end":{"outputs":{}}
     })).await?;
 
     create_workflow(
@@ -83,100 +85,102 @@ async fn main() -> Result<()> {
         department_id,
         "M4 Cycle Budget Fixture",
         json!({
-            "schemaVersion":"3.0",
+            "schemaVersion":"4.0",
+            "start":{"inputs":{"type":"object","properties":{},"additionalProperties":false},"contexts":{}},
             "settings":{"executionOrder":"deterministic","activationBudget":7},
             "nodes":[
-                node("trigger", "manual_trigger", "Manual Trigger", 60, 160, json!({})),
+                node("root", "no_op", "Cycle Root", 80, 160, json!({})),
                 node("step", "set", "Cycle Step", 300, 160, json!({"values":{"cycled":true}})),
                 node("branch", "if", "Cycle Branch", 540, 160, json!({"condition":true}))
             ],
             "connections":[
-                edge("cycle-start", "trigger", "main", "step", "main"),
+                edge("cycle-start", "root", "main", "step", "main"),
                 edge("cycle-forward", "step", "main", "branch", "main"),
                 edge("cycle-back", "branch", "true", "step", "main")
-            ]
+            ],
+            "end":{"outputs":{}}
         }),
     )
     .await?;
 
     create_workflow(&pool, tenant_id, user_id, department_id, "M4 Wait Fixture", json!({
-        "schemaVersion":"3.0",
+        "schemaVersion":"4.0",
+        "start":{"inputs":{"type":"object","properties":{},"additionalProperties":false},"contexts":{}},
         "nodes":[
-            node("trigger", "manual_trigger", "Manual Trigger", 80, 160, json!({})),
             node("wait", "wait", "Signed Webhook Wait", 340, 160, json!({"kind":"webhook","authenticationMode":"signed"})),
             node("resumed", "set", "Resume Output", 620, 160, json!({"values":{"resumed":true}}))
         ],
         "connections":[
-            edge("wait-start", "trigger", "main", "wait", "main"),
             edge("wait-resume", "wait", "resumed", "resumed", "main")
-        ]
+        ],
+        "end":{"outputs":{}}
     })).await?;
 
     create_workflow(&pool, tenant_id, user_id, department_id, "M4 Timer Fixture", json!({
-        "schemaVersion":"3.0",
+        "schemaVersion":"4.0",
+        "start":{"inputs":{"type":"object","properties":{},"additionalProperties":false},"contexts":{}},
         "nodes":[
-            node("trigger", "manual_trigger", "Manual Trigger", 80, 160, json!({})),
             node("timer", "wait", "Duration Wait", 340, 160, json!({"kind":"duration","durationMs":2500})),
             node("resumed", "set", "Timer Output", 620, 160, json!({"values":{"timerCompleted":true}}))
         ],
         "connections":[
-            edge("timer-start", "trigger", "main", "timer", "main"),
             edge("timer-resume", "timer", "resumed", "resumed", "main")
-        ]
+        ],
+        "end":{"outputs":{}}
     })).await?;
 
     create_workflow(&pool, tenant_id, user_id, department_id, "M4 Datetime Wait Fixture", json!({
-        "schemaVersion":"3.0",
+        "schemaVersion":"4.0",
+        "start":{"inputs":{"type":"object","properties":{},"additionalProperties":false},"contexts":{}},
         "nodes":[
-            node("trigger", "manual_trigger", "Manual Trigger", 80, 160, json!({})),
             node("datetime", "wait", "Datetime Wait", 340, 160, json!({"kind":"datetime","resumeAt":"2026-01-01T00:00:00Z"})),
             node("resumed", "set", "Datetime Output", 620, 160, json!({"values":{"datetimeCompleted":true}}))
         ],
         "connections":[
-            edge("datetime-start", "trigger", "main", "datetime", "main"),
             edge("datetime-resume", "datetime", "resumed", "resumed", "main")
-        ]
+        ],
+        "end":{"outputs":{}}
     })).await?;
 
     create_workflow(&pool, tenant_id, user_id, department_id, "M4 Form Wait Fixture", json!({
-        "schemaVersion":"3.0",
+        "schemaVersion":"4.0",
+        "start":{"inputs":{"type":"object","properties":{},"additionalProperties":false},"contexts":{}},
         "nodes":[
-            node("trigger", "manual_trigger", "Manual Trigger", 80, 160, json!({})),
             node("form", "wait", "Signed Form Wait", 340, 160, json!({"kind":"form","authenticationMode":"signed","payloadSchema":{"type":"object","required":["name"],"properties":{"name":{"type":"string"}}}})),
             node("resumed", "set", "Form Output", 620, 160, json!({"values":{"formCompleted":true}}))
         ],
         "connections":[
-            edge("form-start", "trigger", "main", "form", "main"),
             edge("form-resume", "form", "resumed", "resumed", "main")
-        ]
+        ],
+        "end":{"outputs":{}}
     })).await?;
 
     create_workflow(&pool, tenant_id, user_id, department_id, "M4 Approval Fixture", json!({
-        "schemaVersion":"3.0",
+        "schemaVersion":"4.0",
+        "start":{"inputs":{"type":"object","properties":{},"additionalProperties":false},"contexts":{}},
         "nodes":[
-            node("trigger", "manual_trigger", "Manual Trigger", 80, 160, json!({})),
             node("approval", "approval", "Charge Approval", 340, 160, json!({"title":"M4 Charge Approval","description":"Approve the M4 recovery fixture"})),
             node("approved", "set", "Approved Output", 620, 100, json!({"values":{"approved":true}})),
             node("rejected", "set", "Rejected Output", 620, 240, json!({"values":{"approved":false}}))
         ],
         "connections":[
-            edge("approval-start", "trigger", "main", "approval", "main"),
             edge("approval-yes", "approval", "approved", "approved", "main"),
             edge_with_order("approval-no", "approval", "rejected", "rejected", "main", 1)
-        ]
+        ],
+        "end":{"outputs":{}}
     })).await?;
 
     create_workflow(&pool, tenant_id, user_id, department_id, "M4 Approval Timeout Fixture", json!({
-        "schemaVersion":"3.0",
+        "schemaVersion":"4.0",
+        "start":{"inputs":{"type":"object","properties":{},"additionalProperties":false},"contexts":{}},
         "nodes":[
-            node("trigger", "manual_trigger", "Manual Trigger", 80, 160, json!({})),
             node("approval", "approval", "Expiring Approval", 340, 160, json!({"title":"M4 Expiring Approval","description":"This approval must time out","timeoutMs":2500})),
             node("timed-out", "set", "Approval Timeout Output", 620, 160, json!({"values":{"timedOut":true}}))
         ],
         "connections":[
-        edge("approval-timeout-start", "trigger", "main", "approval", "main"),
             edge("approval-timeout-output", "approval", "timed_out", "timed-out", "main")
-        ]
+        ],
+        "end":{"outputs":{}}
     })).await?;
     Ok(())
 }
@@ -353,15 +357,15 @@ async fn insert_workflow(
         .await?;
     sqlx::query("INSERT INTO workflow_members(tenant_id,workflow_id,user_id,member_role,created_by) VALUES(?,?,?,'manager',?)")
         .bind(tenant_id).bind(workflow_id).bind(user_id).bind(user_id).execute(&mut **tx).await?;
-    sqlx::query("INSERT INTO workflow_drafts(id,tenant_id,workflow_id,schema_version,revision,definition_json,content_hash,updated_by) VALUES(?,?,?,'3.0',1,?,?,?)")
+    sqlx::query("INSERT INTO workflow_drafts(id,tenant_id,workflow_id,schema_version,revision,definition_json,content_hash,updated_by) VALUES(?,?,?,'4.0',1,?,?,?)")
         .bind(draft_id).bind(tenant_id).bind(workflow_id).bind(&definition).bind(&content_hash).bind(user_id).execute(&mut **tx).await?;
-    sqlx::query("INSERT INTO workflow_versions(id,tenant_id,workflow_id,version_number,source_revision,schema_version,definition_json,content_hash,compiled_ir_json,compiled_ir_hash,compiler_version,compiled_at,created_by) VALUES(?,?,?,1,1,'3.0',?,?,?,?,?,CURRENT_TIMESTAMP(6),?)")
+    sqlx::query("INSERT INTO workflow_versions(id,tenant_id,workflow_id,version_number,source_revision,schema_version,definition_json,content_hash,compiled_ir_json,compiled_ir_hash,compiler_version,compiled_at,created_by) VALUES(?,?,?,1,1,'4.0',?,?,?,?,?,CURRENT_TIMESTAMP(6),?)")
         .bind(version_id).bind(tenant_id).bind(workflow_id).bind(definition).bind(content_hash).bind(compiled).bind(compiled_hash).bind(compiler_version).bind(user_id).execute(&mut **tx).await?;
     Ok(())
 }
 
 fn node(id: &str, node_type: &str, name: &str, _x: i32, _y: i32, parameters: Value) -> Value {
-    json!({"id":id,"type":node_type,"typeVersion":1,"name":name,"parameters":parameters})
+    json!({"id":id,"key":id.replace('-', "_"),"type":node_type,"typeVersion":1,"name":name,"parameters":parameters})
 }
 
 fn edge(id: &str, source: &str, source_handle: &str, target: &str, target_handle: &str) -> Value {

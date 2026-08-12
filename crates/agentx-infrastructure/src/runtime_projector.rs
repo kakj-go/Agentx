@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use agentx_application::{ArtifactStore, RuntimeEventEnvelope};
 use agentx_domain::{ArtifactId, TenantId};
-use agentx_runtime::{ExpressionContext, ExpressionEngine};
 use anyhow::{Context, Result};
 use serde_json::{Value, json};
 use sqlx::{MySql, MySqlPool, Row, Transaction};
@@ -286,7 +285,7 @@ async fn project_execution_event(
         return Ok(());
     };
     let Some(row) = sqlx::query(
-        "SELECT invocation_id,session_id,input_json FROM workflow_executions WHERE tenant_id=? AND id=?",
+        "SELECT invocation_id,session_id FROM workflow_executions WHERE tenant_id=? AND id=?",
     )
     .bind(event.tenant_id.as_uuid())
     .bind(execution_id)
@@ -305,7 +304,7 @@ async fn project_execution_event(
     let Some(invocation_id) = row.try_get::<Option<Uuid>, _>("invocation_id")? else {
         return Ok(());
     };
-    let invocation = sqlx::query("SELECT i.id,ad.output_expression,ad.output_schema_json FROM application_invocations i LEFT JOIN application_deployments ad ON ad.id=i.application_deployment_id AND ad.tenant_id=i.tenant_id WHERE i.tenant_id=? AND i.id=? FOR UPDATE")
+    sqlx::query("SELECT id FROM application_invocations WHERE tenant_id=? AND id=? FOR UPDATE")
         .bind(event.tenant_id.as_uuid())
         .bind(invocation_id)
         .fetch_one(&mut **transaction)
@@ -331,20 +330,7 @@ async fn project_execution_event(
         .await?;
     }
     let application_output = if event.event_type == "execution.succeeded" {
-        execution_result
-            .map(|result| {
-                project_application_output(
-                    result,
-                    &row.try_get::<Value, _>("input_json")?,
-                    invocation
-                        .try_get::<Option<String>, _>("output_expression")?
-                        .as_deref(),
-                    &invocation
-                        .try_get::<Option<Value>, _>("output_schema_json")?
-                        .unwrap_or_else(|| json!({})),
-                )
-            })
-            .transpose()
+        execution_result.map(project_application_output).transpose()
     } else {
         Ok(None)
     };
@@ -397,7 +383,7 @@ async fn project_execution_event(
             event.tenant_id.as_uuid(),
             session_id,
             invocation_id,
-            output,
+            chatbox_output(output),
         )
         .await?;
     }
@@ -405,8 +391,8 @@ async fn project_execution_event(
 }
 
 fn application_output_error_code(message: &str) -> &'static str {
-    if message.contains("APPLICATION_PRIMARY_OUTPUT_NOT_REACHED") {
-        "APPLICATION_PRIMARY_OUTPUT_NOT_REACHED"
+    if message.contains("APPLICATION_END_OUTPUT_NOT_REACHED") {
+        "APPLICATION_END_OUTPUT_NOT_REACHED"
     } else {
         "APPLICATION_OUTPUT_INVALID"
     }
@@ -416,55 +402,21 @@ fn advances_event_sequence(last_sequence: u64, incoming_sequence: u64) -> bool {
     incoming_sequence > last_sequence
 }
 
-fn project_application_output(
-    result: &Value,
-    input: &Value,
-    expression: Option<&str>,
-    schema: &Value,
-) -> Result<Value> {
+fn project_application_output(result: &Value) -> Result<Value> {
     let outputs = result
-        .get("primaryOutput")
-        .filter(|value| !value.is_null())
-        .context("APPLICATION_PRIMARY_OUTPUT_NOT_REACHED: primary output node did not complete")?
         .get("outputs")
-        .cloned()
-        .context("APPLICATION_PRIMARY_OUTPUT_NOT_REACHED: primary output has no outputs")?;
-    let output = if let Some(expression) = expression.filter(|value| !value.trim().is_empty()) {
-        ExpressionEngine.evaluate(
-            expression.strip_prefix('=').unwrap_or(expression),
-            &ExpressionContext {
-                json: outputs.clone(),
-                input: input.clone(),
-                ..ExpressionContext::default()
-            },
-        )?
-    } else {
-        infer_application_output(&outputs)
-    };
-    let validator =
-        jsonschema::validator_for(schema).context("Application Output Schema is invalid")?;
-    validator.validate(&output).map_err(|error| {
-        anyhow::anyhow!("Application output does not match Output Schema: {error}")
-    })?;
-    Ok(output)
+        .filter(|value| !value.is_null())
+        .filter(|value| value.is_object())
+        .context("APPLICATION_END_OUTPUT_NOT_REACHED: execution result has no End outputs")?;
+    Ok(outputs.clone())
 }
 
-fn infer_application_output(outputs: &Value) -> Value {
-    let Some(item) = outputs
-        .get("main")
-        .and_then(Value::as_array)
-        .filter(|items| items.len() == 1)
-        .and_then(|items| items.first())
-        .and_then(|item| item.get("json"))
-    else {
-        return outputs.clone();
-    };
-    item.pointer("/message/content")
-        .or_else(|| item.get("output"))
-        .or_else(|| item.get("text"))
+fn chatbox_output(outputs: Value) -> Value {
+    outputs
+        .get("answer")
         .filter(|value| value.is_string())
         .cloned()
-        .unwrap_or_else(|| outputs.clone())
+        .unwrap_or(outputs)
 }
 
 fn invocation_status(event_type: &str, payload: &Value) -> Option<&'static str> {
@@ -563,7 +515,7 @@ async fn append_assistant_message(
 #[cfg(test)]
 mod tests {
     use super::{
-        advances_event_sequence, application_output_error_code, invocation_status,
+        advances_event_sequence, application_output_error_code, chatbox_output, invocation_status,
         project_application_output,
     };
     use serde_json::json;
@@ -596,19 +548,12 @@ mod tests {
     }
 
     #[test]
-    fn application_output_expression_and_schema_are_enforced() {
-        let result = json!({"primaryOutput":{"outputs":{"main":[{"json":{"answer":42}}]}}});
-        let output = project_application_output(
-            &result,
-            &json!({}),
-            Some("$json.main[0].json.answer"),
-            &json!({"type":"integer"}),
-        )
-        .unwrap();
-        assert_eq!(output, json!(42));
-        assert!(
-            project_application_output(&result, &json!({}), None, &json!({"type":"string"}),)
-                .is_err()
+    fn application_output_uses_the_explicit_end_contract() {
+        let result =
+            json!({"schemaVersion":"4.0","outputs":{"answer":"hello","usage":{"tokens":42}}});
+        assert_eq!(
+            project_application_output(&result).unwrap(),
+            json!({"answer":"hello","usage":{"tokens":42}})
         );
     }
 
@@ -616,9 +561,9 @@ mod tests {
     fn application_output_errors_have_stable_public_codes() {
         assert_eq!(
             application_output_error_code(
-                "APPLICATION_PRIMARY_OUTPUT_NOT_REACHED: primary output has no outputs"
+                "APPLICATION_END_OUTPUT_NOT_REACHED: execution result has no End outputs"
             ),
-            "APPLICATION_PRIMARY_OUTPUT_NOT_REACHED"
+            "APPLICATION_END_OUTPUT_NOT_REACHED"
         );
         assert_eq!(
             application_output_error_code("Application output does not match Output Schema"),
@@ -627,28 +572,24 @@ mod tests {
     }
 
     #[test]
-    fn application_output_infers_agent_text_and_preserves_ambiguous_items() {
-        let result = json!({"primaryOutput":{"outputs":{"main":[{"json":{"message":{"content":"hello"}}}]}}});
+    fn chatbox_prefers_the_conventional_answer_output() {
         assert_eq!(
-            project_application_output(&result, &json!({}), None, &json!({})).unwrap(),
+            chatbox_output(json!({"answer":"hello","citations":[]})),
             json!("hello")
         );
-        let ambiguous = json!({"primaryOutput":{"outputs":{"main":[{"json":{"text":"one"}},{"json":{"text":"two"}}]}}});
         assert_eq!(
-            project_application_output(&ambiguous, &json!({}), None, &json!({})).unwrap(),
-            json!({"main":[{"json":{"text":"one"}},{"json":{"text":"two"}}]})
+            chatbox_output(json!({"result":{"value":1}})),
+            json!({"result":{"value":1}})
         );
     }
 
     #[test]
-    fn application_output_requires_reached_primary_node() {
-        let error =
-            project_application_output(&json!({"terminalNodes":[]}), &json!({}), None, &json!({}))
-                .unwrap_err();
+    fn application_output_requires_end_outputs() {
+        let error = project_application_output(&json!({})).unwrap_err();
         assert!(
             error
                 .to_string()
-                .contains("APPLICATION_PRIMARY_OUTPUT_NOT_REACHED")
+                .contains("APPLICATION_END_OUTPUT_NOT_REACHED")
         );
     }
 }

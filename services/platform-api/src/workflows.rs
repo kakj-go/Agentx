@@ -1,7 +1,8 @@
 use agentx_api_types::{FieldError, PageResponse};
 use agentx_application::{RuntimeCommand, RuntimeCommandType, StartExecutionCommandPayload};
 use agentx_domain::{
-    EditorDocument, TenantId, WorkflowDefinition, canonical_content_hash, validate_editor_document,
+    EditorDocument, TenantId, WorkflowDefinition, canonical_content_hash, validate_definition,
+    validate_editor_document,
 };
 use agentx_infrastructure::runtime_commands::RuntimeCommandRepository;
 use agentx_runtime::{CompileContext, WorkflowCompiler};
@@ -22,10 +23,18 @@ use crate::{
         IdempotencyReservation, audit, complete_idempotency, idempotency_key, outbox,
         require_workflow_access, reserve_idempotency, validate_name,
     },
-    error::{AppError, AppResult},
+    deletion,
+    error::{AppError, AppResult, UniqueConstraint, map_unique},
     grants,
     security::AuthActor,
     state::AppState,
+};
+
+pub(crate) const ENVIRONMENT_CODE: UniqueConstraint = UniqueConstraint {
+    index: "uq_workflow_environment_code",
+    code: "ENVIRONMENT_CODE_EXISTS",
+    field: "code",
+    message: "An environment with this code already exists",
 };
 
 #[derive(Deserialize)]
@@ -310,7 +319,7 @@ pub async fn create_workflow(
         .execute(&mut *tx)
         .await?;
     sqlx::query("INSERT INTO workflow_members(tenant_id,workflow_id,user_id,member_role,created_by) VALUES(?,?,?,'manager',?)").bind(actor.tenant_id).bind(workflow_id).bind(actor.user_id).bind(actor.user_id).execute(&mut *tx).await?;
-    sqlx::query("INSERT INTO workflow_drafts(id,tenant_id,workflow_id,schema_version,revision,definition_json,editor_json,content_hash,editor_hash,updated_by) VALUES(?,?,?,'3.0',0,?,?,?,?,?)").bind(draft_id).bind(actor.tenant_id).bind(workflow_id).bind(&definition).bind(&editor).bind(&hash).bind(&editor_hash).bind(actor.user_id).execute(&mut *tx).await?;
+    sqlx::query("INSERT INTO workflow_drafts(id,tenant_id,workflow_id,schema_version,revision,definition_json,editor_json,content_hash,editor_hash,updated_by) VALUES(?,?,?,'4.0',0,?,?,?,?,?)").bind(draft_id).bind(actor.tenant_id).bind(workflow_id).bind(&definition).bind(&editor).bind(&hash).bind(&editor_hash).bind(actor.user_id).execute(&mut *tx).await?;
     audit(
         &mut tx,
         &actor,
@@ -443,11 +452,9 @@ pub async fn save_draft(
         serde_json::from_value(input.definition.clone()).map_err(|error| {
             AppError::unprocessable("INVALID_WORKFLOW_DEFINITION", error.to_string())
         })?;
-    let registry = crate::catalog::registry_for_tenant(&state.pool, actor.tenant_id).await?;
-    if let Err(error) =
-        WorkflowCompiler::new(&registry).compile(&definition, &CompileContext::default())
-    {
-        return Err(compile_definition_error(error.issues));
+    let definition_issues = validate_definition(&definition);
+    if !definition_issues.is_empty() {
+        return Err(definition_error(definition_issues));
     }
     let editor_document: EditorDocument =
         serde_json::from_value(if input.editor_document.is_null() {
@@ -506,6 +513,30 @@ pub async fn save_draft(
         )
         .with_field("expectedRevision", "CURRENT_REVISION", current.to_string()));
     }
+    let mut lock_targets = validated_definition
+        .nodes
+        .iter()
+        .flat_map(|node| node.resource_references.iter())
+        .map(|reference| {
+            (
+                reference.resource_type.as_str().to_owned(),
+                reference.resource_id,
+            )
+        })
+        .collect::<Vec<_>>();
+    let subworkflow_versions = subworkflow_references(&validated_definition);
+    for version_id in &subworkflow_versions {
+        let workflow_id: Uuid = sqlx::query_scalar(
+            "SELECT workflow_id FROM workflow_versions WHERE tenant_id=? AND id=?",
+        )
+        .bind(actor.tenant_id)
+        .bind(version_id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or_else(|| AppError::not_found("Sub-workflow version"))?;
+        lock_targets.push(("workflow".into(), workflow_id));
+    }
+    deletion::lock_resource_targets(&mut tx, actor.tenant_id, lock_targets).await?;
     grants::require_definition_resources_visible_in_transaction(
         &mut tx,
         &actor,
@@ -530,6 +561,14 @@ pub async fn save_draft(
             ),
         ));
     }
+    rebuild_draft_resource_projection(
+        &mut tx,
+        actor.tenant_id,
+        id,
+        draft_id,
+        &validated_definition,
+    )
+    .await?;
     if current_hash == hash && current_editor_hash.as_deref() == Some(editor_hash.as_str()) {
         let response = load_draft(&state, actor.tenant_id, id).await?;
         complete_idempotency(
@@ -583,8 +622,8 @@ pub async fn save_draft(
             _ => {}
         }
     }
-    sqlx::query("UPDATE workflow_drafts SET revision=?,schema_version='3.0',definition_json=?,editor_json=?,content_hash=?,editor_hash=?,updated_by=? WHERE id=?").bind(next).bind(&definition).bind(&editor_document).bind(&hash).bind(&editor_hash).bind(actor.user_id).bind(draft_id).execute(&mut *tx).await?;
-    sqlx::query("INSERT INTO workflow_draft_revisions(id,tenant_id,workflow_id,draft_id,revision,schema_version,definition_json,editor_json,content_hash,editor_hash,created_by) VALUES(?,?,?,?,?,'3.0',?,?,?,?,?)").bind(revision_id).bind(actor.tenant_id).bind(id).bind(draft_id).bind(next).bind(&definition).bind(&editor_document).bind(&hash).bind(&editor_hash).bind(actor.user_id).execute(&mut *tx).await?;
+    sqlx::query("UPDATE workflow_drafts SET revision=?,schema_version='4.0',definition_json=?,editor_json=?,content_hash=?,editor_hash=?,updated_by=? WHERE id=?").bind(next).bind(&definition).bind(&editor_document).bind(&hash).bind(&editor_hash).bind(actor.user_id).bind(draft_id).execute(&mut *tx).await?;
+    sqlx::query("INSERT INTO workflow_draft_revisions(id,tenant_id,workflow_id,draft_id,revision,schema_version,definition_json,editor_json,content_hash,editor_hash,created_by) VALUES(?,?,?,?,?,'4.0',?,?,?,?,?)").bind(revision_id).bind(actor.tenant_id).bind(id).bind(draft_id).bind(next).bind(&definition).bind(&editor_document).bind(&hash).bind(&editor_hash).bind(actor.user_id).execute(&mut *tx).await?;
     audit(
         &mut tx,
         &actor,
@@ -635,6 +674,50 @@ pub async fn save_draft(
     Ok(Json(response))
 }
 
+async fn rebuild_draft_resource_projection(
+    tx: &mut sqlx::Transaction<'_, sqlx::MySql>,
+    tenant_id: Uuid,
+    workflow_id: Uuid,
+    draft_id: Uuid,
+    definition: &WorkflowDefinition,
+) -> AppResult<()> {
+    sqlx::query("DELETE FROM workflow_draft_resources WHERE tenant_id=? AND draft_id=?")
+        .bind(tenant_id)
+        .bind(draft_id)
+        .execute(&mut **tx)
+        .await?;
+    for node in &definition.nodes {
+        for reference in &node.resource_references {
+            sqlx::query("INSERT INTO workflow_draft_resources(id,tenant_id,workflow_id,draft_id,node_id,node_name,resource_type,resource_id,resource_version_id,operation_key,relation) VALUES(?,?,?,?,?,?,?,?,?,?,?)")
+                .bind(Uuid::now_v7()).bind(tenant_id).bind(workflow_id).bind(draft_id)
+                .bind(&node.id).bind(&node.name).bind(reference.resource_type.as_str())
+                .bind(reference.resource_id).bind(reference.resource_version_id)
+                .bind(reference.operation.as_str()).bind("resource_reference")
+                .execute(&mut **tx).await?;
+        }
+        if (node.node_type == "sub_workflow" || node.node_type.starts_with("workflow."))
+            && let Some(version_id) = node
+                .parameters
+                .get("workflowVersionId")
+                .and_then(Value::as_str)
+                .and_then(|value| Uuid::parse_str(value).ok())
+        {
+            let target_workflow_id: Uuid = sqlx::query_scalar(
+                "SELECT workflow_id FROM workflow_versions WHERE tenant_id=? AND id=?",
+            )
+            .bind(tenant_id)
+            .bind(version_id)
+            .fetch_one(&mut **tx)
+            .await?;
+            sqlx::query("INSERT INTO workflow_draft_resources(id,tenant_id,workflow_id,draft_id,node_id,node_name,resource_type,resource_id,resource_version_id,operation_key,relation) VALUES(?,?,?,?,?,?,?,?,?,'use','subworkflow')")
+                .bind(Uuid::now_v7()).bind(tenant_id).bind(workflow_id).bind(draft_id)
+                .bind(&node.id).bind(&node.name).bind("workflow").bind(target_workflow_id)
+                .bind(version_id).execute(&mut **tx).await?;
+        }
+    }
+    Ok(())
+}
+
 #[utoipa::path(get, path = "/api/v1/workflows/{id}/revisions", params(("id" = Uuid, Path)))]
 pub async fn list_revisions(
     State(state): State<AppState>,
@@ -661,6 +744,58 @@ pub async fn list_revisions(
             })
             .collect::<Result<_, sqlx::Error>>()?,
     ))
+}
+
+async fn validate_subworkflow_dependency_graph(
+    state: &AppState,
+    tenant_id: Uuid,
+    current_workflow_id: Uuid,
+    definition: &WorkflowDefinition,
+) -> AppResult<()> {
+    let mut pending = subworkflow_references(definition);
+    let mut visited = BTreeSet::new();
+    while let Some(version_id) = pending.pop() {
+        if !visited.insert(version_id) {
+            continue;
+        }
+        let row = sqlx::query(
+            "SELECT workflow_id,definition_json FROM workflow_versions WHERE tenant_id=? AND id=?",
+        )
+        .bind(tenant_id)
+        .bind(version_id)
+        .fetch_optional(&state.pool)
+        .await?
+        .ok_or_else(|| {
+            AppError::unprocessable(
+                "SUBWORKFLOW_DEPENDENCY_MISSING",
+                format!("Workflow Version {version_id} does not exist in this tenant"),
+            )
+        })?;
+        let workflow_id: Uuid = row.try_get("workflow_id")?;
+        if workflow_id == current_workflow_id {
+            return Err(AppError::unprocessable(
+                "RECURSIVE_SUBWORKFLOW",
+                "Composite Workflow dependency graph reaches the Workflow being published",
+            ));
+        }
+        let child: WorkflowDefinition = serde_json::from_value(row.try_get("definition_json")?)
+            .map_err(|error| {
+                AppError::unprocessable("INVALID_SUBWORKFLOW_DEFINITION", error.to_string())
+            })?;
+        pending.extend(subworkflow_references(&child));
+    }
+    Ok(())
+}
+
+fn subworkflow_references(definition: &WorkflowDefinition) -> Vec<Uuid> {
+    definition
+        .nodes
+        .iter()
+        .filter(|node| node.node_type == "sub_workflow" || node.node_type.starts_with("workflow."))
+        .filter_map(|node| node.parameters.get("workflowVersionId"))
+        .filter_map(Value::as_str)
+        .filter_map(|version| Uuid::parse_str(version).ok())
+        .collect()
 }
 
 #[utoipa::path(operation_id = "create_workflow_version", post, path = "/api/v1/workflows/{id}/versions", request_body = CreateVersionRequest, params(("id" = Uuid, Path)))]
@@ -712,6 +847,29 @@ pub async fn create_version(
     }
     let definition: WorkflowDefinition =
         serde_json::from_value(draft.definition.clone()).map_err(AppError::internal)?;
+    validate_subworkflow_dependency_graph(&state, actor.tenant_id, id, &definition).await?;
+    let mut lock_targets = definition
+        .nodes
+        .iter()
+        .flat_map(|node| node.resource_references.iter())
+        .map(|reference| {
+            (
+                reference.resource_type.as_str().to_owned(),
+                reference.resource_id,
+            )
+        })
+        .collect::<Vec<_>>();
+    for subworkflow_version_id in subworkflow_references(&definition) {
+        let target_workflow_id: Uuid = sqlx::query_scalar(
+            "SELECT workflow_id FROM workflow_versions WHERE tenant_id=? AND id=?",
+        )
+        .bind(actor.tenant_id)
+        .bind(subworkflow_version_id)
+        .fetch_one(&mut *tx)
+        .await?;
+        lock_targets.push(("workflow".into(), target_workflow_id));
+    }
+    deletion::lock_resource_targets(&mut tx, actor.tenant_id, lock_targets).await?;
     let snapshots = grants::validate_and_snapshot(&state, &actor, id, &definition).await?;
     if let Some(row)=sqlx::query("SELECT id,workflow_id,version_number,source_revision,schema_version,content_hash,definition_json,editor_json,created_by,created_at FROM workflow_versions WHERE tenant_id=? AND workflow_id=? AND source_revision=? AND content_hash=?").bind(actor.tenant_id).bind(id).bind(draft.revision).bind(&draft.definition_hash).fetch_optional(&mut *tx).await? {
         let response = version_from_row(row)?;
@@ -747,9 +905,55 @@ pub async fn create_version(
         .as_ref()
         .map(|value| value.compiler_version.as_str());
     let compiled_at = compiled.as_ref().map(|_| OffsetDateTime::now_utc());
-    sqlx::query("INSERT INTO workflow_versions(id,tenant_id,workflow_id,version_number,source_revision,schema_version,definition_json,editor_json,content_hash,editor_hash,compiled_ir_json,compiled_ir_hash,compiler_version,compiled_at,created_by) VALUES(?,?,?,?,?,'3.0',?,?,?,?,?,?,?,?,?)").bind(version_id).bind(actor.tenant_id).bind(id).bind(version_number).bind(draft.revision).bind(&draft.definition).bind(&draft.editor_document).bind(&draft.definition_hash).bind(&draft.editor_hash).bind(compiled_json).bind(compiled_hash).bind(compiler_version).bind(compiled_at).bind(actor.user_id).execute(&mut *tx).await?;
+    sqlx::query("INSERT INTO workflow_versions(id,tenant_id,workflow_id,version_number,source_revision,schema_version,definition_json,editor_json,content_hash,editor_hash,compiled_ir_json,compiled_ir_hash,compiler_version,compiled_at,created_by) VALUES(?,?,?,?,?,'4.0',?,?,?,?,?,?,?,?,?)").bind(version_id).bind(actor.tenant_id).bind(id).bind(version_number).bind(draft.revision).bind(&draft.definition).bind(&draft.editor_document).bind(&draft.definition_hash).bind(&draft.editor_hash).bind(compiled_json).bind(compiled_hash).bind(compiler_version).bind(compiled_at).bind(actor.user_id).execute(&mut *tx).await?;
+    let workflow_name: String =
+        sqlx::query_scalar("SELECT name FROM workflows WHERE tenant_id=? AND id=?")
+            .bind(actor.tenant_id)
+            .bind(id)
+            .fetch_one(&mut *tx)
+            .await?;
+    crate::catalog::register_composite_manifest(
+        &mut tx,
+        actor.tenant_id,
+        version_id,
+        &workflow_name,
+        version_number,
+        &definition,
+    )
+    .await?;
     for snapshot in snapshots {
         sqlx::query("INSERT INTO workflow_version_resources(id,tenant_id,workflow_version_id,node_id,binding_id,binding_role,resource_type,resource_id,resource_version_id,operation_key,snapshot_json,snapshot_hash) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)").bind(Uuid::now_v7()).bind(actor.tenant_id).bind(version_id).bind(snapshot.node_id).bind(snapshot.reference.binding_id).bind(snapshot.reference.binding_role).bind(snapshot.reference.resource_type.as_str()).bind(snapshot.reference.resource_id).bind(snapshot.reference.resource_version_id).bind(snapshot.reference.operation.as_str()).bind(snapshot.snapshot).bind(snapshot.snapshot_hash).execute(&mut *tx).await?;
+    }
+    for node in definition
+        .nodes
+        .iter()
+        .filter(|node| node.node_type == "sub_workflow" || node.node_type.starts_with("workflow."))
+    {
+        let Some(target_version_id) = node
+            .parameters
+            .get("workflowVersionId")
+            .and_then(Value::as_str)
+            .and_then(|value| Uuid::parse_str(value).ok())
+        else {
+            continue;
+        };
+        let target_workflow_id: Uuid = sqlx::query_scalar(
+            "SELECT workflow_id FROM workflow_versions WHERE tenant_id=? AND id=?",
+        )
+        .bind(actor.tenant_id)
+        .bind(target_version_id)
+        .fetch_one(&mut *tx)
+        .await?;
+        let snapshot = json!({
+            "workflowId": target_workflow_id,
+            "workflowVersionId": target_version_id,
+            "nodeName": node.name,
+        });
+        let snapshot_hash = canonical_content_hash(&snapshot).map_err(AppError::internal)?;
+        sqlx::query("INSERT INTO workflow_version_resources(id,tenant_id,workflow_version_id,node_id,binding_id,binding_role,resource_type,resource_id,resource_version_id,operation_key,snapshot_json,snapshot_hash) VALUES(?,?,?,?,NULL,NULL,'workflow',?,?,'use',?,?)")
+            .bind(Uuid::now_v7()).bind(actor.tenant_id).bind(version_id).bind(&node.id)
+            .bind(target_workflow_id).bind(target_version_id).bind(snapshot).bind(snapshot_hash)
+            .execute(&mut *tx).await?;
     }
     audit(
         &mut tx,
@@ -954,6 +1158,16 @@ pub async fn create_environment(
         ));
     }
     let id = Uuid::now_v7();
+    let code_exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM workflow_environments WHERE tenant_id=? AND code=?)",
+    )
+    .bind(actor.tenant_id)
+    .bind(&code)
+    .fetch_one(&state.pool)
+    .await?;
+    if code_exists {
+        return Err(AppError::unique(ENVIRONMENT_CODE));
+    }
     let mut tx = state.pool.begin().await?;
     sqlx::query("INSERT INTO workflow_environments(id,tenant_id,code,name) VALUES(?,?,?,?)")
         .bind(id)
@@ -961,7 +1175,8 @@ pub async fn create_environment(
         .bind(&code)
         .bind(name)
         .execute(&mut *tx)
-        .await?;
+        .await
+        .map_err(|error| map_unique(error, &[ENVIRONMENT_CODE]))?;
     audit(
         &mut tx,
         &actor,
@@ -1381,18 +1596,4 @@ fn definition_error(issues: Vec<agentx_domain::DefinitionIssue>) -> AppError {
     error
 }
 
-fn compile_definition_error(issues: Vec<agentx_runtime::CompileIssue>) -> AppError {
-    let mut error = AppError::unprocessable(
-        "INVALID_WORKFLOW_DEFINITION",
-        "Workflow definition is invalid",
-    );
-    error.fields = issues
-        .into_iter()
-        .map(|issue| FieldError {
-            field: issue.path,
-            code: issue.code,
-            message: issue.message,
-        })
-        .collect();
-    error
-}
+use std::collections::BTreeSet;

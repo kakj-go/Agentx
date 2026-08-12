@@ -44,6 +44,8 @@ pub struct DebugExecutionRequest {
     pub target_node_id: Option<String>,
     #[serde(default)]
     pub input: Value,
+    #[serde(default = "empty_object")]
+    pub context: Value,
     #[serde(default)]
     pub input_source: Value,
     #[serde(default)]
@@ -248,6 +250,7 @@ pub async fn start_execution(
             requested_by: Some(UserId::from_uuid(actor.user_id)),
             trigger_type: "manual".into(),
             input: input.input,
+            context: serde_json::json!({}),
             debug_plan: serde_json::json!({}),
             debug_overlay: serde_json::json!({}),
             resource_snapshots: Vec::new(),
@@ -319,6 +322,7 @@ pub async fn start_debug_execution(
         .bind(actor.tenant_id).bind(id).bind(input.expected_revision).fetch_optional(&state.pool).await?.ok_or_else(|| AppError::not_found("Workflow Draft Revision"))?;
     let definition: WorkflowDefinition =
         serde_json::from_value(definition_value).map_err(AppError::internal)?;
+    let context = validate_debug_context(&definition, &input.context)?;
     let registry = crate::catalog::registry_for_tenant(&state.pool, actor.tenant_id).await?;
     WorkflowCompiler::new(&registry)
         .compile(&definition, &CompileContext::default())
@@ -416,6 +420,7 @@ pub async fn start_debug_execution(
             requested_by: Some(UserId::from_uuid(actor.user_id)),
             trigger_type: "manual_debug".into(),
             input: resolved_input,
+            context,
             debug_plan,
             debug_overlay: overlay_snapshot,
             resource_snapshots,
@@ -915,15 +920,65 @@ fn runtime(state: &AppState) -> AppResult<&dyn ExecutionRuntime> {
         AppError::service_unavailable("RUNTIME_UNAVAILABLE", "Workflow runtime is unavailable")
     })
 }
+
+fn empty_object() -> Value {
+    serde_json::json!({})
+}
+
+fn validate_debug_context(definition: &WorkflowDefinition, context: &Value) -> AppResult<Value> {
+    let values = context.as_object().ok_or_else(|| {
+        AppError::unprocessable(
+            "CONTEXT_INPUT_INVALID",
+            "Execution context must be a JSON object",
+        )
+    })?;
+    for name in values.keys() {
+        let Some(contract) = definition.start.contexts.get(name) else {
+            return Err(AppError::unprocessable(
+                "CONTEXT_INPUT_INVALID",
+                format!("Context '{name}' is not declared by this workflow"),
+            ));
+        };
+        if !contract.client_writable {
+            return Err(AppError::unprocessable(
+                "CONTEXT_WRITE_FORBIDDEN",
+                format!("Context '{name}' is not writable by the caller"),
+            ));
+        }
+    }
+    Ok(context.clone())
+}
+
 fn runtime_error(error: anyhow::Error) -> AppError {
-    let message = error.to_string();
-    if message.contains("not found") {
-        AppError::not_found("Runtime resource")
-    } else if message.contains("INVALID")
-        || message.contains("IDEMPOTENCY")
-        || message.contains("SIDE_EFFECT")
+    let detail = format!("{error:#}");
+    tracing::error!(error = %detail, "runtime coordinator request failed");
+    if let Some(status) = error
+        .chain()
+        .find_map(|cause| cause.downcast_ref::<tonic::Status>())
     {
-        AppError::conflict("RUNTIME_COMMAND_REJECTED", message)
+        let message = status.message();
+        for code in [
+            "START_INPUT_INVALID",
+            "CONTEXT_VALUE_INVALID",
+            "CONTEXT_VALUE_TOO_LARGE",
+            "CONTEXT_INPUT_INVALID",
+            "CONTEXT_WRITE_FORBIDDEN",
+        ] {
+            if message.starts_with(code) {
+                return AppError::unprocessable(code, message);
+            }
+        }
+        if status.code() == tonic::Code::NotFound {
+            return AppError::not_found("Runtime resource");
+        }
+    }
+    if detail.contains("not found") {
+        AppError::not_found("Runtime resource")
+    } else if detail.contains("INVALID")
+        || detail.contains("IDEMPOTENCY")
+        || detail.contains("SIDE_EFFECT")
+    {
+        AppError::conflict("RUNTIME_COMMAND_REJECTED", detail)
     } else {
         AppError::service_unavailable("RUNTIME_UNAVAILABLE", "Workflow runtime is unavailable")
     }
@@ -1023,20 +1078,49 @@ mod tests {
     }
 
     #[test]
+    fn runtime_validation_errors_are_not_reported_as_unavailable() {
+        let error = anyhow::Error::new(tonic::Status::failed_precondition(
+            "START_INPUT_INVALID: question is required",
+        ));
+        let mapped = runtime_error(error);
+        assert_eq!(mapped.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(mapped.code, "START_INPUT_INVALID");
+    }
+
+    #[test]
+    fn debug_context_accepts_only_declared_client_writable_values() {
+        let definition: WorkflowDefinition = serde_json::from_value(json!({
+            "schemaVersion": "4.0",
+            "start": {"inputs": {}, "contexts": {
+                "region": {"schema": {"type": "string"}, "default": "cn", "clientWritable": true},
+                "internal": {"schema": {"type": "string"}, "default": "", "clientWritable": false}
+            }},
+            "nodes": [], "connections": [], "end": {"outputs": {}}, "settings": {}
+        }))
+        .expect("valid definition");
+        assert!(validate_debug_context(&definition, &json!({"region": "us"})).is_ok());
+        assert_eq!(
+            validate_debug_context(&definition, &json!({"internal": "x"}))
+                .unwrap_err()
+                .code,
+            "CONTEXT_WRITE_FORBIDDEN"
+        );
+    }
+
+    #[test]
     fn partial_debug_plan_selects_only_the_requested_subgraph() {
         let definition: WorkflowDefinition = serde_json::from_value(json!({
-            "schemaVersion": "3.0",
+            "schemaVersion": "4.0",
+            "start":{"inputs":{"type":"object","properties":{},"additionalProperties":false},"contexts":{}},
             "nodes": [
-                {"id":"trigger","type":"manual_trigger","typeVersion":1,"name":"Trigger"},
-                {"id":"left","type":"set","typeVersion":1,"name":"Left"},
-                {"id":"target","type":"set","typeVersion":1,"name":"Target"},
-                {"id":"right","type":"set","typeVersion":1,"name":"Right"}
+                {"id":"left","key":"left","type":"set","typeVersion":1,"name":"Left"},
+                {"id":"target","key":"target","type":"set","typeVersion":1,"name":"Target"},
+                {"id":"right","key":"right","type":"set","typeVersion":1,"name":"Right"}
             ],
             "connections": [
-                {"id":"a","sourceNodeId":"trigger","sourceHandle":"main","targetNodeId":"left","targetHandle":"main","order":0},
-                {"id":"b","sourceNodeId":"left","sourceHandle":"main","targetNodeId":"target","targetHandle":"main","order":0},
-                {"id":"c","sourceNodeId":"trigger","sourceHandle":"main","targetNodeId":"right","targetHandle":"main","order":1}
+                {"id":"b","sourceNodeId":"left","sourceHandle":"main","targetNodeId":"target","targetHandle":"main","order":0}
             ],
+            "end":{"outputs":{}},
             "settings": {}
         })).expect("valid definition");
 
@@ -1046,7 +1130,7 @@ mod tests {
         );
         assert_eq!(
             debug_included_node_ids(&definition, "to_node", Some("target")).unwrap(),
-            vec!["trigger", "left", "target"]
+            vec!["left", "target"]
         );
         assert_eq!(
             debug_included_node_ids(&definition, "from_node", Some("left")).unwrap(),
@@ -1073,12 +1157,13 @@ mod tests {
     #[test]
     fn irreversible_debug_nodes_require_the_exact_execute_decision() {
         let definition: WorkflowDefinition = serde_json::from_value(json!({
-            "schemaVersion": "3.0",
+            "schemaVersion": "4.0",
+            "start":{"inputs":{"type":"object","properties":{},"additionalProperties":false},"contexts":{}},
             "nodes": [
-                {"id":"trigger","type":"manual_trigger","typeVersion":1,"name":"Trigger"},
-                {"id":"agent","type":"agent","typeVersion":1,"name":"Agent","resourceReferences":[{"bindingId":"model-binding","bindingRole":"ai_model","resourceType":"model","resourceId":"018f47a0-7e9c-7000-8000-000000000001","operation":"use"}]}
+                {"id":"agent","key":"agent","type":"agent","typeVersion":1,"name":"Agent","resourceReferences":[{"bindingId":"model-binding","bindingRole":"ai_model","resourceType":"model","resourceId":"018f47a0-7e9c-7000-8000-000000000001","operation":"use"}]}
             ],
-            "connections": [{"id":"a","sourceNodeId":"trigger","sourceHandle":"main","targetNodeId":"agent","targetHandle":"main","order":0}],
+            "connections": [],
+            "end":{"outputs":{}},
             "settings": {}
         })).expect("valid definition");
         let registry = agentx_runtime::NodeRegistry::m5_defaults();
@@ -1104,13 +1189,8 @@ mod tests {
         )
         .unwrap();
 
-        validate_side_effect_decisions(
-            &definition,
-            &HashSet::from(["trigger".to_owned()]),
-            &registry,
-            &json!({}),
-        )
-        .unwrap();
+        validate_side_effect_decisions(&definition, &HashSet::new(), &registry, &json!({}))
+            .unwrap();
     }
 
     #[test]

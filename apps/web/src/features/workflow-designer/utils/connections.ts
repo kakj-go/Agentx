@@ -11,6 +11,25 @@ type ConnectionCandidate = {
 export type ConnectionValidation = { status: 'valid' | 'invalid' | 'occupied'; replaceEdge?: StudioEdge; reason?: string }
 
 export function inspectConnection(connection: ConnectionCandidate, index: GraphIndex): ConnectionValidation {
+  const sourceIsStart = connection.source === '__start__'
+  const targetIsEnd = connection.target === '__end__'
+  if (sourceIsStart || targetIsEnd) {
+    if (sourceIsStart && targetIsEnd) return connection.sourceHandle === 'main' && connection.targetHandle === 'main' ? { status: 'valid' } : invalid('invalid_boundary_port')
+    if (sourceIsStart) {
+      if (connection.sourceHandle !== 'main') return invalid('invalid_start_port')
+      const target = index.nodeById.get(connection.target)
+      if (!target || target.data.editorKind !== 'action') return invalid('invalid_target')
+      const targetPort = resolveIndexedPort(index, target.id, connection.targetHandle, 'input')
+      return targetPort?.direction === 'input' && 'kind' in targetPort.port && targetPort.port.kind === 'main' ? { status: 'valid' } : invalid('incompatible_port')
+    }
+    const source = index.nodeById.get(connection.source)
+    if (!source || source.data.editorKind !== 'action') return invalid('invalid_source')
+    const sourcePort = resolveIndexedPort(index, source.id, connection.sourceHandle, 'output')
+    if (sourcePort?.direction !== 'output' || !('kind' in sourcePort.port)) return invalid('incompatible_port')
+    if (connection.targetHandle === 'main' && sourcePort.port.kind === 'main') return { status: 'valid' }
+    if (connection.targetHandle === 'error' && sourcePort.port.kind === 'error') return { status: 'valid' }
+    return invalid('incompatible_port')
+  }
   const source = index.nodeById.get(connection.source)
   const target = index.nodeById.get(connection.target)
   if (!source || !target) return invalid('missing_node')

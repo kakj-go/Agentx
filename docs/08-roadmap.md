@@ -18,7 +18,7 @@ M1 基础管理闭环、M2.1 资源中心重构、M3 外围控制面、M4 可靠
 - Application、Gateway、Dataset、Evaluation、Approval、Notification、Execution/Trace 查询与 Runtime Status 已接入真实 API
 - Definition 2.0、Node Protocol、Coordinator/Worker、Checkpoint/Fork、Wait/Approval 和 Execution/Recovery Workbench 已通过可靠性门禁
 - M5 Runtime Port、资源 Adapter、Agent Ledger/循环、Rust OpenSandbox Adapter、Sandbox Manager 和 Runtime Workbench 已实现，Agent+MCP、Skill/RAG/Memory、全部 Command Runner、故障恢复和真实 OpenSandbox 链路已通过临时 Kubernetes E2E
-- M6 Definition 3.0、Manifest 驱动画布/表单、Draft Revision 调试、Pin/Mock、Trace、Version/Deployment 和 Agent/Code/Approval 全 UI 链路已通过临时 Kubernetes E2E
+- M6 Definition 4.0、Manifest 驱动画布/表单、Draft Revision 调试、Pin/Mock、Trace、Version/Deployment 和 Agent/Code/Approval 全 UI 链路已通过临时 Kubernetes E2E
 
 完成证据见 [M2.1 验收证据](plan/m2.1-acceptance-evidence.md)、[M3 验收证据](plan/m3-acceptance-evidence.md)、[M3.1 验收证据](plan/m3.1-acceptance-evidence.md)、[M4 验收证据](plan/m4-acceptance-evidence.md)、[M5 验收证据](plan/m5-acceptance-evidence.md) 和 [M6 验收证据](plan/m6-acceptance-evidence.md)。当前 Docker Desktop Kubernetes+runc 是 M5/M6 的验收基线；生产 RuntimeClass、Vault、供应链和跨租户强隔离属于 M7 生产强化，不作为当前 M5/M6 阶段阻塞项。
 
@@ -47,7 +47,7 @@ M1 基础管理闭环、M2.1 资源中心重构、M3 外围控制面、M4 可靠
 | M3 外围闭环（done） | Application、Session、Dataset、Evaluation、Approval、Notification、Execution/Trace 查询可用 | [阶段 05](plan/05-applications-sessions-gateway.md) 至 [阶段 07](plan/07-approvals-notifications-trace.md)；[M3 任务](plan/m3-task-list.md)与[验收证据](plan/m3-acceptance-evidence.md)；[M3.1 修正](plan/m3.1-evaluation-profile-and-prerequisites.md)与[验收证据](plan/m3.1-acceptance-evidence.md) |
 | M4 可靠运行（done） | 非 AI JSON Workflow 按 n8n 行为语义运行，Checkpoint、Fork、Wait 和审批恢复可用 | [M4 任务](plan/m4-task-list.md)、[阶段 08](plan/08-workflow-runtime-core.md)、[阶段 09](plan/09-checkpoint-wait-recovery.md)；[验收证据](plan/m4-acceptance-evidence.md) |
 | M5 Agent 运行（done） | AGT-001～013、Go Oracle、资源/Agent/Sandbox 故障矩阵和当前 Docker+runc Runtime E2E 已完成；AGT-010 生产强化暂不重试并转入 M7 | [阶段 10](plan/10-agent-opensandbox.md)、[任务清单](plan/m5-task-list.md)、[验收证据](plan/m5-acceptance-evidence.md)、[OpenSandbox 可行性](plan/opensandbox-feasibility.md) |
-| M6 Studio（done） | Definition 3.0、Manifest 驱动画布、Draft Revision 调试快照、Pin/Mock、Trace、版本发布和 Agent/Code/Approval 全 UI E2E | [阶段 11](plan/11-workflow-studio.md)；[验收证据](plan/m6-acceptance-evidence.md) |
+| M6 Studio（done） | Definition 4.0、Manifest 驱动画布、Draft Revision 调试快照、Pin/Mock、Trace、版本发布和 Agent/Code/Approval 全 UI E2E | [阶段 11](plan/11-workflow-studio.md)；[验收证据](plan/m6-acceptance-evidence.md) |
 | M7 首期发布 | 复用 M6 Runtime 接通 Application/Trigger/Evaluation/Approval/SSE，完成配额、保留、生产 RuntimeClass、Vault、签名镜像、跨租户安全、容量和发布证据 | [阶段 12](plan/12-integration-hardening-release.md) |
 
 ## 4. MVP 验收闭环

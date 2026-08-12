@@ -8,11 +8,19 @@ describe('editor store node creation', () => {
   })
 
   it('selects a newly added action so it can be configured immediately', () => {
-    useEditorStore.getState().addAction({ editorKind: 'action', nodeType: 'mcp_tool', typeVersion: 1, label: 'mcp tool', parameters: {}, resourceReferences: [], settings: {}, disabled: false })
+    useEditorStore.getState().addAction({ editorKind: 'action', nodeType: 'mcp_tool', typeVersion: 1, label: 'mcp tool', key: 'mcp_tool', parameters: {}, outputProjection: {}, contextWrites: [], resourceReferences: [], settings: {}, disabled: false })
 
     const state = useEditorStore.getState()
     expect(state.selectedId).toBe(state.nodes[0].id)
     expect(state.nodes[0].selected).toBe(true)
+  })
+
+  it('rewrites upstream output references when a node key changes', () => {
+    const source = useEditorStore.getState().addAction({ editorKind: 'action', nodeType: 'set', typeVersion: 1, label: 'Source', key: 'source', parameters: {}, outputProjection: {}, contextWrites: [], resourceReferences: [], settings: {}, disabled: false })
+    const target = useEditorStore.getState().addAction({ editorKind: 'action', nodeType: 'set', typeVersion: 1, label: 'Target', key: 'target', parameters: { value: '${{ outputs.source.main.first.json.value }}' }, outputProjection: {}, contextWrites: [], resourceReferences: [], settings: {}, disabled: false })
+    useEditorStore.getState().updateNode(source, { key: 'renamed' })
+    const node = useEditorStore.getState().nodes.find((item) => item.id === target)
+    expect(node?.data.editorKind === 'action' && node.data.parameters.value).toBe('${{ outputs.renamed.main.first.json.value }}')
   })
 
   it('selects a newly added AI attachment so its resource can be chosen immediately', () => {
@@ -24,7 +32,7 @@ describe('editor store node creation', () => {
   })
 
   it('aligns a multi-selection as one undoable command', () => {
-    const data = { editorKind: 'action' as const, nodeType: 'set', typeVersion: 1, label: 'Set', parameters: {}, resourceReferences: [], settings: {}, disabled: false }
+    const data = { editorKind: 'action' as const, nodeType: 'set', typeVersion: 1, label: 'Set', key: 'set', parameters: {}, outputProjection: {}, contextWrites: [], resourceReferences: [], settings: {}, disabled: false }
     useEditorStore.getState().addAction(data, { x: 80, y: 40 })
     useEditorStore.getState().addAction(data, { x: 260, y: 160 })
     useEditorStore.setState((state) => ({ nodes: state.nodes.map((node) => ({ ...node, selected: true })), selectedId: undefined, past: [], future: [] }))
@@ -37,7 +45,7 @@ describe('editor store node creation', () => {
   })
 
   it('keeps annotation and group edits in the same undo history', () => {
-    const data = { editorKind: 'action' as const, nodeType: 'set', typeVersion: 1, label: 'Set', parameters: {}, resourceReferences: [], settings: {}, disabled: false }
+    const data = { editorKind: 'action' as const, nodeType: 'set', typeVersion: 1, label: 'Set', key: 'set', parameters: {}, outputProjection: {}, contextWrites: [], resourceReferences: [], settings: {}, disabled: false }
     useEditorStore.getState().addAction(data, { x: 80, y: 40 })
     useEditorStore.getState().addAction(data, { x: 260, y: 40 })
     useEditorStore.setState((state) => ({ nodes: state.nodes.map((node) => ({ ...node, selected: true })), selectedId: undefined, past: [], future: [] }))
@@ -65,8 +73,36 @@ describe('editor store node creation', () => {
     expect(useEditorStore.getState().viewport).toEqual({ x: -180, y: 90, zoom: 0.7 })
   })
 
+  it('adds missing boundary layouts on the first drag and restores them with undo', () => {
+    useEditorStore.setState({ boundaryLayouts: [], past: [], future: [], dirty: false })
+
+    useEditorStore.getState().beginEdit({ boundary: 'start' })
+    useEditorStore.getState().updateBoundaryPosition('start', { x: 180, y: 120 })
+    useEditorStore.getState().commitEdit()
+
+    expect(useEditorStore.getState().boundaryLayouts).toEqual([{ boundary: 'start', x: 180, y: 120 }])
+    expect(useEditorStore.getState().past).toHaveLength(1)
+    expect(useEditorStore.getState().dirty).toBe(true)
+    useEditorStore.getState().undo()
+    expect(useEditorStore.getState().boundaryLayouts).toEqual([])
+    useEditorStore.getState().redo()
+    expect(useEditorStore.getState().boundaryLayouts).toEqual([{ boundary: 'start', x: 180, y: 120 }])
+  })
+
+  it('stores Start and End boundary positions independently', () => {
+    useEditorStore.setState({ boundaryLayouts: [], past: [], future: [] })
+
+    useEditorStore.getState().updateBoundaryPosition('start', { x: 80, y: 140 })
+    useEditorStore.getState().updateBoundaryPosition('end', { x: 640, y: 260 })
+
+    expect(useEditorStore.getState().boundaryLayouts).toEqual([
+      { boundary: 'start', x: 80, y: 140 },
+      { boundary: 'end', x: 640, y: 260 },
+    ])
+  })
+
   it('adds and connects a quick-add node as one undoable command', () => {
-    const data = { editorKind: 'action' as const, nodeType: 'set', typeVersion: 1, label: 'Set', parameters: {}, resourceReferences: [], settings: {}, disabled: false }
+    const data = { editorKind: 'action' as const, nodeType: 'set', typeVersion: 1, label: 'Set', key: 'set', parameters: {}, outputProjection: {}, contextWrites: [], resourceReferences: [], settings: {}, disabled: false }
     const sourceId = useEditorStore.getState().addAction(data, { x: 20, y: 40 })
     useEditorStore.setState({ past: [], future: [] })
 
@@ -81,7 +117,7 @@ describe('editor store node creation', () => {
   })
 
   it('undoes a Group move and Sticky Note resize from their gesture checkpoints', () => {
-    const data = { editorKind: 'action' as const, nodeType: 'set', typeVersion: 1, label: 'Set', parameters: {}, resourceReferences: [], settings: {}, disabled: false }
+    const data = { editorKind: 'action' as const, nodeType: 'set', typeVersion: 1, label: 'Set', key: 'set', parameters: {}, outputProjection: {}, contextWrites: [], resourceReferences: [], settings: {}, disabled: false }
     useEditorStore.getState().addAction(data, { x: 80, y: 40 })
     useEditorStore.getState().addAction(data, { x: 260, y: 40 })
     useEditorStore.setState((state) => ({ nodes: state.nodes.map((node) => ({ ...node, selected: true })), selectedId: undefined, past: [], future: [] }))
@@ -105,29 +141,21 @@ describe('editor store node creation', () => {
     expect(useEditorStore.getState().annotations[0]).toMatchObject({ width: 240, height: 160 })
   })
 
-  it('keeps primary output and error policy changes in the same undo transaction', () => {
-    const data = { editorKind: 'action' as const, nodeType: 'set', typeVersion: 1, label: 'Set', parameters: {}, resourceReferences: [], settings: {}, disabled: false }
+  it('keeps error policy changes in the same undo transaction', () => {
+    const data = { editorKind: 'action' as const, nodeType: 'set', typeVersion: 1, label: 'Set', key: 'set', parameters: {}, outputProjection: {}, contextWrites: [], resourceReferences: [], settings: {}, disabled: false }
     const sourceId = useEditorStore.getState().addAction(data)
     const targetId = useEditorStore.getState().addAction(data)
-    useEditorStore.getState().setPrimaryOutput(sourceId)
     useEditorStore.setState({ past: [], future: [] })
-
     useEditorStore.getState().connect({ source: sourceId, sourceHandle: 'error', target: targetId, targetHandle: 'error' }, { edgeKind: 'execution', sourcePortKind: 'error' })
     const source = useEditorStore.getState().nodes.find((node) => node.id === sourceId)
     expect(source?.data.editorKind === 'action' && source.data.settings.onError).toBe('continue_error_output')
-    expect(useEditorStore.getState().settings.primaryOutputNodeId).toBe(sourceId)
     useEditorStore.getState().undo()
     const restored = useEditorStore.getState().nodes.find((node) => node.id === sourceId)
     expect(restored?.data.editorKind === 'action' && restored.data.settings.onError).toBeUndefined()
-
-    useEditorStore.getState().connect({ source: sourceId, sourceHandle: 'main', target: targetId, targetHandle: 'main' }, { edgeKind: 'execution', sourcePortKind: 'main' })
-    expect(useEditorStore.getState().settings.primaryOutputNodeId).toBeUndefined()
-    useEditorStore.getState().undo()
-    expect(useEditorStore.getState().settings.primaryOutputNodeId).toBe(sourceId)
   })
 
   it('deletes selected edges as one undoable command', () => {
-    const data = { editorKind: 'action' as const, nodeType: 'set', typeVersion: 1, label: 'Set', parameters: {}, resourceReferences: [], settings: {}, disabled: false }
+    const data = { editorKind: 'action' as const, nodeType: 'set', typeVersion: 1, label: 'Set', key: 'set', parameters: {}, outputProjection: {}, contextWrites: [], resourceReferences: [], settings: {}, disabled: false }
     const sourceId = useEditorStore.getState().addAction(data)
     const targetId = useEditorStore.getState().addAction(data)
     useEditorStore.getState().connect({ source: sourceId, sourceHandle: 'main', target: targetId, targetHandle: 'main' }, { edgeKind: 'execution', sourcePortKind: 'main' })
@@ -141,7 +169,7 @@ describe('editor store node creation', () => {
   })
 
   it('keeps position frames out of GraphIndex revisions and reconnects as one command', () => {
-    const data = { editorKind: 'action' as const, nodeType: 'set', typeVersion: 1, label: 'Set', parameters: {}, resourceReferences: [], settings: {}, disabled: false }
+    const data = { editorKind: 'action' as const, nodeType: 'set', typeVersion: 1, label: 'Set', key: 'set', parameters: {}, outputProjection: {}, contextWrites: [], resourceReferences: [], settings: {}, disabled: false }
     const sourceId = useEditorStore.getState().addAction(data)
     const firstTarget = useEditorStore.getState().addAction(data)
     const secondTarget = useEditorStore.getState().addAction(data)
@@ -160,7 +188,7 @@ describe('editor store node creation', () => {
   })
 
   it('stores only the dragged node in a large-document history patch', () => {
-    const data = { editorKind: 'action' as const, nodeType: 'set', typeVersion: 1, label: 'Set', parameters: {}, resourceReferences: [], settings: {}, disabled: false }
+    const data = { editorKind: 'action' as const, nodeType: 'set', typeVersion: 1, label: 'Set', key: 'set', parameters: {}, outputProjection: {}, contextWrites: [], resourceReferences: [], settings: {}, disabled: false }
     const nodes: import('../model/types').StudioNode[] = Array.from({ length: 1_000 }, (_, index) => ({ id: `node-${index}`, type: 'manifest', position: { x: index, y: 0 }, data }))
     useEditorStore.setState({ nodes, past: [], future: [], graphRevision: 7 })
     useEditorStore.getState().beginEdit({ nodeIds: ['node-500'] })

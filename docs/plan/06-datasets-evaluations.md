@@ -102,3 +102,9 @@
 - Evaluation Run、Case Result 和报告结构。
 - `EvaluationRuntime` 批量执行接入点。
 - Case Result 到 Execution/Trace 的引用方式。
+
+## 13. 安全删除补充
+
+- Dataset 被任意 Evaluation Run 固定的 Dataset Version 引用时不可删除；无引用时 Case 和 Version 随 Dataset 聚合删除。
+- Evaluation Profile 被任意 Evaluation Run 固定的 Profile Version 引用时不可删除；无引用时 Rule 和 Version 随 Profile 聚合删除。
+- Evaluation Run、Case Result 和 Report 是不可变历史，不提供物理删除入口。Dataset 与 Profile 分别使用 `dataset:delete` 和 `evaluation_profile:delete`。

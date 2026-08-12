@@ -11,7 +11,7 @@ const manifest = (nodeType: string, variadic = false): NodeManifest => ({
   retryPolicy: { retryable: false, maxAttempts: 1, initialBackoffMs: 0, maxBackoffMs: 0 }, sandboxRequired: false, supportsMock: true, sideEffectLevel: 'none',
 })
 
-const action = (id: string, nodeType = 'set'): StudioNode => ({ id, type: 'manifest', position: { x: 0, y: 0 }, data: { editorKind: 'action', nodeType, typeVersion: 1, label: id, parameters: {}, resourceReferences: [], settings: {}, disabled: false } })
+const action = (id: string, nodeType = 'set'): StudioNode => ({ id, type: 'manifest', position: { x: 0, y: 0 }, data: { editorKind: 'action', nodeType, typeVersion: 1, label: id, key: id, parameters: {}, outputProjection: {}, contextWrites: [], resourceReferences: [], settings: {}, disabled: false } })
 const binding = (id: string): StudioNode => ({ id, type: 'attachment', position: { x: 0, y: 0 }, data: { editorKind: 'binding', bindingId: id, resourceType: 'model', operation: 'use', label: id } })
 const edge = (id: string, source: string, target: string, sourceHandle = 'main', targetHandle = 'main'): StudioEdge => ({ id, source, target, sourceHandle, targetHandle, type: 'studio', data: { edgeKind: source.startsWith('binding:') ? 'binding' : 'execution', targetSlot: source.startsWith('binding:') ? targetHandle.replace(/^binding:/, '') : undefined } })
 

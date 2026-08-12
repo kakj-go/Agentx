@@ -29,7 +29,7 @@ fn migration_cli_accepts_only_a_positive_through_bound() {
     assert!(super::migration_command::parse_migration_upper_bound(&["--unknown".into()]).is_err());
 }
 
-async fn start_mysql() -> (
+pub(crate) async fn start_mysql() -> (
     testcontainers::ContainerAsync<GenericImage>,
     sqlx::MySqlPool,
 ) {

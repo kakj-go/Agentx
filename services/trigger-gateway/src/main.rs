@@ -2,21 +2,24 @@ use std::{convert::Infallible, env, sync::Arc, time::Duration};
 
 use agentx_api_types::{ApiErrorResponse, FieldError};
 use agentx_application::{
-    CancelExecutionCommandPayload, ResumeExecutionCommandPayload, RuntimeCommand,
-    RuntimeCommandType, StartExecutionCommandPayload,
+    ArtifactStore, ArtifactWrite, CancelExecutionCommandPayload, ResumeExecutionCommandPayload,
+    RuntimeCommand, RuntimeCommandType, StartExecutionCommandPayload,
 };
 use agentx_domain::{InvocationId, TenantId};
 use agentx_infrastructure::{
-    config::MySqlSettings,
+    artifact::MySqlObjectArtifactStore,
+    clients,
+    config::{MySqlSettings, ObjectStorageSettings},
     config::{SecretProviderMode, secret_provider_mode},
     credential::{CredentialKeyring, PlainSecret},
     mysql,
     runtime_commands::RuntimeCommandRepository,
 };
+use agentx_runtime::{StartInputError, materialize_and_validate_start_input};
 use anyhow::{Context, Result};
 use axum::{
     Json, Router,
-    extract::{FromRequestParts, Path, State},
+    extract::{DefaultBodyLimit, FromRequest, FromRequestParts, Multipart, Path, State},
     http::{HeaderMap, StatusCode, header::AUTHORIZATION, request::Parts},
     response::{
         IntoResponse, Response, Sse,
@@ -46,6 +49,7 @@ mod schedule_loop;
 #[derive(Clone)]
 struct GatewayState {
     pool: MySqlPool,
+    artifacts: Option<Arc<dyn ArtifactStore>>,
     jwt: Arc<JwtSettings>,
     webhook_secrets: WebhookSecretSource,
     wait_resume_secret: Arc<SecretString>,
@@ -289,6 +293,7 @@ impl IntoResponse for GatewayError {
                 message: self.message,
                 request_id,
                 field_errors: Vec::<FieldError>::new(),
+                details: None,
             }),
         )
             .into_response()
@@ -397,8 +402,8 @@ struct InvocationResponse {
     session_id: Option<Uuid>,
     execution_id: Option<Uuid>,
     status: String,
-    error_code: Option<String>,
-    error_message: Option<String>,
+    outputs: Option<Value>,
+    error: Option<Value>,
     #[serde(with = "time::serde::rfc3339")]
     created_at: OffsetDateTime,
 }
@@ -419,7 +424,7 @@ struct WaitResumeResponse {
 }
 
 #[derive(OpenApi)]
-#[openapi(paths(create_session,get_session,list_messages,create_invocation,send_message,get_invocation,cancel_invocation,invocation_events,webhook_trigger,resume_wait),components(schemas(CreateSessionRequest,SessionResponse,InvocationRequest,MessageRequest,MessagePartInput,MessageResponse,MessagePartResponse,InvocationResponse,WaitResumeRequest,WaitResumeResponse,ApiErrorResponse,FieldError)),tags((name="Agentx Gateway",description="Application invocation and runtime wait API")))]
+#[openapi(paths(create_session,get_session,list_messages,create_invocation,invoke_workflow,upload_artifact,send_message,get_invocation,cancel_invocation,invocation_events,webhook_trigger,resume_wait),components(schemas(CreateSessionRequest,SessionResponse,InvocationRequest,MessageRequest,MessagePartInput,MessageResponse,MessagePartResponse,InvocationResponse,ArtifactUploadResponse,WaitResumeRequest,WaitResumeResponse,ApiErrorResponse,FieldError)),tags((name="Agentx Gateway",description="Application invocation and runtime wait API")))]
 struct GatewayApi;
 
 #[tokio::main]
@@ -459,6 +464,13 @@ async fn main() -> Result<()> {
     };
     let state = GatewayState {
         pool: pool.clone(),
+        artifacts: ObjectStorageSettings::from_env()
+            .ok()
+            .and_then(|settings| clients::object_store(&settings).ok())
+            .map(|objects| {
+                Arc::new(MySqlObjectArtifactStore::new(pool.clone(), objects))
+                    as Arc<dyn ArtifactStore>
+            }),
         jwt: Arc::new(JwtSettings::from_env()?),
         webhook_secrets,
         wait_resume_secret: Arc::new(SecretString::from(
@@ -483,6 +495,11 @@ fn router(state: GatewayState) -> Router {
             Router::new()
                 .route("/applications/{slug}/sessions", post(create_session))
                 .route("/applications/{slug}/invocations", post(create_invocation))
+                .route("/workflows/{slug}/invoke", post(invoke_workflow))
+                .route(
+                    "/artifacts",
+                    post(upload_artifact).layer(DefaultBodyLimit::max(51 * 1024 * 1024)),
+                )
                 .route("/sessions/{id}", get(get_session))
                 .route(
                     "/sessions/{id}/messages",
@@ -580,7 +597,7 @@ async fn create_invocation(
     caller: Caller,
     Path(slug): Path<String>,
     headers: HeaderMap,
-    Json(input): Json<InvocationRequest>,
+    Json(mut input): Json<InvocationRequest>,
 ) -> GatewayResult<(StatusCode, Json<InvocationResponse>)> {
     let app = load_active_application(&state, &caller, &slug).await?;
     validate_response_mode(input.response_mode.as_deref())?;
@@ -595,7 +612,15 @@ async fn create_invocation(
         }
     }
     let idempotency_key = validate_idempotency(&headers)?;
-    validate_input(&input.input, app.try_get("input_schema_json")?)?;
+    let definition: Value = app.try_get("definition_json")?;
+    let input_schema = definition
+        .get("start")
+        .and_then(|start| start.get("inputs"))
+        .cloned()
+        .unwrap_or_else(|| json!({"type":"object"}));
+    validate_input(&mut input.input, &input_schema)?;
+    validate_artifact_constraints(&state.pool, caller.tenant_id(), &input.input, &input_schema)
+        .await?;
     let application_id: Uuid = app.try_get("id")?;
     let application_deployment_id: Uuid = app.try_get("deployment_id")?;
     let workflow_version_id: Uuid = app.try_get("workflow_version_id")?;
@@ -613,7 +638,115 @@ async fn create_invocation(
         },
     )
     .await?;
+    if input.response_mode.as_deref() == Some("sync") {
+        let (status, response) = wait_for_invocation(&state, &caller, response.0.id).await?;
+        return Ok((status, Json(response)));
+    }
     Ok((StatusCode::ACCEPTED, response))
+}
+
+#[utoipa::path(post,path="/gateway/v1/workflows/{slug}/invoke",request_body(content((InvocationRequest = "application/json"), (String = "multipart/form-data"))))]
+async fn invoke_workflow(
+    state: State<GatewayState>,
+    caller: Caller,
+    slug: Path<String>,
+    request: axum::extract::Request,
+) -> GatewayResult<(StatusCode, Json<InvocationResponse>)> {
+    let headers = request.headers().clone();
+    let input = parse_workflow_invocation_request(&state, &caller, request).await?;
+    create_invocation(state, caller, slug, headers, Json(input)).await
+}
+
+async fn parse_workflow_invocation_request(
+    state: &GatewayState,
+    caller: &Caller,
+    request: axum::extract::Request,
+) -> GatewayResult<InvocationRequest> {
+    let content_type = request
+        .headers()
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("application/json")
+        .to_ascii_lowercase();
+    if !content_type.starts_with("multipart/form-data") {
+        let body = axum::body::to_bytes(request.into_body(), 2 * 1024 * 1024)
+            .await
+            .map_err(GatewayError::internal)?;
+        return serde_json::from_slice(&body)
+            .map_err(|error| GatewayError::bad_request("INVALID_JSON", error.to_string()));
+    }
+    let mut multipart = Multipart::from_request(request, state)
+        .await
+        .map_err(|error| GatewayError::bad_request("INVALID_MULTIPART", error.to_string()))?;
+    let Some(store) = state.artifacts.clone() else {
+        return Err(GatewayError::service_unavailable(
+            "ARTIFACT_STORAGE_UNAVAILABLE",
+            "Artifact storage is not configured",
+        ));
+    };
+    let mut input = Value::Object(serde_json::Map::new());
+    let mut response_mode = None;
+    let mut session_id = None;
+    let mut attachments = Vec::new();
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(GatewayError::internal)?
+    {
+        let name = field.name().unwrap_or_default().to_owned();
+        if matches!(name.as_str(), "input" | "inputs") {
+            let value = field.text().await.map_err(GatewayError::internal)?;
+            input = serde_json::from_str(&value).map_err(|error| {
+                GatewayError::bad_request("INVALID_INPUT_JSON", error.to_string())
+            })?;
+        } else if name == "question" {
+            let value = field.text().await.map_err(GatewayError::internal)?;
+            input["question"] = Value::String(value);
+        } else if name == "responseMode" {
+            response_mode = Some(field.text().await.map_err(GatewayError::internal)?);
+        } else if name == "sessionId" {
+            session_id = Some(
+                field
+                    .text()
+                    .await
+                    .map_err(GatewayError::internal)?
+                    .parse::<Uuid>()
+                    .map_err(|error| {
+                        GatewayError::bad_request("INVALID_SESSION_ID", error.to_string())
+                    })?,
+            );
+        } else if matches!(name.as_str(), "file" | "files" | "attachments") {
+            let content_type = field
+                .content_type()
+                .unwrap_or("application/octet-stream")
+                .to_owned();
+            let file_name = field.file_name().unwrap_or("attachment").to_owned();
+            let bytes = field.bytes().await.map_err(GatewayError::internal)?;
+            if bytes.len() > 50 * 1024 * 1024 {
+                return Err(GatewayError::bad_request(
+                    "ARTIFACT_TOO_LARGE",
+                    "Artifact uploads are limited to 50 MiB",
+                ));
+            }
+            let artifact = store
+                .put(ArtifactWrite {
+                    tenant_id: TenantId::from_uuid(caller.tenant_id()),
+                    content_type: content_type.clone(),
+                    content: bytes.to_vec(),
+                })
+                .await
+                .map_err(GatewayError::internal)?;
+            attachments.push(json!({"artifactId":artifact.id.as_uuid(),"type":"file","fileName":file_name,"contentType":content_type}));
+        }
+    }
+    if !attachments.is_empty() {
+        input["attachments"] = Value::Array(attachments);
+    }
+    Ok(InvocationRequest {
+        input,
+        session_id,
+        response_mode,
+    })
 }
 
 #[utoipa::path(post,path="/gateway/v1/sessions/{id}/messages",request_body=MessageRequest)]
@@ -649,13 +782,58 @@ async fn send_message(
                 "Message part requires content or an Artifact",
             ));
         }
+        if let Some(artifact_id) = part.artifact_id {
+            let exists: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM artifacts WHERE tenant_id=? AND id=?)",
+            )
+            .bind(caller.tenant_id())
+            .bind(artifact_id)
+            .fetch_one(&state.pool)
+            .await?;
+            if !exists {
+                return Err(GatewayError::bad_request(
+                    "ARTIFACT_NOT_FOUND",
+                    "Message Artifact does not exist in the caller tenant",
+                ));
+            }
+        }
     }
     let row=sqlx::query("SELECT a.id application_id,COALESCE(s.workflow_version_id,ad.workflow_version_id) workflow_version_id,IF(s.workflow_version_id IS NULL,h.deployment_id,s.application_deployment_id) application_deployment_id FROM application_sessions s JOIN applications a ON a.id=s.application_id AND a.tenant_id=s.tenant_id JOIN application_deployment_heads h ON h.application_id=a.id AND h.tenant_id=a.tenant_id JOIN application_deployments ad ON ad.id=h.deployment_id WHERE s.id=? AND s.tenant_id=? AND s.status='active' AND a.status='active'")
         .bind(id).bind(caller.tenant_id()).fetch_optional(&state.pool).await?.ok_or_else(||GatewayError::not_found("Session"))?;
     let application_id: Uuid = row.try_get("application_id")?;
     let application_deployment_id: Uuid = row.try_get("application_deployment_id")?;
     let workflow_version_id: Uuid = row.try_get("workflow_version_id")?;
-    let input_value = serde_json::to_value(&input.parts).map_err(GatewayError::internal)?;
+    let text = input
+        .parts
+        .iter()
+        .filter(|part| part.part_type == "text")
+        .filter_map(|part| part.content.as_ref().and_then(Value::as_str))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let attachments = input
+        .parts
+        .iter()
+        .filter_map(|part| {
+            part.artifact_id
+                .map(|artifact_id| json!({"artifactId":artifact_id,"type":part.part_type}))
+        })
+        .collect::<Vec<_>>();
+    let mut input_value = json!({"question":text,"attachments":attachments});
+    let definition: Value = sqlx::query_scalar(
+        "SELECT wv.definition_json FROM workflow_versions wv WHERE wv.tenant_id=? AND wv.id=?",
+    )
+    .bind(caller.tenant_id())
+    .bind(workflow_version_id)
+    .fetch_one(&state.pool)
+    .await?;
+    let input_schema = definition
+        .get("start")
+        .and_then(|start| start.get("inputs"))
+        .cloned()
+        .unwrap_or_else(|| json!({"type":"object"}));
+    validate_input(&mut input_value, &input_schema)?;
+    validate_artifact_constraints(&state.pool, caller.tenant_id(), &input_value, &input_schema)
+        .await?;
     let response = request_invocation(
         &state,
         &caller,
@@ -664,13 +842,74 @@ async fn send_message(
             application_deployment_id,
             session_id: Some(id),
             workflow_version_id,
-            input: json!({"parts":input_value}),
+            input: input_value,
             idempotency_key,
             message_parts: Some(&input.parts),
         },
     )
     .await?;
     Ok((StatusCode::ACCEPTED, response))
+}
+
+#[derive(Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+struct ArtifactUploadResponse {
+    artifact_id: Uuid,
+    content_type: String,
+    size_bytes: u64,
+}
+
+#[utoipa::path(post, path = "/gateway/v1/artifacts", request_body(content_type = "multipart/form-data", content = String), responses((status = 200, body = ArtifactUploadResponse)))]
+async fn upload_artifact(
+    State(state): State<GatewayState>,
+    caller: Caller,
+    mut multipart: Multipart,
+) -> GatewayResult<Json<ArtifactUploadResponse>> {
+    let Some(store) = state.artifacts else {
+        return Err(GatewayError::service_unavailable(
+            "ARTIFACT_STORAGE_UNAVAILABLE",
+            "Artifact storage is not configured",
+        ));
+    };
+    let mut content_type = "application/octet-stream".to_owned();
+    let mut content = None;
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(GatewayError::internal)?
+    {
+        if field.name() == Some("file") {
+            if let Some(value) = field.content_type() {
+                content_type = value.to_owned();
+            }
+            let bytes = field.bytes().await.map_err(GatewayError::internal)?;
+            if bytes.len() > 50 * 1024 * 1024 {
+                return Err(GatewayError::bad_request(
+                    "ARTIFACT_TOO_LARGE",
+                    "Artifact uploads are limited to 50 MiB",
+                ));
+            }
+            content = Some(bytes.to_vec());
+            break;
+        }
+    }
+    let content = content.ok_or_else(|| {
+        GatewayError::bad_request("FILE_REQUIRED", "Multipart field 'file' is required")
+    })?;
+    let size_bytes = content.len() as u64;
+    let artifact = store
+        .put(ArtifactWrite {
+            tenant_id: TenantId::from_uuid(caller.tenant_id()),
+            content_type: content_type.clone(),
+            content,
+        })
+        .await
+        .map_err(GatewayError::internal)?;
+    Ok(Json(ArtifactUploadResponse {
+        artifact_id: artifact.id.as_uuid(),
+        content_type,
+        size_bytes,
+    }))
 }
 
 async fn request_invocation(
@@ -732,7 +971,7 @@ async fn request_invocation(
         Err(error) => return Err(error.into()),
     };
     if !inserted {
-        let row=sqlx::query("SELECT i.id,i.application_id,i.session_id,i.execution_id,i.status,i.created_at,i.request_hash,(SELECT JSON_UNQUOTE(JSON_EXTRACT(e.payload_json,'$.errorCode')) FROM invocation_events e WHERE e.tenant_id=i.tenant_id AND e.invocation_id=i.id AND e.event_type='application.output_invalid' ORDER BY e.sequence_number DESC LIMIT 1) error_code,(SELECT JSON_UNQUOTE(JSON_EXTRACT(e.payload_json,'$.errorMessage')) FROM invocation_events e WHERE e.tenant_id=i.tenant_id AND e.invocation_id=i.id AND e.event_type='application.output_invalid' ORDER BY e.sequence_number DESC LIMIT 1) error_message FROM application_invocations i WHERE i.tenant_id=? AND i.application_id=? AND i.caller_type=? AND i.caller_id <=> ? AND i.idempotency_key=?")
+        let row=sqlx::query("SELECT i.id,i.application_id,i.session_id,i.execution_id,i.status,i.created_at,i.request_hash,(SELECT JSON_EXTRACT(x.result_json,'$.error') FROM workflow_executions x WHERE x.tenant_id=i.tenant_id AND x.id=i.execution_id) error FROM application_invocations i WHERE i.tenant_id=? AND i.application_id=? AND i.caller_type=? AND i.caller_id <=> ? AND i.idempotency_key=?")
             .bind(caller.tenant_id()).bind(application_id).bind(caller_type).bind(caller_id).bind(idempotency_key).fetch_one(&mut *tx).await?;
         let existing_hash: String = row.try_get("request_hash")?;
         tx.rollback().await?;
@@ -771,10 +1010,35 @@ async fn request_invocation(
             }
         }
     }
-    let row=sqlx::query("SELECT i.id,i.application_id,i.session_id,i.execution_id,i.status,i.created_at,NULL error_code,NULL error_message FROM application_invocations i WHERE i.id=? AND i.tenant_id=?")
+    let row=sqlx::query("SELECT i.id,i.application_id,i.session_id,i.execution_id,i.status,i.created_at,NULL error FROM application_invocations i WHERE i.id=? AND i.tenant_id=?")
         .bind(invocation_id.as_uuid()).bind(caller.tenant_id()).fetch_one(&mut *tx).await?;
     tx.commit().await?;
     Ok(Json(invocation_from_row(row)?))
+}
+
+async fn wait_for_invocation(
+    state: &GatewayState,
+    caller: &Caller,
+    id: Uuid,
+) -> GatewayResult<(StatusCode, InvocationResponse)> {
+    let mut latest = None;
+    for _ in 0..120 {
+        let row = sqlx::query("SELECT i.id,i.application_id,i.session_id,i.execution_id,i.status,i.created_at,(SELECT JSON_EXTRACT(e.result_json,'$.outputs') FROM workflow_executions e WHERE e.tenant_id=i.tenant_id AND e.id=i.execution_id) outputs,(SELECT JSON_EXTRACT(e.result_json,'$.error') FROM workflow_executions e WHERE e.tenant_id=i.tenant_id AND e.id=i.execution_id) error FROM application_invocations i WHERE i.id=? AND i.tenant_id=?")
+            .bind(id).bind(caller.tenant_id()).fetch_optional(&state.pool).await?.ok_or_else(|| GatewayError::not_found("Invocation"))?;
+        let response = invocation_from_row(row)?;
+        if matches!(
+            response.status.as_str(),
+            "completed" | "failed" | "cancelled"
+        ) {
+            return Ok((StatusCode::OK, response));
+        }
+        latest = Some(response);
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    Ok((
+        StatusCode::ACCEPTED,
+        latest.ok_or_else(|| GatewayError::not_found("Invocation"))?,
+    ))
 }
 
 fn stable_invocation_id(
@@ -806,7 +1070,7 @@ async fn get_invocation(
     caller: Caller,
     Path(id): Path<Uuid>,
 ) -> GatewayResult<Json<InvocationResponse>> {
-    let row=sqlx::query("SELECT i.id,i.application_id,i.session_id,i.execution_id,i.status,i.created_at,(SELECT JSON_UNQUOTE(JSON_EXTRACT(e.payload_json,'$.errorCode')) FROM invocation_events e WHERE e.tenant_id=i.tenant_id AND e.invocation_id=i.id AND e.event_type='application.output_invalid' ORDER BY e.sequence_number DESC LIMIT 1) error_code,(SELECT JSON_UNQUOTE(JSON_EXTRACT(e.payload_json,'$.errorMessage')) FROM invocation_events e WHERE e.tenant_id=i.tenant_id AND e.invocation_id=i.id AND e.event_type='application.output_invalid' ORDER BY e.sequence_number DESC LIMIT 1) error_message FROM application_invocations i WHERE i.id=? AND i.tenant_id=?").bind(id).bind(caller.tenant_id()).fetch_optional(&state.pool).await?.ok_or_else(||GatewayError::not_found("Invocation"))?;
+    let row=sqlx::query("SELECT i.id,i.application_id,i.session_id,i.execution_id,i.status,i.created_at,(SELECT JSON_EXTRACT(x.result_json,'$.outputs') FROM workflow_executions x WHERE x.tenant_id=i.tenant_id AND x.id=i.execution_id) outputs,(SELECT JSON_EXTRACT(x.result_json,'$.error') FROM workflow_executions x WHERE x.tenant_id=i.tenant_id AND x.id=i.execution_id) error FROM application_invocations i WHERE i.id=? AND i.tenant_id=?").bind(id).bind(caller.tenant_id()).fetch_optional(&state.pool).await?.ok_or_else(||GatewayError::not_found("Invocation"))?;
     let response = invocation_from_row(row)?;
     authorize_application(&state, &caller, response.application_id).await?;
     Ok(Json(response))
@@ -1238,7 +1502,7 @@ async fn load_active_application(
     caller: &Caller,
     slug: &str,
 ) -> GatewayResult<sqlx::mysql::MySqlRow> {
-    let row=sqlx::query("SELECT a.id,a.tenant_id,h.deployment_id,ad.workflow_version_id,ad.session_version_policy,ad.input_schema_json FROM applications a JOIN application_deployment_heads h ON h.application_id=a.id AND h.tenant_id=a.tenant_id JOIN application_deployments ad ON ad.id=h.deployment_id WHERE a.slug=? AND a.tenant_id=? AND a.status='active'").bind(slug).bind(caller.tenant_id()).fetch_optional(&state.pool).await?.ok_or_else(||GatewayError::not_found("Application"))?;
+    let row=sqlx::query("SELECT a.id,a.tenant_id,h.deployment_id,ad.workflow_version_id,ad.session_version_policy,wv.definition_json FROM applications a JOIN application_deployment_heads h ON h.application_id=a.id AND h.tenant_id=a.tenant_id JOIN application_deployments ad ON ad.id=h.deployment_id JOIN workflow_versions wv ON wv.id=ad.workflow_version_id WHERE a.slug=? AND a.tenant_id=? AND a.status='active'").bind(slug).bind(caller.tenant_id()).fetch_optional(&state.pool).await?.ok_or_else(||GatewayError::not_found("Application"))?;
     authorize_application(state, caller, row.try_get("id")?).await?;
     Ok(row)
 }
@@ -1299,8 +1563,8 @@ fn invocation_from_row(row: sqlx::mysql::MySqlRow) -> GatewayResult<InvocationRe
         session_id: row.try_get("session_id")?,
         execution_id: row.try_get("execution_id")?,
         status: row.try_get("status")?,
-        error_code: row.try_get("error_code")?,
-        error_message: row.try_get("error_message")?,
+        outputs: row.try_get::<Option<Value>, _>("outputs").unwrap_or(None),
+        error: row.try_get::<Option<Value>, _>("error").unwrap_or(None),
         created_at: row.try_get("created_at")?,
     })
 }
@@ -1325,24 +1589,181 @@ fn validate_response_mode(value: Option<&str>) -> GatewayResult<()> {
         ))
     }
 }
-fn validate_input(input: &Value, schema: Value) -> GatewayResult<()> {
-    if schema.get("type").and_then(Value::as_str) == Some("object") && !input.is_object() {
-        return Err(GatewayError::bad_request(
+fn validate_input(input: &mut Value, schema: &Value) -> GatewayResult<()> {
+    match materialize_and_validate_start_input(input, schema) {
+        Ok(()) => Ok(()),
+        Err(StartInputError::InvalidSchema(message)) => {
+            Err(GatewayError::bad_request("INPUT_SCHEMA_INVALID", message))
+        }
+        Err(StartInputError::InvalidInput(message)) => Err(GatewayError::bad_request(
             "INPUT_SCHEMA_VALIDATION_FAILED",
-            "Input must be an object",
-        ));
+            message,
+        )),
     }
-    if let Some(required) = schema.get("required").and_then(Value::as_array) {
-        for field in required.iter().filter_map(Value::as_str) {
-            if input.get(field).is_none() {
+}
+
+#[derive(Debug)]
+struct ArtifactFieldConstraint {
+    path: String,
+    artifact_ids: Vec<Uuid>,
+    content_types: Vec<String>,
+    max_size_bytes: Option<u64>,
+    max_total_size_bytes: Option<u64>,
+}
+
+async fn validate_artifact_constraints(
+    pool: &MySqlPool,
+    tenant_id: Uuid,
+    input: &Value,
+    schema: &Value,
+) -> GatewayResult<()> {
+    let mut fields = Vec::new();
+    collect_artifact_constraints(input, schema, "inputs", &mut fields)?;
+    for field in fields {
+        let mut total_size = 0_u64;
+        for artifact_id in field.artifact_ids {
+            let row = sqlx::query(
+                "SELECT content_type,size_bytes FROM artifacts WHERE tenant_id=? AND id=?",
+            )
+            .bind(tenant_id)
+            .bind(artifact_id)
+            .fetch_optional(pool)
+            .await?;
+            let Some(row) = row else {
                 return Err(GatewayError::bad_request(
-                    "INPUT_SCHEMA_VALIDATION_FAILED",
-                    format!("Required field {field} is missing"),
+                    "ARTIFACT_NOT_FOUND",
+                    format!("{} references an unavailable Artifact", field.path),
+                ));
+            };
+            let content_type: String = row.try_get("content_type")?;
+            let size_bytes: u64 = row.try_get("size_bytes")?;
+            if !field.content_types.is_empty()
+                && !field
+                    .content_types
+                    .iter()
+                    .any(|allowed| content_type_matches(allowed, &content_type))
+            {
+                return Err(GatewayError::bad_request(
+                    "ARTIFACT_CONTENT_TYPE_NOT_ALLOWED",
+                    format!("{} does not allow content type {content_type}", field.path),
                 ));
             }
+            if field
+                .max_size_bytes
+                .is_some_and(|maximum| size_bytes > maximum)
+            {
+                return Err(GatewayError::bad_request(
+                    "ARTIFACT_TOO_LARGE",
+                    format!(
+                        "{} contains a file larger than its configured limit",
+                        field.path
+                    ),
+                ));
+            }
+            total_size = total_size.saturating_add(size_bytes);
+        }
+        if field
+            .max_total_size_bytes
+            .is_some_and(|maximum| total_size > maximum)
+        {
+            return Err(GatewayError::bad_request(
+                "ARTIFACT_TOTAL_SIZE_EXCEEDED",
+                format!("{} exceeds its configured total size limit", field.path),
+            ));
         }
     }
     Ok(())
+}
+
+fn collect_artifact_constraints(
+    value: &Value,
+    schema: &Value,
+    path: &str,
+    fields: &mut Vec<ArtifactFieldConstraint>,
+) -> GatewayResult<()> {
+    if schema
+        .get("x-agentx-artifact")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        let references = if schema
+            .get("x-agentx-artifact-array")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
+            value.as_array().cloned().unwrap_or_default()
+        } else {
+            vec![value.clone()]
+        };
+        let artifact_ids = references
+            .iter()
+            .map(|reference| {
+                reference
+                    .get("artifactId")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| {
+                        GatewayError::bad_request(
+                            "ARTIFACT_REFERENCE_INVALID",
+                            format!("{path} requires an artifactId"),
+                        )
+                    })?
+                    .parse::<Uuid>()
+                    .map_err(|_| {
+                        GatewayError::bad_request(
+                            "ARTIFACT_REFERENCE_INVALID",
+                            format!("{path} contains an invalid artifactId"),
+                        )
+                    })
+            })
+            .collect::<GatewayResult<Vec<_>>>()?;
+        fields.push(ArtifactFieldConstraint {
+            path: path.to_owned(),
+            artifact_ids,
+            content_types: schema
+                .get("x-agentx-content-types")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect(),
+            max_size_bytes: schema
+                .get("x-agentx-max-size-bytes")
+                .and_then(Value::as_u64),
+            max_total_size_bytes: schema
+                .get("x-agentx-max-total-size-bytes")
+                .and_then(Value::as_u64),
+        });
+        return Ok(());
+    }
+    if let (Some(properties), Some(object)) = (
+        schema.get("properties").and_then(Value::as_object),
+        value.as_object(),
+    ) {
+        for (name, property_schema) in properties {
+            if let Some(property_value) = object.get(name) {
+                collect_artifact_constraints(
+                    property_value,
+                    property_schema,
+                    &format!("{path}.{name}"),
+                    fields,
+                )?;
+            }
+        }
+    }
+    if let (Some(item_schema), Some(items)) = (schema.get("items"), value.as_array()) {
+        for (index, item) in items.iter().enumerate() {
+            collect_artifact_constraints(item, item_schema, &format!("{path}[{index}]"), fields)?;
+        }
+    }
+    Ok(())
+}
+
+fn content_type_matches(allowed: &str, actual: &str) -> bool {
+    allowed == actual
+        || allowed
+            .strip_suffix("/*")
+            .is_some_and(|prefix| actual.starts_with(&format!("{prefix}/")))
 }
 fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
     if left.len() != right.len() {
@@ -1357,24 +1778,55 @@ fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        InvocationResponse, constant_time_eq, last_event_cursor, stable_invocation_id,
-        validate_input,
+        InvocationResponse, collect_artifact_constraints, constant_time_eq, content_type_matches,
+        last_event_cursor, stable_invocation_id, validate_input,
     };
     use axum::http::{HeaderMap, HeaderValue};
     use serde_json::json;
     use uuid::Uuid;
     #[test]
-    fn validates_input_and_constant_time_comparison() {
-        assert!(
-            validate_input(
-                &json!({"name":"ok"}),
-                json!({"type":"object","required":["name"]})
-            )
-            .is_ok()
-        );
-        assert!(validate_input(&json!({}), json!({"type":"object","required":["name"]})).is_err());
+    fn validates_complete_input_schema_and_applies_defaults() {
+        let schema = json!({
+            "type":"object",
+            "required":["name"],
+            "properties":{
+                "name":{"type":"string","minLength":2},
+                "count":{"type":"number","minimum":1,"default":3}
+            },
+            "additionalProperties":false
+        });
+        let mut valid = json!({"name":"ok"});
+        validate_input(&mut valid, &schema).unwrap();
+        assert_eq!(valid["count"], 3);
+        let mut too_short = json!({"name":"x"});
+        assert!(validate_input(&mut too_short, &schema).is_err());
+        let mut undeclared = json!({"name":"ok","extra":true});
+        assert!(validate_input(&mut undeclared, &schema).is_err());
         assert!(constant_time_eq(b"same", b"same"));
         assert!(!constant_time_eq(b"same", b"diff"));
+    }
+
+    #[test]
+    fn discovers_nested_artifact_constraints_and_matches_mime_wildcards() {
+        let schema = json!({"type":"object","properties":{"attachments":{
+            "type":"array",
+            "items":{"type":"object","required":["artifactId"]},
+            "x-agentx-artifact":true,
+            "x-agentx-artifact-array":true,
+            "x-agentx-content-types":["application/pdf","image/*"],
+            "x-agentx-max-size-bytes":1024,
+            "x-agentx-max-total-size-bytes":2048
+        }}});
+        let first = Uuid::now_v7();
+        let second = Uuid::now_v7();
+        let input = json!({"attachments":[{"artifactId":first},{"artifactId":second}]});
+        let mut fields = Vec::new();
+        collect_artifact_constraints(&input, &schema, "inputs", &mut fields).unwrap();
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].artifact_ids, vec![first, second]);
+        assert_eq!(fields[0].max_total_size_bytes, Some(2048));
+        assert!(content_type_matches("image/*", "image/png"));
+        assert!(!content_type_matches("image/*", "application/pdf"));
     }
 
     #[test]
@@ -1425,12 +1877,15 @@ mod tests {
             session_id: None,
             execution_id: Some(Uuid::nil()),
             status: "failed".into(),
-            error_code: Some("APPLICATION_PRIMARY_OUTPUT_NOT_REACHED".into()),
-            error_message: Some("Primary output was not reached".into()),
+            outputs: None,
+            error: Some(json!({"primaryError":{"code":"WORKFLOW_FAILED","message":"Workflow execution failed"},"errors":[],"outputs":{}})),
             created_at: time::OffsetDateTime::UNIX_EPOCH,
         })
         .unwrap();
-        assert_eq!(value["errorCode"], "APPLICATION_PRIMARY_OUTPUT_NOT_REACHED");
-        assert_eq!(value["errorMessage"], "Primary output was not reached");
+        assert_eq!(value["error"]["primaryError"]["code"], "WORKFLOW_FAILED");
+        assert_eq!(
+            value["error"]["primaryError"]["message"],
+            "Workflow execution failed"
+        );
     }
 }

@@ -1,5 +1,6 @@
-import { lazy, Suspense, useEffect, useRef } from 'react'
+import { lazy, Suspense, forwardRef, useEffect, useImperativeHandle, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
+import type { OnMount } from '@monaco-editor/react'
 
 import { Textarea } from '../../../shared/ui/textarea'
 
@@ -7,19 +8,31 @@ const Monaco = lazy(() => import('@monaco-editor/react'))
 let expressionLanguageRegistered = false
 
 export type EditorCompletion = { label: string; insertText: string; detail?: string }
+export type CodeEditorHandle = { insertText: (value: string) => void }
 
-export function CodeEditor({ value, language = 'plaintext', height = '150px', completionItems = [], readOnly = false, onChange }: { value: string; language?: string; height?: string; completionItems?: EditorCompletion[]; readOnly?: boolean; onChange: (value: string) => void }) {
+export const CodeEditor = forwardRef<CodeEditorHandle, { value: string; language?: string; height?: string; completionItems?: EditorCompletion[]; readOnly?: boolean; onChange: (value: string) => void }>(function CodeEditor({ value, language = 'plaintext', height = '150px', completionItems = [], readOnly = false, onChange }, ref) {
   const { t } = useTranslation()
   const theme = typeof document !== 'undefined' && document.documentElement.classList.contains('dark') ? 'vs-dark' : 'light'
   const disposable = useRef<{ dispose: () => void }>()
+  const editor = useRef<Parameters<OnMount>[0]>()
   useEffect(() => () => disposable.current?.dispose(), [])
+  useImperativeHandle(ref, () => ({ insertText: (text) => {
+    const instance = editor.current
+    const selection = instance?.getSelection()
+    if (!instance || !selection) return onChange(`${value}${text}`)
+    instance.pushUndoStop()
+    instance.executeEdits('agentx-reference-picker', [{ range: selection, text, forceMoveMarkers: true }])
+    instance.pushUndoStop()
+    instance.focus()
+  } }), [onChange, value])
   return <Suspense fallback={<div className="border border-border bg-muted/20 p-1"><Textarea aria-label={t('studio.editorFallback')} className="resize-none border-0 bg-transparent font-mono text-xs focus-visible:ring-0" onChange={(event) => onChange(event.target.value)} style={{ height }} value={value} /></div>}><Monaco beforeMount={(monaco) => {
     if (language === 'agentx-expression' && !expressionLanguageRegistered) {
       monaco.languages.register({ id: 'agentx-expression' })
       monaco.languages.setMonarchTokensProvider('agentx-expression', { tokenizer: { root: [[/\$[a-zA-Z][\w]*/, 'variable'], [/'[^']*'|"[^"]*"/, 'string'], [/\b\d+(?:\.\d+)?\b/, 'number'], [/[a-zA-Z_]\w*(?=\()/, 'function']] } })
       expressionLanguageRegistered = true
     }
-  }} height={height} language={language} onChange={(next) => onChange(next ?? '')} onMount={(_, monaco) => {
+  }} height={height} language={language} onChange={(next) => onChange(next ?? '')} onMount={(mountedEditor, monaco) => {
+    editor.current = mountedEditor
     disposable.current?.dispose()
     if (!completionItems.length) return
     const provider: Parameters<typeof monaco.languages.registerCompletionItemProvider>[1] = {
@@ -31,6 +44,6 @@ export function CodeEditor({ value, language = 'plaintext', height = '150px', co
     }
     disposable.current = monaco.languages.registerCompletionItemProvider(language, provider)
   }} options={{ minimap: { enabled: false }, fontSize: 12, lineNumbers: language === 'json' || language === 'plaintext' || language === 'agentx-expression' ? 'off' : 'on', readOnly, scrollBeyondLastLine: false, wordWrap: 'on' }} theme={theme} value={value} /></Suspense>
-}
+})
 
 type EditorPosition = { lineNumber: number; column: number }

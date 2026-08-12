@@ -23,6 +23,7 @@ import { useTheme } from '../../app/providers/theme-provider'
 import { useAuth } from '../../app/providers/auth-provider'
 import { cn } from '../../shared/lib/cn'
 import { roleLabel } from '../../shared/lib/iam-labels'
+import { useLocaleFormat } from '../../shared/lib/locale-format'
 import type { SupportedLocale, ThemePreference } from '../../shared/types/app'
 import { Avatar } from '../../shared/ui/avatar'
 import { Button } from '../../shared/ui/button'
@@ -46,13 +47,14 @@ import type { NotificationInbox } from '../../shared/api/types'
 const sidebarStorageKey = 'agentx.sidebar.collapsed'
 
 function pathTitleKey(pathname: string) {
-  if (pathname.startsWith('/workflows/')) return 'nav.workflows'
+  if (pathname.startsWith('/workflows/')) return 'navigation.workflows'
   for (const item of navigationItems) if (item.path !== '/' && pathname.startsWith(`${item.path}/`)) return item.labelKey
-  return navigationItems.find((item) => item.path === pathname)?.labelKey ?? 'nav.dashboard'
+  return navigationItems.find((item) => item.path === pathname)?.labelKey ?? 'navigation.dashboard'
 }
 
 export function EnterpriseLayout() {
   const { t, i18n } = useTranslation()
+  const { formatDateTime } = useLocaleFormat()
   const { preference, resolvedTheme, setPreference } = useTheme()
   const { showToast } = useToast()
   const { user, logout, hasPermission } = useAuth()
@@ -64,7 +66,7 @@ export function EnterpriseLayout() {
   const [mobileOpen, setMobileOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
   const [query, setQuery] = useState('')
-  const tenantName = user?.companyName ?? t('app.name')
+  const tenantName = user?.companyName ?? t('navigation.brand.name')
   const initials = (user?.displayName ?? user?.username ?? 'AX').slice(0, 2).toUpperCase()
   const notifications = useQuery({ enabled: hasPermission('notification:view'), queryKey: ['notifications'], queryFn: () => apiRequest<NotificationInbox>('/notifications'), refetchInterval: 30_000 })
   const readNotification = useMutation({ mutationFn: (id: string) => apiRequest(`/notifications/${id}/read`, { method: 'POST' }), onSuccess: async () => queryClient.invalidateQueries({ queryKey: ['notifications'] }) })
@@ -115,7 +117,7 @@ export function EnterpriseLayout() {
       <aside className={cn('fixed inset-y-0 left-0 z-50 flex min-h-0 w-[248px] min-w-0 flex-col border-r border-border bg-sidebar transition-transform md:static md:z-auto md:w-auto md:translate-x-0', mobileOpen ? 'translate-x-0' : '-translate-x-full')}>
         <div className={cn('flex h-18 items-center gap-3 px-5', collapsed && !mobileOpen && 'justify-center px-0')}>
           <div className="grid size-9 shrink-0 place-items-center rounded-xl bg-primary text-primary-foreground shadow-sm"><Bot className="size-5" /></div>
-          {showSidebarLabels && <div><strong className="block text-[15px] tracking-tight">{t('app.name')}</strong><span className="text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">{t('app.subtitle')}</span></div>}
+          {showSidebarLabels && <div><strong className="block text-[15px] tracking-tight">{t('navigation.brand.name')}</strong><span className="text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">{t('navigation.brand.subtitle')}</span></div>}
         </div>
 
         <nav className="mt-2 flex-1 overflow-y-auto px-2.5 pb-4">
@@ -136,34 +138,34 @@ export function EnterpriseLayout() {
         </nav>
 
       </aside>
-      {mobileOpen && <button aria-label="关闭导航" className="fixed inset-0 z-40 bg-background/70 md:hidden" onClick={() => setMobileOpen(false)} />}
+      {mobileOpen && <button aria-label={t('navigation.header.close')} className="fixed inset-0 z-40 bg-background/70 md:hidden" onClick={() => setMobileOpen(false)} />}
 
       <div className="flex min-h-0 min-w-0 flex-col">
         <header className="flex h-16 shrink-0 items-center gap-2 border-b border-border bg-surface/95 px-3 sm:gap-3 sm:px-6">
-          <Button aria-label="打开导航" className="md:hidden" onClick={() => setMobileOpen(true)} size="icon" variant="ghost"><Menu className="size-4" /></Button>
-          <Button aria-label={t(collapsed ? 'header.expand' : 'header.collapse')} className="hidden md:inline-flex" onClick={toggleSidebar} size="icon" variant="ghost">{collapsed ? <Menu className="size-4" /> : <ChevronLeft className="size-4" />}</Button>
+          <Button aria-label={t('navigation.header.open')} className="md:hidden" onClick={() => setMobileOpen(true)} size="icon" variant="ghost"><Menu className="size-4" /></Button>
+          <Button aria-label={t(collapsed ? 'navigation.header.expand' : 'navigation.header.collapse')} className="hidden md:inline-flex" onClick={toggleSidebar} size="icon" variant="ghost">{collapsed ? <Menu className="size-4" /> : <ChevronLeft className="size-4" />}</Button>
           <div className="min-w-0 truncate text-xs text-muted-foreground"><span className="hidden sm:inline">{tenantName}<span className="mx-2">/</span></span><strong className="text-foreground">{t(pathTitleKey(location.pathname))}</strong></div>
           <div className="flex-1" />
-          <button className="hidden h-9 w-80 items-center gap-2 rounded-lg border border-border bg-muted/50 px-3 text-xs text-muted-foreground outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-primary/25 xl:flex" onClick={() => setSearchOpen(true)}><Search className="size-4" /><span className="truncate">{t('header.searchPlaceholder')}</span><kbd className="ml-auto text-[10px]">⌘ K</kbd></button>
+          <button className="hidden h-9 w-80 items-center gap-2 rounded-lg border border-border bg-muted/50 px-3 text-xs text-muted-foreground outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-primary/25 xl:flex" onClick={() => setSearchOpen(true)}><Search className="size-4" /><span className="truncate">{t('navigation.header.searchPlaceholder')}</span><kbd className="ml-auto text-[10px]">⌘ K</kbd></button>
 
           <DropdownMenu>
             <DropdownMenuTrigger asChild><Button aria-label={t('common.language')} size="icon" variant="ghost"><Globe2 className="size-4" /></Button></DropdownMenuTrigger>
-            <DropdownMenuContent align="end"><DropdownMenuLabel>{t('common.language')}</DropdownMenuLabel><DropdownMenuRadioGroup onValueChange={(value) => void i18n.changeLanguage(value as SupportedLocale)} value={i18n.resolvedLanguage === 'en-US' ? 'en-US' : 'zh-CN'}><DropdownMenuRadioItem value="zh-CN">{t('header.chinese')}</DropdownMenuRadioItem><DropdownMenuRadioItem value="en-US">{t('header.english')}</DropdownMenuRadioItem></DropdownMenuRadioGroup></DropdownMenuContent>
+            <DropdownMenuContent align="end"><DropdownMenuLabel>{t('common.language')}</DropdownMenuLabel><DropdownMenuRadioGroup onValueChange={(value) => void i18n.changeLanguage(value as SupportedLocale)} value={i18n.resolvedLanguage === 'en-US' ? 'en-US' : 'zh-CN'}><DropdownMenuRadioItem value="zh-CN">{t('navigation.header.chinese')}</DropdownMenuRadioItem><DropdownMenuRadioItem value="en-US">{t('navigation.header.english')}</DropdownMenuRadioItem></DropdownMenuRadioGroup></DropdownMenuContent>
           </DropdownMenu>
 
           <DropdownMenu>
             <DropdownMenuTrigger asChild><Button aria-label={t('common.theme')} size="icon" variant="ghost">{resolvedTheme === 'dark' ? <Moon className="size-4" /> : <Sun className="size-4" />}</Button></DropdownMenuTrigger>
-            <DropdownMenuContent align="end"><DropdownMenuLabel>{t('common.theme')}</DropdownMenuLabel><DropdownMenuRadioGroup onValueChange={(value) => setPreference(value as ThemePreference)} value={preference}><DropdownMenuRadioItem value="system"><Monitor className="size-4" />{t('header.systemTheme')}</DropdownMenuRadioItem><DropdownMenuRadioItem value="light"><Sun className="size-4" />{t('header.lightTheme')}</DropdownMenuRadioItem><DropdownMenuRadioItem value="dark"><Moon className="size-4" />{t('header.darkTheme')}</DropdownMenuRadioItem></DropdownMenuRadioGroup></DropdownMenuContent>
+            <DropdownMenuContent align="end"><DropdownMenuLabel>{t('common.theme')}</DropdownMenuLabel><DropdownMenuRadioGroup onValueChange={(value) => setPreference(value as ThemePreference)} value={preference}><DropdownMenuRadioItem value="system"><Monitor className="size-4" />{t('navigation.header.systemTheme')}</DropdownMenuRadioItem><DropdownMenuRadioItem value="light"><Sun className="size-4" />{t('navigation.header.lightTheme')}</DropdownMenuRadioItem><DropdownMenuRadioItem value="dark"><Moon className="size-4" />{t('navigation.header.darkTheme')}</DropdownMenuRadioItem></DropdownMenuRadioGroup></DropdownMenuContent>
           </DropdownMenu>
 
           <DropdownMenu>
-            <DropdownMenuTrigger asChild><Button aria-label={t('common.notifications')} className="relative" size="icon" variant="ghost"><Bell className="size-4" />{Boolean(notifications.data?.unreadCount) && <span className="absolute right-2 top-2 size-1.5 rounded-full bg-danger ring-2 ring-surface" />}</Button></DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-96"><div className="flex items-center justify-between px-2.5 py-2"><strong className="text-sm">{t('common.notifications')}</strong><span className="text-[10px] text-muted-foreground">{t('header.unread', { count: notifications.data?.unreadCount ?? 0 })}</span></div><DropdownMenuSeparator />{notifications.data?.items.slice(0, 5).map((item) => <DropdownMenuItem className="items-start py-3" key={item.id} onSelect={() => openNotification(item.id, item.targetPath)}><span className={cn('mt-1 size-2 shrink-0 rounded-full', item.read && 'bg-border', !item.read && item.tone === 'warning' && 'bg-warning', !item.read && item.tone === 'success' && 'bg-success', !item.read && item.tone === 'danger' && 'bg-danger', !item.read && item.tone === 'primary' && 'bg-primary')} /><span><strong className="block text-xs">{t(item.titleKey, item.arguments as Record<string, string>)}</strong><span className="mt-1 block text-[10px] leading-4 text-muted-foreground">{t(item.bodyKey, item.arguments as Record<string, string>)}</span><span className="mt-1.5 block text-[10px] text-muted-foreground">{new Date(item.createdAt).toLocaleString()}</span></span></DropdownMenuItem>)}{!notifications.data?.items.length && <div className="px-4 py-8 text-center text-xs text-muted-foreground">{t('header.noNotifications')}</div>}<DropdownMenuSeparator /><DropdownMenuItem onSelect={() => navigate('/notifications')}>{t('common.viewAll')}</DropdownMenuItem></DropdownMenuContent>
+            <DropdownMenuTrigger asChild><Button aria-label={t('navigation.notifications')} className="relative" size="icon" variant="ghost"><Bell className="size-4" />{Boolean(notifications.data?.unreadCount) && <span className="absolute right-2 top-2 size-1.5 rounded-full bg-danger ring-2 ring-surface" />}</Button></DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-96"><div className="flex items-center justify-between px-2.5 py-2"><strong className="text-sm">{t('navigation.notifications')}</strong><span className="text-[10px] text-muted-foreground">{t('navigation.header.unread', { count: notifications.data?.unreadCount ?? 0 })}</span></div><DropdownMenuSeparator />{notifications.data?.items.slice(0, 5).map((item) => <DropdownMenuItem className="items-start py-3" key={item.id} onSelect={() => openNotification(item.id, item.targetPath)}><span className={cn('mt-1 size-2 shrink-0 rounded-full', item.read && 'bg-border', !item.read && item.tone === 'warning' && 'bg-warning', !item.read && item.tone === 'success' && 'bg-success', !item.read && item.tone === 'danger' && 'bg-danger', !item.read && item.tone === 'primary' && 'bg-primary')} /><span><strong className="block text-xs">{t(item.titleKey, item.arguments as Record<string, string>)}</strong><span className="mt-1 block text-[10px] leading-4 text-muted-foreground">{t(item.bodyKey, item.arguments as Record<string, string>)}</span><span className="mt-1.5 block text-[10px] text-muted-foreground">{formatDateTime(item.createdAt)}</span></span></DropdownMenuItem>)}{!notifications.data?.items.length && <div className="px-4 py-8 text-center text-xs text-muted-foreground">{t('navigation.header.noNotifications')}</div>}<DropdownMenuSeparator /><DropdownMenuItem onSelect={() => navigate('/notifications')}>{t('common.viewAll')}</DropdownMenuItem></DropdownMenuContent>
           </DropdownMenu>
 
           <DropdownMenu>
-            <DropdownMenuTrigger asChild><button aria-label={t('header.profile')} className="rounded-full outline-none focus-visible:ring-2 focus-visible:ring-primary/30"><Avatar initials={initials} tone="dark" /></button></DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-72"><div className="flex items-center gap-3 px-2.5 py-3"><Avatar initials={initials} tone="dark" /><span><strong className="block text-sm">{user?.displayName}</strong><span className="text-[10px] text-muted-foreground">@{user?.username}</span></span></div><DropdownMenuSeparator /><dl className="grid grid-cols-[72px_1fr] gap-x-3 gap-y-2 px-3 py-2.5 text-[11px]"><dt className="text-muted-foreground">{t('header.company')}</dt><dd className="truncate font-medium">{user?.companyName}</dd><dt className="text-muted-foreground">{t('header.department')}</dt><dd className="truncate font-medium">{user?.departmentName}</dd><dt className="text-muted-foreground">{t('header.roles')}</dt><dd className="flex flex-wrap gap-1">{user?.roles.map((role) => <span className="rounded-md bg-primary/10 px-1.5 py-0.5 font-medium text-primary" key={role}>{roleLabel(t, role)}</span>)}</dd></dl><DropdownMenuSeparator /><DropdownMenuItem onSelect={() => showToast(t('common.comingSoon'))}><UserRound className="size-4" />{t('header.profile')}</DropdownMenuItem><DropdownMenuItem onSelect={() => showToast(t('common.comingSoon'))}><Settings className="size-4" />{t('header.preferences')}</DropdownMenuItem><DropdownMenuSeparator /><DropdownMenuItem className="text-danger" onSelect={() => void logout()}><LogOut className="size-4" />{t('header.logout')}</DropdownMenuItem></DropdownMenuContent>
+            <DropdownMenuTrigger asChild><button aria-label={t('navigation.header.profile')} className="rounded-full outline-none focus-visible:ring-2 focus-visible:ring-primary/30"><Avatar initials={initials} tone="dark" /></button></DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-72"><div className="flex items-center gap-3 px-2.5 py-3"><Avatar initials={initials} tone="dark" /><span><strong className="block text-sm">{user?.displayName}</strong><span className="text-[10px] text-muted-foreground">@{user?.username}</span></span></div><DropdownMenuSeparator /><dl className="grid grid-cols-[72px_1fr] gap-x-3 gap-y-2 px-3 py-2.5 text-[11px]"><dt className="text-muted-foreground">{t('navigation.header.company')}</dt><dd className="truncate font-medium">{user?.companyName}</dd><dt className="text-muted-foreground">{t('navigation.header.department')}</dt><dd className="truncate font-medium">{user?.departmentName}</dd><dt className="text-muted-foreground">{t('navigation.header.roles')}</dt><dd className="flex flex-wrap gap-1">{user?.roles.map((role) => <span className="rounded-md bg-primary/10 px-1.5 py-0.5 font-medium text-primary" key={role}>{roleLabel(t, role)}</span>)}</dd></dl><DropdownMenuSeparator /><DropdownMenuItem onSelect={() => showToast(t('common.comingSoon'))}><UserRound className="size-4" />{t('navigation.header.profile')}</DropdownMenuItem><DropdownMenuItem onSelect={() => showToast(t('common.comingSoon'))}><Settings className="size-4" />{t('navigation.header.preferences')}</DropdownMenuItem><DropdownMenuSeparator /><DropdownMenuItem className="text-danger" onSelect={() => void logout()}><LogOut className="size-4" />{t('navigation.header.logout')}</DropdownMenuItem></DropdownMenuContent>
           </DropdownMenu>
         </header>
 
@@ -171,8 +173,8 @@ export function EnterpriseLayout() {
       </div>
 
       <Dialog onOpenChange={setSearchOpen} open={searchOpen}>
-        <DialogContent description={t('header.searchHint')} title={t('common.search')}>
-          <div className="flex h-14 items-center gap-3 border-b border-border px-4"><Search className="size-4 text-muted-foreground" /><Input autoFocus className="h-auto border-0 bg-transparent px-0 shadow-none focus:ring-0" onChange={(event) => setQuery(event.target.value)} placeholder={t('header.searchHint')} value={query} /></div>
+        <DialogContent description={t('navigation.header.searchHint')} title={t('common.search')}>
+          <div className="flex h-14 items-center gap-3 border-b border-border px-4"><Search className="size-4 text-muted-foreground" /><Input autoFocus className="h-auto border-0 bg-transparent px-0 shadow-none focus:ring-0" onChange={(event) => setQuery(event.target.value)} placeholder={t('navigation.header.searchHint')} value={query} /></div>
           <div className="max-h-96 overflow-y-auto p-2">{searchResults.length === 0 ? <div className="p-8 text-center text-xs text-muted-foreground">{t('common.noResults')}</div> : searchResults.map((item) => { const Icon = item.icon; return <button className="flex h-11 w-full items-center gap-3 rounded-lg px-3 text-left text-xs text-muted-foreground hover:bg-muted hover:text-foreground" key={item.path} onClick={() => navigateFromMenu(item.path)}><Icon className="size-4 text-primary" /><span className="flex-1">{t(item.labelKey)}</span><Check className={cn('size-3.5', location.pathname === item.path ? 'text-success' : 'opacity-0')} /></button> })}</div>
         </DialogContent>
       </Dialog>

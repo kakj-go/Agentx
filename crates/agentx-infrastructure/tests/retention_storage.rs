@@ -274,7 +274,7 @@ async fn verify_trace_failure_recovery(pool: &MySqlPool) {
         .execute(pool)
         .await
         .expect("trace workflow");
-    sqlx::query("INSERT INTO workflow_versions(id,tenant_id,workflow_id,version_number,source_revision,schema_version,definition_json,content_hash,created_by) VALUES(?,?,?,1,1,'3.0',JSON_OBJECT(),'trace-retention',?)")
+    sqlx::query("INSERT INTO workflow_versions(id,tenant_id,workflow_id,version_number,source_revision,schema_version,definition_json,content_hash,created_by) VALUES(?,?,?,1,1,'4.0',JSON_OBJECT('schemaVersion','4.0','start',JSON_OBJECT('inputs',JSON_OBJECT(),'contexts',JSON_OBJECT()),'nodes',JSON_ARRAY(),'connections',JSON_ARRAY(),'end',JSON_OBJECT('outputs',JSON_OBJECT())),'trace-retention',?)")
         .bind(version)
         .bind(tenant)
         .bind(workflow)
@@ -283,7 +283,7 @@ async fn verify_trace_failure_recovery(pool: &MySqlPool) {
         .await
         .expect("trace workflow version");
     for execution in [unprotected_execution, protected_execution] {
-        sqlx::query("INSERT INTO workflow_executions(id,tenant_id,workflow_id,workflow_version_id,trace_id,trigger_type,status,started_at,ended_at) VALUES(?,?,?,?,?,'manual','succeeded',DATE_SUB(CURRENT_TIMESTAMP(6),INTERVAL 10 DAY),DATE_SUB(CURRENT_TIMESTAMP(6),INTERVAL 10 DAY))")
+        sqlx::query("INSERT INTO workflow_executions(id,tenant_id,workflow_id,workflow_version_id,trace_id,trigger_type,status,input_json,context_json,context_base_json,context_version,session_context_version,started_at,ended_at) VALUES(?,?,?,?,?,'manual','succeeded',JSON_OBJECT(),JSON_OBJECT(),JSON_OBJECT(),0,0,DATE_SUB(CURRENT_TIMESTAMP(6),INTERVAL 10 DAY),DATE_SUB(CURRENT_TIMESTAMP(6),INTERVAL 10 DAY))")
             .bind(execution)
             .bind(tenant)
             .bind(workflow)
@@ -393,7 +393,7 @@ async fn verify_message_and_evaluation_cleanup(pool: &MySqlPool) {
         .execute(pool)
         .await
         .expect("cleanup workflow");
-    sqlx::query("INSERT INTO workflow_versions(id,tenant_id,workflow_id,version_number,source_revision,schema_version,definition_json,content_hash,created_by) VALUES(?,?,?,1,1,'3.0',JSON_OBJECT(),'cleanup-version',?)")
+    sqlx::query("INSERT INTO workflow_versions(id,tenant_id,workflow_id,version_number,source_revision,schema_version,definition_json,content_hash,created_by) VALUES(?,?,?,1,1,'4.0',JSON_OBJECT('schemaVersion','4.0','start',JSON_OBJECT('inputs',JSON_OBJECT(),'contexts',JSON_OBJECT()),'nodes',JSON_ARRAY(),'connections',JSON_ARRAY(),'end',JSON_OBJECT('outputs',JSON_OBJECT())),'cleanup-version',?)")
         .bind(workflow_version)
         .bind(tenant)
         .bind(workflow)
@@ -423,7 +423,7 @@ async fn verify_message_and_evaluation_cleanup(pool: &MySqlPool) {
         .execute(pool)
         .await
         .expect("cleanup application");
-    sqlx::query("INSERT INTO application_deployments(id,tenant_id,application_id,workflow_version_id,environment_id,sequence_number,input_schema_json,output_schema_json,created_by) VALUES(?,?,?,?,?,1,JSON_OBJECT(),JSON_OBJECT(),?)")
+    sqlx::query("INSERT INTO application_deployments(id,tenant_id,application_id,workflow_version_id,environment_id,sequence_number,created_by) VALUES(?,?,?,?,?,1,?)")
         .bind(deployment)
         .bind(tenant)
         .bind(application)

@@ -11,7 +11,7 @@ M7 完成代表 Agentx 首期 MVP/内部生产版基本完成，不代表通用�
 ## 2. 进入条件
 
 - 阶段 01～11 全部为 `done`，M6 的 STU-001～016 有独立验收证据。
-- Definition 3.0、Node Catalog、Version/Draft Revision Execution Source、Runtime Event 和错误码已冻结。
+- Definition 4.0、Node Catalog、Version/Draft Revision Execution Source、Runtime Event 和错误码已冻结。
 - Studio 已能通过 Draft Revision Snapshot 完成 Full/Single/To/From 调试、Trace、Version 和发布。
 - M7 开始时建立所有 `RUNTIME_UNAVAILABLE`、Fake Adapter、未消费 Outbox、孤立页面和业务 Mock 的清单，逐项映射到 INT-001～014；清单外不得临时扩大产品范围。
 - AGT-010 的生产强化保持“暂不在 M5 重试”，由 INT-006/010/011/014 唯一承接。
@@ -76,7 +76,7 @@ M7 只建设现有领域投影：
 
 ### 3.5 发布后的兼容边界
 
-项目当前尚未发布，M6 的 Definition 3.0 和 Execution Source 改造可一次性清理开发数据，不维护历史双读。M7 生成首个 Release Candidate 后开始执行正式兼容规则：
+项目当前尚未发布，M6 的 Definition 4.0 和 Execution Source 改造可一次性清理开发数据，不维护 3.0 及更早版本双读。M7 生成首个 Release Candidate 后开始执行正式兼容规则：
 
 - Workflow Version、Execution Snapshot、Dataset Version 和资源版本不可重写。
 - Migration 支持 expand/migrate/contract 和滚动部署；已执行 Migration 不随应用回滚。

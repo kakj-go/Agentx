@@ -10,7 +10,6 @@ type CanvasRenderState = {
   runtimeStatuses: Map<string, string>
   bindingSummaries: Map<string, NodeBindingSummary[]>
   occupiedHandlesByNodeId: Map<string, string>
-  primaryOutputNodeId?: string
   zoomTier: CanvasZoomTier
   onQuickAdd?: (nodeId: string, handleId: string, mode: 'output' | 'binding') => void
   onSourceHover?: (nodeId: string, handleId: string, active: boolean) => void

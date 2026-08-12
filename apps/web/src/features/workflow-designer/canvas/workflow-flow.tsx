@@ -1,6 +1,5 @@
-import { Background, BackgroundVariant, Controls, MarkerType, MiniMap, ReactFlow, type Connection, type NodeChange, type ReactFlowInstance } from '@xyflow/react'
+import { Background, BackgroundVariant, Controls, MarkerType, MiniMap, ReactFlow, type AriaLabelConfig, type Connection, type NodeChange, type ReactFlowInstance } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { Plus, Search } from 'lucide-react'
 import { forwardRef, useCallback, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type DragEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
@@ -9,6 +8,7 @@ import type { CanvasNode, ConnectionInteractionState, EditorDocument, NodeManife
 import { StudioEdgeComponent } from '../edges/studio-edge'
 import { AnnotationNode, GroupNode } from './editor-overlays'
 import { AttachmentNode, ManifestNode } from '../nodes/manifest-node'
+import { BoundaryNode } from '../nodes/boundary-node'
 import { canvasNodeMetrics, canvasNodeRole } from '../nodes/node-appearance'
 import { canvasZoomTier, syncCanvasRenderState } from '../store/canvas-render-store'
 import { useEditorStore } from '../store/editor-store'
@@ -25,9 +25,8 @@ type FlowProps = {
   onDropAction: (manifest: NodeManifest, position: { x: number; y: number }) => void
   onDropBinding: (resourceType: ResourceType, role: string, position: { x: number; y: number }) => void
   onNodeOpen?: (nodeId: string) => void
+  onBoundaryOpen?: (boundary: 'start' | 'end') => void
   onPaneClear?: () => void
-  onSearchNodes?: (source?: { nodeId: string; handleId: string; mode: 'output' | 'binding' }) => void
-  onAddTrigger?: () => void
 }
 
 export type WorkflowFlowHandle = {
@@ -35,23 +34,23 @@ export type WorkflowFlowHandle = {
   getViewportBounds: () => { x: number; y: number; width: number; height: number } | undefined
 }
 
-const NODE_TYPES = { manifest: ManifestNode, attachment: AttachmentNode, annotation: AnnotationNode, group: GroupNode }
+const NODE_TYPES = { manifest: ManifestNode, attachment: AttachmentNode, annotation: AnnotationNode, group: GroupNode, boundary: BoundaryNode }
 const EDGE_TYPES = { studio: StudioEdgeComponent }
 
-export const WorkflowFlow = forwardRef<WorkflowFlowHandle, FlowProps>(function WorkflowFlow({ manifests, runtimeStatuses, onDropAction, onDropBinding, onNodeOpen, onPaneClear, onSearchNodes, onAddTrigger }, ref) {
+export const WorkflowFlow = forwardRef<WorkflowFlowHandle, FlowProps>(function WorkflowFlow({ manifests, runtimeStatuses, onDropAction, onDropBinding, onNodeOpen, onBoundaryOpen, onPaneClear }, ref) {
   const { t } = useTranslation()
   const instance = useRef<ReactFlowInstance<CanvasNode, StudioEdge>>()
   const [connectionState, setConnectionState] = useState<ConnectionInteractionState>({ status: 'idle' })
   const editor = useEditorStore(useShallow((state) => ({
-    nodes: state.nodes, edges: state.edges, annotations: state.annotations, groups: state.groups, viewport: state.viewport,
-    graphRevision: state.graphRevision, primaryOutputNodeId: state.settings.primaryOutputNodeId,
+    nodes: state.nodes, edges: state.edges, annotations: state.annotations, groups: state.groups, viewport: state.viewport, boundaryLayouts: state.boundaryLayouts,
+    graphRevision: state.graphRevision,
     onEdgesChange: state.onEdgesChange, connect: state.connect, select: state.select, setViewport: state.setViewport,
     reconnectEdge: state.reconnectEdge, edgeReconnectRequest: state.edgeReconnectRequest, clearEdgeReconnectRequest: state.clearEdgeReconnectRequest,
     beginEdit: state.beginEdit, commitEdit: state.commitEdit, onNodesChange: state.onNodesChange,
     updateAnnotationFrame: state.updateAnnotationFrame, removeAnnotation: state.removeAnnotation, updateAnnotation: state.updateAnnotation,
-    moveGroup: state.moveGroup, removeGroup: state.removeGroup, toggleGroup: state.toggleGroup,
+    moveGroup: state.moveGroup, removeGroup: state.removeGroup, toggleGroup: state.toggleGroup, updateBoundaryPosition: state.updateBoundaryPosition,
   })))
-  const { nodes, edges, annotations, groups, viewport, onEdgesChange, connect, select, setViewport, commitEdit } = editor
+  const { nodes, edges, annotations, groups, viewport, boundaryLayouts, onEdgesChange, connect, select, setViewport, commitEdit } = editor
   const annotationActions = useMemo(() => ({
     updateAnnotation: editor.updateAnnotation,
     removeAnnotation: editor.removeAnnotation,
@@ -70,9 +69,10 @@ export const WorkflowFlow = forwardRef<WorkflowFlowHandle, FlowProps>(function W
   const renderedNodeCache = useRef(new Map<string, { source: StudioNode; manifest?: NodeManifest; value: StudioNode }>())
   const flowNodes = useMemo<CanvasNode[]>(() => [
     ...materializeNodes(nodes.filter((node) => !collapsedByMember.has(node.id)), manifests, renderedNodeCache.current),
+    ...boundaryNodes(boundaryLayouts),
     ...annotations.map((annotation) => annotationNode(annotation, annotationActions)),
     ...groupViews.map((view) => groupNode(view, groupActions)),
-  ], [annotationActions, annotations, collapsedByMember, groupActions, groupViews, manifests, nodes])
+  ], [annotationActions, annotations, boundaryLayouts, collapsedByMember, groupActions, groupViews, manifests, nodes])
   const renderedEdgeCache = useRef(new Map<string, { source: StudioEdge; sourceStatus?: string; targetStatus?: string; value: StudioEdge }>())
   const flowEdges = useMemo(() => materializeRuntimeEdges(proxyEdges(edges, collapsedByMember), runtimeStatuses, renderedEdgeCache.current), [collapsedByMember, edges, runtimeStatuses])
   const groupViewMap = useMemo(() => new Map(groupViews.map((view) => [view.id, view])), [groupViews])
@@ -88,10 +88,10 @@ export const WorkflowFlow = forwardRef<WorkflowFlowHandle, FlowProps>(function W
   }), [])
   useLayoutEffect(() => syncCanvasRenderState({
     manifests, runtimeStatuses, bindingSummaries: graphIndex.bindingSummaryByNodeId, occupiedHandlesByNodeId: occupiedHandles,
-    primaryOutputNodeId: editor.primaryOutputNodeId ?? undefined, zoomTier: canvasZoomTier(viewport.zoom),
-    onQuickAdd: onSearchNodes ? (nodeId, handleId, mode) => onSearchNodes({ nodeId, handleId, mode }) : undefined,
+    zoomTier: canvasZoomTier(viewport.zoom),
+    onQuickAdd: undefined,
     onSourceHover,
-  }), [editor.graphRevision, editor.primaryOutputNodeId, graphIndex, manifests, occupiedHandles, onSearchNodes, onSourceHover, runtimeStatuses, viewport.zoom])
+  }), [editor.graphRevision, graphIndex, manifests, occupiedHandles, onSourceHover, runtimeStatuses, viewport.zoom])
   useImperativeHandle(ref, () => ({
     getViewportCenter: () => {
       const flow = instance.current
@@ -132,6 +132,10 @@ export const WorkflowFlow = forwardRef<WorkflowFlowHandle, FlowProps>(function W
     const canonical: NodeChange<CanvasNode>[] = []
     for (const change of changes) {
       if (!('id' in change)) continue
+      if (change.id === '__start__' || change.id === '__end__') {
+        if (change.type === 'position' && change.position) editor.updateBoundaryPosition(change.id === '__start__' ? 'start' : 'end', change.position)
+        continue
+      }
       if (change.id.startsWith('annotation:')) {
         const annotationId = change.id.slice('annotation:'.length)
         if (change.type === 'position' && change.position) editor.updateAnnotationFrame(annotationId, change.position)
@@ -155,6 +159,7 @@ export const WorkflowFlow = forwardRef<WorkflowFlowHandle, FlowProps>(function W
     editor.clearEdgeReconnectRequest()
   }, [edges, editor, manifests, nodes])
   const onNodeDragStart = useCallback((_: unknown, node: CanvasNode) => {
+    if (node.id === '__start__' || node.id === '__end__') return editor.beginEdit({ boundary: node.id === '__start__' ? 'start' : 'end' })
     if (node.id.startsWith('annotation:')) return editor.beginEdit({ annotationIds: [node.id.slice('annotation:'.length)] })
     const group = groupViewMap.get(node.id)
     if (group) return editor.beginEdit({ nodeIds: group.group.nodeIds })
@@ -170,17 +175,37 @@ export const WorkflowFlow = forwardRef<WorkflowFlowHandle, FlowProps>(function W
     if (value.kind === 'action') { const manifest = manifests.get(`${value.nodeType}@${value.version}`); if (manifest) onDropAction(manifest, position) }
     if (value.kind === 'binding' && value.resourceType && value.role) onDropBinding(value.resourceType, value.role, position)
   }
-  const actionCount = nodes.filter((node) => node.data.editorKind === 'action').length
+  const ariaLabelConfig: Partial<AriaLabelConfig> = {
+    'node.a11yDescription.default': t('studio.canvasA11y.node'),
+    'node.a11yDescription.keyboardDisabled': t('studio.canvasA11y.nodeKeyboard'),
+    'node.a11yDescription.ariaLiveMessage': ({ direction, x, y }) => t('studio.canvasA11y.nodeMoved', { direction, x, y }),
+    'edge.a11yDescription.default': t('studio.canvasA11y.edge'),
+    'controls.ariaLabel': t('studio.canvasA11y.controls'),
+    'controls.zoomIn.ariaLabel': t('studio.canvasA11y.zoomIn'),
+    'controls.zoomOut.ariaLabel': t('studio.canvasA11y.zoomOut'),
+    'controls.fitView.ariaLabel': t('studio.canvasA11y.fitView'),
+    'controls.interactive.ariaLabel': t('studio.canvasA11y.interactive'),
+    'minimap.ariaLabel': t('studio.canvasA11y.minimap'),
+    'handle.ariaLabel': t('studio.canvasA11y.handle'),
+  }
   return <div className="relative min-w-0 flex-1 bg-canvas" data-connection-state={connectionState.status} data-testid="workflow-canvas" onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = 'copy' }} onDrop={onDrop}>
     <div className="pointer-events-none absolute right-3 top-3 z-10 flex items-center gap-3 rounded-md border border-border bg-surface/90 px-2.5 py-1.5 text-[9px] text-muted-foreground shadow-sm backdrop-blur"><LegendDot className="bg-primary" label={t('studio.ports.flow')} /><LegendDot className="bg-danger" label={t('studio.ports.error')} /><LegendDot className="bg-warning" label={t('studio.ports.resource')} /></div>
-    {actionCount === 0 && <div className="pointer-events-none absolute inset-0 z-10 grid place-items-center"><div className="pointer-events-auto flex items-center gap-2 rounded-md border border-border bg-surface/95 p-2 shadow-md"><button className="flex h-9 items-center gap-2 rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground" onClick={onAddTrigger} type="button"><Plus className="size-4" />{t('studio.empty.addTrigger')}</button><button className="flex h-9 items-center gap-2 rounded-md px-3 text-xs text-muted-foreground hover:bg-muted hover:text-foreground" onClick={() => onSearchNodes?.()} type="button"><Search className="size-4" />{t('studio.empty.search')}</button></div></div>}
-    <ReactFlow<CanvasNode, StudioEdge> connectionRadius={60} defaultViewport={viewport} edges={flowEdges} edgeTypes={EDGE_TYPES} edgesReconnectable fitViewOptions={{ maxZoom: 1, padding: 0.2 }} nodes={flowNodes} nodeTypes={NODE_TYPES} onConnect={onConnect} onConnectEnd={() => { setConnectionState({ status: 'cancelled' }); window.requestAnimationFrame(() => setConnectionState({ status: 'idle' })) }} onConnectStart={(_, params) => setConnectionState({ status: 'connecting', nodeId: params.nodeId ?? '', handleId: params.handleId ?? undefined })} onEdgesChange={onEdgesChange} onInit={(value) => { instance.current = value }} onMoveEnd={(_, next) => setViewport(next)} onNodeClick={(_, node) => { select(node.id); if (node.data.editorKind === 'action' || node.data.editorKind === 'binding') onNodeOpen?.(node.id) }} onNodeDragStart={onNodeDragStart} onNodeDragStop={commitEdit} onNodesChange={onNodesChange} onPaneClick={() => { select(undefined); onPaneClear?.() }} onReconnect={onReconnect} onReconnectEnd={() => editor.clearEdgeReconnectRequest()} isValidConnection={valid} multiSelectionKeyCode="Shift" onlyRenderVisibleElements={nodes.length >= LARGE_GRAPH_RENDER_THRESHOLD} proOptions={{ hideAttribution: true }} selectionOnDrag>
+    <ReactFlow<CanvasNode, StudioEdge> ariaLabelConfig={ariaLabelConfig} connectionRadius={60} defaultViewport={viewport} edges={flowEdges} edgeTypes={EDGE_TYPES} edgesReconnectable fitViewOptions={{ maxZoom: 1, padding: 0.2 }} nodes={flowNodes} nodeTypes={NODE_TYPES} onConnect={onConnect} onConnectEnd={() => { setConnectionState({ status: 'cancelled' }); window.requestAnimationFrame(() => setConnectionState({ status: 'idle' })) }} onConnectStart={(_, params) => setConnectionState({ status: 'connecting', nodeId: params.nodeId ?? '', handleId: params.handleId ?? undefined })} onEdgesChange={onEdgesChange} onInit={(value) => { instance.current = value }} onMoveEnd={(_, next) => setViewport(next)} onNodeClick={(_, node) => { if (node.data.editorKind === 'boundary') { select(undefined); onBoundaryOpen?.(node.data.boundary) } else { select(node.id); if (node.data.editorKind === 'action' || node.data.editorKind === 'binding') onNodeOpen?.(node.id) } }} onNodeDragStart={onNodeDragStart} onNodeDragStop={commitEdit} onNodesChange={onNodesChange} onPaneClick={() => { select(undefined); onPaneClear?.() }} onReconnect={onReconnect} onReconnectEnd={() => editor.clearEdgeReconnectRequest()} isValidConnection={valid} multiSelectionKeyCode="Shift" onlyRenderVisibleElements={nodes.length >= LARGE_GRAPH_RENDER_THRESHOLD} proOptions={{ hideAttribution: true }} selectionOnDrag>
       <Background color="var(--ui-canvas-dot)" gap={22} size={1} variant={BackgroundVariant.Dots} />
-      <Controls className="!border-border !bg-surface !shadow-md" />
-      {nodes.length < LARGE_GRAPH_MINIMAP_THRESHOLD && <MiniMap className="!border !border-border !bg-surface" maskColor="color-mix(in srgb, var(--ui-background) 70%, transparent)" pannable zoomable />}
+      <Controls aria-label={t('studio.canvasA11y.controls')} className="!border-border !bg-surface !shadow-md" />
+      {nodes.length < LARGE_GRAPH_MINIMAP_THRESHOLD && <MiniMap ariaLabel={t('studio.canvasA11y.minimap')} className="!border !border-border !bg-surface" maskColor="color-mix(in srgb, var(--ui-background) 70%, transparent)" pannable zoomable />}
     </ReactFlow>
   </div>
 })
+
+function boundaryNodes(layouts: EditorDocument['boundaryLayouts']): CanvasNode[] {
+  const start = layouts.find((layout) => layout.boundary === 'start') ?? { x: 40, y: 220 }
+  const end = layouts.find((layout) => layout.boundary === 'end') ?? { x: 560, y: 220 }
+  return [
+    { id: '__start__', type: 'boundary', position: { x: start.x, y: start.y }, draggable: true, deletable: false, data: { editorKind: 'boundary', boundary: 'start', label: '' } },
+    { id: '__end__', type: 'boundary', position: { x: end.x, y: end.y }, draggable: true, deletable: false, data: { editorKind: 'boundary', boundary: 'end', label: '' } },
+  ]
+}
 
 type GroupView = { id: string; group: EditorDocument['groups'][number]; position: { x: number; y: number }; width: number; height: number }
 

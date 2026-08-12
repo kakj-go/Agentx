@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 use thiserror::Error;
 use uuid::Uuid;
 
-use crate::CompiledWorkflow;
+use crate::{CompiledTerminalConnection, CompiledWorkflow};
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -125,8 +125,23 @@ pub struct ExecutionMachine {
     activation_keys: BTreeMap<String, NodeExecutionId>,
     ready: VecDeque<NodeExecutionId>,
     deliveries: Vec<EdgeDelivery>,
+    end_deliveries: Vec<EndDelivery>,
+    #[serde(default)]
+    partial_completion: bool,
+    error_collecting: bool,
     next_delivery_sequence: u64,
     run_counts: Vec<u32>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EndDelivery {
+    pub sequence: u64,
+    pub source_node_execution_id: NodeExecutionId,
+    pub source_node: usize,
+    pub source_port: String,
+    pub target_port: String,
+    pub items: Vec<Item>,
 }
 
 impl ExecutionMachine {
@@ -139,6 +154,9 @@ impl ExecutionMachine {
             activation_keys: BTreeMap::new(),
             ready: VecDeque::new(),
             deliveries: Vec::new(),
+            end_deliveries: Vec::new(),
+            partial_completion: false,
+            error_collecting: false,
             next_delivery_sequence: 1,
             run_counts: vec![0; node_count],
         };
@@ -177,7 +195,9 @@ impl ExecutionMachine {
         };
         let (workflow, indexes) = subgraph(&self.workflow, &included, mode, selected);
         if mode == PartialExecutionMode::ToNode {
-            return Self::new(workflow, whole_input);
+            let mut machine = Self::new(workflow, whole_input)?;
+            machine.partial_completion = true;
+            return Ok(machine);
         }
         let mut inputs = self
             .activations
@@ -187,7 +207,9 @@ impl ExecutionMachine {
             .map(|activation| activation.inputs.clone())
             .ok_or_else(|| MachineError::PartialInputUnavailable(node_id.into()))?;
         apply_input_overrides(&mut inputs, input_overrides);
-        Self::new_with_starts(workflow, vec![(indexes[&selected], inputs)])
+        let mut machine = Self::new_with_starts(workflow, vec![(indexes[&selected], inputs)])?;
+        machine.partial_completion = true;
+        Ok(machine)
     }
 
     pub fn new_partial(
@@ -212,12 +234,16 @@ impl ExecutionMachine {
         };
         let (workflow, indexes) = subgraph(&workflow, &included, mode, selected);
         if mode == PartialExecutionMode::ToNode {
-            return Self::new(workflow, input);
+            let mut machine = Self::new(workflow, input)?;
+            machine.partial_completion = true;
+            return Ok(machine);
         }
-        Self::new_with_starts(
+        let mut machine = Self::new_with_starts(
             workflow,
             vec![(indexes[&selected], BTreeMap::from([("main".into(), input)]))],
-        )
+        )?;
+        machine.partial_completion = true;
+        Ok(machine)
     }
 
     fn new_with_starts(
@@ -232,6 +258,9 @@ impl ExecutionMachine {
             activation_keys: BTreeMap::new(),
             ready: VecDeque::new(),
             deliveries: Vec::new(),
+            end_deliveries: Vec::new(),
+            partial_completion: false,
+            error_collecting: false,
             next_delivery_sequence: 1,
             run_counts: vec![0; node_count],
         };
@@ -264,6 +293,11 @@ impl ExecutionMachine {
     #[must_use]
     pub fn deliveries(&self) -> &[EdgeDelivery] {
         &self.deliveries
+    }
+
+    #[must_use]
+    pub fn end_deliveries(&self) -> &[EndDelivery] {
+        &self.end_deliveries
     }
 
     pub fn next_ready(&mut self) -> Option<NodeExecutionId> {
@@ -424,10 +458,24 @@ impl ExecutionMachine {
                     "main"
                 };
                 let mut outputs = BTreeMap::new();
-                outputs.insert(port.into(), vec![Item {
-                    json: json!({"error":{"code":code,"message":message},"sourceNode":self.workflow.nodes[node_index].id}),
-                    ..Item::default()
-                }]);
+                let activation = &self.activations[&id];
+                outputs.insert(
+                    port.into(),
+                    vec![Item {
+                        json: json!({
+                            "code":code,
+                            "message":message,
+                            "details":{},
+                            "sourceNodeId":self.workflow.nodes[node_index].id,
+                            "sourceNodeKey":self.workflow.nodes[node_index].key,
+                            "nodeExecutionId":id,
+                            "runIndex":activation.run_index,
+                            "iterationIndex":activation.generation,
+                            "retryable":retryable
+                        }),
+                        ..Item::default()
+                    }],
+                );
                 self.emit_outputs(id, &outputs)?;
                 self.update_terminal_status();
             }
@@ -537,6 +585,33 @@ impl ExecutionMachine {
         outputs: &BTreeMap<String, Vec<Item>>,
     ) -> Result<(), MachineError> {
         let source = self.activations[&source_id].clone();
+        let terminal_connections = self
+            .workflow
+            .terminal_connections
+            .iter()
+            .filter(|connection| connection.source_node == source.node_index)
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut failed_at_end = false;
+        for connection in terminal_connections {
+            let items = outputs
+                .get(&connection.source_port)
+                .cloned()
+                .unwrap_or_default();
+            if items.is_empty() {
+                continue;
+            }
+            self.end_deliveries.push(EndDelivery {
+                sequence: self.next_delivery_sequence,
+                source_node_execution_id: source_id,
+                source_node: source.node_index,
+                source_port: connection.source_port,
+                target_port: connection.target_port.clone(),
+                items,
+            });
+            self.next_delivery_sequence += 1;
+            failed_at_end |= connection.target_port == "error";
+        }
         let outgoing = self.workflow.nodes[source.node_index]
             .outgoing_connections
             .clone();
@@ -577,7 +652,76 @@ impl ExecutionMachine {
         for (target, generation, edge) in targets {
             self.evaluate_target(target, generation, edge)?;
         }
+        if failed_at_end {
+            self.fail_fast_at_end();
+        }
         Ok(())
+    }
+
+    #[must_use]
+    pub const fn is_error_collecting(&self) -> bool {
+        self.error_collecting
+    }
+
+    pub fn finish_error_collection(&mut self) {
+        if !self.error_collecting || is_terminal(self.status) {
+            return;
+        }
+        self.status = RuntimeExecutionStatus::Failed;
+        self.ready.clear();
+        for activation in self.activations.values_mut() {
+            if matches!(
+                activation.status,
+                ActivationStatus::Ready | ActivationStatus::Running | ActivationStatus::Waiting
+            ) {
+                activation.status = ActivationStatus::Cancelled;
+                if let Some(attempt) = activation.attempts.last_mut()
+                    && matches!(
+                        attempt.status,
+                        AttemptStatus::Running | AttemptStatus::Suspended
+                    )
+                {
+                    attempt.status = AttemptStatus::Cancelled;
+                }
+            }
+        }
+    }
+
+    fn fail_fast_at_end(&mut self) {
+        if matches!(
+            self.workflow.end.error.strategy,
+            agentx_domain::EndErrorStrategy::Collect
+        ) {
+            self.error_collecting = true;
+            self.ready.clear();
+            for activation in self.activations.values_mut() {
+                if activation.status == ActivationStatus::Waiting {
+                    activation.status = ActivationStatus::Cancelled;
+                    if let Some(attempt) = activation.attempts.last_mut() {
+                        attempt.status = AttemptStatus::Cancelled;
+                    }
+                }
+            }
+            return;
+        }
+        self.status = RuntimeExecutionStatus::Failed;
+        self.ready.clear();
+        for activation in self.activations.values_mut() {
+            if matches!(
+                activation.status,
+                ActivationStatus::Ready | ActivationStatus::Running | ActivationStatus::Waiting
+            ) {
+                activation.status = ActivationStatus::Cancelled;
+                if let Some(attempt) = activation.attempts.last_mut()
+                    && matches!(
+                        attempt.status,
+                        AttemptStatus::Running | AttemptStatus::Suspended
+                    )
+                {
+                    attempt.status = AttemptStatus::Cancelled;
+                }
+            }
+        }
     }
 
     fn evaluate_target(
@@ -750,8 +894,16 @@ impl ExecutionMachine {
                 .any(|activation| activation.status == ActivationStatus::Failed)
             {
                 RuntimeExecutionStatus::Failed
-            } else {
+            } else if self.partial_completion
+                || self.workflow.start_to_end
+                || self
+                    .end_deliveries
+                    .iter()
+                    .any(|delivery| delivery.target_port == "main")
+            {
                 RuntimeExecutionStatus::Succeeded
+            } else {
+                RuntimeExecutionStatus::Failed
             };
         }
     }
@@ -854,6 +1006,20 @@ fn subgraph(
     );
     workflow.nodes = nodes;
     workflow.connections = connections;
+    workflow.terminal_connections = source
+        .terminal_connections
+        .iter()
+        .filter_map(|connection| {
+            Some(CompiledTerminalConnection {
+                id: connection.id.clone(),
+                source_node: *indexes.get(&connection.source_node)?,
+                source_port: connection.source_port.clone(),
+                target_port: connection.target_port.clone(),
+                branch_order: connection.branch_order,
+            })
+        })
+        .collect();
+    workflow.start_to_end = source.start_to_end && start_nodes.is_empty();
     workflow.start_nodes = start_nodes;
     workflow.strongly_connected_components = components;
     (workflow, indexes)
@@ -924,7 +1090,77 @@ mod tests {
     use crate::{CompileContext, NodeRegistry, WorkflowCompiler};
     use agentx_domain::WorkflowDefinition;
 
-    fn compile(value: serde_json::Value) -> CompiledWorkflow {
+    fn compile(mut value: serde_json::Value) -> CompiledWorkflow {
+        let definition = value.as_object_mut().expect("workflow fixture object");
+        definition.insert(
+            "start".into(),
+            json!({"inputs":{"type":"object","properties":{},"additionalProperties":false},"contexts":{}}),
+        );
+        definition
+            .entry("end")
+            .or_insert_with(|| json!({"outputs":{}}));
+        for node in definition
+            .get_mut("nodes")
+            .and_then(Value::as_array_mut)
+            .expect("workflow fixture nodes")
+        {
+            let node = node.as_object_mut().expect("workflow fixture node");
+            let key = node.get("id").cloned().expect("workflow fixture node id");
+            node.insert("key".into(), key);
+            node.insert("outputProjection".into(), json!({}));
+            node.insert("contextWrites".into(), json!([]));
+        }
+        let node_ids = definition["nodes"]
+            .as_array()
+            .expect("workflow fixture nodes")
+            .iter()
+            .filter_map(|node| node.get("id").and_then(Value::as_str))
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        let node_types = definition["nodes"]
+            .as_array()
+            .expect("workflow fixture nodes")
+            .iter()
+            .filter_map(|node| {
+                Some((
+                    node.get("id")?.as_str()?.to_owned(),
+                    node.get("type")?.as_str()?.to_owned(),
+                ))
+            })
+            .collect::<BTreeMap<_, _>>();
+        let connections = definition
+            .get_mut("connections")
+            .and_then(Value::as_array_mut)
+            .expect("workflow fixture connections");
+        let mut has_incoming = BTreeSet::new();
+        let mut has_outgoing = BTreeSet::new();
+        for connection in connections.iter() {
+            if let Some(source) = connection.get("sourceNodeId").and_then(Value::as_str) {
+                has_outgoing.insert(source.to_owned());
+            }
+            if let Some(target) = connection.get("targetNodeId").and_then(Value::as_str) {
+                has_incoming.insert(target.to_owned());
+            }
+        }
+        if let Some(root) = node_ids.iter().find(|id| !has_incoming.contains(*id)) {
+            connections.push(json!({"id":"__test_start__","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":root,"targetHandle":"main","order":0}));
+        }
+        let end_source = node_ids
+            .iter()
+            .find(|id| !has_outgoing.contains(*id))
+            .or_else(|| node_ids.last())
+            .expect("workflow fixture has node");
+        let end_handle = node_types
+            .get(end_source)
+            .map(|node_type| match node_type.as_str() {
+                "if" => "true",
+                "wait" => "resumed",
+                "approval" => "approved",
+                "loop_over_items" => "done",
+                _ => "main",
+            })
+            .unwrap_or("main");
+        connections.push(json!({"id":"__test_end__","sourceNodeId":end_source,"sourceHandle":end_handle,"targetNodeId":"__end__","targetHandle":"main","order":99}));
         let registry = NodeRegistry::m4_defaults();
         WorkflowCompiler::new(&registry)
             .compile(
@@ -944,9 +1180,9 @@ mod tests {
     #[test]
     fn closes_unselected_branch_without_blocking_merge() {
         let workflow = compile(json!({
-            "schemaVersion":"3.0",
+            "schemaVersion":"4.0",
             "nodes":[
-                {"id":"trigger","type":"manual_trigger","typeVersion":1,"name":"Trigger",},
+                {"id":"trigger","type":"no_op","typeVersion":1,"name":"Root",},
                 {"id":"if","type":"if","typeVersion":1,"name":"IF","parameters":{"condition":true}},
                 {"id":"merge","type":"merge","typeVersion":1,"name":"Merge",}
             ],
@@ -974,8 +1210,8 @@ mod tests {
     #[test]
     fn retry_adds_attempt_to_same_activation_and_late_transitions_fail() {
         let workflow = compile(json!({
-            "schemaVersion":"3.0",
-            "nodes":[{"id":"trigger","type":"manual_trigger","typeVersion":1,"name":"Trigger","settings":{"retryOnFail":true,"maxTries":2}}],
+            "schemaVersion":"4.0",
+            "nodes":[{"id":"trigger","type":"no_op","typeVersion":1,"name":"Root","settings":{"retryOnFail":true,"maxTries":2}}],
             "connections":[]
         }));
         let mut machine = ExecutionMachine::new(workflow, vec![]).unwrap();
@@ -984,7 +1220,9 @@ mod tests {
         machine.fail(activation, "TEMP", "temporary", true).unwrap();
         assert_eq!(machine.next_ready(), Some(activation));
         machine.start_attempt(activation).unwrap();
-        machine.complete(activation, BTreeMap::new()).unwrap();
+        machine
+            .complete(activation, BTreeMap::from([("main".into(), vec![item(1)])]))
+            .unwrap();
         assert_eq!(machine.activations[&activation].attempts.len(), 2);
         assert_eq!(machine.status(), RuntimeExecutionStatus::Succeeded);
         assert_eq!(
@@ -994,11 +1232,87 @@ mod tests {
     }
 
     #[test]
+    fn end_error_fail_fast_cancels_other_running_activations() {
+        let workflow = compile(error_terminal_fixture("fail_fast"));
+        let mut machine = ExecutionMachine::new(workflow, vec![item(1)]).unwrap();
+        let first = machine.next_ready().unwrap();
+        let second = machine.next_ready().unwrap();
+        machine.start_attempt(first).unwrap();
+        machine.start_attempt(second).unwrap();
+
+        machine.fail(first, "FAILED", "failed", false).unwrap();
+
+        assert_eq!(machine.status(), RuntimeExecutionStatus::Failed);
+        assert_eq!(
+            machine.activation(second).unwrap().status,
+            ActivationStatus::Cancelled
+        );
+        assert_eq!(machine.end_deliveries().len(), 1);
+        assert_eq!(machine.end_deliveries()[0].target_port, "error");
+    }
+
+    #[test]
+    fn end_error_collect_keeps_running_work_until_window_is_closed() {
+        let workflow = compile(error_terminal_fixture("collect"));
+        let mut machine = ExecutionMachine::new(workflow, vec![item(1)]).unwrap();
+        let first = machine.next_ready().unwrap();
+        let second = machine.next_ready().unwrap();
+        machine.start_attempt(first).unwrap();
+        machine.start_attempt(second).unwrap();
+
+        machine.fail(first, "FAILED", "failed", false).unwrap();
+
+        assert!(machine.is_error_collecting());
+        assert_eq!(machine.status(), RuntimeExecutionStatus::Running);
+        assert_eq!(
+            machine.activation(second).unwrap().status,
+            ActivationStatus::Running
+        );
+        machine
+            .fail(second, "ALSO_FAILED", "also failed", false)
+            .unwrap();
+        assert_eq!(machine.end_deliveries().len(), 2);
+        assert_eq!(
+            machine
+                .end_deliveries()
+                .iter()
+                .map(|delivery| delivery.items[0].json["code"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            vec!["FAILED", "ALSO_FAILED"]
+        );
+        machine.finish_error_collection();
+        assert_eq!(machine.status(), RuntimeExecutionStatus::Failed);
+        assert_eq!(
+            machine.activation(second).unwrap().status,
+            ActivationStatus::Failed
+        );
+    }
+
+    fn error_terminal_fixture(strategy: &str) -> Value {
+        json!({
+            "schemaVersion":"4.0",
+            "end":{"outputs":{},"error":{"strategy":strategy,"collectWindowMs":100,"outputs":{}}},
+            "nodes":[
+                {"id":"first","type":"set","typeVersion":1,"name":"First","settings":{"onError":"continue_error_output"}},
+                {"id":"second","type":"set","typeVersion":1,"name":"Second","settings":{"onError":"continue_error_output"}}
+            ],
+            "connections":[
+                {"id":"start-first","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"first","targetHandle":"main","order":0},
+                {"id":"start-second","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"second","targetHandle":"main","order":1},
+                {"id":"first-main","sourceNodeId":"first","sourceHandle":"main","targetNodeId":"__end__","targetHandle":"main","order":0},
+                {"id":"second-main","sourceNodeId":"second","sourceHandle":"main","targetNodeId":"__end__","targetHandle":"main","order":1},
+                {"id":"first-error","sourceNodeId":"first","sourceHandle":"error","targetNodeId":"__end__","targetHandle":"error","order":0},
+                {"id":"second-error","sourceNodeId":"second","sourceHandle":"error","targetNodeId":"__end__","targetHandle":"error","order":1}
+            ]
+        })
+    }
+
+    #[test]
     fn wait_releases_execution_and_resumes_once() {
         let workflow = compile(json!({
-            "schemaVersion":"3.0",
+            "schemaVersion":"4.0",
             "nodes":[
-                {"id":"trigger","type":"manual_trigger","typeVersion":1,"name":"Trigger",},
+                {"id":"trigger","type":"no_op","typeVersion":1,"name":"Root",},
                 {"id":"wait","type":"wait","typeVersion":1,"name":"Wait",}
             ],
             "connections":[{"id":"a","sourceNodeId":"trigger","sourceHandle":"main","targetNodeId":"wait","targetHandle":"main","order":0}]
@@ -1024,9 +1338,9 @@ mod tests {
     #[test]
     fn partial_forks_select_the_expected_subgraph_and_inputs() {
         let workflow = compile(json!({
-            "schemaVersion":"3.0",
+            "schemaVersion":"4.0",
             "nodes":[
-                {"id":"trigger","type":"manual_trigger","typeVersion":1,"name":"Trigger",},
+                {"id":"trigger","type":"no_op","typeVersion":1,"name":"Root",},
                 {"id":"first","type":"set","typeVersion":1,"name":"First",},
                 {"id":"last","type":"set","typeVersion":1,"name":"Last",}
             ],
@@ -1089,7 +1403,7 @@ mod tests {
         assert_eq!(node.workflow.nodes.len(), 1);
         assert!(node.workflow.connections.is_empty());
 
-        let direct = ExecutionMachine::new_partial(
+        let mut direct = ExecutionMachine::new_partial(
             source.workflow.clone(),
             PartialExecutionMode::Node,
             "last",
@@ -1102,13 +1416,19 @@ mod tests {
             direct.activations().next().unwrap().inputs["main"][0].json["value"],
             7
         );
+        let activation = direct.next_ready().unwrap();
+        direct.start_attempt(activation).unwrap();
+        direct
+            .complete(activation, BTreeMap::from([("main".into(), vec![item(7)])]))
+            .unwrap();
+        assert_eq!(direct.status(), RuntimeExecutionStatus::Succeeded);
     }
 
     #[test]
     fn checkpoint_state_round_trips_through_json() {
         let workflow = compile(json!({
-            "schemaVersion":"3.0",
-            "nodes":[{"id":"trigger","type":"manual_trigger","typeVersion":1,"name":"Trigger",}],
+            "schemaVersion":"4.0",
+            "nodes":[{"id":"trigger","type":"no_op","typeVersion":1,"name":"Root"}],
             "connections":[]
         }));
         let machine = ExecutionMachine::new(workflow, vec![item(1)]).unwrap();
@@ -1121,9 +1441,9 @@ mod tests {
     #[test]
     fn confirmation_wait_is_visible_and_resumes_the_same_activation() {
         let workflow = compile(json!({
-            "schemaVersion":"3.0",
+            "schemaVersion":"4.0",
             "nodes":[
-                {"id":"trigger","type":"manual_trigger","typeVersion":1,"name":"Trigger",},
+                {"id":"trigger","type":"no_op","typeVersion":1,"name":"Root",},
                 {"id":"remote","type":"remote_action","typeVersion":1,"name":"Remote","parameters":{"endpoint":"http://node"}}
             ],
             "connections":[{"id":"start","sourceNodeId":"trigger","sourceHandle":"main","targetNodeId":"remote","targetHandle":"main","order":0}]
@@ -1153,10 +1473,10 @@ mod tests {
     #[test]
     fn ordinary_cycle_stops_at_the_activation_budget() {
         let workflow = compile(json!({
-            "schemaVersion":"3.0",
+            "schemaVersion":"4.0",
             "settings":{"activationBudget":7},
             "nodes":[
-                {"id":"trigger","type":"manual_trigger","typeVersion":1,"name":"Trigger",},
+                {"id":"trigger","type":"no_op","typeVersion":1,"name":"Root",},
                 {"id":"step","type":"set","typeVersion":1,"name":"Step",},
                 {"id":"branch","type":"if","typeVersion":1,"name":"Branch","parameters":{"condition":true}}
             ],

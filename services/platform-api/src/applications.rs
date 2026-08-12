@@ -1,4 +1,5 @@
 use agentx_api_types::PageResponse;
+use agentx_domain::WorkflowDefinition;
 use agentx_infrastructure::credential::PlainSecret;
 use agentx_runtime::CompiledWorkflow;
 use axum::{
@@ -18,9 +19,16 @@ use uuid::Uuid;
 
 use crate::{
     control_common::{audit, outbox, require_department_scope, validate_name},
-    error::{AppError, AppResult},
+    error::{AppError, AppResult, UniqueConstraint, map_unique},
     security::AuthActor,
     state::AppState,
+};
+
+pub(crate) const APPLICATION_SLUG: UniqueConstraint = UniqueConstraint {
+    index: "uq_application_slug",
+    code: "APPLICATION_SLUG_EXISTS",
+    field: "slug",
+    message: "An application with this slug already exists",
 };
 
 #[derive(Deserialize)]
@@ -85,7 +93,6 @@ pub struct ApplicationDeploymentResponse {
     pub sequence_number: u64,
     pub input_schema: Value,
     pub output_schema: Value,
-    pub output_expression: Option<String>,
     pub session_version_policy: String,
     pub status: String,
     #[serde(with = "time::serde::rfc3339")]
@@ -97,9 +104,6 @@ pub struct ApplicationDeploymentResponse {
 pub struct CreateApplicationDeploymentRequest {
     pub workflow_version_id: Uuid,
     pub environment_id: Uuid,
-    pub input_schema: Value,
-    pub output_schema: Value,
-    pub output_expression: Option<String>,
     pub session_version_policy: String,
 }
 
@@ -276,6 +280,16 @@ pub async fn create_application(
     validate_visibility(&input.visibility)?;
     let name = validate_name(&input.name, 160)?;
     let slug = validate_slug(&input.slug)?;
+    let slug_exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM applications WHERE tenant_id=? AND slug=?)",
+    )
+    .bind(actor.tenant_id)
+    .bind(&slug)
+    .fetch_one(&state.pool)
+    .await?;
+    if slug_exists {
+        return Err(AppError::unique(APPLICATION_SLUG));
+    }
     let workflow_department: Uuid = sqlx::query_scalar(
         "SELECT owner_department_id FROM workflows WHERE id=? AND tenant_id=? AND status='active'",
     )
@@ -289,7 +303,7 @@ pub async fn create_application(
     let mut tx = state.pool.begin().await?;
     sqlx::query("INSERT INTO applications(id,tenant_id,workflow_id,name,slug,description,visibility,owner_user_id,owner_department_id) VALUES(?,?,?,?,?,?,?,?,?)")
         .bind(id).bind(actor.tenant_id).bind(input.workflow_id).bind(&name).bind(&slug).bind(&input.description)
-        .bind(&input.visibility).bind(actor.user_id).bind(actor.department_id).execute(&mut *tx).await?;
+        .bind(&input.visibility).bind(actor.user_id).bind(actor.department_id).execute(&mut *tx).await.map_err(|error| map_unique(error, &[APPLICATION_SLUG]))?;
     audit(
         &mut tx,
         &actor,
@@ -424,20 +438,7 @@ pub async fn create_deployment(
     .await?;
     let compiled: CompiledWorkflow = serde_json::from_value(compiled_json)
         .map_err(|error| AppError::unprocessable("INVALID_COMPILED_WORKFLOW", error.to_string()))?;
-    validate_application_output_contract(
-        compiled.primary_output_node,
-        compiled.normal_output_candidates.len(),
-    )?;
-    validate_schema(&input.input_schema)?;
-    validate_schema(&input.output_schema)?;
-    if let Some(expression) = input.output_expression.as_deref() {
-        let source = expression.strip_prefix('=').unwrap_or(expression);
-        agentx_runtime::ExpressionEngine
-            .validate(source)
-            .map_err(|error| {
-                AppError::unprocessable("INVALID_OUTPUT_EXPRESSION", error.to_string())
-            })?;
-    }
+    validate_application_output_contract(compiled.end.outputs.len())?;
     let deployment_id = Uuid::now_v7();
     let mut tx = state.pool.begin().await?;
     sqlx::query("SELECT id FROM applications WHERE id=? AND tenant_id=? FOR UPDATE")
@@ -447,9 +448,9 @@ pub async fn create_deployment(
         .await?;
     sqlx::query("UPDATE application_deployments SET status='superseded' WHERE tenant_id=? AND application_id=? AND status='active'").bind(actor.tenant_id).bind(id).execute(&mut *tx).await?;
     let sequence: u64=sqlx::query_scalar("SELECT CAST(COALESCE(MAX(sequence_number),0)+1 AS UNSIGNED) FROM application_deployments WHERE tenant_id=? AND application_id=? FOR UPDATE").bind(actor.tenant_id).bind(id).fetch_one(&mut *tx).await?;
-    sqlx::query("INSERT INTO application_deployments(id,tenant_id,application_id,workflow_version_id,environment_id,sequence_number,input_schema_json,output_schema_json,output_expression,session_version_policy,created_by) VALUES(?,?,?,?,?,?,?,?,?,?,?)")
+    sqlx::query("INSERT INTO application_deployments(id,tenant_id,application_id,workflow_version_id,environment_id,sequence_number,session_version_policy,created_by) VALUES(?,?,?,?,?,?,?,?)")
         .bind(deployment_id).bind(actor.tenant_id).bind(id).bind(input.workflow_version_id).bind(input.environment_id).bind(sequence)
-        .bind(input.input_schema).bind(input.output_schema).bind(input.output_expression).bind(input.session_version_policy).bind(actor.user_id).execute(&mut *tx).await?;
+        .bind(input.session_version_policy).bind(actor.user_id).execute(&mut *tx).await?;
     reconcile_trigger_bindings(
         &mut tx,
         actor.tenant_id,
@@ -1005,7 +1006,7 @@ pub async fn upgrade_session(
 
 const APPLICATION_SELECT_LIST: &str = "SELECT a.id,a.workflow_id,w.name workflow_name,a.name,a.slug,a.description,a.visibility,a.status,a.owner_department_id,h.deployment_id active_deployment_id,wv.version_number active_version_number,a.version,a.updated_at FROM applications a JOIN workflows w ON w.id=a.workflow_id LEFT JOIN application_deployment_heads h ON h.application_id=a.id LEFT JOIN application_deployments ad ON ad.id=h.deployment_id LEFT JOIN workflow_versions wv ON wv.id=ad.workflow_version_id WHERE a.tenant_id=? AND (?='' OR a.status=?) AND (?='%%' OR a.name LIKE ?) ORDER BY a.updated_at DESC LIMIT ? OFFSET ?";
 const APPLICATION_SELECT_VISIBLE: &str = "SELECT a.id,a.workflow_id,w.name workflow_name,a.name,a.slug,a.description,a.visibility,a.status,a.owner_department_id,h.deployment_id active_deployment_id,wv.version_number active_version_number,a.version,a.updated_at FROM applications a JOIN workflows w ON w.id=a.workflow_id LEFT JOIN application_deployment_heads h ON h.application_id=a.id LEFT JOIN application_deployments ad ON ad.id=h.deployment_id LEFT JOIN workflow_versions wv ON wv.id=ad.workflow_version_id WHERE a.tenant_id=? AND (a.visibility='company' OR a.owner_user_id=? OR (a.visibility='department' AND EXISTS(SELECT 1 FROM department_closure dc WHERE dc.tenant_id=a.tenant_id AND ((dc.ancestor_id=a.owner_department_id AND dc.descendant_id=?) OR (dc.ancestor_id=? AND dc.descendant_id=a.owner_department_id)))) OR EXISTS(SELECT 1 FROM user_roles ur JOIN department_closure dc ON dc.tenant_id=ur.tenant_id AND dc.ancestor_id=ur.scope_department_id WHERE ur.tenant_id=a.tenant_id AND ur.user_id=? AND dc.descendant_id=a.owner_department_id)) AND (?='' OR a.status=?) AND (?='%%' OR a.name LIKE ?) ORDER BY a.updated_at DESC LIMIT ? OFFSET ?";
-const DEPLOYMENT_SELECT: &str = "SELECT ad.id,ad.application_id,ad.workflow_version_id,wv.version_number,ad.environment_id,e.name environment_name,ad.sequence_number,ad.input_schema_json,ad.output_schema_json,ad.output_expression,ad.session_version_policy,ad.status,ad.created_at FROM application_deployments ad JOIN workflow_versions wv ON wv.id=ad.workflow_version_id JOIN workflow_environments e ON e.id=ad.environment_id WHERE ad.tenant_id=? AND ad.application_id=? ORDER BY ad.sequence_number DESC";
+const DEPLOYMENT_SELECT: &str = "SELECT ad.id,ad.application_id,ad.workflow_version_id,wv.version_number,wv.definition_json,ad.environment_id,e.name environment_name,ad.sequence_number,ad.session_version_policy,ad.status,ad.created_at FROM application_deployments ad JOIN workflow_versions wv ON wv.id=ad.workflow_version_id JOIN workflow_environments e ON e.id=ad.environment_id WHERE ad.tenant_id=? AND ad.application_id=? ORDER BY ad.sequence_number DESC";
 const SESSION_SELECT: &str = "SELECT id,application_id,application_deployment_id,workflow_version_id,version_policy,external_user_id,title,status,version,updated_at FROM application_sessions WHERE tenant_id=? AND application_id=? ORDER BY updated_at DESC";
 
 async fn require_application_access(
@@ -1057,6 +1058,22 @@ fn application_from_row(row: sqlx::mysql::MySqlRow) -> AppResult<ApplicationResp
     })
 }
 fn deployment_from_row(row: sqlx::mysql::MySqlRow) -> AppResult<ApplicationDeploymentResponse> {
+    let definition: WorkflowDefinition =
+        serde_json::from_value(row.try_get("definition_json")?).map_err(AppError::internal)?;
+    let input_schema = definition.start.inputs;
+    let properties = definition
+        .end
+        .outputs
+        .iter()
+        .map(|(name, output)| (name.clone(), output.schema.clone()))
+        .collect::<serde_json::Map<_, _>>();
+    let required = definition
+        .end
+        .outputs
+        .iter()
+        .filter(|(_, output)| output.required)
+        .map(|(name, _)| name.clone())
+        .collect::<Vec<_>>();
     Ok(ApplicationDeploymentResponse {
         id: row.try_get("id")?,
         application_id: row.try_get("application_id")?,
@@ -1065,9 +1082,8 @@ fn deployment_from_row(row: sqlx::mysql::MySqlRow) -> AppResult<ApplicationDeplo
         environment_id: row.try_get("environment_id")?,
         environment_name: row.try_get("environment_name")?,
         sequence_number: row.try_get("sequence_number")?,
-        input_schema: row.try_get("input_schema_json")?,
-        output_schema: row.try_get("output_schema_json")?,
-        output_expression: row.try_get("output_expression")?,
+        input_schema,
+        output_schema: json!({"type":"object","properties":properties,"required":required,"additionalProperties":false}),
         session_version_policy: row.try_get("session_version_policy")?,
         status: row.try_get("status")?,
         created_at: row.try_get("created_at")?,
@@ -1078,7 +1094,7 @@ async fn load_deployment(
     tenant_id: Uuid,
     id: Uuid,
 ) -> AppResult<ApplicationDeploymentResponse> {
-    let row = sqlx::query("SELECT ad.id,ad.application_id,ad.workflow_version_id,wv.version_number,ad.environment_id,e.name environment_name,ad.sequence_number,ad.input_schema_json,ad.output_schema_json,ad.output_expression,ad.session_version_policy,ad.status,ad.created_at FROM application_deployments ad JOIN workflow_versions wv ON wv.id=ad.workflow_version_id JOIN workflow_environments e ON e.id=ad.environment_id WHERE ad.tenant_id=? AND ad.id=?")
+    let row = sqlx::query("SELECT ad.id,ad.application_id,ad.workflow_version_id,wv.version_number,wv.definition_json,ad.environment_id,e.name environment_name,ad.sequence_number,ad.session_version_policy,ad.status,ad.created_at FROM application_deployments ad JOIN workflow_versions wv ON wv.id=ad.workflow_version_id JOIN workflow_environments e ON e.id=ad.environment_id WHERE ad.tenant_id=? AND ad.id=?")
         .bind(tenant_id)
         .bind(id)
         .fetch_one(&state.pool)
@@ -1199,30 +1215,13 @@ fn validate_version_policy(value: &str) -> AppResult<()> {
         ))
     }
 }
-fn validate_application_output_contract(
-    primary_output_node: Option<usize>,
-    candidate_count: usize,
-) -> AppResult<()> {
-    match (primary_output_node, candidate_count) {
-        (_, 0) => Err(AppError::unprocessable(
+fn validate_application_output_contract(output_count: usize) -> AppResult<()> {
+    match output_count {
+        0 => Err(AppError::unprocessable(
             "APPLICATION_OUTPUT_UNAVAILABLE",
-            "Workflow has no enabled normal output node",
-        )),
-        (None, count) if count > 1 => Err(AppError::unprocessable(
-            "APPLICATION_PRIMARY_OUTPUT_REQUIRED",
-            "Workflow has multiple normal outputs; select a primary output node before deployment",
+            "Workflow End must declare at least one output",
         )),
         _ => Ok(()),
-    }
-}
-fn validate_schema(value: &Value) -> AppResult<()> {
-    if value.is_object() {
-        Ok(())
-    } else {
-        Err(AppError::bad_request(
-            "INVALID_JSON_SCHEMA",
-            "JSON Schema must be an object",
-        ))
     }
 }
 fn validate_schedule(cron: &str, timezone: &str) -> AppResult<()> {
@@ -1285,20 +1284,12 @@ mod tests {
     }
 
     #[test]
-    fn application_deployment_requires_an_unambiguous_output() {
+    fn application_deployment_requires_at_least_one_end_output() {
         assert_eq!(
-            validate_application_output_contract(None, 0)
-                .unwrap_err()
-                .code,
+            validate_application_output_contract(0).unwrap_err().code,
             "APPLICATION_OUTPUT_UNAVAILABLE"
         );
-        assert_eq!(
-            validate_application_output_contract(None, 2)
-                .unwrap_err()
-                .code,
-            "APPLICATION_PRIMARY_OUTPUT_REQUIRED"
-        );
-        assert!(validate_application_output_contract(None, 1).is_ok());
-        assert!(validate_application_output_contract(Some(2), 2).is_ok());
+        assert!(validate_application_output_contract(1).is_ok());
+        assert!(validate_application_output_contract(2).is_ok());
     }
 }

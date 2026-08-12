@@ -24,10 +24,17 @@ use crate::{
     connection_test::{self, HealthCheckResponse},
     control_common::{audit, require_department_scope, validate_name},
     credentials,
-    error::{AppError, AppResult},
+    error::{AppError, AppResult, UniqueConstraint, map_unique},
     grants::require_resource_visible,
     security::AuthActor,
     state::AppState,
+};
+
+pub(crate) const MCP_SERVER_NAME: UniqueConstraint = UniqueConstraint {
+    index: "uq_mcp_server_name",
+    code: "MCP_SERVER_NAME_EXISTS",
+    field: "name",
+    message: "An MCP server with this name already exists",
 };
 
 const MAX_MCP_RESPONSE_BYTES: usize = 1024 * 1024;
@@ -197,6 +204,7 @@ pub async fn create_server(
     )
     .await?;
     let name = validate_name(&input.name, 160)?;
+    ensure_server_name_available(&state, actor.tenant_id, &name, None).await?;
     let id = Uuid::now_v7();
     let version_id = Uuid::now_v7();
     let hash = config_hash(
@@ -206,7 +214,7 @@ pub async fn create_server(
         &input.configuration,
     )?;
     let mut tx = state.pool.begin().await?;
-    sqlx::query("INSERT INTO mcp_servers(id,tenant_id,name,description,owner_department_id,created_by) VALUES(?,?,?,?,?,?)").bind(id).bind(actor.tenant_id).bind(name).bind(input.description).bind(input.owner_department_id).bind(actor.user_id).execute(&mut *tx).await?;
+    sqlx::query("INSERT INTO mcp_servers(id,tenant_id,name,description,owner_department_id,created_by) VALUES(?,?,?,?,?,?)").bind(id).bind(actor.tenant_id).bind(name).bind(input.description).bind(input.owner_department_id).bind(actor.user_id).execute(&mut *tx).await.map_err(|error| map_unique(error, &[MCP_SERVER_NAME]))?;
     sqlx::query("INSERT INTO mcp_server_versions(id,tenant_id,server_id,version_number,transport,endpoint,credential_id,configuration_json,configuration_hash,created_by) VALUES(?,?,?,1,?,?,?,?,?,?)").bind(version_id).bind(actor.tenant_id).bind(id).bind(input.transport).bind(input.endpoint).bind(input.credential_id).bind(input.configuration).bind(hash).bind(actor.user_id).execute(&mut *tx).await?;
     audit(
         &mut tx,
@@ -259,6 +267,7 @@ pub async fn update_server(
         ));
     }
     let name = validate_name(&input.name, 160)?;
+    ensure_server_name_available(&state, actor.tenant_id, &name, Some(id)).await?;
     let hash = config_hash(
         &input.transport,
         &input.endpoint,
@@ -266,8 +275,8 @@ pub async fn update_server(
         &input.configuration,
     )?;
     let mut tx = state.pool.begin().await?;
-    let current:Option<(u64,u64)>=sqlx::query_as("SELECT current_version_number,version FROM mcp_servers WHERE tenant_id=? AND id=? FOR UPDATE").bind(actor.tenant_id).bind(id).fetch_optional(&mut *tx).await?;
-    let (current_number, current_version) =
+    let current:Option<(u64,u64,String)>=sqlx::query_as("SELECT current_version_number,version,(SELECT configuration_hash FROM mcp_server_versions WHERE tenant_id=mcp_servers.tenant_id AND server_id=mcp_servers.id AND version_number=mcp_servers.current_version_number) FROM mcp_servers WHERE tenant_id=? AND id=? FOR UPDATE").bind(actor.tenant_id).bind(id).fetch_optional(&mut *tx).await?;
+    let (current_number, current_version, current_hash) =
         current.ok_or_else(|| AppError::not_found("MCP server"))?;
     if current_version != input.version {
         return Err(AppError::conflict(
@@ -275,20 +284,47 @@ pub async fn update_server(
             "MCP server changed",
         ));
     }
-    let next = current_number + 1;
-    sqlx::query("INSERT INTO mcp_server_versions(id,tenant_id,server_id,version_number,transport,endpoint,credential_id,configuration_json,configuration_hash,created_by) VALUES(?,?,?,?,?,?,?,?,?,?)").bind(Uuid::now_v7()).bind(actor.tenant_id).bind(id).bind(next).bind(input.transport).bind(input.endpoint).bind(input.credential_id).bind(input.configuration).bind(hash).bind(actor.user_id).execute(&mut *tx).await?;
-    sqlx::query("UPDATE mcp_servers SET name=?,description=?,status=?,current_version_number=?,version=version+1 WHERE tenant_id=? AND id=? AND version=?").bind(name).bind(input.description).bind(input.status).bind(next).bind(actor.tenant_id).bind(id).bind(input.version).execute(&mut *tx).await?;
+    let (target_number, configuration_resolution) = if hash == current_hash {
+        (current_number, "current")
+    } else if let Some(existing) = sqlx::query_scalar::<_, u64>("SELECT version_number FROM mcp_server_versions WHERE tenant_id=? AND server_id=? AND configuration_hash=?").bind(actor.tenant_id).bind(id).bind(&hash).fetch_optional(&mut *tx).await? {
+        (existing, "historical")
+    } else {
+        let next: u64 = sqlx::query_scalar("SELECT CAST(COALESCE(MAX(version_number),0)+1 AS UNSIGNED) FROM mcp_server_versions WHERE tenant_id=? AND server_id=? FOR UPDATE").bind(actor.tenant_id).bind(id).fetch_one(&mut *tx).await?;
+        sqlx::query("INSERT INTO mcp_server_versions(id,tenant_id,server_id,version_number,transport,endpoint,credential_id,configuration_json,configuration_hash,created_by) VALUES(?,?,?,?,?,?,?,?,?,?)").bind(Uuid::now_v7()).bind(actor.tenant_id).bind(id).bind(next).bind(input.transport).bind(input.endpoint).bind(input.credential_id).bind(input.configuration).bind(&hash).bind(actor.user_id).execute(&mut *tx).await?;
+        (next, "new")
+    };
+    let updated = sqlx::query("UPDATE mcp_servers SET name=?,description=?,status=?,current_version_number=?,version=version+1 WHERE tenant_id=? AND id=? AND version=?").bind(name).bind(input.description).bind(input.status).bind(target_number).bind(actor.tenant_id).bind(id).bind(input.version).execute(&mut *tx).await.map_err(|error| map_unique(error, &[MCP_SERVER_NAME]))?;
+    if updated.rows_affected() != 1 {
+        return Err(AppError::conflict(
+            "MCP_SERVER_VERSION_CONFLICT",
+            "MCP server changed",
+        ));
+    }
     audit(
         &mut tx,
         &actor,
         "mcp.server_updated",
         "mcp_server",
         id,
-        json!({"serverVersion":next}),
+        json!({"serverVersion":target_number,"configurationResolution":configuration_resolution}),
     )
     .await?;
     tx.commit().await?;
     Ok(Json(load_server(&state, actor.tenant_id, id).await?))
+}
+
+async fn ensure_server_name_available(
+    state: &AppState,
+    tenant: Uuid,
+    name: &str,
+    exclude: Option<Uuid>,
+) -> AppResult<()> {
+    let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mcp_servers WHERE tenant_id=? AND name=? AND (? IS NULL OR id<>?))").bind(tenant).bind(name).bind(exclude).bind(exclude).fetch_one(&state.pool).await?;
+    if exists {
+        Err(AppError::unique(MCP_SERVER_NAME))
+    } else {
+        Ok(())
+    }
 }
 
 #[utoipa::path(get,path="/api/v1/mcp/servers/{id}/tools",params(("id"=Uuid,Path)))]
@@ -1342,10 +1378,14 @@ mod tests {
 
     use crate::{
         config::{AuthSettings, ConnectionSettings},
+        security::AuthActor,
         state::AppState,
     };
 
-    use super::{ServerConfig, call_remote_tool, discover_remote};
+    use super::{
+        ServerConfig, UpdateMcpServerRequest, call_remote_tool, config_hash, discover_remote,
+        update_server,
+    };
 
     fn test_state() -> AppState {
         let pool = MySqlPoolOptions::new()
@@ -1515,5 +1555,172 @@ mod tests {
         .await
         .expect("invoke SSE tool");
         assert_eq!(result["content"][0]["text"], "legacy");
+    }
+
+    #[tokio::test]
+    async fn mcp_update_reuses_versions_and_increments_from_historical_maximum() {
+        let _container_guard = crate::TESTCONTAINER_LOCK.lock().await;
+        let (_container, pool) = crate::migration_tests::start_mysql().await;
+        agentx_infrastructure::mysql::run_migrations(&pool)
+            .await
+            .expect("apply migrations");
+        let tenant = Uuid::now_v7();
+        let department = Uuid::now_v7();
+        let user = Uuid::now_v7();
+        let server = Uuid::now_v7();
+        sqlx::query("INSERT INTO tenants(id,name,normalized_name) VALUES(?,'Test','test')")
+            .bind(tenant)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO departments(id,tenant_id,name,normalized_name,is_root) VALUES(?,?,'Root','root',TRUE)")
+            .bind(department)
+            .bind(tenant)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO users(id,tenant_id,username,username_normalized,display_name,status) VALUES(?,?,'admin','admin','Admin','active')")
+            .bind(user)
+            .bind(tenant)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO mcp_servers(id,tenant_id,name,owner_department_id,created_by) VALUES(?,?,'Server',?,?)")
+            .bind(server)
+            .bind(tenant)
+            .bind(department)
+            .bind(user)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let initial = json!({"token":"initial"});
+        let historical = json!({"token":"historical"});
+        let initial_hash = config_hash(
+            "streamable_http",
+            "http://127.0.0.1:8090/mcp",
+            None,
+            &initial,
+        )
+        .unwrap();
+        let historical_hash = config_hash(
+            "streamable_http",
+            "http://127.0.0.1:8091/mcp",
+            None,
+            &historical,
+        )
+        .unwrap();
+        for (number, endpoint, configuration, hash) in [
+            (1_u64, "http://127.0.0.1:8090/mcp", &initial, initial_hash),
+            (
+                7_u64,
+                "http://127.0.0.1:8091/mcp",
+                &historical,
+                historical_hash,
+            ),
+        ] {
+            sqlx::query("INSERT INTO mcp_server_versions(id,tenant_id,server_id,version_number,transport,endpoint,configuration_json,configuration_hash,created_by) VALUES(?,?,?,?,'streamable_http',?,?,?,?)")
+                .bind(Uuid::now_v7())
+                .bind(tenant)
+                .bind(server)
+                .bind(number)
+                .bind(endpoint)
+                .bind(configuration)
+                .bind(hash)
+                .bind(user)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        let mut state = test_state();
+        state.pool = pool.clone();
+        let actor = AuthActor {
+            tenant_id: tenant,
+            user_id: user,
+            username: "admin".to_owned(),
+            display_name: "Admin".to_owned(),
+            department_id: department,
+            permissions: vec!["mcp:manage".to_owned()],
+            roles: vec!["company_admin".to_owned()],
+            company_admin: true,
+        };
+
+        let metadata_only = update_server(
+            State(state.clone()),
+            actor.clone(),
+            axum::extract::Path(server),
+            Json(UpdateMcpServerRequest {
+                name: "Renamed".to_owned(),
+                description: Some("metadata".to_owned()),
+                status: "active".to_owned(),
+                transport: "streamable_http".to_owned(),
+                endpoint: "http://127.0.0.1:8090/mcp".to_owned(),
+                credential_id: None,
+                configuration: initial,
+                version: 1,
+            }),
+        )
+        .await
+        .unwrap()
+        .0;
+        assert_eq!(metadata_only.current_version_number, 1);
+        assert_eq!(metadata_only.version, 2);
+        let version_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM mcp_server_versions WHERE tenant_id=? AND server_id=?",
+        )
+        .bind(tenant)
+        .bind(server)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(version_count, 2);
+
+        let reused = update_server(
+            State(state.clone()),
+            actor.clone(),
+            axum::extract::Path(server),
+            Json(UpdateMcpServerRequest {
+                name: "Renamed".to_owned(),
+                description: None,
+                status: "active".to_owned(),
+                transport: "streamable_http".to_owned(),
+                endpoint: "http://127.0.0.1:8091/mcp".to_owned(),
+                credential_id: None,
+                configuration: historical,
+                version: 2,
+            }),
+        )
+        .await
+        .unwrap()
+        .0;
+        assert_eq!(reused.current_version_number, 7);
+
+        let created = update_server(
+            State(state),
+            actor,
+            axum::extract::Path(server),
+            Json(UpdateMcpServerRequest {
+                name: "Renamed".to_owned(),
+                description: None,
+                status: "active".to_owned(),
+                transport: "streamable_http".to_owned(),
+                endpoint: "http://127.0.0.1:8092/mcp".to_owned(),
+                credential_id: None,
+                configuration: json!({"token":"new"}),
+                version: 3,
+            }),
+        )
+        .await
+        .unwrap()
+        .0;
+        assert_eq!(created.current_version_number, 8);
+        let version_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM mcp_server_versions WHERE tenant_id=? AND server_id=?",
+        )
+        .bind(tenant)
+        .bind(server)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(version_count, 3);
     }
 }

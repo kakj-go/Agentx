@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import { I18nextProvider } from 'react-i18next'
 import type { ComponentProps } from 'react'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { i18n } from '../../app/i18n'
 import type { RuntimeDetails } from '../../shared/api/types'
@@ -41,25 +41,28 @@ function renderPanel(props: Partial<ComponentProps<typeof ExecutionRuntimePanel>
 }
 
 describe('ExecutionRuntimePanel', () => {
+  beforeEach(async () => { await i18n.changeLanguage('zh-CN') })
+  afterEach(async () => { await i18n.changeLanguage('zh-CN') })
+
   it('renders loading, error, and empty states', async () => {
     await i18n.changeLanguage('zh-CN')
     const { rerender } = render(<I18nextProvider i18n={i18n}><ExecutionRuntimePanel loading onDownloadArtifact={vi.fn()} /></I18nextProvider>)
-    expect(screen.getByText('正在加载 Agent Runtime 明细…')).toBeInTheDocument()
+    expect(screen.getByText('正在加载智能体 Runtime 明细…')).toBeInTheDocument()
     rerender(<I18nextProvider i18n={i18n}><ExecutionRuntimePanel error={new Error('runtime denied')} loading={false} onDownloadArtifact={vi.fn()} /></I18nextProvider>)
     expect(screen.getByText('runtime denied')).toHaveClass('text-danger')
     rerender(<I18nextProvider i18n={i18n}><ExecutionRuntimePanel details={{ ...details, agentRuns: [], iterations: [], calls: [], sandboxes: [] }} loading={false} onDownloadArtifact={vi.fn()} /></I18nextProvider>)
-    expect(screen.getByText('该 Execution 没有 Agent、Runtime Call 或 Sandbox 记录。')).toBeInTheDocument()
+    expect(screen.getByText('该执行没有智能体、Runtime 调用或沙箱记录。')).toBeInTheDocument()
   })
 
   it('shows the agent, call, sandbox, budget, stop reason, and artifact controls', async () => {
     await i18n.changeLanguage('zh-CN')
     const onDownload = vi.fn()
     renderPanel({ details, onDownloadArtifact: onDownload })
-    expect(screen.getByRole('heading', { name: 'Agent Runtime 明细' })).toBeInTheDocument()
-    expect(screen.getAllByText('stop')).toHaveLength(2)
-    expect(screen.getByRole('tab', { name: /Runtime Calls 1/ })).toBeInTheDocument()
-    expect(screen.getByRole('tab', { name: /Sandboxes 1/ })).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Download artifact artifact-1' }))
+    expect(screen.getByRole('heading', { name: '智能体 Runtime 明细' })).toBeInTheDocument()
+    expect(screen.getAllByText('未知（stop）')).toHaveLength(2)
+    expect(screen.getByRole('tab', { name: /Runtime 调用 1/ })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: /沙箱 1/ })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '下载 Artifact artifact-1' }))
     expect(onDownload).toHaveBeenCalledWith('artifact-1')
   })
 

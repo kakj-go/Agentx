@@ -1,22 +1,13 @@
-/**
- * This file was auto-generated from openapi/platform-api.json.
- * Only schema components are emitted because the web client uses its shared request layer.
- * Do not make direct changes to the file.
- */
-
+/** Generated schema components from openapi/platform-api.json. Do not edit. */
 export interface components {
     schemas: {
         AgentIterationDetail: {
-            /** Format: uuid */
             agentRunId: string;
             endedAt?: string | null;
-            /** Format: uuid */
             id: string;
-            /** Format: int32 */
             iterationIndex: number;
             startedAt: string;
             stateAfterHash?: string | null;
-            /** Format: uuid */
             stateArtifactId?: string | null;
             stateBeforeHash: string;
             status: string;
@@ -24,45 +15,32 @@ export interface components {
         };
         AgentRunDetail: {
             budget: unknown;
-            /** Format: int64 */
             costMicros: number;
             endedAt?: string | null;
-            /** Format: uuid */
             id: string;
-            /** Format: int64 */
             inputTokens: number;
-            /** Format: int32 */
             iterationCount: number;
-            /** Format: int32 */
             modelCallCount: number;
-            /** Format: uuid */
             nodeExecutionId: string;
-            /** Format: int64 */
             outputTokens: number;
             startedAt: string;
-            /** Format: uuid */
             stateArtifactId?: string | null;
             stateHash?: string | null;
             status: string;
             stopReason?: string | null;
-            /** Format: int32 */
             toolCallCount: number;
         };
         ApiErrorResponse: {
             code: string;
+            details?: unknown;
             fieldErrors?: components["schemas"]["FieldError"][];
             message: string;
-            /** Format: uuid */
             requestId: string;
         };
         ApiKeyResponse: {
-            /** Format: date-time */
             createdAt: string;
-            /** Format: uuid */
             familyId: string;
-            /** Format: uuid */
             id: string;
-            /** Format: date-time */
             lastUsedAt?: string | null;
             name: string;
             prefix: string;
@@ -70,100 +48,72 @@ export interface components {
             status: string;
         };
         ApplicationDeploymentResponse: {
-            /** Format: uuid */
             applicationId: string;
-            /** Format: date-time */
             createdAt: string;
-            /** Format: uuid */
             environmentId: string;
             environmentName: string;
-            /** Format: uuid */
             id: string;
             inputSchema: unknown;
-            outputExpression?: string | null;
             outputSchema: unknown;
-            /** Format: int64 */
             sequenceNumber: number;
             sessionVersionPolicy: string;
             status: string;
-            /** Format: uuid */
             workflowVersionId: string;
-            /** Format: int64 */
             workflowVersionNumber: number;
         };
         ApplicationResponse: {
-            /** Format: uuid */
             activeDeploymentId?: string | null;
-            /** Format: int64 */
             activeVersionNumber?: number | null;
             description?: string | null;
-            /** Format: uuid */
             id: string;
             name: string;
-            /** Format: uuid */
             ownerDepartmentId: string;
             slug: string;
             status: string;
-            /** Format: date-time */
             updatedAt: string;
-            /** Format: int64 */
             version: number;
             visibility: string;
-            /** Format: uuid */
             workflowId: string;
             workflowName: string;
         };
         ApprovalActionResponse: {
             actionType: string;
             actorName: string;
-            /** Format: uuid */
             actorUserId: string;
-            /** Format: date-time */
             createdAt: string;
             fromStatus: string;
-            /** Format: uuid */
             id: string;
             input?: unknown;
             toStatus: string;
         };
         ApprovalCandidateResponse: {
             displayName: string;
-            /** Format: uuid */
             userId: string;
         };
         ApprovalResponse: {
-            /** Format: uuid */
             claimedBy?: string | null;
             claimedByName?: string | null;
-            /** Format: date-time */
             createdAt: string;
-            /** Format: date-time */
             deadlineAt?: string | null;
             description?: string | null;
-            /** Format: uuid */
             executionId: string;
-            /** Format: uuid */
             id: string;
             nodeId: string;
             requestPayload?: unknown;
             resumeStatus: string;
             status: string;
             title: string;
-            /** Format: int64 */
             version: number;
-            /** Format: uuid */
             workflowId: string;
             workflowName: string;
         };
         ArtifactUploadResponse: {
             entry: components["schemas"]["SkillWorkspaceEntry"];
-            /** Format: int64 */
             revision: number;
         };
         AuthResponse: {
             accessToken?: string | null;
             changePasswordToken?: string | null;
-            /** Format: int64 */
             expiresIn?: number | null;
             passwordChangeRequired: boolean;
             user?: null | components["schemas"]["MeResponse"];
@@ -178,6 +128,9 @@ export interface components {
         };
         BootstrapStatus: {
             required: boolean;
+        };
+        CancelResourceGrantRequest: {
+            expectedVersion: number;
         };
         CaseInput: {
             caseKey: string;
@@ -196,49 +149,33 @@ export interface components {
             items: components["schemas"]["CheckpointResponse"][];
         };
         CheckpointResponse: {
-            /** Format: int64 */
             activationCount: number;
             checkpointType: string;
-            /** Format: date-time */
             createdAt: string;
-            /** Format: int64 */
             deliveryCount: number;
-            /** Format: uuid */
             executionId: string;
-            /** Format: uuid */
             id: string;
-            /** Format: uuid */
             nodeExecutionId?: string | null;
-            /** Format: int64 */
             sequenceNumber: number;
             stateHash: string;
         };
         ConnectionResponse: {
             configuration: unknown;
-            /** Format: uuid */
             credentialId?: string | null;
             endpoint: string;
             healthPath: string;
-            /** Format: uuid */
             id: string;
             name: string;
-            /** Format: uuid */
             ownerDepartmentId: string;
             status: string;
-            /** Format: int64 */
             version: number;
         };
         CreateApiKeyRequest: {
             name: string;
         };
         CreateApplicationDeploymentRequest: {
-            /** Format: uuid */
             environmentId: string;
-            inputSchema: unknown;
-            outputExpression?: string | null;
-            outputSchema: unknown;
             sessionVersionPolicy: string;
-            /** Format: uuid */
             workflowVersionId: string;
         };
         CreateApplicationRequest: {
@@ -246,27 +183,22 @@ export interface components {
             name: string;
             slug: string;
             visibility: string;
-            /** Format: uuid */
             workflowId: string;
         };
         CreateCaseRequest: components["schemas"]["CaseInput"] & {
-            /** Format: int64 */
             expectedRevision: number;
         };
         CreateConnectionRequest: {
             configuration: unknown;
-            /** Format: uuid */
             credentialId?: string | null;
             endpoint: string;
             healthPath?: string | null;
             name: string;
-            /** Format: uuid */
             ownerDepartmentId: string;
         };
         CreateCredentialRequest: {
             credentialType: string;
             name: string;
-            /** Format: uuid */
             ownerDepartmentId: string;
             secret: unknown;
         };
@@ -277,28 +209,12 @@ export interface components {
         };
         CreateDepartmentRequest: {
             name: string;
-            /** Format: uuid */
             parentId: string;
-        };
-        CreateDeploymentRevisionRequest: {
-            /** Format: uuid */
-            credentialId?: string | null;
-            defaultParameters: unknown;
-            endpointOverride?: string | null;
-            /** Format: int64 */
-            expectedAliasVersion: number;
-            modelName: string;
-            name: string;
-            price?: null | components["schemas"]["CreateModelPriceRequest"];
-            /** Format: uuid */
-            providerId: string;
         };
         CreateEntryRequest: {
             entryType: string;
-            /** Format: int64 */
             expectedRevision: number;
             name: string;
-            /** Format: uuid */
             parentId?: string | null;
         };
         CreateEnvironmentRequest: {
@@ -314,90 +230,73 @@ export interface components {
             visibility?: string;
         };
         CreateEvaluationRunRequest: {
-            /** Format: uuid */
             datasetVersionId: string;
-            /** Format: uuid */
             evaluationProfileVersionId: string;
             name: string;
             parameters: unknown;
             visibility?: string;
-            /** Format: uuid */
             workflowVersionId: string;
         };
         CreateGrantRequest: {
             operation: string;
-            /** Format: uuid */
             resourceVersionId?: string | null;
-            /** Format: uuid */
             subjectId: string;
             subjectType: string;
         };
         CreateKnowledgeRequest: {
-            /** Format: uuid */
             connectionId: string;
             externalResourceId: string;
             name: string;
-            /** Format: uuid */
             ownerDepartmentId: string;
         };
         CreateMcpServerRequest: {
             configuration?: unknown;
-            /** Format: uuid */
             credentialId?: string | null;
             description?: string | null;
             endpoint: string;
             name: string;
-            /** Format: uuid */
             ownerDepartmentId: string;
             transport: string;
         };
         CreateMemoryRequest: {
             accessMode: string;
-            /** Format: uuid */
             connectionId: string;
             externalNamespace: string;
             name: string;
-            /** Format: uuid */
             ownerDepartmentId: string;
-        };
-        CreateModelAliasRequest: {
-            alias: string;
-            /** Format: uuid */
-            deploymentId: string;
-        };
-        CreateModelDeploymentRequest: {
-            /** Format: uuid */
-            credentialId?: string | null;
-            defaultParameters: unknown;
-            endpointOverride?: string | null;
-            modelName: string;
-            name: string;
-            /** Format: uuid */
-            providerId: string;
         };
         CreateModelPriceRequest: {
             currency: string;
             inputPerMillion: string;
             outputPerMillion: string;
         };
-        CreateModelProviderRequest: {
-            /** Format: uuid */
+        CreateModelRequest: {
+            alias?: string;
+            connectionName: string;
             credentialId?: string | null;
+            defaultParameters?: unknown;
             endpoint: string;
-            name: string;
-            /** Format: uuid */
+            maxInputTokens?: number;
+            maxOutputTokens?: number;
+            modelName?: string;
             ownerDepartmentId: string;
+            price?: null | components["schemas"]["CreateModelPriceRequest"];
             providerType: string;
         };
+        CreateResourceGrantRequest: {
+            message?: string | null;
+            operation: string;
+            resourceId: string;
+            resourceType: string;
+            resourceVersionId?: string | null;
+            sourceNodeId?: string | null;
+            sourceRevision?: number | null;
+        };
         CreateRetentionRunRequest: {
-            /** Format: int32 */
             artifactRetentionDays?: number;
             dryRun?: boolean;
-            /** Format: int32 */
             evaluationRetentionDays?: number;
-            /** Format: int32 */
             messageRetentionDays?: number;
-            /** Format: int32 */
             traceRetentionDays?: number;
         };
         CreateRoleRequest: {
@@ -410,7 +309,6 @@ export interface components {
         CreateSandboxProfileRequest: components["schemas"]["SandboxProfileVersionInput"] & {
             description?: string | null;
             name: string;
-            /** Format: uuid */
             ownerDepartmentId: string;
         };
         CreateScheduleRequest: {
@@ -424,19 +322,15 @@ export interface components {
             alias: string;
             description: string;
             name: string;
-            /** Format: uuid */
             ownerDepartmentId: string;
         };
         CreateUserRequest: {
-            /** Format: uuid */
             departmentId: string;
             displayName: string;
-            /** Format: uuid */
             roleId: string;
             username: string;
         };
         CreateVersionRequest: {
-            /** Format: int64 */
             draftRevision: number;
         };
         CreateWebhookRequest: {
@@ -449,74 +343,49 @@ export interface components {
         };
         CredentialResponse: {
             credentialType: string;
-            /** Format: int64 */
             currentSecretVersion: number;
-            /** Format: uuid */
             id: string;
             maskedHint: string;
             name: string;
-            /** Format: uuid */
             ownerDepartmentId: string;
             status: string;
             storageMode: string;
-            /** Format: date-time */
             updatedAt: string;
-            /** Format: int64 */
             version: number;
         };
         DashboardSummaryResponse: {
-            /** Format: int64 */
             costMicrosToday: number;
-            /** Format: int64 */
             executionsToday: number;
-            /** Format: int64 */
             failedToday: number;
-            /** Format: int64 */
             pendingApprovals: number;
-            /** Format: int64 */
             runningExecutions: number;
-            /** Format: int64 */
             succeededToday: number;
-            /** Format: int64 */
             workflowCount: number;
         };
         DatasetResponse: {
-            /** Format: int64 */
             caseCount: number;
             description?: string | null;
-            /** Format: uuid */
             id: string;
-            /** Format: int64 */
             latestVersion?: number | null;
             name: string;
-            /** Format: uuid */
             ownerDepartmentId: string;
-            /** Format: int64 */
             revision: number;
             status: string;
-            /** Format: date-time */
             updatedAt: string;
-            /** Format: int64 */
             version: number;
             visibility: string;
         };
         DatasetVersionResponse: {
-            /** Format: int64 */
             caseCount: number;
             contentHash: string;
-            /** Format: date-time */
             createdAt: string;
-            /** Format: uuid */
             datasetId: string;
-            /** Format: uuid */
             id: string;
-            /** Format: int64 */
             sourceRevision: number;
-            /** Format: int64 */
             versionNumber: number;
         };
         DebugExecutionRequest: {
-            /** Format: int64 */
+            context?: unknown;
             expectedRevision: number;
             idempotencyKey?: string | null;
             input?: unknown;
@@ -530,51 +399,57 @@ export interface components {
             arguments: unknown;
             confirmationText?: string | null;
             confirmed: boolean;
-            /** Format: uuid */
             expectedToolVersionId: string;
         };
         DebugMcpToolResponse: {
-            /** Format: int64 */
             durationMs: number;
             result: unknown;
-            /** Format: uuid */
             toolVersionId: string;
         };
         DebugOverlayResponse: {
-            /** Format: uuid */
             artifactId?: string | null;
-            /** Format: uuid */
             id: string;
             kind: string;
             nodeId: string;
             payload: unknown;
             schemaHash?: string | null;
             stale: boolean;
-            /** Format: date-time */
             updatedAt: string;
-            /** Format: uuid */
             updatedBy: string;
-            /** Format: uuid */
             workflowId: string;
         };
         DecideApprovalRequest: {
             input?: unknown;
-            /** Format: int64 */
             version: number;
         };
         DeleteCaseRequest: {
-            /** Format: int64 */
             expectedRevision: number;
         };
+        DeletionImpactResponse: {
+            deletable: boolean;
+            page: number;
+            pageSize: number;
+            references: components["schemas"]["DeletionReference"][];
+            targetVersion: number;
+            total: number;
+        };
+        DeletionReference: {
+            immutable: boolean;
+            nodeId?: string | null;
+            nodeName?: string | null;
+            parentId?: string | null;
+            relation: string;
+            sourceId: string;
+            sourceModule: string;
+            sourceName: string;
+            sourceType: string;
+        };
         DepartmentResponse: {
-            /** Format: uuid */
             id: string;
             isRoot: boolean;
             name: string;
-            /** Format: uuid */
             parentId?: string | null;
             status: string;
-            /** Format: int64 */
             version: number;
         };
         DependencyHealth: {
@@ -583,22 +458,15 @@ export interface components {
             status: string;
         };
         DeploymentResponse: {
-            /** Format: date-time */
             createdAt: string;
-            /** Format: uuid */
             environmentId: string;
             environmentName: string;
-            /** Format: uuid */
             id: string;
-            /** Format: int64 */
             sequenceNumber: number;
             source: string;
             status: string;
-            /** Format: int64 */
             versionNumber: number;
-            /** Format: uuid */
             workflowId: string;
-            /** Format: uuid */
             workflowVersionId: string;
         };
         DraftResponse: {
@@ -606,62 +474,45 @@ export interface components {
             definitionHash: string;
             editorDocument: unknown;
             editorHash: string;
-            /** Format: uuid */
             id: string;
-            /** Format: int64 */
             revision: number;
             schemaVersion: string;
-            /** Format: date-time */
             updatedAt: string;
-            /** Format: uuid */
             workflowId: string;
         };
         EnvironmentResponse: {
             code: string;
-            /** Format: uuid */
             id: string;
             isBuiltin: boolean;
             name: string;
             status: string;
-            /** Format: int64 */
             version: number;
         };
         EvaluationCaseResultResponse: {
-            /** Format: uuid */
             caseId: string;
             caseKey: string;
-            /** Format: int64 */
             costMicros: number;
             detail?: unknown;
-            /** Format: int64 */
             durationMs?: number | null;
             errorCode?: string | null;
             errorMessage?: string | null;
             ruleResults: components["schemas"]["EvaluationRuleResultResponse"][];
-            /** Format: double */
             score?: number | null;
-            /** Format: uuid */
             sourceCaseId: string;
             status: string;
-            /** Format: uuid */
             targetExecutionId?: string | null;
         };
         EvaluationProfileResponse: {
             aggregation: string;
             description?: string | null;
-            /** Format: uuid */
             id: string;
             name: string;
-            /** Format: uuid */
             ownerDepartmentId: string;
             passThreshold: string;
             rules: components["schemas"]["EvaluationRuleResponse"][];
             status: string;
-            /** Format: int64 */
             version: number;
-            /** Format: uuid */
             versionId: string;
-            /** Format: int64 */
             versionNumber: number;
             visibility: string;
         };
@@ -682,119 +533,83 @@ export interface components {
         EvaluationRuleResponse: {
             configuration: unknown;
             evaluatorType: string;
-            /** Format: uuid */
             id: string;
             key: string;
             name: string;
             required: boolean;
-            /** Format: int32 */
             sortOrder: number;
             weight: string;
         };
         EvaluationRuleResultResponse: {
-            /** Format: int64 */
             costMicros: number;
             detail: unknown;
-            /** Format: int64 */
             durationMs?: number | null;
-            /** Format: uuid */
             evaluatorExecutionId?: string | null;
             evaluatorType: string;
-            /** Format: uuid */
             id: string;
             key: string;
             name: string;
             passed?: boolean | null;
-            /** Format: double */
             score?: number | null;
             status: string;
         };
         EvaluationRunResponse: {
-            /** Format: date-time */
             createdAt: string;
             datasetName: string;
-            /** Format: uuid */
             datasetVersionId: string;
-            /** Format: uuid */
             evaluationProfileVersionId: string;
-            /** Format: uuid */
             id: string;
             name: string;
-            /** Format: uuid */
             ownerDepartmentId: string;
             parameters: unknown;
-            /** Format: int64 */
             resultCount: number;
             status: string;
             visibility: string;
             workflowName: string;
-            /** Format: uuid */
             workflowVersionId: string;
         };
         ExecutionCommandResponse: {
-            /** Format: uuid */
             executionId: string;
             replayed: boolean;
             status: string;
         };
         ExecutionEventListResponse: {
             items: components["schemas"]["ExecutionEventResponse"][];
-            /** Format: int64 */
             nextCursor?: number | null;
         };
         ExecutionEventQuery: {
-            /** Format: int64 */
             after?: number | null;
-            /** Format: int32 */
             limit?: number | null;
         };
         ExecutionEventResponse: {
             eventType: string;
-            /** Format: date-time */
             occurredAt: string;
-            /** Format: int64 */
             sequence: number;
             status: string;
             summary: unknown;
         };
         ExecutionResponse: {
-            /** Format: uuid */
             callerExecutionId?: string | null;
-            /** Format: int64 */
             costMicros: number;
-            /** Format: int64 */
             durationMs?: number | null;
-            /** Format: date-time */
             endedAt?: string | null;
             errorCode?: string | null;
             errorMessage?: string | null;
             executionType: string;
-            /** Format: uuid */
             forkCheckpointId?: string | null;
-            /** Format: uuid */
             id: string;
-            /** Format: int64 */
             inputTokens: number;
-            /** Format: uuid */
             invocationId?: string | null;
-            /** Format: int64 */
             outputTokens: number;
-            /** Format: uuid */
             parentExecutionId?: string | null;
-            /** Format: uuid */
             sessionId?: string | null;
-            /** Format: date-time */
             startedAt: string;
             status: string;
-            /** Format: uuid */
             traceId: string;
             triggerType: string;
-            /** Format: uuid */
             workflowId: string;
             workflowName: string;
-            /** Format: uuid */
             workflowVersionId?: string | null;
-            /** Format: int64 */
             workflowVersionNumber?: number | null;
         };
         ExpressionPreviewRequest: {
@@ -803,7 +618,6 @@ export interface components {
             itemIndex?: number;
             json?: unknown;
             linkedNodes?: unknown;
-            /** Format: int32 */
             runIndex?: number;
         };
         ExpressionPreviewResponse: {
@@ -816,7 +630,6 @@ export interface components {
             message: string;
         };
         ForkRequest: {
-            /** Format: uuid */
             checkpointId: string;
             idempotencyKey?: string | null;
             inputOverrides?: unknown;
@@ -825,40 +638,29 @@ export interface components {
             sideEffectDecisions?: unknown;
         };
         GrantResponse: {
-            /** Format: date-time */
             createdAt: string;
-            /** Format: uuid */
             id: string;
             operation: string;
-            /** Format: uuid */
             resourceId: string;
             resourceType: string;
-            /** Format: uuid */
             resourceVersionId?: string | null;
-            /** Format: uuid */
             subjectId: string;
             subjectType: string;
         };
         GrantableResourceResponse: {
             detail: string;
-            /** Format: int64 */
             grantCount: number;
-            /** Format: uuid */
             id: string;
             name: string;
-            /** Format: uuid */
             ownerDepartmentId: string;
             resourceType: string;
             status: string;
-            /** Format: date-time */
             updatedAt: string;
         };
         HealthCheckResponse: {
-            /** Format: date-time */
             checkedAt: string;
             errorCode?: string | null;
             errorMessage?: string | null;
-            /** Format: int64 */
             latencyMs?: number | null;
             status: string;
         };
@@ -874,41 +676,42 @@ export interface components {
         };
         ImportCasesRequest: {
             content: string;
-            /** Format: int64 */
             expectedRevision: number;
             format: string;
         };
+        ImportWorkflowPackageRequest: {
+            description?: string | null;
+            name: string;
+            package: components["schemas"]["WorkflowPackage"];
+            resourceBindings?: {
+                [key: string]: components["schemas"]["ResourceBindingTarget"];
+            };
+            visibility: string;
+        };
+        ImportedWorkflowResponse: {
+            definitionHash: string;
+            draftId: string;
+            workflowId: string;
+        };
         KnowledgeResponse: {
-            /** Format: uuid */
             connectionId: string;
             connectionName: string;
             externalResourceId: string;
-            /** Format: int64 */
             grantCount: number;
-            /** Format: uuid */
             id: string;
             name: string;
-            /** Format: uuid */
             ownerDepartmentId: string;
             status: string;
             syncStatus: string;
-            /** Format: date-time */
             updatedAt: string;
-            /** Format: int64 */
             version: number;
         };
         LineageResponse: {
-            /** Format: uuid */
             deliveryId: string;
-            /** Format: int32 */
             sourceItemIndex: number;
-            /** Format: uuid */
             sourceNodeExecutionId: string;
-            /** Format: int32 */
             sourceOutputIndex: number;
-            /** Format: int32 */
             sourceRunIndex: number;
-            /** Format: int32 */
             targetItemIndex: number;
         };
         LoginRequest: {
@@ -916,69 +719,50 @@ export interface components {
             username: string;
         };
         McpDiscoveryResponse: {
-            /** Format: int32 */
             discoveredCount: number;
-            /** Format: uuid */
             runId: string;
             tools: components["schemas"]["McpToolResponse"][];
         };
         McpServerResponse: {
-            /** Format: uuid */
             credentialId?: string | null;
-            /** Format: int64 */
             currentVersionNumber: number;
             description?: string | null;
             endpoint: string;
-            /** Format: uuid */
             id: string;
-            /** Format: date-time */
             lastDiscoveredAt?: string | null;
             name: string;
-            /** Format: uuid */
             ownerDepartmentId: string;
             status: string;
-            /** Format: int64 */
             toolCount: number;
             transport: string;
-            /** Format: date-time */
             updatedAt: string;
-            /** Format: int64 */
             version: number;
         };
         McpToolResponse: {
             annotations: unknown;
             availability: string;
-            /** Format: uuid */
             currentVersionId: string;
-            /** Format: int64 */
             currentVersionNumber: number;
             debugEnabled: boolean;
             description?: string | null;
             enabled: boolean;
-            /** Format: uuid */
             id: string;
             inputSchema: unknown;
             name: string;
             outputSchema?: unknown;
             schemaHash: string;
-            /** Format: uuid */
             serverId: string;
             sideEffect: string;
-            /** Format: int32 */
             timeoutSeconds: number;
             title?: string | null;
-            /** Format: int64 */
             version: number;
         };
         MeResponse: {
-            /** Format: uuid */
             companyId: string;
             companyName: string;
-            /** Format: uuid */
             departmentId: string;
             departmentName: string;
             displayName: string;
-            /** Format: uuid */
             id: string;
             locale: string;
             permissions: string[];
@@ -988,136 +772,76 @@ export interface components {
         };
         MemoryResponse: {
             accessMode: string;
-            /** Format: uuid */
             connectionId: string;
             connectionName: string;
             externalNamespace: string;
-            /** Format: int64 */
             grantCount: number;
-            /** Format: uuid */
             id: string;
             name: string;
-            /** Format: uuid */
             ownerDepartmentId: string;
             status: string;
-            /** Format: date-time */
             updatedAt: string;
-            /** Format: int64 */
             version: number;
         };
         MissingGrantResponse: {
             nodeId: string;
             operation: string;
             reason: string;
-            /** Format: uuid */
             requiredByResourceId?: string | null;
-            /** Format: uuid */
             resourceId: string;
             resourceType: string;
         };
         ModelDeploymentHistoryResponse: {
-            /** Format: date-time */
             changedAt: string;
-            /** Format: uuid */
             changedBy: string;
-            /** Format: uuid */
+            connectionName: string;
             deploymentId: string;
-            /** Format: uuid */
             id: string;
             modelName: string;
-            /** Format: uuid */
             previousDeploymentId?: string | null;
-            /** Format: int64 */
             revisionNumber: number;
-        };
-        ModelDeploymentResponse: {
-            /** Format: uuid */
-            credentialId?: string | null;
-            defaultParameters: unknown;
-            endpointOverride?: string | null;
-            /** Format: uuid */
-            id: string;
-            modelName: string;
-            name: string;
-            /** Format: uuid */
-            providerId: string;
-            /** Format: int64 */
-            revisionNumber: number;
-            status: string;
-            /** Format: uuid */
-            supersedesDeploymentId?: string | null;
-            /** Format: int64 */
-            version: number;
         };
         ModelPriceResponse: {
-            /** Format: date-time */
             createdAt: string;
             currency: string;
-            /** Format: uuid */
             deploymentId: string;
-            /** Format: uuid */
             id: string;
             inputPerMillion: string;
             outputPerMillion: string;
-            /** Format: int64 */
             versionNumber: number;
-        };
-        ModelProviderResponse: {
-            /** Format: uuid */
-            credentialId?: string | null;
-            endpoint: string;
-            /** Format: uuid */
-            id: string;
-            name: string;
-            /** Format: uuid */
-            ownerDepartmentId: string;
-            providerType: string;
-            status: string;
-            /** Format: int64 */
-            version: number;
         };
         ModelResponse: {
             alias: string;
-            /** Format: int64 */
             aliasVersion: number;
-            /** Format: date-time */
             connectionCheckedAt?: string | null;
+            connectionName: string;
             connectionStatus: string;
-            /** Format: uuid */
+            credentialId?: string | null;
+            defaultParameters: unknown;
             deploymentId: string;
-            deploymentName: string;
-            /** Format: uuid */
+            endpoint: string;
             id: string;
+            maxInputTokens: number;
+            maxOutputTokens: number;
             modelName: string;
-            /** Format: uuid */
             ownerDepartmentId: string;
-            /** Format: uuid */
-            providerId: string;
-            providerName: string;
             providerType: string;
+            revisionNumber: number;
             status: string;
-            /** Format: date-time */
             updatedAt: string;
         };
         MoveEntryRequest: {
-            /** Format: int64 */
             expectedRevision: number;
             name: string;
-            /** Format: uuid */
             parentId?: string | null;
         };
         NodeAttemptResponse: {
-            /** Format: int32 */
             attemptNumber: number;
-            /** Format: date-time */
             deadlineAt?: string | null;
-            /** Format: date-time */
             endedAt?: string | null;
             errorCode?: string | null;
             errorMessage?: string | null;
-            /** Format: uuid */
             id: string;
-            /** Format: date-time */
             startedAt?: string | null;
             status: string;
             workerInstanceId?: string | null;
@@ -1126,14 +850,11 @@ export interface components {
             manifest: unknown;
             manifestHash: string;
             nodeType: string;
-            /** Format: int32 */
             version: number;
         };
         NodeDefinitionQuery: {
             category?: string | null;
-            /** Format: int32 */
             page?: number | null;
-            /** Format: int32 */
             pageSize?: number | null;
             search?: string | null;
         };
@@ -1147,43 +868,38 @@ export interface components {
             keywords: string[];
             manifestHash: string;
             nodeType: string;
-            /** Format: int32 */
             version: number;
         };
         NodeExecutionListResponse: {
             items: components["schemas"]["NodeExecutionResponse"][];
         };
         NodeExecutionResponse: {
-            /** Format: int32 */
             activationSlot: number;
             attempts: components["schemas"]["NodeAttemptResponse"][];
             capability: string;
-            /** Format: date-time */
             endedAt?: string | null;
             errorCode?: string | null;
             errorMessage?: string | null;
-            /** Format: uuid */
             executionId: string;
-            /** Format: int32 */
             generation: number;
-            /** Format: uuid */
             id: string;
             input?: unknown;
-            /** Format: int32 */
             iterationIndex: number;
             lineage: components["schemas"]["LineageResponse"][];
             nodeId: string;
             nodeName: string;
             nodeType: string;
-            /** Format: int32 */
             nodeVersion: number;
             output?: unknown;
-            /** Format: int32 */
             runIndex: number;
             sideEffectLevel: string;
-            /** Format: date-time */
             startedAt?: string | null;
             status: string;
+        };
+        NodeLock: {
+            manifestHash: string;
+            nodeType: string;
+            version: number;
         };
         NodeProviderOption: {
             description?: string | null;
@@ -1194,25 +910,20 @@ export interface components {
             items: components["schemas"]["NodeProviderOption"][];
         };
         NodeProviderQuery: {
-            /** Format: int32 */
             limit?: number | null;
             search?: string | null;
         };
         NotificationInboxResponse: {
             items: components["schemas"]["NotificationResponse"][];
-            /** Format: int64 */
             unreadCount: number;
         };
         NotificationResponse: {
             arguments: unknown;
             bodyKey: string;
-            /** Format: date-time */
             createdAt: string;
-            /** Format: uuid */
             id: string;
             notificationType: string;
             read: boolean;
-            /** Format: uuid */
             targetId: string;
             targetPath: string;
             targetType: string;
@@ -1226,83 +937,149 @@ export interface components {
         };
         PublishSkillVersionRequest: {
             dependencies?: components["schemas"]["SkillDependencyInput"][];
-            /** Format: int64 */
             expectedRevision: number;
         };
         PublishWorkflowRequest: {
-            /** Format: uuid */
             environmentId: string;
-            /** Format: uuid */
             workflowVersionId: string;
         };
         QueuedWorkflowRunResponse: {
-            /** Format: uuid */
             commandId: string;
             status: string;
         };
         QuotaPolicyInput: {
             dimension: string;
             hardLimit: string;
-            /** Format: int64 */
             periodSeconds?: number | null;
         };
         QuotaPolicyResponse: {
             activeReserved: string;
             dimension: string;
             hardLimit: string;
-            /** Format: int64 */
             periodSeconds?: number | null;
             periodUsage: string;
-            /** Format: int64 */
             version: number;
         };
         ReassignApprovalRequest: {
-            /** Format: uuid */
             targetUserId: string;
-            /** Format: int64 */
             version: number;
+        };
+        ResourceAuthorizationInput: {
+            operation: string;
+            resourceId: string;
+            resourceType: string;
+            resourceVersionId?: string | null;
+        };
+        ResourceAuthorizationResponse: {
+            alreadyGrantedCount: number;
+            grantedCount: number;
+            resourceId: string;
+            resourceType: string;
+            workflowId: string;
+        };
+        ResourceBindingPlaceholder: {
+            bindingRole?: string | null;
+            id: string;
+            nodeId: string;
+            operation: string;
+            referenceIndex: number;
+            resourceType: string;
+        };
+        ResourceBindingTarget: {
+            resourceId: string;
+            resourceVersionId?: string | null;
+        };
+        ResourceGrantRequestAuditResponse: {
+            action: string;
+            actorName?: string | null;
+            id: string;
+            occurredAt: string;
+        };
+        ResourceGrantRequestResponse: {
+            createdAt: string;
+            history: components["schemas"]["ResourceGrantRequestAuditResponse"][];
+            id: string;
+            items: components["schemas"]["ResourceRequirementResponse"][];
+            message?: string | null;
+            operation: string;
+            primaryResourceId: string;
+            primaryResourceName?: string | null;
+            primaryResourceType: string;
+            requestedBy: string;
+            requestedByName: string;
+            reviews: components["schemas"]["ResourceGrantRequestReviewResponse"][];
+            sourceNodeId?: string | null;
+            sourceRevision?: number | null;
+            status: string;
+            updatedAt: string;
+            version: number;
+            workflowId: string;
+            workflowName: string;
+            workflowServiceIdentityId: string;
+        };
+        ResourceGrantRequestReviewResponse: {
+            canAct: boolean;
+            id: string;
+            ownerDepartmentId: string;
+            ownerDepartmentName: string;
+            reviewComment?: string | null;
+            reviewedAt?: string | null;
+            reviewedBy?: string | null;
+            reviewedByName?: string | null;
+            status: string;
+            version: number;
+        };
+        ResourceOptionQuery: {
+            operation?: string | null;
+            page?: number | null;
+            pageSize?: number | null;
+            resourceType: string;
+            search?: string | null;
+        };
+        ResourceRequirementResponse: {
+            active: boolean;
+            authorized: boolean;
+            name?: string | null;
+            operation: string;
+            ownerDepartmentId?: string | null;
+            requiredByResourceId?: string | null;
+            resourceId: string;
+            resourceType: string;
+            resourceVersionId?: string | null;
         };
         ResourceValidationResponse: {
             missingGrants: components["schemas"]["MissingGrantResponse"][];
             valid: boolean;
         };
         RetentionItemResponse: {
-            /** Format: int32 */
             attemptCount: number;
             dataType: string;
-            /** Format: uuid */
             id: string;
             reason?: string | null;
             status: string;
             targetId: string;
-            /** Format: date-time */
             updatedAt: string;
         };
         RetentionRunResponse: {
-            /** Format: int64 */
             candidateCount: number;
-            /** Format: date-time */
             completedAt?: string | null;
-            /** Format: date-time */
             createdAt: string;
-            /** Format: int64 */
             deletedCount: number;
             dryRun: boolean;
             errorMessage?: string | null;
-            /** Format: uuid */
             id: string;
             status: string;
         };
+        ReviewResourceGrantRequest: {
+            comment?: string | null;
+            expectedVersion: number;
+        };
         RevisionResponse: {
-            /** Format: date-time */
             createdAt: string;
-            /** Format: uuid */
             createdBy: string;
             definitionHash: string;
             editorHash: string;
-            /** Format: uuid */
             id: string;
-            /** Format: int64 */
             revision: number;
             schemaVersion: string;
         };
@@ -1310,24 +1087,19 @@ export interface components {
             code: string;
             dataScope: string;
             description?: string | null;
-            /** Format: uuid */
             id: string;
             isBuiltin: boolean;
-            /** Format: int64 */
             memberCount: number;
             name: string;
             permissions: string[];
             status: string;
-            /** Format: int64 */
             version: number;
         };
         RollbackWorkflowRequest: {
-            /** Format: uuid */
             targetWorkflowVersionId: string;
         };
         RotateCredentialRequest: {
             secret: unknown;
-            /** Format: int64 */
             version: number;
         };
         RunWorkflowRequest: {
@@ -1335,33 +1107,22 @@ export interface components {
             input?: unknown;
         };
         RuntimeCallDetail: {
-            /** Format: uuid */
             agentRunId?: string | null;
-            /** Format: uuid */
             attemptId: string;
-            /** Format: int32 */
             callIndex: number;
             callKind: string;
-            /** Format: int64 */
             costMicros: number;
             endedAt?: string | null;
             errorCode?: string | null;
             errorMessage?: string | null;
-            /** Format: uuid */
             id: string;
-            /** Format: int64 */
             inputTokens: number;
-            /** Format: int32 */
             iterationIndex: number;
-            /** Format: int64 */
             outputTokens: number;
             requestFingerprint: string;
-            /** Format: uuid */
             resourceId?: string | null;
             resourceType?: string | null;
-            /** Format: uuid */
             resourceVersionId?: string | null;
-            /** Format: uuid */
             responseArtifactId?: string | null;
             sideEffect: string;
             startedAt: string;
@@ -1370,118 +1131,82 @@ export interface components {
         };
         RuntimeComponentStatus: {
             component: string;
-            /** Format: int64 */
             instances?: number | null;
             lastHeartbeat?: string | null;
-            /** Format: int64 */
             queueDepth?: number | null;
             status: string;
         };
         RuntimeDetailsResponse: {
             agentRuns: components["schemas"]["AgentRunDetail"][];
             calls: components["schemas"]["RuntimeCallDetail"][];
-            /** Format: int64 */
             costMicros: number;
-            /** Format: uuid */
             executionId: string;
-            /** Format: int64 */
             inputTokens: number;
             iterations: components["schemas"]["AgentIterationDetail"][];
-            /** Format: int64 */
             outputTokens: number;
             sandboxes: components["schemas"]["SandboxLeaseDetail"][];
         };
         RuntimeStatusResponse: {
-            /** Format: int64 */
             activeSandboxes: number;
             components: components["schemas"]["RuntimeComponentStatus"][];
-            /** Format: int64 */
             failedToday: number;
-            /** Format: int64 */
             running: number;
             sandboxCompatibility?: unknown;
-            /** Format: int64 */
             waiting: number;
         };
         SandboxLeaseDetail: {
-            /** Format: uuid */
             attemptId: string;
             createdAt: string;
             expiresAt: string;
             heartbeatAt: string;
-            /** Format: uuid */
             id: string;
             lastError?: string | null;
-            /** Format: uuid */
             nodeExecutionId: string;
-            /** Format: uuid */
             profileVersionId: string;
             sandboxId?: string | null;
             status: string;
             terminatedAt?: string | null;
-            /** Format: int32 */
             terminationAttempts: number;
         };
         SandboxProfileResponse: {
             current: components["schemas"]["SandboxProfileVersionResponse"];
-            /** Format: int64 */
             currentVersionNumber: number;
             description?: string | null;
-            /** Format: uuid */
             id: string;
             name: string;
-            /** Format: uuid */
             ownerDepartmentId: string;
             status: string;
-            /** Format: date-time */
             updatedAt: string;
-            /** Format: int64 */
             version: number;
             versions: components["schemas"]["SandboxProfileVersionResponse"][];
         };
         SandboxProfileVersionInput: {
-            /** Format: int32 */
             cpuMillis: number;
-            /** Format: int64 */
             diskBytes: number;
             imageDigest: string;
-            /** Format: int64 */
             memoryBytes: number;
             networkPolicy: unknown;
-            /** Format: int64 */
             outputLimitBytes: number;
-            /** Format: int32 */
             pidsLimit: number;
             runner: string;
-            /** Format: int32 */
             timeoutSeconds: number;
         };
         SandboxProfileVersionResponse: {
             configurationHash: string;
-            /** Format: int32 */
             cpuMillis: number;
-            /** Format: date-time */
             createdAt: string;
-            /** Format: int64 */
             diskBytes: number;
-            /** Format: uuid */
             id: string;
             imageDigest: string;
-            /** Format: int64 */
             memoryBytes: number;
             networkPolicy: unknown;
-            /** Format: int64 */
             outputLimitBytes: number;
-            /** Format: int32 */
             pidsLimit: number;
             runner: string;
-            /** Format: int32 */
             timeoutSeconds: number;
-            /** Format: int64 */
             versionNumber: number;
         };
         SaveDebugOverlayRequest: {
-            /** Format: uuid */
             artifactId?: string | null;
             kind: string;
             payload: unknown;
@@ -1490,113 +1215,81 @@ export interface components {
         SaveDraftRequest: {
             definition: unknown;
             editorDocument?: unknown;
-            /** Format: int64 */
             expectedRevision: number;
         };
         ScheduleResponse: {
             cronExpression: string;
-            /** Format: uuid */
             id: string;
             input: unknown;
             misfirePolicy: string;
             name: string;
             status: string;
             timezone: string;
-            /** Format: int64 */
             version: number;
         };
         SessionResponse: {
-            /** Format: uuid */
             applicationDeploymentId: string;
-            /** Format: uuid */
             applicationId: string;
             externalUserId?: string | null;
-            /** Format: uuid */
             id: string;
             status: string;
             title?: string | null;
-            /** Format: date-time */
             updatedAt: string;
-            /** Format: int64 */
             version: number;
             versionPolicy: string;
-            /** Format: uuid */
             workflowVersionId?: string | null;
         };
         SideEffectConfirmationRequest: {
-            /** Format: uuid */
             checkpointId?: string | null;
             decision: string;
             idempotencyKey: string;
-            /** Format: uuid */
             nodeExecutionId: string;
         };
         SkillDependencyInput: {
             operation: string;
-            /** Format: uuid */
             resourceId: string;
             resourceType: string;
-            /** Format: uuid */
             resourceVersionId?: string | null;
         };
         SkillResponse: {
             alias: string;
             description?: string | null;
-            /** Format: int64 */
             draftRevision: number;
-            /** Format: int64 */
             grantCount: number;
-            /** Format: uuid */
             id: string;
-            /** Format: int64 */
             latestVersion?: number | null;
             name: string;
-            /** Format: uuid */
             ownerDepartmentId: string;
             status: string;
-            /** Format: date-time */
             updatedAt: string;
-            /** Format: int64 */
             version: number;
         };
         SkillVersionResponse: {
             contentHash: string;
-            /** Format: date-time */
             createdAt: string;
             dependencies: components["schemas"]["SkillDependencyInput"][];
-            /** Format: int64 */
             fileCount: number;
-            /** Format: uuid */
             id: string;
             manifest: unknown;
-            /** Format: uuid */
             skillId: string;
-            /** Format: int64 */
             sourceRevision: number;
-            /** Format: int64 */
             versionNumber: number;
         };
         SkillWorkspaceEntry: {
-            /** Format: uuid */
             artifactId?: string | null;
             contentHash?: string | null;
             editable: boolean;
             entryType: string;
-            /** Format: uuid */
             id: string;
             mimeType?: string | null;
             name: string;
-            /** Format: uuid */
             parentId?: string | null;
             path: string;
-            /** Format: int64 */
             sizeBytes: number;
-            /** Format: date-time */
             updatedAt: string;
         };
         SkillWorkspaceResponse: {
             entries: components["schemas"]["SkillWorkspaceEntry"][];
-            /** Format: int64 */
             revision: number;
         };
         StartExecutionRequest: {
@@ -1608,14 +1301,11 @@ export interface components {
             context?: unknown;
             evaluatorOverride?: unknown;
             expectedOutput?: unknown;
-            /** Format: uuid */
             id: string;
             input: unknown;
             name: string;
-            /** Format: int64 */
             sortOrder: number;
             tags: string[];
-            /** Format: int64 */
             version: number;
         };
         TraceEventResponse: {
@@ -1623,9 +1313,7 @@ export interface components {
             attemptId?: string | null;
             attributes: unknown;
             contentRef?: string | null;
-            /** Format: int64 */
             costMicros: number;
-            /** Format: int64 */
             durationMs?: number | null;
             errorCode?: string | null;
             errorMessage?: string | null;
@@ -1633,15 +1321,12 @@ export interface components {
             eventTime: string;
             eventType: string;
             executionId: string;
-            /** Format: int64 */
             inputTokens?: number | null;
-            /** Format: int32 */
             iterationIndex: number;
             mcpToolName?: string | null;
             modelName?: string | null;
             nodeExecutionId?: string | null;
             nodeId?: string | null;
-            /** Format: int64 */
             outputTokens?: number | null;
             parentSpanId?: string | null;
             partial: boolean;
@@ -1649,7 +1334,6 @@ export interface components {
             resourceId?: string | null;
             resourceType?: string | null;
             resourceVersionId?: string | null;
-            /** Format: int32 */
             runIndex: number;
             runtimeCallId?: string | null;
             sandboxId?: string | null;
@@ -1660,100 +1344,84 @@ export interface components {
         };
         TraceResponse: {
             events: components["schemas"]["TraceEventResponse"][];
-            /** Format: uuid */
             executionId: string;
             nextCursor?: string | null;
-            /** Format: uuid */
             traceId: string;
         };
         UpdateApplicationRequest: {
             description?: string | null;
             name: string;
             status: string;
-            /** Format: int64 */
             version: number;
             visibility: string;
         };
         UpdateCaseRequest: components["schemas"]["CaseInput"] & {
-            /** Format: int64 */
             expectedRevision: number;
-            /** Format: int64 */
             version: number;
         };
         UpdateCredentialRequest: {
             name: string;
             status: string;
-            /** Format: int64 */
             version: number;
         };
         UpdateDatasetRequest: {
             description?: string | null;
             name: string;
             status: string;
-            /** Format: int64 */
             version: number;
             visibility: string;
         };
         UpdateDepartmentRequest: {
             name: string;
-            /** Format: uuid */
             parentId?: string | null;
-            /** Format: int64 */
             version: number;
         };
         UpdateEnvironmentRequest: {
             name: string;
             status: string;
-            /** Format: int64 */
             version: number;
         };
         UpdateExternalResourceRequest: {
             name: string;
             status: string;
-            /** Format: int64 */
             version: number;
         };
         UpdateMarkdownRequest: {
             content: string;
             description?: string | null;
-            /** Format: int64 */
             expectedRevision: number;
         };
         UpdateMcpServerRequest: {
             configuration?: unknown;
-            /** Format: uuid */
             credentialId?: string | null;
             description?: string | null;
             endpoint: string;
             name: string;
             status: string;
             transport: string;
-            /** Format: int64 */
             version: number;
         };
         UpdateMcpToolPolicyRequest: {
             debugEnabled: boolean;
             enabled: boolean;
             sideEffect: string;
-            /** Format: int32 */
             timeoutSeconds: number;
-            /** Format: int64 */
             version: number;
         };
-        UpdateModelAliasRequest: {
+        UpdateModelRequest: {
             alias: string;
-            status: string;
-            /** Format: int64 */
-            version: number;
-        };
-        UpdateModelProviderRequest: {
-            /** Format: uuid */
+            connectionName: string;
             credentialId?: string | null;
+            defaultParameters: unknown;
             endpoint: string;
-            name: string;
+            expectedAliasVersion: number;
+            maxInputTokens: number;
+            maxOutputTokens: number;
+            modelName: string;
+            ownerDepartmentId: string;
+            price?: null | components["schemas"]["CreateModelPriceRequest"];
+            providerType: string;
             status: string;
-            /** Format: int64 */
-            version: number;
         };
         UpdateQuotaPoliciesRequest: {
             policies: components["schemas"]["QuotaPolicyInput"][];
@@ -1763,14 +1431,12 @@ export interface components {
             description?: string | null;
             name: string;
             permissions: string[];
-            /** Format: int64 */
             version: number;
         };
         UpdateSandboxProfileRequest: {
             description?: string | null;
             name: string;
             status: string;
-            /** Format: int64 */
             version: number;
         };
         UpdateScheduleRequest: {
@@ -1780,7 +1446,6 @@ export interface components {
             name: string;
             status: string;
             timezone: string;
-            /** Format: int64 */
             version: number;
         };
         UpdateSkillRequest: {
@@ -1788,54 +1453,42 @@ export interface components {
             description?: string | null;
             name: string;
             status: string;
-            /** Format: int64 */
             version: number;
         };
         UpdateUserRequest: {
-            /** Format: uuid */
             departmentId: string;
             displayName: string;
-            /** Format: uuid */
             roleId: string;
-            /** Format: int64 */
             version: number;
         };
         UpdateWebhookRequest: {
             name: string;
             status: string;
-            /** Format: int64 */
             version: number;
         };
         UpdateWorkflowRequest: {
             description?: string | null;
             name: string;
-            /** Format: int64 */
             version: number;
             visibility: string;
         };
         UpgradeSessionRequest: {
-            /** Format: int64 */
             version: number;
-            /** Format: uuid */
             workflowVersionId: string;
         };
         UpsertWorkflowMemberRequest: {
             memberRole: string;
-            /** Format: uuid */
             userId: string;
         };
         UserResponse: {
-            /** Format: uuid */
             departmentId: string;
             departmentName: string;
             displayName: string;
-            /** Format: uuid */
             id: string;
             passwordChangeRequired: boolean;
             roles: string[];
             status: string;
             username: string;
-            /** Format: int64 */
             version: number;
         };
         ValidateDraftRequest: {
@@ -1856,7 +1509,6 @@ export interface components {
             severity: string;
         };
         VersionActionRequest: {
-            /** Format: int64 */
             version: number;
         };
         WaitListResponse: {
@@ -1864,36 +1516,28 @@ export interface components {
         };
         WaitResponse: {
             authenticationMode: string;
-            /** Format: uuid */
             executionId: string;
-            /** Format: uuid */
             id: string;
-            /** Format: uuid */
             nodeExecutionId: string;
             resumeUrl?: string | null;
             status: string;
-            /** Format: date-time */
             timeoutAt?: string | null;
             waitKind: string;
-            /** Format: date-time */
             wakeAt?: string | null;
         };
         WebhookResponse: {
-            /** Format: uuid */
             id: string;
             name: string;
             path: string;
             publicId: string;
             secret?: string | null;
             status: string;
-            /** Format: int64 */
             version: number;
         };
         WorkerCapabilityResponse: {
             capability: string;
             compilerVersionMax: string;
             compilerVersionMin: string;
-            /** Format: date-time */
             heartbeatAt: string;
             instanceId: string;
             irSchemaVersions: unknown;
@@ -1904,49 +1548,63 @@ export interface components {
         WorkflowMemberResponse: {
             displayName: string;
             memberRole: string;
-            /** Format: uuid */
             userId: string;
             username: string;
         };
+        WorkflowPackage: {
+            apiBinding: unknown;
+            editorDocument: unknown;
+            manifest: components["schemas"]["WorkflowPackageManifest"];
+            nodeLock: components["schemas"]["NodeLock"][];
+            resourceBindingPlaceholders: components["schemas"]["ResourceBindingPlaceholder"][];
+            subWorkflowReferences: string[];
+            workflowDefinition: unknown;
+        };
+        WorkflowPackageManifest: {
+            contentHash: string;
+            name: string;
+            packageSchemaVersion: string;
+            signature: string;
+            signatureAlgorithm: string;
+            signingKeyId: string;
+            workflowSchemaVersion: string;
+        };
+        WorkflowResourceOptionResponse: {
+            accessState: string;
+            detail: string;
+            id: string;
+            name: string;
+            pendingRequestId?: string | null;
+            requirements: components["schemas"]["ResourceRequirementResponse"][];
+            resourceType: string;
+            resourceVersionId?: string | null;
+            status: string;
+        };
         WorkflowResponse: {
             description?: string | null;
-            /** Format: int64 */
             draftRevision: number;
-            /** Format: uuid */
             id: string;
-            /** Format: int64 */
             latestVersion?: number | null;
             name: string;
-            /** Format: uuid */
             ownerDepartmentId: string;
             ownerName: string;
-            /** Format: uuid */
             ownerUserId: string;
-            /** Format: uuid */
             serviceIdentityId: string;
             status: string;
-            /** Format: date-time */
             updatedAt: string;
-            /** Format: int64 */
             version: number;
             visibility: string;
         };
         WorkflowVersionResponse: {
             contentHash: string;
-            /** Format: date-time */
             createdAt: string;
-            /** Format: uuid */
             createdBy: string;
             definition: unknown;
             editorDocument: unknown;
-            /** Format: uuid */
             id: string;
             schemaVersion: string;
-            /** Format: int64 */
             sourceRevision: number;
-            /** Format: int64 */
             versionNumber: number;
-            /** Format: uuid */
             workflowId: string;
         };
     };

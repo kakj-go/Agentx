@@ -1,0 +1,81 @@
+const translations = {
+  "details": "Details",
+  "overview": "Overview",
+  "createVersion": "Create version",
+  "publish": "Publish",
+  "rollback": "Roll back",
+  "archive": "Archive",
+  "addMember": "Add member",
+  "noData": "No data",
+  "loading": "Loading…",
+  "saved": "Saved",
+  "revision": "Draft revision {{revision}}",
+  "draftRevision": "Draft revision",
+  "visibility": "Visibility",
+  "private": "Members only",
+  "departmentVisible": "Department",
+  "companyVisible": "Company",
+  "workflowName": "Workflow name",
+  "fields": {
+    "description": "Description"
+  },
+  "description": "Design, test, and publish enterprise Agent Workflows.",
+  "validationPassed": "Resource and grant validation passed",
+  "validationFailed": "{{count}} resource or grant issues found",
+  "versionNumber": "Version {{version}}",
+  "environment": "Environment",
+  "environmentManagement": "Environment management",
+  "environmentDescription": "Manage deployment environments used by workflows and applications.",
+  "manageEnvironments": "Manage environments",
+  "createEnvironment": "New environment",
+  "editEnvironment": "Edit environment",
+  "environmentCode": "Environment code",
+  "environmentName": "Environment name",
+  "environmentType": "Type",
+  "builtinEnvironment": "Built-in",
+  "customEnvironment": "Custom",
+  "searchEnvironments": "Search environments",
+  "environmentSaved": "Environment saved",
+  "environmentDeleted": "Environment deleted",
+  "members": "Members",
+  "versions": "Versions",
+  "deployments": "Deployment history",
+  "resources": "Resource validation",
+  "createWorkflow": "New workflow",
+  "openEditor": "Open canvas",
+  "latestVersion": "Latest version",
+  "draftLabel": "Draft",
+  "selectEnvironment": "Select environment",
+  "selectVersion": "Select version",
+  "confirmArchive": "Archived workflows cannot be edited or published.",
+  "created": "Created",
+  "loadFailed": "Failed to load data",
+  "title": "Workflows",
+  "search": "Search workflows",
+  "workflowId": "Workflow ID",
+  "serviceIdentity": "Service identity",
+  "sourceRevision": "Source revision {{revision}}",
+  "deploymentSources": {
+    "publish": "Publish",
+    "rollback": "Rollback"
+  },
+  "visibilities": {
+    "private": "Members only",
+    "department": "Department",
+    "company": "Company"
+  },
+  "memberRoles": {
+    "owner": "Owner",
+    "editor": "Editor",
+    "viewer": "Viewer",
+    "manager": "Manager"
+  },
+  "prerequisites": {
+    "publishDescription": "Create a version and activate the workflow before publishing.",
+    "version": "At least one published Workflow Version",
+    "active": "The workflow is active"
+  },
+  "deleted": "Deleted"
+} as const
+
+export default translations

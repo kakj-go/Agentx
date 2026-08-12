@@ -71,7 +71,7 @@ pub(crate) fn manifests() -> Vec<NodeManifestVersion> {
                 "按一个或多个字段排序数据项。",
             ),
             json!({"type":"object","properties":{"fields":{"type":"array","items":{"type":"object","required":["field"],"properties":{"field":{"type":"string"},"direction":{"enum":["asc","desc"],"default":"asc"},"nulls":{"enum":["first","last"],"default":"last"}}}}},"additionalProperties":false}),
-            json!({"fields":{"fields":{"control":"collection"}}}),
+            json!({"fields":{"fields":{"control":"json"}}}),
         ),
         configured(
             action(
@@ -84,7 +84,7 @@ pub(crate) fn manifests() -> Vec<NodeManifestVersion> {
                 "按全部或指定字段移除重复数据项。",
             ),
             json!({"type":"object","properties":{"fields":{"type":"array","items":{"type":"string"}},"keep":{"enum":["first","last"],"default":"first"}},"additionalProperties":false}),
-            json!({"fields":{"fields":{"control":"collection"},"keep":{"control":"select"}}}),
+            json!({"fields":{"fields":{"control":"json"},"keep":{"control":"select"}}}),
         ),
         configured(
             action(
@@ -110,7 +110,7 @@ pub(crate) fn manifests() -> Vec<NodeManifestVersion> {
                 "分组数据项并计算聚合值。",
             ),
             json!({"type":"object","properties":{"groupBy":{"type":"array","items":{"type":"string"}},"operations":{"type":"array","items":{"type":"object","required":["operation","outputField"],"properties":{"operation":{"enum":["count","sum","avg","min","max","first","last","collect"]},"field":{"type":"string"},"outputField":{"type":"string"}}}}},"additionalProperties":false}),
-            json!({"fields":{"groupBy":{"control":"collection"},"operations":{"control":"collection"}}}),
+            json!({"fields":{"groupBy":{"control":"json"},"operations":{"control":"json"}}}),
         ),
         configured(
             action(
@@ -123,7 +123,7 @@ pub(crate) fn manifests() -> Vec<NodeManifestVersion> {
                 "重命名数据项中的嵌套字段。",
             ),
             json!({"type":"object","required":["mappings"],"properties":{"mappings":{"type":"array","items":{"type":"object","required":["from","to"],"properties":{"from":{"type":"string"},"to":{"type":"string"}}}},"missingField":{"enum":["ignore","error"],"default":"ignore"}},"additionalProperties":false}),
-            json!({"fields":{"mappings":{"control":"collection"},"missingField":{"control":"select"}}}),
+            json!({"fields":{"mappings":{"control":"json"},"missingField":{"control":"select"}}}),
         ),
         configured(
             action(
@@ -165,8 +165,9 @@ pub(crate) fn manifests() -> Vec<NodeManifestVersion> {
             json!({"fields":{"code":{"control":"expression"},"message":{"control":"expression"}}}),
         ),
         configured(
-            trigger(
+            action(
                 "item_generator",
+                main_in(),
                 vec![
                     port("main", PortKind::Main, false, false),
                     port("error", PortKind::Error, false, false),
@@ -238,7 +239,7 @@ pub(crate) fn manifests() -> Vec<NodeManifestVersion> {
                 "按关键字段比较两个本地数据集。",
             ),
             json!({"type":"object","properties":{"keyFields":{"type":"array","items":{"type":"string"}}},"additionalProperties":false}),
-            json!({"fields":{"keyFields":{"control":"collection"}}}),
+            json!({"fields":{"keyFields":{"control":"json"}}}),
         ),
         configured(
             action(
@@ -282,31 +283,6 @@ fn action(
                 ReadinessPolicy::Any
             },
             inputs,
-            outputs,
-            SideEffectLevel::None,
-        ),
-        en,
-        zh,
-        en_description,
-        zh_description,
-    )
-}
-
-fn trigger(
-    node_type: &str,
-    outputs: Vec<agentx_node_protocol::NodePort>,
-    en: &str,
-    zh: &str,
-    en_description: &str,
-    zh_description: &str,
-) -> NodeManifestVersion {
-    localized(
-        manifest(
-            node_type,
-            ExecutionStyle::Trigger,
-            NodeCapability::Builtin,
-            ReadinessPolicy::Any,
-            vec![],
             outputs,
             SideEffectLevel::None,
         ),

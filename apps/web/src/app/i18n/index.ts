@@ -1,6 +1,8 @@
 import i18n from 'i18next'
 import { initReactI18next } from 'react-i18next'
 
+import { setApiErrorTranslator } from '../../shared/api/client'
+import type { ApiError } from '../../shared/api/types'
 import type { SupportedLocale } from '../../shared/types/app'
 import { resources } from './resources'
 
@@ -19,6 +21,15 @@ void i18n.use(initReactI18next).init({
   fallbackLng: 'zh-CN',
   interpolation: { escapeValue: false },
 })
+
+export function apiErrorMessage(detail: ApiError, status = 400) {
+  const key = `errors.codes.${detail.code}`
+  if (i18n.exists(key)) return i18n.t(key)
+  if (status >= 400 && status < 500 && detail.message) return detail.message
+  return i18n.t('errors.requestFailedWithId', { requestId: detail.requestId })
+}
+
+setApiErrorTranslator(apiErrorMessage)
 
 document.documentElement.lang = i18n.language
 

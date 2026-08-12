@@ -83,9 +83,9 @@ pub async fn resource_is_active(
     let active = match resource_type {
         "credential" => sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM credentials WHERE tenant_id=? AND id=? AND status='active')").bind(tenant_id).bind(resource_id).fetch_one(&mut **transaction).await?,
         "model" => if let Some(version_id) = version_id {
-            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM model_aliases a JOIN model_deployments d ON d.tenant_id=a.tenant_id JOIN model_providers p ON p.id=d.provider_id WHERE a.tenant_id=? AND a.id=? AND a.status='active' AND d.id=? AND d.status='active' AND p.status='active')").bind(tenant_id).bind(resource_id).bind(version_id).fetch_one(&mut **transaction).await?
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM model_aliases a JOIN model_alias_deployment_history h ON h.alias_id=a.id JOIN model_deployments d ON d.id=h.deployment_id WHERE a.tenant_id=? AND a.id=? AND a.status='active' AND d.id=? AND d.status='active')").bind(tenant_id).bind(resource_id).bind(version_id).fetch_one(&mut **transaction).await?
         } else {
-            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM model_aliases a JOIN model_deployments d ON d.id=a.deployment_id JOIN model_providers p ON p.id=d.provider_id WHERE a.tenant_id=? AND a.id=? AND a.status='active' AND d.status='active' AND p.status='active')").bind(tenant_id).bind(resource_id).fetch_one(&mut **transaction).await?
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM model_aliases a JOIN model_deployments d ON d.id=a.deployment_id WHERE a.tenant_id=? AND a.id=? AND a.status='active' AND d.status='active')").bind(tenant_id).bind(resource_id).fetch_one(&mut **transaction).await?
         },
         "mcp_server" => sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mcp_servers WHERE tenant_id=? AND id=? AND status='active')").bind(tenant_id).bind(resource_id).fetch_one(&mut **transaction).await?,
         "mcp_tool" => if let Some(version_id) = version_id {

@@ -24,7 +24,7 @@ async function runFixture(page: Page, name: string) {
 }
 
 function succeededRun(page: Page, name: string) {
-  return page.getByRole('button', { name: new RegExp(`^${name} Run \\d+ · succeeded$`) }).first()
+  return page.getByRole('button', { name: new RegExp(`^${name} 运行 \\d+ · 成功$`) }).first()
 }
 
 test('M4 runtime executes deterministic graph semantics and forks through the workbench', async ({ page }) => {
@@ -32,18 +32,17 @@ test('M4 runtime executes deterministic graph semantics and forks through the wo
   const platformHeaders = { Authorization: `Bearer ${accessToken}` }
   const sourceExecutionId = await runFixture(page, 'M4 Runtime Fixture')
 
-  await expect(page.locator('header').getByText('succeeded', { exact: true })).toBeVisible({ timeout: 120_000 })
+  await expect(page.locator('header').getByText('成功', { exact: true })).toBeVisible({ timeout: 120_000 })
   await expect(page.getByRole('complementary', { name: '执行节点大纲' }).getByRole('button')).toHaveText([
-    /Manual Trigger.*Run 0.*succeeded/,
-    /Left Branch.*Run 0.*succeeded/,
-    /Right Branch.*Run 0.*succeeded/,
-    /Required Merge.*Run 0.*succeeded/,
-    /Loop Over Items.*Run 0.*succeeded/,
-    /Loop Over Items.*Run 1.*succeeded/,
-    /Fixed Sub-workflow.*Run 0.*skipped/,
-    /Remote Echo.*Run 0.*skipped/,
-    /Fixed Sub-workflow.*Run 1.*succeeded/,
-    /Remote Echo.*Run 1.*succeeded/,
+    /Left Branch.*运行 0.*成功/,
+    /Right Branch.*运行 0.*成功/,
+    /Required Merge.*运行 0.*成功/,
+    /Loop Over Items.*运行 0.*成功/,
+    /Loop Over Items.*运行 1.*成功/,
+    /Fixed Sub-workflow.*运行 0.*已跳过/,
+    /Remote Echo.*运行 0.*已跳过/,
+    /Fixed Sub-workflow.*运行 1.*成功/,
+    /Remote Echo.*运行 1.*成功/,
   ])
   for (const name of ['Left Branch', 'Right Branch', 'Required Merge', 'Loop Over Items', 'Fixed Sub-workflow', 'Remote Echo']) {
     await expect(succeededRun(page, name)).toBeVisible()
@@ -52,14 +51,14 @@ test('M4 runtime executes deterministic graph semantics and forks through the wo
   await succeededRun(page, 'Required Merge').click()
   await expect(page.getByRole('tab', { name: /Lineage [2-9]/ })).toBeVisible()
   await page.getByRole('tab', { name: /Lineage/ }).click()
-  await expect(page.getByText(/Output 0 · Item 0/).first()).toBeVisible()
-  await page.getByRole('tab', { name: /Attempts/ }).click()
-  await expect(page.getByText('Attempt 1')).toBeVisible()
+  await expect(page.getByText(/输出 0 · 项 0/).first()).toBeVisible()
+  await page.getByRole('tab', { name: /尝试记录/ }).click()
+  await expect(page.getByText('尝试 1')).toBeVisible()
 
   await succeededRun(page, 'Remote Echo').click()
-  await page.getByRole('tab', { name: /Logs/ }).click()
+  await page.getByRole('tab', { name: /日志/ }).click()
   await expect(page.getByText('node.completed').first()).toBeVisible()
-  await expect(page.getByText(/Checkpoints · [1-9]/)).toBeVisible()
+  await expect(page.getByText(/检查点 · [1-9]/)).toBeVisible()
 
   const checkpoints = await (await page.request.get(`/api/v1/executions/${sourceExecutionId}/checkpoints`, { headers: platformHeaders })).json() as { items: Array<{ id: string }> }
   const guardedForkResponse = await page.request.post(`/api/v1/executions/${sourceExecutionId}/fork`, {
@@ -76,7 +75,7 @@ test('M4 runtime executes deterministic graph semantics and forks through the wo
   expect(guardedForkResponse.status()).toBe(202)
   const guardedFork = await guardedForkResponse.json() as { executionId: string }
   await page.goto(`/executions/${guardedFork.executionId}`)
-  await expect(page.locator('header').getByText('waiting', { exact: true })).toBeVisible({ timeout: 120_000 })
+  await expect(page.locator('header').getByText('等待中', { exact: true })).toBeVisible({ timeout: 120_000 })
   const guardedNodes = await (await page.request.get(`/api/v1/executions/${guardedFork.executionId}/nodes`, { headers: platformHeaders })).json() as { items: Array<{ id: string, status: string, sideEffectLevel: string }> }
   const guardedNode = guardedNodes.items.find((node) => node.sideEffectLevel === 'irreversible' && node.status === 'waiting')
   expect(guardedNode).toBeTruthy()
@@ -91,30 +90,30 @@ test('M4 runtime executes deterministic graph semantics and forks through the wo
   const confirmationReplay = await page.request.post(`/api/v1/executions/${guardedFork.executionId}/side-effect-confirmations`, { headers: platformHeaders, data: confirmation })
   expect(await confirmationReplay.json()).toMatchObject({ accepted: true, replayed: true })
   await page.goto(`/executions/${guardedFork.executionId}`)
-  await expect(page.locator('header').getByText('succeeded', { exact: true })).toBeVisible({ timeout: 120_000 })
+  await expect(page.locator('header').getByText('成功', { exact: true })).toBeVisible({ timeout: 120_000 })
 
   await page.goto(`/executions/${sourceExecutionId}`)
 
-  await page.getByRole('button', { name: 'Fork' }).click()
-  const fork = page.getByRole('dialog', { name: 'Fork execution' })
-  await expect(fork.getByText('Execution preview')).toBeVisible()
+  await page.getByRole('button', { name: '派生执行' }).click()
+  const fork = page.getByRole('dialog', { name: '派生执行' })
+  await expect(fork.getByText('执行预览')).toBeVisible()
   await expect(fork.getByText(/不可逆节点需要明确决策/)).toBeVisible()
-  await fork.getByRole('button', { name: '创建 Fork' }).click()
+  await fork.getByRole('button', { name: '创建派生执行' }).click()
 
   await expect(page).toHaveURL(new RegExp(`/executions/(?!${sourceExecutionId})[0-9a-f-]+$`))
-  await expect(page.getByText(`Parent ${sourceExecutionId}`)).toBeVisible()
-  await expect(page.locator('header').getByText('succeeded', { exact: true })).toBeVisible({ timeout: 120_000 })
+  await expect(page.getByText(`父执行 ${sourceExecutionId}`)).toBeVisible()
+  await expect(page.locator('header').getByText('成功', { exact: true })).toBeVisible({ timeout: 120_000 })
 
   await runFixture(page, 'M4 Broker Fixture')
-  await expect(page.locator('header').getByText('succeeded', { exact: true })).toBeVisible({ timeout: 120_000 })
+  await expect(page.locator('header').getByText('成功', { exact: true })).toBeVisible({ timeout: 120_000 })
   await succeededRun(page, 'Remote Broker Probe').click()
-  await page.getByRole('tab', { name: 'Output' }).click()
+  await page.getByRole('tab', { name: '输出' }).click()
   await expect(page.getByTestId('execution-json')).toContainText('"credentialResolved": true')
   await expect(page.getByTestId('execution-json')).toContainText('"leaseValid": true')
   await expect(page.getByTestId('execution-json')).not.toContainText('m4-broker-secret')
 
   await runFixture(page, 'M4 Cycle Budget Fixture')
-  await expect(page.locator('header').getByText('failed', { exact: true })).toBeVisible({ timeout: 120_000 })
+  await expect(page.locator('header').getByText('失败', { exact: true })).toBeVisible({ timeout: 120_000 })
   await expect(page.getByText('ACTIVATION_BUDGET_EXCEEDED')).toBeVisible()
-  expect(await page.getByRole('button', { name: /Cycle Step Run \d+ · succeeded/ }).count()).toBeGreaterThan(1)
+  expect(await page.getByRole('button', { name: /Cycle Step.*运行 \d+.*成功/ }).count()).toBeGreaterThan(1)
 })

@@ -1,0 +1,31 @@
+const translations = {
+  "create": "New sandbox profile",
+  "details": "Details",
+  "saved": "Sandbox profile saved",
+  "department": "Department",
+  "description": "Manage OpenSandbox runners, tagged images, security boundaries, and immutable versions.",
+  "invalidJson": "Invalid JSON",
+  "created": "Sandbox profile created",
+  "timeoutSeconds": "Maximum runtime (seconds)",
+  "edit": "Edit sandbox profile",
+  "newVersion": "Create immutable version",
+  "versionCreated": "Version created",
+  "runner": "Runner",
+  "image": "Image",
+  "imageTag": "Image tag",
+  "invalidImageTag": "The image must include a valid tag, for example registry.example/runner:stable",
+  "cpuMillis": "CPU (milliCPU, 1000 = 1 core)",
+  "memoryGb": "Memory (GB)",
+  "pidsLimit": "Processes (count)",
+  "diskGb": "Disk (GB)",
+  "outputKb": "Output limit (KB)",
+  "networkPolicy": "Network policy JSON",
+  "limits": "Resource limits",
+  "configurationHash": "Configuration hash",
+  "versionHistory": "Immutable version history",
+  "title": "Sandbox Profiles",
+  "search": "Search profiles, runners, or image tags",
+  "deleted": "Deleted"
+} as const
+
+export default translations

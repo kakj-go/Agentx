@@ -7,6 +7,10 @@ export type LocalizedManifest = {
   inputPortLabel: (name: string) => string
   outputPortLabel: (name: string) => string
   bindingSlotLabel: (name: string) => string
+  parameterLabel: (name: string) => string
+  parameterDescription: (name: string) => string | undefined
+  parameterPlaceholder: (name: string) => string | undefined
+  parameterEnumLabel: (name: string, value: string) => string
 }
 
 export function localizeManifest(manifest: NodeManifest, language?: string): LocalizedManifest {
@@ -26,6 +30,10 @@ export function localizeManifest(manifest: NodeManifest, language?: string): Loc
     inputPortLabel: (name) => resolve((value) => value?.inputPortLabels?.[name], name === 'main' ? (locale === 'zh-CN' ? '输入' : 'Input') : fallbackPortLabel(name, locale)),
     outputPortLabel: (name) => resolve((value) => value?.outputPortLabels?.[name], fallbackPortLabel(name, locale)),
     bindingSlotLabel: (name) => resolve((value) => value?.bindingSlotLabels?.[name], fallbackSlotLabel(name, locale)),
+    parameterLabel: (name) => resolve((value) => value?.parameterLabels?.[name], name.replaceAll('_', ' ')),
+    parameterDescription: (name) => resolve((value) => value?.parameterDescriptions?.[name], undefined),
+    parameterPlaceholder: (name) => resolve((value) => value?.parameterPlaceholders?.[name], undefined),
+    parameterEnumLabel: (name, option) => resolve((value) => value?.parameterEnumOptions?.[name]?.[option], option),
   }
 }
 

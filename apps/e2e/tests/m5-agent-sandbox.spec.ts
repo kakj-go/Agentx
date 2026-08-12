@@ -24,9 +24,7 @@ async function runFixture(page: Page, name: string) {
 }
 
 async function expectExecutionSucceeded(page: Page, timeout: number) {
-  const status = page.locator('header').getByText(/^(succeeded|failed|cancelled|timed_out)$/)
-  await expect(status).toBeVisible({ timeout })
-  await expect(status).toHaveText('succeeded')
+  await expect(page.locator('header').getByText('成功', { exact: true })).toBeVisible({ timeout })
 }
 
 async function executionNodes(page: Page, token: string, execution: string) {
@@ -56,8 +54,8 @@ test('M5 Agent uses the deterministic model and authorized MCP tool with a persi
   expect(details.iterations).toHaveLength(2)
   expect(details.calls.map((call) => call.callKind)).toEqual(['model', 'mcp_tool', 'model'])
   expect(details.calls.every((call) => call.requestFingerprint.length === 64)).toBeTruthy()
-  await expect(page.getByRole('heading', { name: 'Agent Runtime 明细' })).toBeVisible()
-  await expect(page.getByRole('tab', { name: /Runtime Calls 3/ })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '智能体 Runtime 明细' })).toBeVisible()
+  await expect(page.getByRole('tab', { name: /Runtime 调用 3/ })).toBeVisible()
 })
 
 test('M5 Agent repeated tool calls stop before another external request', async ({ page }) => {
@@ -91,8 +89,7 @@ test('M5 RAG and Memory nodes call the fixed Addons through Worker runtime ports
 test('M5 RAG write with read scope fails before reaching the Addon', async ({ page }) => {
   const token = await login(page)
   const execution = await runFixture(page, 'M5 RAG Read Scope Fixture')
-  const status = page.locator('header').getByText(/^(succeeded|failed|cancelled|timed_out)$/)
-  await expect(status).toHaveText('failed', { timeout: 120_000 })
+  await expect(page.locator('header').getByText('失败', { exact: true })).toBeVisible({ timeout: 120_000 })
   const nodes = await executionNodes(page, token, execution)
   expect(nodes.items.find((node) => node.nodeName === 'M5 RAG Read Scope')?.errorCode).toBe('RAG_WRITE_DENIED')
   await expect.poll(async () => {

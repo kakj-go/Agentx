@@ -15,10 +15,23 @@ use crate::{
     connection_test::{self, HealthCheckResponse},
     control_common::{audit, require_department_scope, validate_name},
     credentials,
-    error::{AppError, AppResult},
+    error::{AppError, AppResult, UniqueConstraint, map_unique},
     grants::require_resource_visible,
     security::AuthActor,
     state::AppState,
+};
+
+pub(crate) const KNOWLEDGE_EXTERNAL_ID: UniqueConstraint = UniqueConstraint {
+    index: "uq_rag_resource_external",
+    code: "KNOWLEDGE_EXTERNAL_RESOURCE_ID_EXISTS",
+    field: "externalResourceId",
+    message: "This external knowledge resource ID already exists for the selected connection",
+};
+pub(crate) const MEMORY_EXTERNAL_NAMESPACE: UniqueConstraint = UniqueConstraint {
+    index: "uq_memory_namespace_external",
+    code: "MEMORY_EXTERNAL_NAMESPACE_EXISTS",
+    field: "externalNamespace",
+    message: "This external namespace already exists for the selected connection",
 };
 
 #[derive(Deserialize)]
@@ -198,9 +211,19 @@ pub async fn create_knowledge(
     let name = validate_name(&input.name, 160)?;
     let external = validate_name(&input.external_resource_id, 512)?;
     require_connection_scope(&state, &actor, "rag_connections", input.connection_id).await?;
+    ensure_external_available(
+        &state,
+        "rag_resources",
+        "external_resource_id",
+        actor.tenant_id,
+        input.connection_id,
+        &external,
+        KNOWLEDGE_EXTERNAL_ID,
+    )
+    .await?;
     let id = Uuid::now_v7();
     let mut tx = state.pool.begin().await?;
-    sqlx::query("INSERT INTO rag_resources(id,tenant_id,connection_id,name,external_resource_id,owner_department_id) VALUES(?,?,?,?,?,?)").bind(id).bind(actor.tenant_id).bind(input.connection_id).bind(name).bind(external).bind(input.owner_department_id).execute(&mut *tx).await?;
+    sqlx::query("INSERT INTO rag_resources(id,tenant_id,connection_id,name,external_resource_id,owner_department_id) VALUES(?,?,?,?,?,?)").bind(id).bind(actor.tenant_id).bind(input.connection_id).bind(name).bind(external).bind(input.owner_department_id).execute(&mut *tx).await.map_err(|error| map_unique(error, &[KNOWLEDGE_EXTERNAL_ID]))?;
     audit(
         &mut tx,
         &actor,
@@ -351,9 +374,19 @@ pub async fn create_memory(
         ));
     }
     require_connection_scope(&state, &actor, "memory_connections", input.connection_id).await?;
+    ensure_external_available(
+        &state,
+        "memory_namespaces",
+        "external_namespace",
+        actor.tenant_id,
+        input.connection_id,
+        &namespace,
+        MEMORY_EXTERNAL_NAMESPACE,
+    )
+    .await?;
     let id = Uuid::now_v7();
     let mut tx = state.pool.begin().await?;
-    sqlx::query("INSERT INTO memory_namespaces(id,tenant_id,connection_id,name,external_namespace,access_mode,owner_department_id) VALUES(?,?,?,?,?,?,?)").bind(id).bind(actor.tenant_id).bind(input.connection_id).bind(name).bind(namespace).bind(input.access_mode).bind(input.owner_department_id).execute(&mut *tx).await?;
+    sqlx::query("INSERT INTO memory_namespaces(id,tenant_id,connection_id,name,external_namespace,access_mode,owner_department_id) VALUES(?,?,?,?,?,?,?)").bind(id).bind(actor.tenant_id).bind(input.connection_id).bind(name).bind(namespace).bind(input.access_mode).bind(input.owner_department_id).execute(&mut *tx).await.map_err(|error| map_unique(error, &[MEMORY_EXTERNAL_NAMESPACE]))?;
     audit(
         &mut tx,
         &actor,
@@ -462,6 +495,31 @@ async fn create_connection(
     tx.commit().await?;
     let row = load_connection(state, actor.tenant_id, table, id).await?;
     Ok((StatusCode::CREATED, Json(row)))
+}
+
+async fn ensure_external_available(
+    state: &AppState,
+    table: &'static str,
+    column: &'static str,
+    tenant: Uuid,
+    connection: Uuid,
+    value: &str,
+    constraint: UniqueConstraint,
+) -> AppResult<()> {
+    let sql = format!(
+        "SELECT EXISTS(SELECT 1 FROM {table} WHERE tenant_id=? AND connection_id=? AND {column}=?)"
+    );
+    let exists: bool = sqlx::query_scalar(&sql)
+        .bind(tenant)
+        .bind(connection)
+        .bind(value)
+        .fetch_one(&state.pool)
+        .await?;
+    if exists {
+        Err(AppError::unique(constraint))
+    } else {
+        Ok(())
+    }
 }
 async fn list_connections(
     state: &AppState,

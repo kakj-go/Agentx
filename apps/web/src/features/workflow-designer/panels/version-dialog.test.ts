@@ -17,5 +17,5 @@ describe('VersionDialog diff', () => {
   })
 })
 
-function definition(name: string): WorkflowDefinition { return { schemaVersion: '3.0', nodes: [{ id: 'node-1', type: 'set', typeVersion: 1, name, disabled: false, parameters: {}, resourceReferences: [], settings: {} }], connections: [], settings: { executionOrder: 'deterministic', activationBudget: 10_000 } } }
-function editor(x: number): EditorDocument { return { nodeLayouts: [{ nodeId: 'node-1', x, y: 100 }], bindingLayouts: [], edges: [], bindingEdges: [], annotations: [], groups: [], viewport: { x: 0, y: 0, zoom: 1 } } }
+function definition(name: string): WorkflowDefinition { return { schemaVersion: '4.0', start: { inputs: {}, contexts: {} }, nodes: [{ id: 'node-1', key: 'set', type: 'set', typeVersion: 1, name, disabled: false, parameters: {}, outputProjection: {}, contextWrites: [], resourceReferences: [], settings: {} }], connections: [], end: { outputs: {}, error: { strategy: 'fail_fast', collectWindowMs: 5000, outputs: {} } }, settings: { executionOrder: 'deterministic', activationBudget: 10_000 } } }
+function editor(x: number): EditorDocument { return { nodeLayouts: [{ nodeId: 'node-1', x, y: 100 }], boundaryLayouts: [], bindingLayouts: [], edges: [], bindingEdges: [], annotations: [], groups: [], viewport: { x: 0, y: 0, zoom: 1 } } }

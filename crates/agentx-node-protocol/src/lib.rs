@@ -224,6 +224,14 @@ pub struct NodeManifestLocalization {
     pub output_port_labels: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub binding_slot_labels: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub parameter_labels: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub parameter_descriptions: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub parameter_placeholders: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub parameter_enum_options: BTreeMap<String, BTreeMap<String, String>>,
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
@@ -254,6 +262,24 @@ pub struct NodeManifestVersion {
     pub binding_slots: Vec<BindingSlot>,
     pub parameter_schema: Value,
     #[serde(default)]
+    pub output_schema: Value,
+    /// Optional schema overrides for individual output ports. The default
+    /// output_schema remains the native main-port schema.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub output_port_schemas: BTreeMap<String, Value>,
+    #[serde(default)]
+    pub output_cardinality: BTreeMap<String, OutputCardinality>,
+    #[serde(default)]
+    pub expression_capabilities: ExpressionCapabilities,
+    #[serde(default)]
+    pub context_read_capability: bool,
+    #[serde(default)]
+    pub context_write_capability: bool,
+    #[serde(default)]
+    pub output_projection_schema: Value,
+    #[serde(default)]
+    pub artifact_output_schema: Value,
+    #[serde(default)]
     pub ui_schema: NodeUiSchema,
     #[serde(default)]
     pub providers: Vec<String>,
@@ -269,6 +295,31 @@ pub struct NodeManifestVersion {
     #[serde(default)]
     pub supports_mock: bool,
     pub side_effect_level: SideEffectLevel,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OutputCardinality {
+    ZeroOrOne,
+    ExactlyOne,
+    ZeroOrMany,
+    #[default]
+    Many,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ExpressionCapabilities {
+    #[serde(default)]
+    pub namespaces: Vec<String>,
+    #[serde(default)]
+    pub supports_current: bool,
+    #[serde(default)]
+    pub supports_first_last: bool,
+    #[serde(default)]
+    pub supports_all: bool,
+    #[serde(default)]
+    pub supports_run_selection: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
@@ -314,6 +365,7 @@ impl NodeManifestVersion {
             .iter()
             .map(|slot| slot.name.as_str())
             .collect::<std::collections::HashSet<_>>();
+        let parameter_properties = parameter_schema_paths(&self.parameter_schema);
         for (locale, localization) in &self.localizations {
             if !matches!(locale.as_str(), "zh-CN" | "en-US") {
                 return Err(format!("unsupported manifest locale '{locale}'"));
@@ -339,8 +391,66 @@ impl NodeManifestVersion {
                     ));
                 }
             }
+            for name in localization
+                .parameter_labels
+                .keys()
+                .chain(localization.parameter_descriptions.keys())
+                .chain(localization.parameter_placeholders.keys())
+                .chain(localization.parameter_enum_options.keys())
+            {
+                if !parameter_properties.contains_key(name) {
+                    return Err(format!(
+                        "locale {locale} references unknown parameter '{name}'"
+                    ));
+                }
+            }
+            for (name, options) in &localization.parameter_enum_options {
+                let declared = parameter_properties
+                    .get(name)
+                    .and_then(|property| property.get("enum"))
+                    .and_then(serde_json::Value::as_array)
+                    .map(|values| {
+                        values
+                            .iter()
+                            .map(serde_json::Value::to_string)
+                            .collect::<std::collections::HashSet<_>>()
+                    })
+                    .unwrap_or_default();
+                for option in options.keys() {
+                    if !declared.contains(&serde_json::Value::String(option.clone()).to_string())
+                        && !declared.contains(option)
+                    {
+                        return Err(format!(
+                            "locale {locale} references unknown enum option '{name}.{option}'"
+                        ));
+                    }
+                }
+            }
         }
         Ok(())
+    }
+}
+
+fn parameter_schema_paths(schema: &Value) -> BTreeMap<String, Value> {
+    let mut paths = BTreeMap::new();
+    if let Some(properties) = schema.get("properties").and_then(Value::as_object) {
+        for (name, property) in properties {
+            collect_parameter_schema_paths(name, property, &mut paths);
+        }
+    }
+    paths
+}
+
+fn collect_parameter_schema_paths(path: &str, schema: &Value, paths: &mut BTreeMap<String, Value>) {
+    paths.insert(path.to_owned(), schema.clone());
+    if let Some(properties) = schema.get("properties").and_then(Value::as_object) {
+        for (name, property) in properties {
+            collect_parameter_schema_paths(&format!("{path}.{name}"), property, paths);
+        }
+    }
+    if let Some(items) = schema.get("items") {
+        let item_path = format!("{path}[]");
+        collect_parameter_schema_paths(&item_path, items, paths);
     }
 }
 

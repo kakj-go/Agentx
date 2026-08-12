@@ -11,6 +11,13 @@ export interface components {
             /** Format: uuid */
             requestId: string;
         };
+        ArtifactUploadResponse: {
+            /** Format: uuid */
+            artifactId: string;
+            contentType: string;
+            /** Format: int64 */
+            sizeBytes: number;
+        };
         CreateSessionRequest: {
             externalUserId?: string | null;
             title?: string | null;
@@ -31,12 +38,12 @@ export interface components {
             applicationId: string;
             /** Format: date-time */
             createdAt: string;
-            errorCode?: string | null;
-            errorMessage?: string | null;
+            error?: unknown;
             /** Format: uuid */
             executionId?: string | null;
             /** Format: uuid */
             id: string;
+            outputs?: unknown;
             /** Format: uuid */
             sessionId?: string | null;
             status: string;

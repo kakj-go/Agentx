@@ -11,7 +11,7 @@ describe('workflow node appearance', () => {
   it('prioritizes capability-specific groups over the backend category', () => {
     expect(nodeCategory(manifest({ nodeType: 'rag', capability: 'rag', category: 'ai' }))).toBe('data')
     expect(nodeCategory(manifest({ nodeType: 'agent', capability: 'agent', category: 'ai' }))).toBe('ai')
-    expect(nodeCategory(manifest({ nodeType: 'manual_trigger', executionStyle: 'trigger' }))).toBe('triggers')
+    expect(nodeCategory(manifest({ nodeType: 'event_source', executionStyle: 'trigger' }))).toBe('triggers')
   })
 
   it('falls back to default when an old Manifest does not declare a role', () => {

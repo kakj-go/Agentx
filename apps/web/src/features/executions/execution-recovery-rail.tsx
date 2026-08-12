@@ -1,8 +1,11 @@
 import { CheckCircle2, Clock3, Download, ExternalLink, GitFork, History, ShieldAlert, TimerReset } from 'lucide-react'
 import type { ReactNode } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
 
 import type { Approval, Checkpoint, ExecutionWait, NodeExecution, Trace } from '../../shared/api/types'
+import { useLocaleFormat } from '../../shared/lib/locale-format'
+import { localizedValue } from '../../shared/lib/localized-value'
 import { Button } from '../../shared/ui/button'
 
 type RecoveryRailProps = {
@@ -17,27 +20,29 @@ type RecoveryRailProps = {
 }
 
 export function ExecutionRecoveryRail({ trace, checkpoints, waits, approvals, nodes, canConfirm, onConfirm, onDownloadArtifact }: RecoveryRailProps) {
+  const { t } = useTranslation()
+  const { formatDateTime } = useLocaleFormat()
   const events = trace?.events.slice().reverse().slice(0, 16) ?? []
   const confirmations = nodes.filter((node) => node.sideEffectLevel === 'irreversible' && node.status === 'waiting')
-  return <aside aria-label="恢复与事件" className="min-w-0 border-l border-border bg-surface max-xl:border-l-0 max-xl:border-t">
-    <div className="flex h-12 items-center border-b border-border px-4"><strong className="text-xs">Timeline & recovery</strong></div>
+  return <aside aria-label={t('executions.recovery.ariaLabel')} className="min-w-0 border-l border-border bg-surface max-xl:border-l-0 max-xl:border-t">
+    <div className="flex h-12 items-center border-b border-border px-4"><strong className="text-xs">{t('executions.recovery.title')}</strong></div>
     <div className="max-h-[calc(100vh-250px)] overflow-auto max-xl:max-h-none">
-      {waits.length > 0 && <RailSection icon={TimerReset} title="Wait">
-        {waits.map((wait) => <div className="border-b border-border/70 py-2.5 last:border-0" key={wait.id}><div className="flex items-center justify-between gap-2"><strong className="text-[11px]">{wait.waitKind}</strong><span className="text-[10px] text-warning">{wait.status}</span></div><p className="mt-1 text-[10px] text-muted-foreground">Wake {formatTime(wait.wakeAt)}<br />Timeout {formatTime(wait.timeoutAt)}</p>{wait.resumeUrl && <p className="mt-1.5 truncate font-mono text-[9px] text-primary" title={wait.resumeUrl}>{wait.resumeUrl}</p>}</div>)}
+      {waits.length > 0 && <RailSection icon={TimerReset} title={t('executions.recovery.wait')}>
+        {waits.map((wait) => <div className="border-b border-border/70 py-2.5 last:border-0" key={wait.id}><div className="flex items-center justify-between gap-2"><strong className="text-[11px]">{wait.waitKind}</strong><span className="text-[10px] text-warning">{localizedValue(t, 'common', wait.status)}</span></div><p className="mt-1 text-[10px] text-muted-foreground">{t('executions.recovery.wake')} {formatDateTime(wait.wakeAt)}<br />{t('executions.recovery.timeout')} {formatDateTime(wait.timeoutAt)}</p>{wait.resumeUrl && <p className="mt-1.5 truncate font-mono text-[9px] text-primary" title={wait.resumeUrl}>{wait.resumeUrl}</p>}</div>)}
       </RailSection>}
-      {approvals.length > 0 && <RailSection icon={CheckCircle2} title="Approval">
-        {approvals.map((approval) => <div className="py-2.5" key={approval.id}><div className="flex items-start justify-between gap-2"><div className="min-w-0"><strong className="block truncate text-[11px]">{approval.title}</strong><p className="mt-1 text-[10px] text-muted-foreground">{approval.status} · {approval.resumeStatus}</p></div><Button asChild aria-label="打开审批" size="icon" variant="ghost"><Link to={`/approvals/${approval.id}`}><ExternalLink className="size-3.5" /></Link></Button></div></div>)}
+      {approvals.length > 0 && <RailSection icon={CheckCircle2} title={t('executions.recovery.approval')}>
+        {approvals.map((approval) => <div className="py-2.5" key={approval.id}><div className="flex items-start justify-between gap-2"><div className="min-w-0"><strong className="block truncate text-[11px]">{approval.title}</strong><p className="mt-1 text-[10px] text-muted-foreground">{localizedValue(t, 'approvals.statuses', approval.status)} · {localizedValue(t, 'approvals.resumeStatuses', approval.resumeStatus)}</p></div><Button asChild aria-label={t('executions.recovery.openApproval')} size="icon" variant="ghost"><Link to={`/approvals/${approval.id}`}><ExternalLink className="size-3.5" /></Link></Button></div></div>)}
       </RailSection>}
-      {confirmations.length > 0 && <RailSection icon={ShieldAlert} title="Side effect confirmation">
-        {confirmations.map((node) => <div className="py-2.5" key={node.id}><strong className="block truncate text-[11px]">{node.nodeName}</strong><p className="my-2 text-[10px] leading-4 text-muted-foreground">不可逆节点正在等待恢复决策。</p><Button disabled={!canConfirm} onClick={() => onConfirm(node)} size="sm" variant="secondary">处理</Button></div>)}
+      {confirmations.length > 0 && <RailSection icon={ShieldAlert} title={t('executions.recovery.sideEffectConfirmation')}>
+        {confirmations.map((node) => <div className="py-2.5" key={node.id}><strong className="block truncate text-[11px]">{node.nodeName}</strong><p className="my-2 text-[10px] leading-4 text-muted-foreground">{t('executions.recovery.irreversibleWaiting')}</p><Button disabled={!canConfirm} onClick={() => onConfirm(node)} size="sm" variant="secondary">{t('executions.recovery.handle')}</Button></div>)}
       </RailSection>}
-      <RailSection icon={GitFork} title={`Checkpoints · ${checkpoints.length}`}>
-        {checkpoints.slice().reverse().slice(0, 8).map((checkpoint) => <div className="border-b border-border/70 py-2.5 last:border-0" key={checkpoint.id}><div className="flex items-center justify-between gap-2"><strong className="text-[11px]">#{checkpoint.sequenceNumber} {checkpoint.checkpointType}</strong><span className="text-[9px] text-muted-foreground">{formatTime(checkpoint.createdAt)}</span></div><p className="mt-1 truncate font-mono text-[9px] text-muted-foreground" title={checkpoint.stateHash}>{checkpoint.stateHash}</p><p className="mt-1 text-[9px] text-muted-foreground">{checkpoint.activationCount} activations · {checkpoint.deliveryCount} deliveries</p></div>)}
-        {!checkpoints.length && <p className="py-3 text-[10px] text-muted-foreground">尚无 Checkpoint</p>}
+      <RailSection icon={GitFork} title={t('executions.recovery.checkpoints', { count: checkpoints.length })}>
+        {checkpoints.slice().reverse().slice(0, 8).map((checkpoint) => <div className="border-b border-border/70 py-2.5 last:border-0" key={checkpoint.id}><div className="flex items-center justify-between gap-2"><strong className="text-[11px]">#{checkpoint.sequenceNumber} {checkpoint.checkpointType}</strong><span className="text-[9px] text-muted-foreground">{formatDateTime(checkpoint.createdAt)}</span></div><p className="mt-1 truncate font-mono text-[9px] text-muted-foreground" title={checkpoint.stateHash}>{checkpoint.stateHash}</p><p className="mt-1 text-[9px] text-muted-foreground">{t('executions.recovery.activationsAndDeliveries', { activations: checkpoint.activationCount, deliveries: checkpoint.deliveryCount })}</p></div>)}
+        {!checkpoints.length && <p className="py-3 text-[10px] text-muted-foreground">{t('executions.recovery.noCheckpoints')}</p>}
       </RailSection>
-      <RailSection icon={History} title="Events">
-        {events.map((event) => <div className="relative border-l border-border pb-3 pl-4 last:pb-0" key={event.eventId}><span className="absolute -left-1 top-1 size-2 rounded-full bg-muted-foreground ring-2 ring-surface" /><div className="flex items-start justify-between gap-2"><strong className="text-[10px]">{event.eventType}</strong><span className="shrink-0 text-[9px] text-muted-foreground">{formatTime(event.eventTime)}</span></div><p className="mt-1 truncate text-[9px] text-muted-foreground">{event.nodeId ?? event.status}</p>{event.contentRef && <Button className="mt-2" onClick={() => onDownloadArtifact(event.contentRef!)} size="sm" variant="secondary"><Download className="size-3.5" />下载</Button>}</div>)}
-        {!events.length && <p className="py-3 text-[10px] text-muted-foreground">尚无 Timeline 事件</p>}
+      <RailSection icon={History} title={t('executions.recovery.events')}>
+        {events.map((event) => <div className="relative border-l border-border pb-3 pl-4 last:pb-0" key={event.eventId}><span className="absolute -left-1 top-1 size-2 rounded-full bg-muted-foreground ring-2 ring-surface" /><div className="flex items-start justify-between gap-2"><strong className="text-[10px]">{event.eventType}</strong><span className="shrink-0 text-[9px] text-muted-foreground">{formatDateTime(event.eventTime)}</span></div><p className="mt-1 truncate text-[9px] text-muted-foreground">{event.nodeId ?? (event.status ? localizedValue(t, 'common', event.status) : '—')}</p>{event.contentRef && <Button className="mt-2" onClick={() => onDownloadArtifact(event.contentRef!)} size="sm" variant="secondary"><Download className="size-3.5" />{t('executions.recovery.download')}</Button>}</div>)}
+        {!events.length && <p className="py-3 text-[10px] text-muted-foreground">{t('executions.recovery.noEvents')}</p>}
       </RailSection>
     </div>
   </aside>
@@ -45,8 +50,4 @@ export function ExecutionRecoveryRail({ trace, checkpoints, waits, approvals, no
 
 function RailSection({ icon: Icon, title, children }: { icon: typeof Clock3; title: string; children: ReactNode }) {
   return <section className="border-b border-border px-4 py-3"><h3 className="flex items-center gap-2 text-[10px] font-semibold uppercase text-muted-foreground"><Icon className="size-3.5" />{title}</h3><div className="mt-2">{children}</div></section>
-}
-
-function formatTime(value?: string | null) {
-  return value ? new Date(value).toLocaleString() : '—'
 }

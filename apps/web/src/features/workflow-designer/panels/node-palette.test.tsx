@@ -23,7 +23,7 @@ describe('NodePalette', () => {
     expect(screen.getByTestId('node-creator-trigger')).toHaveClass('rounded-full')
     expect(screen.queryByTestId('node-creator-rail')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Search nodes' }))
-    expect(screen.getByTestId('node-creator')).toBeInTheDocument()
+    expect(screen.getByTestId('node-creator')).toHaveClass('left-0')
     expect(screen.getByRole('textbox', { name: 'Search nodes' })).toHaveFocus()
   })
 

@@ -18,12 +18,9 @@ if (componentStart < 0 || componentEnd < 0) {
   throw new Error('Unable to locate the generated OpenAPI components interface')
 }
 
-const header = `/**
- * This file was auto-generated from openapi/platform-api.json.
- * Only schema components are emitted because the web client uses its shared request layer.
- * Do not make direct changes to the file.
- */
+const header = `/** Generated schema components from openapi/platform-api.json. Do not edit. */\n`
+const components = generated
+  .slice(componentStart, componentEnd)
+  .replace(/^[ \t]*\/\*\* Format: [^\r\n]*\*\/\r?\n/gm, '')
 
-`
-
-await writeFile(outputPath, `${header}${generated.slice(componentStart, componentEnd)}\n`, 'utf8')
+await writeFile(outputPath, `${header}${components}\n`, 'utf8')

@@ -15,6 +15,7 @@ const ApplicationsPage = lazy(() => import('../features/applications/application
 const ApplicationDetailPage = lazy(() => import('../features/applications/application-detail-page').then((module) => ({ default: module.ApplicationDetailPage })))
 const ApprovalsPage = lazy(() => import('../features/approvals/approvals-page').then((module) => ({ default: module.ApprovalsPage })))
 const ApprovalDetailPage = lazy(() => import('../features/approvals/approval-detail-page').then((module) => ({ default: module.ApprovalDetailPage })))
+const ResourceGrantRequestDetailPage = lazy(() => import('../features/approvals/resource-grant-request-detail-page').then((module) => ({ default: module.ResourceGrantRequestDetailPage })))
 const DatasetsPage = lazy(() => import('../features/datasets/datasets-page').then((module) => ({ default: module.DatasetsPage })))
 const DatasetDetailPage = lazy(() => import('../features/datasets/dataset-detail-page').then((module) => ({ default: module.DatasetDetailPage })))
 const EvaluationsPage = lazy(() => import('../features/evaluations/evaluations-page').then((module) => ({ default: module.EvaluationsPage })))
@@ -37,6 +38,7 @@ const SkillDetailPage = lazy(() => import('../features/skills/skill-detail-page'
 const McpServersPage = lazy(() => import('../features/mcp/mcp-servers-page').then((module) => ({ default: module.McpServersPage })))
 const McpServerDetailPage = lazy(() => import('../features/mcp/mcp-server-detail-page').then((module) => ({ default: module.McpServerDetailPage })))
 const WorkflowsPage = lazy(() => import('../features/workflows/workflows-page').then((module) => ({ default: module.WorkflowsPage })))
+const EnvironmentsPage = lazy(() => import('../features/workflows/environments-page').then((module) => ({ default: module.EnvironmentsPage })))
 const WorkflowDetailPage = lazy(() => import('../features/workflows/workflow-detail-page').then((module) => ({ default: module.WorkflowDetailPage })))
 const WorkflowCanvas = lazy(() => import('../features/workflow-designer/workflow-canvas').then((module) => ({ default: module.WorkflowCanvas })))
 const CredentialsPage = lazy(() => import('../features/credentials/credentials-page').then((module) => ({ default: module.CredentialsPage })))
@@ -59,6 +61,7 @@ export const router = createBrowserRouter([
     children: [
       { index: true, element: <DashboardPage /> },
       { path: 'workflows', element: deferred(<RequirePermission permission="workflow:view"><WorkflowsPage /></RequirePermission>) },
+      { path: 'environments', element: deferred(<RequirePermission permission="workflow:view"><EnvironmentsPage /></RequirePermission>) },
       { path: 'workflows/:workflowId', element: deferred(<RequirePermission permission="workflow:view"><WorkflowDetailPage /></RequirePermission>) },
       { path: 'workflows/:workflowId/editor', element: deferred(<RequirePermission permission="workflow:edit"><WorkflowCanvas /></RequirePermission>) },
       { path: 'applications', element: deferred(<RequirePermission permission="application:view"><ApplicationsPage /></RequirePermission>) },
@@ -67,6 +70,7 @@ export const router = createBrowserRouter([
       { path: 'executions', element: deferred(<RequirePermission permission="execution:view"><ExecutionsPage /></RequirePermission>) },
       { path: 'executions/:id', element: deferred(<RequirePermission permission="execution:view"><ExecutionDetailPage /></RequirePermission>) },
       { path: 'approvals', element: deferred(<RequirePermission permission="approval:view"><ApprovalsPage /></RequirePermission>) },
+      { path: 'approvals/resource-grants/:id', element: deferred(<RequirePermission permission="workflow:view"><ResourceGrantRequestDetailPage /></RequirePermission>) },
       { path: 'approvals/:id', element: deferred(<RequirePermission permission="approval:view"><ApprovalDetailPage /></RequirePermission>) },
       { path: 'notifications', element: deferred(<RequirePermission permission="notification:view"><NotificationsPage /></RequirePermission>) },
       { path: 'datasets', element: deferred(<RequirePermission permission="dataset:view"><DatasetsPage /></RequirePermission>) },

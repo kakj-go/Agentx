@@ -23,8 +23,8 @@ fn dispatch_message_round_trips() {
         attempt_id: Uuid::nil(),
         capability: "builtin".into(),
         node_protocol_version: agentx_node_protocol::NODE_PROTOCOL_VERSION.into(),
-        compiler_version: "agentx-workflow-3.0.0".into(),
-        ir_schema_version: "3.0".into(),
+        compiler_version: "agentx-workflow-4.0.0".into(),
+        ir_schema_version: "4.0".into(),
     };
     assert_eq!(
         serde_json::from_value::<DispatchMessage>(serde_json::to_value(value).unwrap())
@@ -48,9 +48,9 @@ fn debug_overlay_accepts_port_maps_and_plain_json() {
 
 #[test]
 fn draft_revision_snapshot_hash_is_stable_and_covers_debug_inputs() {
-    let definition = json!({"schemaVersion":"3.0","nodes":[],"connections":[],"settings":{}});
+    let definition = json!({"schemaVersion":"4.0","start":{"inputs":{"type":"object"},"contexts":{}},"nodes":[],"connections":[],"end":{"outputs":{}},"settings":{}});
     let source = json!({"kind":"draft_revision","id":Uuid::nil(),"revision":7});
-    let manifest = json!([{"nodeType":"manual_trigger","version":1}]);
+    let manifest = json!([{"nodeType":"no_op","version":1}]);
     let resources = json!({"schemaVersion":"1.0","resources":[]});
     let base = execution_snapshot_hash(
         &definition,
@@ -103,9 +103,16 @@ fn draft_resource_snapshots_allow_resolved_versions_and_transitive_dependencies(
         operation: agentx_domain::ResourceOperation::Use,
     };
     let mut definition = WorkflowDefinition::empty();
-    definition.nodes[0].resource_references = vec![expected.clone()];
+    definition.nodes.push(
+        serde_json::from_value(json!({
+            "id":"resource-node","key":"resource_node","type":"no_op","typeVersion":1,
+            "name":"Resource Node","outputProjection":{},"contextWrites":[],
+            "resourceReferences":[expected.clone()]
+        }))
+        .unwrap(),
+    );
     let direct = RuntimeResourceSnapshot {
-        node_id: "manual-trigger".into(),
+        node_id: "resource-node".into(),
         reference: ResourceReference {
             resource_version_id: Some(version_id),
             ..expected
@@ -114,7 +121,7 @@ fn draft_resource_snapshots_allow_resolved_versions_and_transitive_dependencies(
         snapshot: json!({}),
     };
     let dependency = RuntimeResourceSnapshot {
-        node_id: "manual-trigger".into(),
+        node_id: "resource-node".into(),
         reference: ResourceReference {
             binding_id: None,
             binding_role: None,

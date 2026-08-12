@@ -2,11 +2,11 @@ use std::collections::BTreeMap;
 
 use agentx_domain::ResourceType;
 use agentx_node_protocol::{
-    BindingSlot, CanvasAppearance, CanvasNodeRole, ExecutionStyle, LifecycleOperation,
-    NODE_PROTOCOL_VERSION, NodeCapability, NodeManifestLocalization, NodeManifestVersion, NodePort,
-    NodeUiSchema, PortKind, ReadinessPolicy, SideEffectLevel,
+    BindingSlot, CanvasAppearance, CanvasNodeRole, ExecutionStyle, NODE_PROTOCOL_VERSION,
+    NodeCapability, NodeManifestLocalization, NodeManifestVersion, NodePort, NodeUiSchema,
+    PortKind, ReadinessPolicy, SideEffectLevel,
 };
-use serde_json::json;
+use serde_json::{Value, json};
 use thiserror::Error;
 
 #[derive(Clone, Debug, Default)]
@@ -97,18 +97,6 @@ fn localized_node_copy(
     node_type: &str,
 ) -> (&'static str, &'static str, &'static str, &'static str) {
     match node_type {
-        "manual_trigger" => (
-            "Manual Trigger",
-            "手动触发",
-            "Start a workflow manually.",
-            "手动启动工作流。",
-        ),
-        "remote_trigger" => (
-            "Remote Trigger",
-            "远程触发",
-            "Start from a remote lifecycle event.",
-            "通过远程生命周期事件启动工作流。",
-        ),
         "set" => (
             "Edit Fields",
             "编辑字段",
@@ -334,6 +322,10 @@ pub(crate) fn manifest(
             input_port_labels,
             output_port_labels,
             binding_slot_labels: BTreeMap::new(),
+            parameter_labels: BTreeMap::new(),
+            parameter_descriptions: BTreeMap::new(),
+            parameter_placeholders: BTreeMap::new(),
+            parameter_enum_options: BTreeMap::new(),
         },
     );
     localizations.insert(
@@ -345,8 +337,16 @@ pub(crate) fn manifest(
             input_port_labels: zh_input_port_labels,
             output_port_labels: zh_output_port_labels,
             binding_slot_labels: BTreeMap::new(),
+            parameter_labels: BTreeMap::new(),
+            parameter_descriptions: BTreeMap::new(),
+            parameter_placeholders: BTreeMap::new(),
+            parameter_enum_options: BTreeMap::new(),
         },
     );
+    let output_cardinality = outputs
+        .iter()
+        .map(|port| (port.name.clone(), Default::default()))
+        .collect();
     NodeManifestVersion {
         protocol_version: NODE_PROTOCOL_VERSION.into(),
         node_type: node_type.into(),
@@ -364,6 +364,20 @@ pub(crate) fn manifest(
         output_ports: outputs,
         binding_slots: Vec::new(),
         parameter_schema: json!({"type":"object"}),
+        output_schema: json!({"type":"object"}),
+        output_port_schemas: BTreeMap::new(),
+        output_cardinality,
+        expression_capabilities: agentx_node_protocol::ExpressionCapabilities {
+            namespaces: vec!["inputs".into(), "outputs".into(), "contexts".into()],
+            supports_current: true,
+            supports_first_last: true,
+            supports_all: true,
+            supports_run_selection: true,
+        },
+        context_read_capability: true,
+        context_write_capability: true,
+        output_projection_schema: json!({"type":"object","additionalProperties":true}),
+        artifact_output_schema: json!({"type":"array","items":{"type":"object"}}),
         ui_schema: NodeUiSchema {
             canvas: Some(CanvasAppearance { role }),
             ..Default::default()
@@ -409,21 +423,20 @@ fn m5_manifest(
     value.parameter_schema = schema;
     let fields = match node_type {
         "model" => {
-            json!({"prompt":{"control":"prompt"},"messages":{"control":"collection"},"parameters":{"control":"json"}})
+            json!({"prompt":{"control":"prompt"},"userQuestion":{"control":"text"}})
         }
-        "mcp_tool" => json!({"arguments":{"control":"json"}}),
         "rag" | "memory" => json!({"operation":{"control":"select"},"input":{"control":"json"}}),
         "agent" => json!({
-            "systemPrompt":{"control":"prompt"},"messages":{"control":"collection"},
-            "maxIterations":{"control":"number"},"maxModelCalls":{"control":"number"},
-            "maxToolCalls":{"control":"number"},"maxTotalTokens":{"control":"number"},
-            "maxOutputTokens":{"control":"number"},"maxCostMicros":{"control":"number"},
-            "maxDurationMs":{"control":"number"},"limitAction":{"control":"select"}
+            "systemPrompt":{"control":"prompt"},"userQuestion":{"control":"text"},
+            "maxIterations":{"control":"number","unit":"calls"},"maxModelCalls":{"control":"number","unit":"calls"},
+            "maxToolCalls":{"control":"number","unit":"calls"},"maxTotalTokens":{"control":"number","unit":"tokens"},
+            "maxOutputTokens":{"control":"number","unit":"tokens"},"maxCostMicros":{"control":"number","unit":"micros"},
+            "maxDurationMs":{"control":"number","unit":"milliseconds"},"limitAction":{"control":"select"}
         }),
         "code" => json!({
             "runner":{"control":"select"},"source":{"control":"code","languageField":"runner"},
-            "arguments":{"control":"collection"},"networkPolicy":{"control":"json"},
-            "outputPaths":{"control":"collection"},"credentialFiles":{"control":"fixed_collection"}
+            "arguments":{"control":"json"},"networkPolicy":{"control":"json"},
+            "outputPaths":{"control":"json"},"credentialFiles":{"control":"json"}
         }),
         _ => json!({}),
     };
@@ -497,7 +510,7 @@ fn canvas_role(
 
 fn category(node_type: &str) -> &'static str {
     match node_type {
-        "manual_trigger" | "remote_trigger" | "item_generator" => "triggers",
+        "item_generator" => "triggers",
         "if" | "switch" | "merge" | "loop_over_items" | "wait" | "approval" | "sub_workflow"
         | "error_handler" | "no_op" | "stop_and_error" => "flow",
         "filter"
@@ -521,8 +534,6 @@ fn category(node_type: &str) -> &'static str {
 
 fn icon_key(node_type: &str) -> &'static str {
     match node_type {
-        "manual_trigger" => "mouse-pointer-click",
-        "remote_trigger" => "radio-tower",
         "agent" => "bot",
         "model" => "brain-circuit",
         "mcp_tool" => "wrench",
@@ -574,36 +585,6 @@ fn default_manifests() -> Vec<NodeManifestVersion> {
         manifest
     };
     let mut manifests = vec![
-        manifest(
-            "manual_trigger",
-            ExecutionStyle::Trigger,
-            NodeCapability::Builtin,
-            ReadinessPolicy::Any,
-            vec![],
-            vec![port("main", PortKind::Main, false, false)],
-            SideEffectLevel::None,
-        ),
-        {
-            let mut trigger = configured(
-                manifest(
-                    "remote_trigger",
-                    ExecutionStyle::Trigger,
-                    NodeCapability::RemoteAction,
-                    ReadinessPolicy::Any,
-                    vec![],
-                    vec![port("main", PortKind::Main, false, false)],
-                    SideEffectLevel::None,
-                ),
-                json!({"type":"object","required":["endpoint"],"properties":{"endpoint":{"type":"string"},"pollIntervalSeconds":{"type":"integer","minimum":1,"maximum":86400,"default":60}},"additionalProperties":true}),
-                json!({"order":["endpoint","pollIntervalSeconds"],"fields":{"endpoint":{"control":"text"},"pollIntervalSeconds":{"control":"number"}}}),
-            );
-            trigger.lifecycle_operations = vec![
-                LifecycleOperation::Activate,
-                LifecycleOperation::Deactivate,
-                LifecycleOperation::Poll,
-            ];
-            trigger
-        },
         configured(
             manifest(
                 "set",
@@ -615,7 +596,7 @@ fn default_manifests() -> Vec<NodeManifestVersion> {
                 SideEffectLevel::None,
             ),
             json!({"type":"object","properties":{"values":{"type":"object","default":{}},"keepOnlySet":{"type":"boolean","default":false}},"additionalProperties":false}),
-            json!({"order":["values","keepOnlySet"],"fields":{"values":{"control":"mapper"},"keepOnlySet":{"control":"boolean"}}}),
+            json!({"order":["values","keepOnlySet"],"fields":{"values":{"control":"json"},"keepOnlySet":{"control":"boolean"}}}),
         ),
         configured(
             manifest(
@@ -662,7 +643,7 @@ fn default_manifests() -> Vec<NodeManifestVersion> {
                 SideEffectLevel::None,
             ),
             json!({"type":"object","required":["rules"],"properties":{"rules":{"type":"array","items":{"type":"object","required":["condition"],"properties":{"condition":{}}}},"sendToAllMatches":{"type":"boolean","default":false}},"additionalProperties":false}),
-            json!({"order":["rules","sendToAllMatches"],"fields":{"rules":{"control":"collection"},"sendToAllMatches":{"control":"boolean"}}}),
+            json!({"order":["rules","sendToAllMatches"],"fields":{"rules":{"control":"json"},"sendToAllMatches":{"control":"boolean"}}}),
         ),
         configured(
             manifest(
@@ -761,37 +742,34 @@ fn default_manifests() -> Vec<NodeManifestVersion> {
                 SideEffectLevel::Idempotent,
             ),
             json!({"type":"object","required":["url"],"properties":{"method":{"type":"string","enum":["GET","POST","PUT","PATCH","DELETE"],"default":"GET"},"url":{"type":"string"},"headers":{"type":"object"},"body":{}},"additionalProperties":false}),
-            json!({"order":["method","url","headers","body"],"fields":{"method":{"control":"select"},"url":{"control":"expression"},"headers":{"control":"fixed_collection"},"body":{"control":"json"}}}),
+            json!({"order":["method","url","headers","body"],"fields":{"method":{"control":"select"},"url":{"control":"expression"},"headers":{"control":"json"},"body":{"control":"json"}}}),
         ),
-        configured(
-            manifest(
-                "remote_action",
-                ExecutionStyle::Action,
-                NodeCapability::RemoteAction,
-                ReadinessPolicy::Any,
-                main_in(),
-                main_out(),
-                SideEffectLevel::Irreversible,
-            ),
-            json!({"type":"object","required":["endpoint"],"properties":{"endpoint":{"type":"string"}},"additionalProperties":true}),
-            json!({"fields":{"endpoint":{"control":"text"}}}),
-        ),
+        {
+            let mut remote_action = configured(
+                manifest(
+                    "remote_action",
+                    ExecutionStyle::Action,
+                    NodeCapability::RemoteAction,
+                    ReadinessPolicy::Any,
+                    main_in(),
+                    main_out(),
+                    SideEffectLevel::Irreversible,
+                ),
+                json!({"type":"object","required":["endpoint"],"properties":{"endpoint":{"type":"string"}},"additionalProperties":true}),
+                json!({"fields":{"endpoint":{"control":"text"}}}),
+            );
+            remote_action.lifecycle_operations = vec![
+                agentx_node_protocol::LifecycleOperation::Activate,
+                agentx_node_protocol::LifecycleOperation::Deactivate,
+                agentx_node_protocol::LifecycleOperation::Poll,
+                agentx_node_protocol::LifecycleOperation::Webhook,
+            ];
+            remote_action
+        },
         m5_manifest(
             "model",
             NodeCapability::Model,
-            json!({"type":"object","properties":{"messages":{"type":"array"},"prompt":{"type":"string"},"parameters":{"type":"object"}},"additionalProperties":false}),
-            SideEffectLevel::None,
-        ),
-        m5_manifest(
-            "mcp_tool",
-            NodeCapability::McpTool,
-            json!({"type":"object","properties":{"arguments":{"type":"object"}},"additionalProperties":false}),
-            SideEffectLevel::Irreversible,
-        ),
-        m5_manifest(
-            "skill",
-            NodeCapability::Skill,
-            json!({"type":"object","additionalProperties":false}),
+            json!({"type":"object","properties":{"prompt":{"type":"string"},"userQuestion":{"type":"string","templatable":true,"allowedNamespaces":["inputs","outputs","contexts","execution","item","loop"],"expectedType":"string","multiline":false,"richText":false}},"additionalProperties":false}),
             SideEffectLevel::None,
         ),
         m5_manifest(
@@ -813,7 +791,7 @@ fn default_manifests() -> Vec<NodeManifestVersion> {
                 json!({
                     "type":"object",
                     "properties":{
-                        "systemPrompt":{"type":"string"},"messages":{"type":"array"},
+                        "systemPrompt":{"type":"string"},"userQuestion":{"type":"string","templatable":true,"allowedNamespaces":["inputs","outputs","contexts","execution","item","loop"],"expectedType":"string","multiline":false,"richText":false},
                         "maxIterations":{"type":"integer","minimum":1,"maximum":12,"default":12},
                         "maxModelCalls":{"type":"integer","minimum":1,"maximum":12,"default":12},
                         "maxToolCalls":{"type":"integer","minimum":0,"maximum":32,"default":32},
@@ -904,7 +882,410 @@ fn default_manifests() -> Vec<NodeManifestVersion> {
         ),
     ];
     manifests.extend(crate::builtin_catalog::manifests());
+    for manifest in &mut manifests {
+        configure_workflow_v4_capabilities(manifest);
+        populate_parameter_localizations(manifest);
+    }
     manifests
+}
+
+fn populate_parameter_localizations(manifest: &mut NodeManifestVersion) {
+    let properties = parameter_schema_paths(&manifest.parameter_schema);
+    for (path, property) in properties {
+        let name = path
+            .trim_end_matches("[]")
+            .rsplit('.')
+            .next()
+            .unwrap_or(path.as_str())
+            .trim_end_matches("[]");
+        let english = humanize_protocol_name(name);
+        let chinese = chinese_parameter_name(name);
+        for (locale, label) in [("en-US", english), ("zh-CN", chinese)] {
+            let localization = manifest
+                .localizations
+                .get_mut(locale)
+                .expect("built-in locale exists");
+            localization.parameter_labels.insert(path.clone(), label);
+            if property.get("templatable").and_then(Value::as_bool) == Some(true) {
+                localization
+                    .parameter_placeholders
+                    .entry(path.clone())
+                    .or_insert_with(|| "${{ inputs.value }}".into());
+            }
+            if let Some(options) = property.get("enum").and_then(Value::as_array) {
+                let labels = options
+                    .iter()
+                    .map(|option| {
+                        let value = option.as_str().unwrap_or_default();
+                        (
+                            value.to_owned(),
+                            if locale == "zh-CN" {
+                                chinese_enum_label(value)
+                            } else {
+                                humanize_protocol_name(value)
+                            },
+                        )
+                    })
+                    .collect();
+                localization
+                    .parameter_enum_options
+                    .insert(path.clone(), labels);
+            }
+        }
+    }
+}
+
+fn parameter_schema_paths(schema: &Value) -> Vec<(String, Value)> {
+    let mut paths = Vec::new();
+    if let Some(properties) = schema.get("properties").and_then(Value::as_object) {
+        for (name, property) in properties {
+            collect_parameter_schema_paths(name, property, &mut paths);
+        }
+    }
+    paths
+}
+
+fn collect_parameter_schema_paths(path: &str, schema: &Value, paths: &mut Vec<(String, Value)>) {
+    paths.push((path.to_owned(), schema.clone()));
+    if let Some(properties) = schema.get("properties").and_then(Value::as_object) {
+        for (name, property) in properties {
+            collect_parameter_schema_paths(&format!("{path}.{name}"), property, paths);
+        }
+    }
+    if let Some(items) = schema.get("items") {
+        collect_parameter_schema_paths(&format!("{path}[]"), items, paths);
+    }
+}
+
+fn humanize_protocol_name(value: &str) -> String {
+    let mut label = String::with_capacity(value.len() + 4);
+    for (index, character) in value.chars().enumerate() {
+        if character == '_' {
+            label.push(' ');
+        } else {
+            if index > 0 && character.is_ascii_uppercase() {
+                label.push(' ');
+            }
+            label.push(character);
+        }
+    }
+    if let Some(first) = label.get_mut(0..1) {
+        first.make_ascii_uppercase();
+    }
+    label
+}
+
+fn chinese_parameter_name(value: &str) -> String {
+    match value {
+        "values" => "字段值".into(),
+        "keepOnlySet" => "仅保留已设置字段".into(),
+        "condition" => "条件".into(),
+        "mode" => "模式".into(),
+        "operation" => "操作".into(),
+        "prompt" => "提示词".into(),
+        "systemPrompt" => "系统提示词".into(),
+        "userQuestion" => "用户问题".into(),
+        "arguments" => "调用参数".into(),
+        "endpoint" => "端点".into(),
+        "url" => "地址".into(),
+        "method" => "请求方法".into(),
+        "headers" => "请求头".into(),
+        "body" => "请求体".into(),
+        "runner" => "运行器".into(),
+        "source" => "源代码".into(),
+        "networkPolicy" => "网络策略".into(),
+        "outputPaths" => "输出路径".into(),
+        "kind" => "类型".into(),
+        "durationMs" => "持续时间".into(),
+        "timeoutMs" => "超时时间".into(),
+        "batchSize" => "批大小".into(),
+        "limitAction" => "超限动作".into(),
+        "maxIterations" => "最大迭代次数".into(),
+        "maxModelCalls" => "最大模型调用数".into(),
+        "maxToolCalls" => "最大工具调用数".into(),
+        "maxTotalTokens" => "最大 Token 数".into(),
+        "maxOutputTokens" => "最大输出 Token".into(),
+        "maxCostMicros" => "最大成本".into(),
+        "maxDurationMs" => "最大时长".into(),
+        "workflowVersionId" => "工作流版本".into(),
+        "authenticationMode" => "认证方式".into(),
+        "statusCode" => "状态码".into(),
+        "structuredJson" => "结构化 JSON".into(),
+        "structuredOutputs" => "结构化输出".into(),
+        "algorithm" => "算法".into(),
+        "amount" => "数量".into(),
+        "compareTo" => "比较目标".into(),
+        "direction" => "排序方向".into(),
+        "encoding" => "编码方式".into(),
+        "field" => "字段".into(),
+        "fields" => "字段列表".into(),
+        "format" => "格式".into(),
+        "from" => "来源字段".into(),
+        "groupBy" => "分组字段".into(),
+        "items" => "数据项".into(),
+        "keep" => "保留策略".into(),
+        "keyFields" => "键字段".into(),
+        "mappings" => "字段映射".into(),
+        "maxItems" => "最大项数".into(),
+        "missingField" => "缺失字段策略".into(),
+        "nulls" => "空值位置".into(),
+        "operations" => "聚合操作".into(),
+        "outputField" => "输出字段".into(),
+        "properties" => "字段定义".into(),
+        "schema" => "数据结构".into(),
+        "step" => "步长".into(),
+        "to" => "目标字段".into(),
+        "unit" => "单位".into(),
+        "candidateUserId" => "候选用户".into(),
+        "conflictStrategy" => "冲突策略".into(),
+        "joinType" => "连接类型".into(),
+        "payloadSchema" => "载荷结构".into(),
+        "resumeAt" => "恢复时间".into(),
+        "timeoutAt" => "超时时间点".into(),
+        "input" => "输入数据".into(),
+        _ => "参数".into(),
+    }
+}
+
+fn chinese_enum_label(value: &str) -> String {
+    match value {
+        "fail_fast" | "fail" | "stop" => "失败并停止".into(),
+        "collect" => "收集".into(),
+        "recover" => "恢复".into(),
+        "append" => "追加".into(),
+        "replace" => "覆盖".into(),
+        "merge_object" => "合并对象".into(),
+        "increment" => "递增".into(),
+        "python" => "Python".into(),
+        "javascript" => "JavaScript".into(),
+        "shell" => "Shell".into(),
+        "browser" => "浏览器".into(),
+        "sync" => "同步".into(),
+        "async" => "异步".into(),
+        "approved" => "通过".into(),
+        "rejected" => "拒绝".into(),
+        "first" => "第一个".into(),
+        "last" => "最后一个".into(),
+        "asc" => "升序".into(),
+        "desc" => "降序".into(),
+        "count" => "计数".into(),
+        "sum" => "求和".into(),
+        "avg" => "平均值".into(),
+        "ignore" => "忽略".into(),
+        "error" => "报错".into(),
+        "parse" => "解析".into(),
+        "stringify" => "转为文本".into(),
+        "format" => "格式化".into(),
+        "add" => "增加".into(),
+        "subtract" => "减少".into(),
+        "difference" => "差值".into(),
+        "rfc3339" => "RFC3339".into(),
+        "unix" => "Unix 时间戳".into(),
+        "seconds" => "秒".into(),
+        "minutes" => "分钟".into(),
+        "hours" => "小时".into(),
+        "days" => "天".into(),
+        "encode" => "编码".into(),
+        "decode" => "解码".into(),
+        "hex" => "十六进制".into(),
+        "base64" => "Base64".into(),
+        "sha256" => "SHA-256".into(),
+        "sha512" => "SHA-512".into(),
+        "route" => "路由".into(),
+        "combine_by_position" => "按位置合并".into(),
+        "combine_by_key" => "按键合并".into(),
+        "inner" => "内连接".into(),
+        "left" => "左连接".into(),
+        "right" => "右连接".into(),
+        "full" => "全连接".into(),
+        "prefer_left" => "优先左侧".into(),
+        "prefer_right" => "优先右侧".into(),
+        "suffix" => "添加后缀".into(),
+        "duration" => "持续时间".into(),
+        "datetime" => "指定时间".into(),
+        "webhook" => "Webhook".into(),
+        "form" => "表单".into(),
+        "signed" => "签名".into(),
+        "none" => "无".into(),
+        "GET" => "GET".into(),
+        "POST" => "POST".into(),
+        "PUT" => "PUT".into(),
+        "PATCH" => "PATCH".into(),
+        "DELETE" => "DELETE".into(),
+        "query" => "查询".into(),
+        "retrieve" => "读取".into(),
+        "insert" => "写入".into(),
+        "health_check" => "健康检查".into(),
+        "get" => "获取".into(),
+        "search" => "搜索".into(),
+        "update" => "更新".into(),
+        "error_output" => "输出错误".into(),
+        "partial" => "部分结果".into(),
+        _ => "选项".into(),
+    }
+}
+
+fn configure_workflow_v4_capabilities(manifest: &mut NodeManifestVersion) {
+    let dynamic_projection = matches!(
+        manifest.node_type.as_str(),
+        "code"
+            | "declarative_http"
+            | "http_request"
+            | "remote_action"
+            | "model"
+            | "agent"
+            | "rag"
+            | "mcp_tool"
+            | "memory"
+            | "set"
+            | "json_transform"
+            | "json_parse"
+    );
+    if !dynamic_projection {
+        manifest.output_projection_schema = Value::Null;
+    }
+    match manifest.node_type.as_str() {
+        "if" | "switch" => {
+            for port in &manifest.output_ports {
+                manifest.output_cardinality.insert(
+                    port.name.clone(),
+                    agentx_node_protocol::OutputCardinality::ZeroOrMany,
+                );
+            }
+        }
+        "loop_over_items" => {
+            for port in &manifest.output_ports {
+                manifest.output_cardinality.insert(
+                    port.name.clone(),
+                    agentx_node_protocol::OutputCardinality::ZeroOrMany,
+                );
+            }
+        }
+        "wait" | "approval" => {
+            for port in &manifest.output_ports {
+                manifest.output_cardinality.insert(
+                    port.name.clone(),
+                    agentx_node_protocol::OutputCardinality::ZeroOrOne,
+                );
+            }
+        }
+        "declarative_http" | "http_request" => {
+            manifest.output_schema = json!({"type":"object","properties":{"status":{"type":"integer"},"statusCode":{"type":"integer"},"headers":{"type":"object"},"body":{},"responseArtifact":{"type":["object","null"]}},"required":["status","statusCode","headers","body"]});
+            manifest.output_cardinality.insert(
+                "main".into(),
+                agentx_node_protocol::OutputCardinality::ExactlyOne,
+            );
+        }
+        "model" => {
+            manifest.output_schema = json!({"type":"object","properties":{"text":{"type":"string"},"message":{},"structuredJson":{},"citations":{"type":"array"},"toolCalls":{"type":"array"},"usage":{"type":"object"},"finishReason":{"type":["string","null"]},"stopReason":{"type":["string","null"]},"partial":{"type":"boolean"}},"required":["text","toolCalls","usage","partial"]});
+            manifest.output_cardinality.insert(
+                "main".into(),
+                agentx_node_protocol::OutputCardinality::ExactlyOne,
+            );
+        }
+        "agent" => {
+            manifest.output_schema = json!({"type":"object","properties":{"finalAnswer":{"type":"string"},"message":{},"messages":{"type":"array"},"toolCalls":{"type":"integer"},"artifacts":{"type":"array"},"citations":{"type":"array"},"usage":{"type":"object"},"stopReason":{"type":["string","null"]}},"required":["finalAnswer","messages","artifacts","citations","usage"]});
+            manifest.output_cardinality.insert(
+                "main".into(),
+                agentx_node_protocol::OutputCardinality::ExactlyOne,
+            );
+        }
+        "mcp_tool" => {
+            manifest.output_schema = json!({"type":"object","properties":{"structuredContent":{},"textContent":{"type":"array"},"content":{"type":"array"},"isError":{"type":"boolean"}},"required":["content","textContent","isError"]});
+            manifest.output_cardinality.insert(
+                "main".into(),
+                agentx_node_protocol::OutputCardinality::ExactlyOne,
+            );
+        }
+        "rag" => {
+            manifest.output_schema = json!({"type":"object","properties":{"documents":{"type":"array"},"chunks":{"type":"array"},"citations":{"type":"array"},"text":{"type":"string"},"recordIds":{"type":"array"}},"additionalProperties":true});
+            manifest.output_cardinality.insert(
+                "main".into(),
+                agentx_node_protocol::OutputCardinality::ExactlyOne,
+            );
+        }
+        "memory" => {
+            manifest.output_schema = json!({"type":"object","properties":{"records":{"type":"array"},"recordIds":{"type":"array"},"text":{"type":"string"}},"additionalProperties":true});
+            manifest.output_cardinality.insert(
+                "main".into(),
+                agentx_node_protocol::OutputCardinality::ExactlyOne,
+            );
+        }
+        "code" => {
+            manifest.output_schema = json!({"type":"object","properties":{"stdout":{"type":"string"},"stderr":{"type":"string"},"exitCode":{"type":"integer"},"partial":{"type":"boolean"},"sandboxId":{"type":"string"},"downloadedArtifacts":{"type":"array","items":{"type":"object"}},"structuredOutputs":{"type":"object"}},"required":["stdout","stderr","exitCode","partial","downloadedArtifacts"]});
+            manifest.output_cardinality.insert(
+                "main".into(),
+                agentx_node_protocol::OutputCardinality::ExactlyOne,
+            );
+        }
+        _ => {}
+    }
+    if matches!(
+        manifest.node_type.as_str(),
+        "if" | "switch"
+            | "merge"
+            | "loop_over_items"
+            | "wait"
+            | "approval"
+            | "error_handler"
+            | "stop_and_error"
+    ) {
+        manifest.context_write_capability = false;
+    }
+    let controls = manifest
+        .ui_schema
+        .fields
+        .iter()
+        .filter_map(|(name, field)| {
+            field
+                .get("control")
+                .and_then(Value::as_str)
+                .map(|control| (name.clone(), control.to_owned()))
+        })
+        .collect::<Vec<_>>();
+    if let Some(properties) = manifest
+        .parameter_schema
+        .get_mut("properties")
+        .and_then(Value::as_object_mut)
+    {
+        for (name, control) in controls {
+            if matches!(
+                control.as_str(),
+                "text"
+                    | "textarea"
+                    | "prompt"
+                    | "expression"
+                    | "json"
+                    | "mapper"
+                    | "fixed_collection"
+                    | "number"
+                    | "boolean"
+                    | "select"
+            ) && let Some(property) = properties.get_mut(&name).and_then(Value::as_object_mut)
+            {
+                property.insert("templatable".into(), Value::Bool(true));
+                property.insert(
+                    "allowedNamespaces".into(),
+                    json!(["inputs", "outputs", "contexts", "execution", "item", "loop"]),
+                );
+                property.insert(
+                    "expectedType".into(),
+                    property
+                        .get("type")
+                        .cloned()
+                        .unwrap_or_else(|| json!("any")),
+                );
+                property.insert(
+                    "multiline".into(),
+                    Value::Bool(matches!(
+                        control.as_str(),
+                        "textarea" | "prompt" | "expression" | "json"
+                    )),
+                );
+                property.insert("richText".into(), Value::Bool(false));
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -932,23 +1313,6 @@ mod tests {
     }
 
     #[test]
-    fn remote_trigger_declares_poll_and_deployment_lifecycle() {
-        let registry = NodeRegistry::m5_defaults();
-        let operations = &registry
-            .get("remote_trigger", 1)
-            .expect("remote trigger manifest")
-            .lifecycle_operations;
-        assert_eq!(
-            operations,
-            &[
-                LifecycleOperation::Activate,
-                LifecycleOperation::Deactivate,
-                LifecycleOperation::Poll,
-            ]
-        );
-    }
-
-    #[test]
     fn built_in_localizations_reference_declared_protocol_names() {
         let registry = NodeRegistry::m5_defaults();
         for manifest in registry.manifests() {
@@ -958,6 +1322,23 @@ mod tests {
             assert!(manifest.localizations.contains_key("zh-CN"));
             assert!(manifest.localizations.contains_key("en-US"));
         }
+
+        let aggregate = registry.get("aggregate", 1).expect("aggregate manifest");
+        let english = aggregate
+            .localizations
+            .get("en-US")
+            .expect("English locale");
+        assert!(
+            english
+                .parameter_labels
+                .contains_key("operations[].operation")
+        );
+        assert!(
+            english
+                .parameter_enum_options
+                .contains_key("operations[].operation")
+        );
+        assert!(english.parameter_descriptions.is_empty());
 
         let mut invalid = registry.get("if", 1).expect("if manifest").clone();
         invalid
@@ -972,6 +1353,45 @@ mod tests {
             target.register(invalid),
             Err(RegistryError::InvalidManifest { .. })
         ));
+
+        let mut invalid_nested = aggregate.clone();
+        invalid_nested
+            .localizations
+            .get_mut("en-US")
+            .expect("English localization")
+            .parameter_labels
+            .insert("operations[].missing".into(), "Missing".into());
+        assert!(invalid_nested.validate_localizations().is_err());
+    }
+
+    #[test]
+    fn agent_owns_skill_and_tool_resources_as_attachments() {
+        let registry = NodeRegistry::m5_defaults();
+        assert!(registry.get("mcp_tool", 1).is_none());
+        assert!(registry.get("skill", 1).is_none());
+
+        let agent = registry.get("agent", 1).expect("agent manifest");
+        assert_eq!(
+            agent.parameter_schema["properties"]["userQuestion"]["type"],
+            "string"
+        );
+        assert!(
+            agent.parameter_schema["properties"]
+                .get("messages")
+                .is_none()
+        );
+        assert!(
+            agent
+                .binding_slots
+                .iter()
+                .any(|slot| slot.name == "ai_tool")
+        );
+        assert!(
+            agent
+                .binding_slots
+                .iter()
+                .any(|slot| slot.name == "ai_skill")
+        );
     }
 
     #[test]

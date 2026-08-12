@@ -48,6 +48,7 @@ name = "agentx-api-types"
 version = "0.1.0"
 dependencies = [
  "serde",
+ "serde_json",
  "utoipa",
  "uuid",
 ]
@@ -2827,6 +2828,7 @@ dependencies = [
  "comrak",
  "csv",
  "futures",
+ "hmac",
  "http-body-util",
  "ipnet",
  "jsonwebtoken",
@@ -2845,6 +2847,7 @@ dependencies = [
  "testcontainers",
  "time",
  "tokio",
+ "tonic",
  "tower",
  "tower-http",
  "tracing",
@@ -4950,6 +4953,7 @@ dependencies = [
  "agentx-domain",
  "agentx-infrastructure",
  "agentx-node-protocol",
+ "agentx-runtime",
  "agentx-service-kit",
  "anyhow",
  "async-trait",

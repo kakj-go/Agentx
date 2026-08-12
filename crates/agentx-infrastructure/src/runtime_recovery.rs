@@ -4,10 +4,10 @@ use serde_json::{Value, json};
 use sqlx::Row;
 use uuid::Uuid;
 
+use crate::runtime_events_repository::{insert_execution_event, sync_execution_status};
 use crate::runtime_repository::{
     CreateExecution, CreatedExecution, ForkExecution, ResumeExecution, RuntimeExecutionSource,
-    RuntimeRepository, insert_execution_event, persist_machine, queue_ready_attempts,
-    sync_execution_status,
+    RuntimeRepository, persist_machine, queue_ready_attempts,
 };
 
 impl RuntimeRepository {
@@ -60,7 +60,7 @@ impl RuntimeRepository {
         let initial_machine = source_machine.fork_from_checkpoint(
             mode,
             command.node_id.as_deref(),
-            crate::runtime_repository::invocation_items(&input),
+            crate::runtime_repository_support::invocation_items(&input),
             &command.input_overrides,
         )?;
         let source_state_hash: String = row.try_get("state_hash")?;
@@ -90,10 +90,13 @@ impl RuntimeRepository {
                 requested_by: Some(command.actor_user_id),
                 trigger_type: "fork".into(),
                 input,
+                context_overlay: json!({}),
                 idempotency_key: key,
                 caller_execution_id: None,
+                caller_node_execution_id: None,
                 execution_type: command.mode.clone(),
                 parent_execution_id: Some(command.source_execution_id),
+                trace_id: None,
                 fork_checkpoint_id: Some(command.checkpoint_id),
                 fork_mode: Some(command.mode.clone()),
                 runtime_settings: json!({"mode":command.mode,"nodeId":command.node_id,"sourceExecutionId":command.source_execution_id,"checkpointId":command.checkpoint_id,"sourceStateHash":source_state_hash,"sideEffectDecisions":command.side_effect_decisions}),

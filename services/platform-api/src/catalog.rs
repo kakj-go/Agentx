@@ -1,6 +1,6 @@
 use agentx_api_types::PageResponse;
-use agentx_domain::canonical_content_hash;
-use agentx_node_protocol::NodeManifestVersion;
+use agentx_domain::{WorkflowDefinition, canonical_content_hash};
+use agentx_node_protocol::{NodeManifestVersion, NodePort, OutputCardinality, PortKind};
 use agentx_runtime::NodeRegistry;
 use axum::{
     Json,
@@ -8,7 +8,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sqlx::{MySqlPool, Row};
+use sqlx::{MySql, MySqlPool, Row, Transaction};
 use std::collections::HashSet;
 use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
@@ -82,7 +82,13 @@ pub type NodeDefinitionPage = PageResponse<NodeDefinitionSummary>;
 
 pub async fn reconcile_builtin_catalog(pool: &MySqlPool) -> anyhow::Result<()> {
     let mut transaction = pool.begin().await?;
+    sqlx::query("UPDATE node_definitions SET status='disabled' WHERE tenant_id IS NULL AND node_type IN ('sub_workflow','mcp_tool','skill')")
+        .execute(&mut *transaction)
+        .await?;
     for manifest in NodeRegistry::m5_defaults().manifests() {
+        if manifest.node_type == "sub_workflow" {
+            continue;
+        }
         let manifest_value = serde_json::to_value(manifest)?;
         let manifest_hash = canonical_content_hash(&manifest_value)?;
         let definition_id: Option<Uuid> = sqlx::query_scalar(
@@ -145,6 +151,150 @@ pub async fn registry_for_tenant(pool: &MySqlPool, tenant_id: Uuid) -> AppResult
         }
     }
     Ok(registry)
+}
+
+pub async fn register_composite_manifest(
+    transaction: &mut Transaction<'_, MySql>,
+    tenant_id: Uuid,
+    workflow_version_id: Uuid,
+    workflow_name: &str,
+    version_number: u64,
+    definition: &WorkflowDefinition,
+) -> AppResult<()> {
+    let mut manifest = NodeRegistry::m5_defaults()
+        .get("sub_workflow", 1)
+        .expect("built-in sub-workflow manifest")
+        .clone();
+    manifest.node_type = format!("workflow.{}", workflow_version_id.simple());
+    manifest.display_name = format!("{workflow_name} v{version_number}");
+    manifest.description = "Immutable published workflow".into();
+    manifest.category = "workflows".into();
+    manifest.keywords = vec![workflow_name.into(), "workflow".into(), "composite".into()];
+    manifest.providers.clear();
+    for localization in manifest.localizations.values_mut() {
+        localization.display_name = manifest.display_name.clone();
+        localization.description = manifest.description.clone();
+        localization.keywords = manifest.keywords.clone();
+    }
+    let input_schema = definition.start.inputs.clone();
+    let workflow_id: Uuid =
+        sqlx::query_scalar("SELECT workflow_id FROM workflow_versions WHERE tenant_id=? AND id=?")
+            .bind(tenant_id)
+            .bind(workflow_version_id)
+            .fetch_one(&mut **transaction)
+            .await?;
+    manifest.parameter_schema = serde_json::json!({
+        "type":"object",
+        "x-agentx-workflowId":workflow_id,
+        "x-agentx-workflowVersionId":workflow_version_id,
+        "x-agentx-versionNumber":version_number,
+        "x-agentx-contextContract":definition.start.contexts,
+        "properties":{
+            "workflowVersionId":{
+                "type":"string",
+                "const":workflow_version_id,
+                "default":workflow_version_id,
+                "readOnly":true
+            },
+            "inputs":{
+                "allOf":[input_schema],
+                "default":{},
+                "templatable":true,
+                "allowedNamespaces":["inputs","outputs","contexts"],
+                "expectedType":"object"
+            }
+        },
+        "required":["workflowVersionId","inputs"],
+        "additionalProperties":false
+    });
+    manifest.ui_schema.order = vec!["inputs".into()];
+    manifest.ui_schema.fields.insert(
+        "workflowVersionId".into(),
+        serde_json::json!({"control":"hidden"}),
+    );
+    manifest.ui_schema.fields.insert(
+        "inputs".into(),
+        serde_json::json!({"control":"json","label":"Inputs"}),
+    );
+    let output_properties = definition
+        .end
+        .outputs
+        .iter()
+        .map(|(name, output)| (name.clone(), output.schema.clone()))
+        .collect::<serde_json::Map<_, _>>();
+    let required = definition
+        .end
+        .outputs
+        .iter()
+        .filter(|(_, output)| output.required)
+        .map(|(name, _)| Value::String(name.clone()))
+        .collect::<Vec<_>>();
+    manifest.output_schema = serde_json::json!({
+        "type":"object",
+        "properties":output_properties,
+        "required":required,
+        "additionalProperties":false
+    });
+    if !manifest
+        .output_ports
+        .iter()
+        .any(|port| port.name == "error")
+    {
+        manifest.output_ports.push(NodePort {
+            name: "error".into(),
+            kind: PortKind::Error,
+            required: false,
+            variadic: false,
+        });
+    }
+    manifest
+        .output_cardinality
+        .insert("main".into(), OutputCardinality::ExactlyOne);
+    manifest
+        .output_cardinality
+        .insert("error".into(), OutputCardinality::ZeroOrMany);
+    manifest.output_port_schemas.insert(
+        "error".into(),
+        serde_json::json!({
+            "type":"object",
+            "properties":{
+                "code":{"type":"string"},
+                "message":{"type":"string"},
+                "details":{},
+                "sourceNodeId":{"type":"string"},
+                "sourceNodeKey":{"type":"string"},
+                "nodeExecutionId":{"type":"string"},
+                "runIndex":{"type":"integer"},
+                "iterationIndex":{"type":"integer"},
+                "retryable":{"type":"boolean"}
+            },
+            "required":["code","message","details","sourceNodeId","sourceNodeKey","nodeExecutionId","runIndex","iterationIndex","retryable"],
+            "additionalProperties":false
+        }),
+    );
+    let manifest_value = serde_json::to_value(&manifest).map_err(AppError::internal)?;
+    let manifest_hash = canonical_content_hash(&manifest_value).map_err(AppError::internal)?;
+    let definition_id = Uuid::now_v7();
+    sqlx::query("INSERT INTO node_definitions(id,tenant_id,node_type,display_name,source_type,status) VALUES(?,?,?,?, 'composite','active')")
+        .bind(definition_id)
+        .bind(tenant_id)
+        .bind(&manifest.node_type)
+        .bind(&manifest.display_name)
+        .execute(&mut **transaction)
+        .await?;
+    sqlx::query("INSERT INTO node_definition_versions(id,node_definition_id,version_number,protocol_version,manifest_json,manifest_hash,capability,execution_style,side_effect_level,resume_policy) VALUES(?,?,?,?,?,?,?,?,?,NULL)")
+        .bind(Uuid::now_v7())
+        .bind(definition_id)
+        .bind(manifest.version)
+        .bind(&manifest.protocol_version)
+        .bind(manifest_value)
+        .bind(manifest_hash)
+        .bind(manifest.capability.as_str())
+        .bind("sub_workflow")
+        .bind("none")
+        .execute(&mut **transaction)
+        .await?;
+    Ok(())
 }
 
 #[utoipa::path(get, path = "/api/v1/node-definitions", params(NodeDefinitionQuery))]

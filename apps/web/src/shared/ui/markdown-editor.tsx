@@ -22,7 +22,7 @@ import {
   type Translation,
 } from '@mdxeditor/editor'
 import '@mdxeditor/editor/style.css'
-import { useCallback, useEffect, useMemo, useRef } from 'react'
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 
 type Props = {
@@ -30,19 +30,26 @@ type Props = {
   readOnly?: boolean
   value: string
 }
+export type MarkdownEditorHandle = { insertText: (value: string) => void }
 
-export function MarkdownEditor({ onChange, readOnly = false, value }: Props) {
-  const { t } = useTranslation()
+export const MarkdownEditor = forwardRef<MarkdownEditorHandle, Props>(function MarkdownEditor({ onChange, readOnly = false, value }, ref) {
+  const { i18n, t } = useTranslation()
   const editor = useRef<MDXEditorMethods>(null)
   const externalValue = useRef(value)
   const onChangeRef = useRef(onChange)
   const initialValue = useRef(value)
   onChangeRef.current = onChange
   externalValue.current = value
+  useImperativeHandle(ref, () => ({ insertText: (text) => editor.current?.insertMarkdown(text) }), [])
 
   const translate = useCallback<Translation>((key, defaultValue, interpolations) => (
-    t(`markdownEditor.${key}`, { defaultValue, ...interpolations })
-  ), [t])
+    t(`skills.markdownEditor.${key}`, {
+      defaultValue: i18n.resolvedLanguage?.startsWith('en')
+        ? defaultValue
+        : t('common.unknownValue', { value: key }),
+      ...interpolations,
+    })
+  ), [i18n.resolvedLanguage, t])
   const plugins = useMemo(() => [
     headingsPlugin(),
     quotePlugin(),
@@ -87,4 +94,4 @@ export function MarkdownEditor({ onChange, readOnly = false, value }: Props) {
     ref={editor}
     translation={translate}
   />
-}
+})

@@ -496,15 +496,14 @@ async fn ensure_model(
     if let Some(row) = sqlx::query("SELECT a.id,d.id deployment_id FROM model_aliases a JOIN model_deployments d ON d.id=a.deployment_id WHERE a.tenant_id=? AND a.alias='m5-fixture-model'").bind(tenant).fetch_optional(pool).await? {
         return Ok((row.try_get("id")?, row.try_get("deployment_id")?));
     }
-    let provider = Uuid::now_v7();
     let deployment = Uuid::now_v7();
     let alias = Uuid::now_v7();
     let mut tx = pool.begin().await?;
-    sqlx::query("INSERT INTO model_providers(id,tenant_id,name,provider_type,endpoint,credential_id,owner_department_id) VALUES(?,?,?,'openai_compatible','http://echo-mcp:8090/v1',?,?)")
-        .bind(provider).bind(tenant).bind("M5 OpenAI Fixture").bind(credential).bind(department).execute(&mut *tx).await?;
-    sqlx::query("INSERT INTO model_deployments(id,tenant_id,provider_id,name,model_name,credential_id,default_parameters) VALUES(?,?,?,?,?,?,JSON_OBJECT())")
-        .bind(deployment).bind(tenant).bind(provider).bind("M5 Deterministic Deployment").bind("echo-model").bind(credential).execute(&mut *tx).await?;
+    sqlx::query("INSERT INTO model_deployments(id,tenant_id,connection_name,provider_type,endpoint,credential_id,owner_department_id,model_name,default_parameters) VALUES(?,?,'M5 OpenAI Fixture','openai_compatible','http://echo-mcp:8090/v1',?,?,?,JSON_OBJECT())")
+        .bind(deployment).bind(tenant).bind(credential).bind(department).bind("echo-model").execute(&mut *tx).await?;
     sqlx::query("INSERT INTO model_aliases(id,tenant_id,alias,deployment_id) VALUES(?,?,'m5-fixture-model',?)").bind(alias).bind(tenant).bind(deployment).execute(&mut *tx).await?;
+    sqlx::query("INSERT INTO model_alias_deployment_history(id,tenant_id,alias_id,previous_deployment_id,deployment_id,changed_by) VALUES(?,?,?,NULL,?,?)")
+        .bind(Uuid::now_v7()).bind(tenant).bind(alias).bind(deployment).bind(user).execute(&mut *tx).await?;
     sqlx::query("INSERT INTO model_price_versions(id,tenant_id,deployment_id,version_number,currency,input_per_million,output_per_million,created_by) VALUES(?,?,?,1,'USD',1.00000000,2.00000000,?)")
         .bind(Uuid::now_v7()).bind(tenant).bind(deployment).bind(user).execute(&mut *tx).await?;
     tx.commit().await?;
@@ -585,15 +584,16 @@ async fn create_agent_workflow(
         "Call the echo tool once and finish"
     };
     let definition = json!({
-        "schemaVersion":"3.0",
+        "schemaVersion":"4.0",
+        "start":{"inputs":{"type":"object","properties":{},"additionalProperties":false},"contexts":{}},
         "nodes":[
-            node("trigger","manual_trigger","Manual Trigger",80,160,json!({})),
-            node_with_resources("agent","agent","M5 Agent",360,160,json!({"systemPrompt":"Use the authorized tools only.","messages":[{"role":"user","content":prompt}],"maxIterations":6,"maxModelCalls":6,"maxToolCalls":8,"maxTotalTokens":4096,"maxOutputTokens":512,"maxCostMicros":1000000,"maxDurationMs":120000,"limitAction":"error_output"}),vec![
+            node_with_resources("agent","agent","M5 Agent",360,160,json!({"systemPrompt":"Use the authorized tools only.","userQuestion":prompt,"maxIterations":6,"maxModelCalls":6,"maxToolCalls":8,"maxTotalTokens":4096,"maxOutputTokens":512,"maxCostMicros":1000000,"maxDurationMs":120000,"limitAction":"error_output"}),vec![
                 binding_reference("agent-model","ai_model","model",resources.model,Some(resources.model_version),"use"),
                 binding_reference("agent-tool","ai_tool","mcp_tool",resources.mcp_tool,Some(resources.mcp_tool_version),"use")
             ])
         ],
-        "connections":[edge("agent-start","trigger","main","agent","main")]
+        "connections":[{"id":"start-agent","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"agent","targetHandle":"main","order":0},{"id":"agent-end","sourceNodeId":"agent","sourceHandle":"main","targetNodeId":"__end__","targetHandle":"main","order":0}],
+        "end":{"outputs":{}}
     });
     let snapshots = agent_snapshots(resources);
     create_workflow(pool, tenant, user, department, name, definition, snapshots).await
@@ -607,15 +607,16 @@ async fn create_knowledge_workflows(
     resources: &Resources,
 ) -> Result<()> {
     let rag_query = json!({
-        "schemaVersion":"3.0",
+        "schemaVersion":"4.0",
+        "start":{"inputs":{"type":"object","properties":{},"additionalProperties":false},"contexts":{}},
         "nodes":[
-            node("trigger","manual_trigger","Manual Trigger",80,160,json!({})),
             node_with_resources("rag","rag","M5 RAG Query",360,160,json!({
                 "operation":"query",
                 "input":{"query":"Which adapter does Agentx M5 use?","mode":"naive","include_references":true}
             }),vec![reference("rag",resources.rag,None,"read")])
         ],
-        "connections":[edge("rag-start","trigger","main","rag","main")]
+        "connections":[{"id":"start-rag","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"rag","targetHandle":"main","order":0},{"id":"rag-end","sourceNodeId":"rag","sourceHandle":"main","targetNodeId":"__end__","targetHandle":"main","order":0}],
+        "end":{"outputs":{}}
     });
     create_workflow(
         pool,
@@ -629,15 +630,16 @@ async fn create_knowledge_workflows(
     .await?;
 
     let memory_search = json!({
-        "schemaVersion":"3.0",
+        "schemaVersion":"4.0",
+        "start":{"inputs":{"type":"object","properties":{},"additionalProperties":false},"contexts":{}},
         "nodes":[
-            node("trigger","manual_trigger","Manual Trigger",80,160,json!({})),
             node_with_resources("memory","memory","M5 Memory Search",360,160,json!({
                 "operation":"search",
                 "input":{"query":"Which adapter does Agentx M5 use?","top_k":5}
             }),vec![reference("memory",resources.memory,None,"read")])
         ],
-        "connections":[edge("memory-start","trigger","main","memory","main")]
+        "connections":[{"id":"start-memory","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"memory","targetHandle":"main","order":0},{"id":"memory-end","sourceNodeId":"memory","sourceHandle":"main","targetNodeId":"__end__","targetHandle":"main","order":0}],
+        "end":{"outputs":{}}
     });
     create_workflow(
         pool,
@@ -651,15 +653,16 @@ async fn create_knowledge_workflows(
     .await?;
 
     let denied_write = json!({
-        "schemaVersion":"3.0",
+        "schemaVersion":"4.0",
+        "start":{"inputs":{"type":"object","properties":{},"additionalProperties":false},"contexts":{}},
         "nodes":[
-            node("trigger","manual_trigger","Manual Trigger",80,160,json!({})),
             node_with_resources("rag","rag","M5 RAG Read Scope",360,160,json!({
                 "operation":"insert",
                 "input":{"text":"This write must never reach LightRAG.","file_source":"m5-denied-write.txt"}
             }),vec![reference("rag",resources.rag,None,"read")])
         ],
-        "connections":[edge("rag-denied-start","trigger","main","rag","main")]
+        "connections":[{"id":"start-rag","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"rag","targetHandle":"main","order":0},{"id":"rag-end","sourceNodeId":"rag","sourceHandle":"main","targetNodeId":"__end__","targetHandle":"main","order":0}],
+        "end":{"outputs":{}}
     });
     create_workflow(
         pool,
@@ -797,12 +800,13 @@ async fn create_code_fixture(
         references.push(reference("credential", resources.credential, None, "use"));
     }
     let definition = json!({
-        "schemaVersion":"3.0",
+        "schemaVersion":"4.0",
+        "start":{"inputs":{"type":"object","properties":{},"additionalProperties":false},"contexts":{}},
         "nodes":[
-            node("trigger","manual_trigger","Manual Trigger",80,160,json!({})),
             node_with_resources("code","code",fixture.node_name,360,160,parameters,references)
         ],
-        "connections":[edge("code-start","trigger","main","code","main")]
+        "connections":[{"id":"start-code","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"code","targetHandle":"main","order":0},{"id":"code-end","sourceNodeId":"code","sourceHandle":"main","targetNodeId":"__end__","targetHandle":"main","order":0}],
+        "end":{"outputs":{}}
     });
     let limits = fixture.limits;
     let configuration = json!({"runner":fixture.runner,"imageDigest":fixture.image,"cpuMillis":limits.cpu_millis,"memoryBytes":limits.memory_bytes,"pidsLimit":limits.pids_limit,"diskBytes":limits.disk_bytes,"timeoutSeconds":limits.timeout_seconds,"outputLimitBytes":limits.output_limit_bytes,"networkPolicy":{"defaultAction":"deny","egress":[]}});
@@ -896,7 +900,7 @@ fn agent_snapshots(resources: &Resources) -> Vec<Snapshot> {
             resource_id: resources.model,
             resource_version_id: Some(resources.model_version),
             operation: "use",
-            value: json!({"aliasId":resources.model,"alias":"m5-fixture-model","aliasVersion":1,"deploymentId":resources.model_version,"deploymentVersion":1,"modelName":"echo-model","defaultParameters":{},"providerId":Uuid::nil(),"providerType":"openai_compatible","endpoint":"http://echo-mcp:8090/v1","providerVersion":1,"credentialId":resources.credential,"price":{"versionId":Uuid::nil(),"versionNumber":1,"currency":"USD","inputPerMillion":"1.00000000","outputPerMillion":"2.00000000"}}),
+            value: json!({"aliasId":resources.model,"alias":"m5-fixture-model","aliasVersion":1,"deploymentId":resources.model_version,"deploymentVersion":1,"connectionName":"M5 OpenAI Fixture","modelName":"echo-model","maxInputTokens":1050000,"maxOutputTokens":128000,"defaultParameters":{},"providerType":"openai_compatible","endpoint":"http://echo-mcp:8090/v1","credentialId":resources.credential,"price":{"versionId":Uuid::nil(),"versionNumber":1,"currency":"USD","inputPerMillion":"1.00000000","outputPerMillion":"2.00000000"}}),
         },
         Snapshot {
             node_id: "agent",
@@ -964,8 +968,8 @@ async fn create_workflow(
         .execute(&mut *tx)
         .await?;
     sqlx::query("INSERT INTO workflow_members(tenant_id,workflow_id,user_id,member_role,created_by) VALUES(?,?,?,'manager',?)").bind(tenant).bind(workflow).bind(user).bind(user).execute(&mut *tx).await?;
-    sqlx::query("INSERT INTO workflow_drafts(id,tenant_id,workflow_id,schema_version,revision,definition_json,content_hash,updated_by) VALUES(?,?,?,'3.0',1,?,?,?)").bind(draft).bind(tenant).bind(workflow).bind(&definition).bind(&content_hash).bind(user).execute(&mut *tx).await?;
-    sqlx::query("INSERT INTO workflow_versions(id,tenant_id,workflow_id,version_number,source_revision,schema_version,definition_json,content_hash,compiled_ir_json,compiled_ir_hash,compiler_version,compiled_at,created_by) VALUES(?,?,?,1,1,'3.0',?,?,?,?,?,CURRENT_TIMESTAMP(6),?)").bind(version).bind(tenant).bind(workflow).bind(&definition).bind(&content_hash).bind(serde_json::to_value(&compiled)?).bind(&compiled.canonical_hash).bind(&compiled.compiler_version).bind(user).execute(&mut *tx).await?;
+    sqlx::query("INSERT INTO workflow_drafts(id,tenant_id,workflow_id,schema_version,revision,definition_json,content_hash,updated_by) VALUES(?,?,?,'4.0',1,?,?,?)").bind(draft).bind(tenant).bind(workflow).bind(&definition).bind(&content_hash).bind(user).execute(&mut *tx).await?;
+    sqlx::query("INSERT INTO workflow_versions(id,tenant_id,workflow_id,version_number,source_revision,schema_version,definition_json,content_hash,compiled_ir_json,compiled_ir_hash,compiler_version,compiled_at,created_by) VALUES(?,?,?,1,1,'4.0',?,?,?,?,?,CURRENT_TIMESTAMP(6),?)").bind(version).bind(tenant).bind(workflow).bind(&definition).bind(&content_hash).bind(serde_json::to_value(&compiled)?).bind(&compiled.canonical_hash).bind(&compiled.compiler_version).bind(user).execute(&mut *tx).await?;
     for snapshot in snapshots {
         insert_snapshot_and_grant(&mut tx, tenant, user, identity, version, snapshot).await?;
     }
@@ -1007,9 +1011,6 @@ fn binding_reference(
 ) -> Value {
     json!({"bindingId":binding_id,"bindingRole":binding_role,"resourceType":resource_type,"resourceId":resource_id,"resourceVersionId":resource_version_id,"operation":operation})
 }
-fn node(id: &str, node_type: &str, name: &str, _x: i32, _y: i32, parameters: Value) -> Value {
-    json!({"id":id,"type":node_type,"typeVersion":1,"name":name,"parameters":parameters})
-}
 fn node_with_resources(
     id: &str,
     node_type: &str,
@@ -1019,10 +1020,7 @@ fn node_with_resources(
     parameters: Value,
     resources: Vec<Value>,
 ) -> Value {
-    json!({"id":id,"type":node_type,"typeVersion":1,"name":name,"parameters":parameters,"resourceReferences":resources})
-}
-fn edge(id: &str, source: &str, source_handle: &str, target: &str, target_handle: &str) -> Value {
-    json!({"id":id,"sourceNodeId":source,"sourceHandle":source_handle,"targetNodeId":target,"targetHandle":target_handle,"order":0})
+    json!({"id":id,"key":id.replace('-', "_"),"type":node_type,"typeVersion":1,"name":name,"parameters":parameters,"resourceReferences":resources})
 }
 fn hash(value: &str) -> String {
     format!("{:x}", Sha256::digest(value.as_bytes()))

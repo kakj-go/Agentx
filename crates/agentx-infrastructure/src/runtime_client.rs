@@ -62,8 +62,12 @@ impl ExecutionRuntime for GrpcExecutionRuntime {
                 debug_plan_json: serde_json::to_string(&request.debug_plan)?,
                 debug_overlay_json: serde_json::to_string(&request.debug_overlay)?,
                 resource_snapshots_json: serde_json::to_string(&request.resource_snapshots)?,
+                context_json: serde_json::to_string(&request.context)?,
                 idempotency_key: request.idempotency_key,
                 caller_execution_id: None,
+                caller_node_execution_id: None,
+                parent_execution_id: None,
+                trace_id: None,
             })
             .await
             .context("runtime coordinator request failed")?

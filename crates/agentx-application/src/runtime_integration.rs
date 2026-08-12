@@ -137,20 +137,8 @@ impl RuntimeEventEnvelope {
 #[serde(rename_all = "camelCase")]
 pub struct ExecutionResult {
     pub schema_version: String,
-    pub terminal_nodes: Vec<TerminalNodeResult>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub primary_output: Option<TerminalNodeResult>,
-    pub output_hash: String,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TerminalNodeResult {
-    pub node_index: usize,
-    pub node_id: String,
-    pub node_execution_id: Uuid,
-    pub activation_generation: u32,
-    pub activation_slot: u32,
-    pub run_index: u32,
     pub outputs: Value,
+    pub output_hash: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<Value>,
 }

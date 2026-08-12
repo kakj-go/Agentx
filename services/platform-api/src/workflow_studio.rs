@@ -208,10 +208,7 @@ pub async fn preview_expression(
 ) -> AppResult<Json<ExpressionPreviewResponse>> {
     actor.require("workflow:update")?;
     require_workflow_access(&state.pool, &actor, id, true).await?;
-    let source = input
-        .expression
-        .strip_prefix('=')
-        .unwrap_or(&input.expression);
+    let source = input.expression.as_str();
     if source.len() > 32_768 {
         return Err(AppError::unprocessable(
             "EXPRESSION_TOO_LARGE",
@@ -223,10 +220,15 @@ pub async fn preview_expression(
             source,
             &ExpressionContext {
                 json: input.json,
-                input: input.input,
+                input: input.input.clone(),
                 item_index: input.item_index,
                 run_index: input.run_index,
-                linked_nodes: input.linked_nodes,
+                linked_nodes: input.linked_nodes.clone(),
+                inputs: input.input,
+                outputs: input.linked_nodes,
+                contexts: serde_json::json!({}),
+                execution: serde_json::json!({}),
+                loop_context: serde_json::json!({}),
             },
         )
         .map_err(|error| AppError::unprocessable("INVALID_EXPRESSION", error.to_string()))?;
@@ -543,26 +545,26 @@ mod tests {
     #[test]
     fn overlay_schema_hash_changes_with_manifest_contract() {
         let definition: WorkflowDefinition = serde_json::from_value(json!({
-            "schemaVersion": "3.0",
-            "nodes": [{"id":"trigger","type":"manual_trigger","typeVersion":1,"name":"Trigger"}],
+            "schemaVersion": "4.0",
+            "start":{"inputs":{"type":"object","properties":{},"additionalProperties":false},"contexts":{}},
+            "nodes": [{"id":"action","key":"action","type":"set","typeVersion":1,"name":"Action"}],
             "connections": [],
+            "end":{"outputs":{}},
             "settings": {}
         }))
         .expect("valid workflow definition");
         let registry = NodeRegistry::m5_defaults();
-        let original = node_overlay_schema_hash(&definition, &registry, "trigger").unwrap();
+        let original = node_overlay_schema_hash(&definition, &registry, "action").unwrap();
 
-        let mut changed_manifest = registry
-            .get("manual_trigger", 1)
-            .expect("built-in manifest")
-            .clone();
+        let mut changed_manifest = registry.get("set", 1).expect("built-in manifest").clone();
         changed_manifest.parameter_schema =
             json!({"type":"object","properties":{"input":{"type":"string"}}});
+        changed_manifest.localizations.clear();
         let mut changed_registry = NodeRegistry::default();
         changed_registry
             .register(changed_manifest)
             .expect("changed manifest registers");
-        let changed = node_overlay_schema_hash(&definition, &changed_registry, "trigger").unwrap();
+        let changed = node_overlay_schema_hash(&definition, &changed_registry, "action").unwrap();
 
         assert_ne!(original, changed);
     }

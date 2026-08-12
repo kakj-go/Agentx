@@ -258,6 +258,7 @@ pub struct RequestExecution {
     pub requested_by: Option<UserId>,
     pub trigger_type: String,
     pub input: Value,
+    pub context: Value,
     pub debug_plan: Value,
     pub debug_overlay: Value,
     pub resource_snapshots: Vec<RuntimeResourceSnapshot>,

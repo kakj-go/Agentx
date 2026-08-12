@@ -83,6 +83,7 @@ function field(page: Page, name: string) {
 
 async function setText(page: Page, name: string, value: string) {
   await field(page, name).getByRole('textbox').fill(value)
+  await page.keyboard.press('Escape')
 }
 
 async function setNumber(page: Page, name: string, value: number) {
@@ -91,11 +92,17 @@ async function setNumber(page: Page, name: string, value: number) {
 
 async function setSelect(page: Page, name: string, value: string) {
   await field(page, name).getByRole('combobox').click()
-  await page.getByRole('option', { name: value, exact: true }).click()
+  const labels: Record<string, string> = { add: '增加', days: '天', combine_by_key: '按键合并', full: '全连接', suffix: '添加后缀', route: '路由', fail: '失败并停止' }
+  await page.getByRole('option', { name: labels[value] ?? value, exact: true }).click()
 }
 
 async function setEditor(page: Page, name: string, value: string) {
   const scope = field(page, name)
+  if (name === 'items' || name === 'schema') {
+    await fillStructuredJson(page, scope, JSON.parse(value) as JsonValue)
+    await page.keyboard.press('Escape')
+    return
+  }
   const editor = scope.getByRole('textbox', { name: 'Editor content' })
   await expect(editor).toBeVisible({ timeout: 30_000 })
   await editor.focus()
@@ -104,28 +111,93 @@ async function setEditor(page: Page, name: string, value: string) {
   await page.keyboard.insertText(value)
   await page.keyboard.press('Control+Home')
   const visibleText = async () => (await scope.locator('.view-lines:visible').textContent())?.replaceAll('\u00a0', ' ')
-  if (name === 'items' || name === 'schema') {
-    const parsed = JSON.parse(value) as Record<string, unknown> | Array<Record<string, unknown>>
-    const sample = Array.isArray(parsed) ? parsed[0] : parsed
-    const [key, sampleValue] = Object.entries(sample)[0]
-    await expect.poll(visibleText).toContain(`"${key}": ${JSON.stringify(sampleValue)}`)
-    await expect(scope.getByText(/JSON 格式无效|Invalid JSON/)).toHaveCount(0)
-  } else {
-    await expect.poll(visibleText).toContain(value.split('\n')[0].slice(0, 64))
+  await expect.poll(visibleText).toContain(value.split('\n')[0].slice(0, 64))
+  await page.keyboard.press('Escape')
+}
+
+type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue }
+
+async function fillStructuredJson(page: Page, scope: Locator, value: JsonValue): Promise<void> {
+  const type = Array.isArray(value) ? 'array' : value !== null && typeof value === 'object' ? 'object' : typeof value
+  const typeControl = scope.locator(':scope > button[role="combobox"][aria-label="值类型"], :scope > button[role="combobox"][aria-label="Value type"]').first()
+  if (await typeControl.count()) {
+    const labels = { string: /字符串|String/, number: /数字|Number/, boolean: /布尔值|Boolean/, object: /对象|Object/, array: /数组|Array/ } as const
+    const selectedType = type === 'object' || type === 'array' || type === 'number' || type === 'boolean' ? type : 'string'
+    await typeControl.click()
+    await page.getByRole('option', { name: labels[selectedType] }).click()
   }
+  if (Array.isArray(value)) {
+    const array = scope.getByTestId('json-array').first()
+    for (const item of value) {
+      const rows = array.locator(':scope > [data-testid="json-array-item"]')
+      const count = await rows.count()
+      await array.dispatchEvent('mousedown')
+      await expect(page.getByTestId('reference-picker')).toBeHidden()
+      await array.locator(':scope > button').last().click()
+      await expect(rows).toHaveCount(count + 1)
+      await fillStructuredJson(page, rows.nth(count).getByTestId('json-any-value').first(), item)
+    }
+    return
+  }
+  if (value !== null && typeof value === 'object') {
+    const object = scope.getByTestId('json-object').first()
+    for (const [name, child] of Object.entries(value)) {
+      const rows = object.locator(':scope > [data-testid="json-object-field"]')
+      const count = await rows.count()
+      await object.dispatchEvent('mousedown')
+      await expect(page.getByTestId('reference-picker')).toBeHidden()
+      await object.locator(':scope > button').last().click()
+      await expect(rows).toHaveCount(count + 1)
+      const row = rows.nth(count)
+      const key = row.getByRole('textbox', { name: /键|Key/ })
+      await key.fill(name)
+      await key.blur()
+      await fillStructuredJson(page, row.getByTestId('json-any-value').first(), child)
+    }
+    return
+  }
+  if (typeof value === 'boolean') {
+    const checkbox = scope.getByRole('checkbox')
+    if (value) await checkbox.check(); else await checkbox.uncheck()
+  } else if (typeof value === 'number') await scope.getByRole('spinbutton').fill(String(value))
+  else await scope.getByRole('textbox').last().fill(value === null ? '' : value)
 }
 
 async function addCollectionItem(page: Page, name: string, value: string | Record<string, unknown>) {
   const scope = field(page, name)
   await scope.getByRole('button').last().click()
   if (typeof value === 'string') await scope.getByRole('textbox').last().fill(value)
-  else await scope.locator('textarea').last().fill(JSON.stringify(value))
+  else {
+    const labels: Record<string, RegExp> = {
+      direction: /^(排序方向|Direction)$/,
+      field: /^(字段|Field)$/,
+      from: /^(来源字段|From)$/,
+      nulls: /^(空值位置|Nulls)$/,
+      operation: /^(操作|Operation)$/,
+      outputField: /^(输出字段|Output field)$/,
+      to: /^(目标字段|To)$/,
+    }
+    const optionLabels: Record<string, RegExp> = {
+      count: /^(计数|Count)$/,
+      desc: /^(降序|Descending|Desc)$/,
+      last: /^(最后一个|Last)$/,
+    }
+    const object = scope.getByTestId('json-object').last()
+    for (const [key, child] of Object.entries(value)) {
+      const control = object.getByLabel(labels[key] ?? new RegExp(`^${key}$`, 'i')).last()
+      if (await control.getAttribute('role') === 'combobox') {
+        await control.click()
+        await page.getByRole('option', { name: optionLabels[String(child)] ?? new RegExp(`^${String(child)}$`, 'i') }).click()
+      } else await control.fill(String(child))
+    }
+  }
+  await page.keyboard.press('Escape')
 }
 
 async function fit(page: Page) {
   const details = page.getByTestId('node-details-view')
-  if (await details.isVisible()) await details.getByRole('button', { name: /关闭|Close/ }).click()
-  await page.getByRole('button', { name: 'Fit View' }).click()
+  if (await details.isVisible()) await details.getByRole('button', { name: /关闭|Close/ }).first().click()
+  await page.getByRole('button', { name: /^(适应画布|Fit View)$/ }).click({ force: true })
 }
 
 async function connect(page: Page, source: Locator, sourceHandle: string, target: Locator, targetHandle: string) {
@@ -145,7 +217,7 @@ async function connect(page: Page, source: Locator, sourceHandle: string, target
 async function save(page: Page) {
   const button = page.getByRole('button', { name: /^(保存|Save)$/ })
   if (await button.isEnabled()) await button.click()
-  await expect(page.locator('header').getByText(/Revision \d+ · (已保存|Saved)/)).toBeVisible({ timeout: 30_000 })
+  await expect(page.locator('header').getByText(/修订号 \d+ · 已保存/)).toBeVisible({ timeout: 30_000 })
 }
 
 test('M6 local built-ins execute transform, multi-input and validation/error workflows through Studio', async ({ page }, testInfo) => {
@@ -163,7 +235,7 @@ test('M6 local built-ins execute transform, multi-input and validation/error wor
     { id: 3, group: 'b', score: 1, tags: ['ignored'], payload: '{}', when: '2026-03-01T00:00:00Z', text: 'low', old: { name: 'low' } },
   ]
   transformNodes.push(await addNode(page, 'item_generator')); await setEditor(page, 'items', JSON.stringify(generatedItems))
-  transformNodes.push(await addNode(page, 'filter')); await setEditor(page, 'condition', '=$json.score >= 2')
+  transformNodes.push(await addNode(page, 'filter')); await setEditor(page, 'condition', '${{ item.score >= 2 }}')
   transformNodes.push(await addNode(page, 'sort')); await addCollectionItem(page, 'fields', { field: 'score', direction: 'desc', nulls: 'last' })
   transformNodes.push(await addNode(page, 'remove_duplicates')); await addCollectionItem(page, 'fields', 'id')
   transformNodes.push(await addNode(page, 'split_out')); await setText(page, 'field', 'tags')
@@ -176,7 +248,9 @@ test('M6 local built-ins execute transform, multi-input and validation/error wor
   transformNodes.push(await addNode(page, 'aggregate')); await addCollectionItem(page, 'groupBy', 'group'); await addCollectionItem(page, 'operations', { operation: 'count', outputField: 'count' })
   transformNodes.push(await addNode(page, 'no_op'))
   await fit(page)
+  await connect(page, page.getByTestId('workflow-start'), 'main', transformNodes[0].node, 'main')
   for (let index = 0; index < transformNodes.length - 1; index += 1) await connect(page, transformNodes[index].node, 'main', transformNodes[index + 1].node, 'main')
+  await connect(page, transformNodes.at(-1)!.node, 'main', page.getByTestId('workflow-end'), 'main')
   await save(page)
   const transform = await runFromStudio(page, token, transformId, 'succeeded')
   const aggregateItems = output(transform.runs, transformNodes.at(-2)!.nodeId, 'main')
@@ -192,10 +266,13 @@ test('M6 local built-ins execute transform, multi-input and validation/error wor
   const merge = await addNode(page, 'merge'); await setSelect(page, 'mode', 'combine_by_key'); await setText(page, 'leftField', 'id'); await setText(page, 'rightField', 'id'); await setSelect(page, 'joinType', 'full'); await setSelect(page, 'conflictStrategy', 'suffix')
   const compare = await addNode(page, 'compare_datasets'); await addCollectionItem(page, 'keyFields', 'id')
   await fit(page)
+  await connect(page, page.getByTestId('workflow-start'), 'main', left.node, 'main')
+  await connect(page, page.getByTestId('workflow-start'), 'main', right.node, 'main')
   await connect(page, left.node, 'main', merge.node, 'left')
   await connect(page, right.node, 'main', merge.node, 'right')
   await connect(page, merge.node, 'main', compare.node, 'left')
   await connect(page, right.node, 'main', compare.node, 'right')
+  for (const port of ['same', 'different', 'left_only', 'right_only']) await connect(page, compare.node, port, page.getByTestId('workflow-end'), 'main')
   await save(page)
   const compared = await runFromStudio(page, token, compareId, 'succeeded')
   expect(output(compared.runs, merge.nodeId, 'main')).toHaveLength(3)
@@ -212,9 +289,12 @@ test('M6 local built-ins execute transform, multi-input and validation/error wor
   const validPass = await addNode(page, 'no_op')
   const stop = await addNode(page, 'stop_and_error'); await setEditor(page, 'code', 'E2E_VALIDATION_STOP'); await setEditor(page, 'message', 'Invalid local item')
   await fit(page)
+  await connect(page, page.getByTestId('workflow-start'), 'main', validationSource.node, 'main')
   await connect(page, validationSource.node, 'main', validator.node, 'main')
   await connect(page, validator.node, 'valid', validPass.node, 'main')
   await connect(page, validator.node, 'invalid', stop.node, 'main')
+  await connect(page, validPass.node, 'main', page.getByTestId('workflow-end'), 'main')
+  await connect(page, stop.node, 'error', page.getByTestId('workflow-end'), 'error')
   await save(page)
   const failed = await runFromStudio(page, token, failureId, 'failed')
   expect(output(failed.runs, validator.nodeId, 'valid')).toHaveLength(1)

@@ -421,9 +421,14 @@ async fn verify_checkpoint_externalization(
     ids: &RuntimeIds,
 ) {
     let definition: WorkflowDefinition = serde_json::from_value(json!({
-        "schemaVersion":"3.0",
-        "nodes":[{"id":"trigger","type":"manual_trigger","typeVersion":1,"name":"Trigger","parameters":{}}],
-        "connections":[]
+        "schemaVersion":"4.0",
+        "start":{"inputs":{"type":"object","properties":{},"additionalProperties":false},"contexts":{}},
+        "nodes":[{"id":"set","key":"set","type":"set","typeVersion":1,"name":"Set","parameters":{}}],
+        "connections":[
+            {"id":"start-set","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"set","targetHandle":"main","order":0},
+            {"id":"set-end","sourceNodeId":"set","sourceHandle":"main","targetNodeId":"__end__","targetHandle":"main","order":0}
+        ],
+        "end":{"outputs":{}}
     }))
     .expect("workflow definition");
     let compiled = WorkflowCompiler::new(&NodeRegistry::m4_defaults())
@@ -537,11 +542,11 @@ async fn seed_runtime(pool: &MySqlPool) -> RuntimeIds {
         .bind(ids.workflow).bind(ids.tenant).bind(ids.user).bind(ids.department).execute(pool).await.unwrap();
     sqlx::query("INSERT INTO workflow_service_identities(id,tenant_id,workflow_id,status) VALUES(?,?,?,'active')")
         .bind(ids.identity).bind(ids.tenant).bind(ids.workflow).execute(pool).await.unwrap();
-    sqlx::query("INSERT INTO workflow_versions(id,tenant_id,workflow_id,version_number,source_revision,schema_version,definition_json,content_hash,created_by) VALUES(?,?,?,1,1,'2.0',JSON_OBJECT(),'fixture',?)")
+    sqlx::query("INSERT INTO workflow_versions(id,tenant_id,workflow_id,version_number,source_revision,schema_version,definition_json,content_hash,created_by) VALUES(?,?,?,1,1,'4.0',JSON_OBJECT('schemaVersion','4.0','start',JSON_OBJECT('inputs',JSON_OBJECT(),'contexts',JSON_OBJECT()),'nodes',JSON_ARRAY(),'connections',JSON_ARRAY(),'end',JSON_OBJECT('outputs',JSON_OBJECT())),'fixture',?)")
         .bind(ids.workflow_version).bind(ids.tenant).bind(ids.workflow).bind(ids.user).execute(pool).await.unwrap();
-    sqlx::query("INSERT INTO workflow_executions(id,tenant_id,workflow_id,workflow_version_id,trace_id,trigger_type,status,started_at) VALUES(?,?,?,?,?,'manual','running',CURRENT_TIMESTAMP(6))")
+    sqlx::query("INSERT INTO workflow_executions(id,tenant_id,workflow_id,workflow_version_id,trace_id,trigger_type,status,input_json,context_json,context_base_json,context_version,session_context_version,started_at) VALUES(?,?,?,?,?,'manual','running',JSON_OBJECT(),JSON_OBJECT(),JSON_OBJECT(),0,0,CURRENT_TIMESTAMP(6))")
         .bind(ids.execution).bind(ids.tenant).bind(ids.workflow).bind(ids.workflow_version).bind(Uuid::now_v7()).execute(pool).await.unwrap();
-    sqlx::query("INSERT INTO node_executions(id,tenant_id,execution_id,node_id,node_name,node_type,node_version,generation,activation_slot,run_index,status,capability) VALUES(?,?,?,'remote','Remote','remote_action',1,0,0,0,'running','remote_action')")
+    sqlx::query("INSERT INTO node_executions(id,tenant_id,execution_id,node_id,node_key,node_name,node_type,node_version,generation,activation_slot,run_index,status,capability) VALUES(?,?,?,'remote','remote','Remote','remote_action',1,0,0,0,'running','remote_action')")
         .bind(ids.node_execution).bind(ids.tenant).bind(ids.execution).execute(pool).await.unwrap();
     sqlx::query("INSERT INTO node_attempts(id,tenant_id,execution_id,node_execution_id,attempt_number,status,idempotency_key,lease_token,deadline_at) VALUES(?,?,?,?,1,'running','runtime-attempt',?,DATE_ADD(CURRENT_TIMESTAMP(6),INTERVAL 5 MINUTE))")
         .bind(ids.attempt).bind(ids.tenant).bind(ids.execution).bind(ids.node_execution).bind(ids.lease).execute(pool).await.unwrap();

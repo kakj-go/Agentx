@@ -3,16 +3,16 @@ use std::{
     sync::Arc,
 };
 
-use agentx_application::{
-    ArtifactStore, ArtifactWrite, RuntimeEventEnvelope, RuntimeResourceSnapshot,
-};
+use agentx_application::{ArtifactStore, ArtifactWrite, RuntimeResourceSnapshot};
 use agentx_domain::{
-    ArtifactId, ExecutionOrder, NodeExecutionId, ResourceReference, TenantId, WorkflowDefinition,
+    ArtifactId, ContextMergePolicy, ContextScope, ExecutionOrder, NodeExecutionId,
+    ResourceReference, TenantId, WorkflowDefinition,
 };
-use agentx_node_protocol::{Item, NodeCapability, NodeManifestVersion, SideEffectLevel};
+use agentx_node_protocol::{Item, NodeManifestVersion, SideEffectLevel};
 use agentx_runtime::{
-    AttemptStatus, CompileContext, CompiledWorkflow, ExecutionMachine, MachineError, NodeRegistry,
-    PartialExecutionMode, RuntimeExecutionStatus, WorkflowCompiler,
+    CompileContext, CompiledWorkflow, ExecutionMachine, ExpressionContext, MachineError,
+    NodeRegistry, PartialExecutionMode, RuntimeExecutionStatus, WorkflowCompiler,
+    materialize_and_validate_start_input,
 };
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -22,8 +22,23 @@ use sqlx::{MySql, MySqlPool, Row, Transaction};
 use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
 
+pub(crate) use self::runtime_repository_completion::persist_machine;
+use self::runtime_repository_completion::{
+    complete_without_worker, debug_overlay_for_node, overlay_items, upsert_activation,
+};
 use crate::quota::QuotaAdmission;
-use crate::runtime_events::append_runtime_event;
+use crate::runtime_context::{
+    apply_context_writes, apply_output_projection, initial_context, load_output_namespace,
+    merge_context_overlay, merge_output_namespace, scoped_context,
+};
+use crate::runtime_events_repository::{
+    TraceInsert, insert_execution_event, insert_trace, sync_execution_status,
+};
+use crate::runtime_repository_support::*;
+use crate::runtime_wait::create_wait;
+
+#[path = "runtime_repository_completion.rs"]
+mod runtime_repository_completion;
 
 #[derive(Clone)]
 pub struct RuntimeRepository {
@@ -42,10 +57,13 @@ pub struct CreateExecution {
     pub requested_by: Option<Uuid>,
     pub trigger_type: String,
     pub input: Value,
+    pub context_overlay: Value,
     pub idempotency_key: Option<String>,
     pub caller_execution_id: Option<Uuid>,
+    pub caller_node_execution_id: Option<Uuid>,
     pub execution_type: String,
     pub parent_execution_id: Option<Uuid>,
+    pub trace_id: Option<Uuid>,
     pub fork_checkpoint_id: Option<Uuid>,
     pub fork_mode: Option<String>,
     pub runtime_settings: Value,
@@ -131,6 +149,9 @@ pub struct RuntimeTask {
     pub node_type: String,
     pub node_version: u32,
     pub node_parameters: Value,
+    pub workflow_inputs: Value,
+    pub contexts: Value,
+    pub context_version: u64,
     pub inputs: BTreeMap<String, Vec<Item>>,
     pub run_index: u32,
     pub iteration_index: u32,
@@ -312,12 +333,14 @@ impl RuntimeRepository {
                 compiled
             }
         };
+        materialize_and_validate_start_input(&mut command.input, &compiled.start.inputs)
+            .map_err(|error| anyhow::anyhow!("START_INPUT_INVALID: {error}"))?;
 
         let identity_id: Uuid = sqlx::query_scalar("SELECT id FROM workflow_service_identities WHERE tenant_id=? AND workflow_id=? AND status='active'")
             .bind(command.tenant_id).bind(workflow_id).fetch_optional(&mut *transaction).await?
             .context("Workflow Service Identity is missing or disabled")?;
         let resource_rows = if let Some(version_id) = workflow_version_id {
-            sqlx::query("SELECT node_id,binding_id,binding_role,resource_type,resource_id,resource_version_id,operation_key,snapshot_json,snapshot_hash FROM workflow_version_resources WHERE tenant_id=? AND workflow_version_id=? ORDER BY node_id,resource_type,resource_id")
+            sqlx::query("SELECT node_id,binding_id,binding_role,resource_type,resource_id,resource_version_id,operation_key,snapshot_json,snapshot_hash FROM workflow_version_resources WHERE tenant_id=? AND workflow_version_id=? AND resource_type<>'workflow' ORDER BY node_id,resource_type,resource_id")
                 .bind(command.tenant_id).bind(version_id).fetch_all(&mut *transaction).await?
         } else {
             Vec::new()
@@ -425,12 +448,63 @@ impl RuntimeRepository {
             self.quota_admission.as_ref(),
         )
         .await?;
-        let trace_id = Uuid::now_v7();
-        sqlx::query("INSERT INTO workflow_executions(id,tenant_id,workflow_id,workflow_version_id,source_kind,source_id,source_revision,invocation_id,session_id,parent_execution_id,caller_execution_id,fork_checkpoint_id,trace_id,trigger_type,execution_type,fork_mode,requested_by,input_json,status,started_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'queued',CURRENT_TIMESTAMP(6))")
+        let trace_id = command.trace_id.unwrap_or_else(Uuid::now_v7);
+        let mut initial_context = initial_context(&compiled.start.contexts);
+        if let (Some(target), Some(overlay)) = (
+            initial_context.as_object_mut(),
+            command.context_overlay.as_object(),
+        ) {
+            for (name, value) in overlay {
+                if let Some(definition) = compiled.start.contexts.get(name) {
+                    let validator = jsonschema::validator_for(&definition.schema)
+                        .with_context(|| format!("Context schema '{name}' is invalid"))?;
+                    validator.validate(value).map_err(|error| {
+                        anyhow::anyhow!("CONTEXT_VALUE_INVALID: {name}: {error}")
+                    })?;
+                    if let Some(max_size) = definition.max_size {
+                        anyhow::ensure!(
+                            serde_json::to_vec(value)?.len() as u64 <= max_size,
+                            "CONTEXT_VALUE_TOO_LARGE: {name}"
+                        );
+                    }
+                    target.insert(name.clone(), value.clone());
+                }
+            }
+        }
+        let mut application_deployment_id = None;
+        let mut session_context_version = 0_u64;
+        if let Some(session_id) = command.session_id {
+            let deployment_id: Uuid = sqlx::query_scalar("SELECT application_deployment_id FROM application_sessions WHERE tenant_id=? AND id=? AND status='active' FOR UPDATE")
+                .bind(command.tenant_id).bind(session_id).fetch_one(&mut *transaction).await?;
+            application_deployment_id = Some(deployment_id);
+            let stored = sqlx::query("SELECT context_json,context_version FROM application_session_contexts WHERE tenant_id=? AND application_deployment_id=? AND session_id=? FOR UPDATE")
+                .bind(command.tenant_id).bind(deployment_id).bind(session_id).fetch_optional(&mut *transaction).await?;
+            let session_context = if let Some(row) = stored {
+                session_context_version = row.try_get("context_version")?;
+                row.try_get::<Value, _>("context_json")?
+            } else {
+                let value = scoped_context(&compiled.start.contexts, ContextScope::Session);
+                sqlx::query("INSERT INTO application_session_contexts(tenant_id,application_deployment_id,session_id,context_json,context_version) VALUES(?,?,?,?,0)")
+                    .bind(command.tenant_id).bind(deployment_id).bind(session_id).bind(&value).execute(&mut *transaction).await?;
+                value
+            };
+            if let (Some(target), Some(session_values)) =
+                (initial_context.as_object_mut(), session_context.as_object())
+            {
+                for (name, definition) in &compiled.start.contexts {
+                    if definition.scope == ContextScope::Session
+                        && let Some(value) = session_values.get(name)
+                    {
+                        target.insert(name.clone(), value.clone());
+                    }
+                }
+            }
+        }
+        sqlx::query("INSERT INTO workflow_executions(id,tenant_id,workflow_id,workflow_version_id,source_kind,source_id,source_revision,invocation_id,session_id,application_deployment_id,parent_execution_id,caller_execution_id,caller_node_execution_id,fork_checkpoint_id,trace_id,trigger_type,execution_type,fork_mode,requested_by,input_json,context_json,context_base_json,context_version,session_context_version,status,started_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?,'queued',CURRENT_TIMESTAMP(6))")
             .bind(execution_id).bind(command.tenant_id).bind(workflow_id).bind(workflow_version_id).bind(source_kind).bind(source_id).bind(source_revision)
-            .bind(command.invocation_id).bind(command.session_id).bind(command.parent_execution_id).bind(command.caller_execution_id).bind(command.fork_checkpoint_id)
+            .bind(command.invocation_id).bind(command.session_id).bind(application_deployment_id).bind(command.parent_execution_id).bind(command.caller_execution_id).bind(command.caller_node_execution_id).bind(command.fork_checkpoint_id)
             .bind(trace_id).bind(&command.trigger_type).bind(&command.execution_type).bind(&command.fork_mode)
-            .bind(command.requested_by).bind(&command.input).execute(&mut *transaction).await?;
+            .bind(command.requested_by).bind(&command.input).bind(&initial_context).bind(&initial_context).bind(session_context_version).execute(&mut *transaction).await?;
         let items = invocation_items(&command.input);
         let mut machine = if let Some(machine) = command.initial_machine.take() {
             machine
@@ -591,7 +665,7 @@ impl RuntimeRepository {
         let result = sqlx::query("UPDATE worker_leases SET heartbeat_at=CURRENT_TIMESTAMP(6),expires_at=DATE_ADD(CURRENT_TIMESTAMP(6),INTERVAL ? SECOND) WHERE tenant_id=? AND node_attempt_id=? AND lease_token=? AND worker_instance_id=? AND released_at IS NULL AND expires_at>CURRENT_TIMESTAMP(6)")
             .bind(lease_seconds.clamp(5,300)).bind(tenant_id).bind(attempt_id).bind(lease_token).bind(worker)
             .execute(&self.pool).await?;
-        let cancelled = sqlx::query_scalar::<_, bool>("SELECT e.cancellation_requested_at IS NOT NULL OR e.status='cancelled' FROM node_attempts a JOIN workflow_executions e ON e.id=a.execution_id WHERE a.tenant_id=? AND a.id=?")
+        let cancelled = sqlx::query_scalar::<_, bool>("SELECT e.cancellation_requested_at IS NOT NULL OR e.status IN ('cancelled','failed','timed_out') FROM node_attempts a JOIN workflow_executions e ON e.id=a.execution_id WHERE a.tenant_id=? AND a.id=?")
             .bind(tenant_id).bind(attempt_id).fetch_optional(&self.pool).await?.unwrap_or(true);
         Ok((result.rows_affected() == 1, cancelled))
     }
@@ -606,7 +680,7 @@ impl RuntimeRepository {
         result: TaskResult,
     ) -> Result<bool> {
         let mut transaction = self.pool.begin().await?;
-        let row=sqlx::query("SELECT a.status,a.lease_token,n.node_id,n.run_index,e.workflow_id,e.workflow_version_id,e.trace_id,e.status execution_status FROM node_attempts a JOIN node_executions n ON n.id=a.node_execution_id JOIN workflow_executions e ON e.id=a.execution_id WHERE a.tenant_id=? AND a.execution_id=? AND a.node_execution_id=? AND a.id=? FOR UPDATE")
+        let row=sqlx::query("SELECT a.status,a.lease_token,n.node_id,n.run_index,e.workflow_id,e.workflow_version_id,e.trace_id,e.status execution_status,e.execution_type,e.input_json workflow_input_json,e.context_json,e.context_version,e.session_id,e.application_deployment_id,e.session_context_version FROM node_attempts a JOIN node_executions n ON n.id=a.node_execution_id JOIN workflow_executions e ON e.id=a.execution_id WHERE a.tenant_id=? AND a.execution_id=? AND a.node_execution_id=? AND a.id=? FOR UPDATE")
             .bind(tenant_id).bind(execution_id).bind(node_execution_id).bind(attempt_id).fetch_optional(&mut *transaction).await?;
         let Some(row) = row else {
             return Ok(false);
@@ -620,6 +694,75 @@ impl RuntimeRepository {
         let mut machine = self
             .load_machine(&mut transaction, tenant_id, execution_id)
             .await?;
+        let node_id: String = row.try_get("node_id")?;
+        let compiled_node = machine
+            .workflow()
+            .nodes
+            .iter()
+            .find(|node| node.id == node_id)
+            .cloned()
+            .context("Compiled node is missing while committing task result")?;
+        let mut result = match result {
+            TaskResult::Completed(mut outputs) => {
+                if compiled_node
+                    .output_projection
+                    .as_object()
+                    .is_some_and(|value| !value.is_empty())
+                {
+                    let upstream =
+                        load_output_namespace(&mut transaction, tenant_id, execution_id).await?;
+                    apply_output_projection(
+                        &mut outputs,
+                        &compiled_node.output_projection,
+                        &ExpressionContext {
+                            inputs: row
+                                .try_get::<Option<Value>, _>("workflow_input_json")?
+                                .unwrap_or(Value::Null),
+                            outputs: upstream,
+                            contexts: row.try_get("context_json")?,
+                            execution: json!({"executionId": execution_id, "nodeExecutionId": node_execution_id}),
+                            ..ExpressionContext::default()
+                        },
+                    )?;
+                }
+                TaskResult::Completed(outputs)
+            }
+            other => other,
+        };
+        if matches!(result, TaskResult::Completed(_))
+            && row.try_get::<String, _>("execution_type")? != "sub_workflow"
+            && (is_subworkflow_type(&compiled_node.node_type)
+                || compiled_node.context_writes.iter().any(|write| {
+                    write
+                        .path
+                        .split('.')
+                        .next()
+                        .and_then(|name| machine.workflow().contexts.get(name))
+                        .is_some_and(|definition| definition.scope == ContextScope::Session)
+                }))
+            && machine.workflow().contexts.values().any(|definition| {
+                definition.scope == ContextScope::Session
+                    && definition.merge_policy == ContextMergePolicy::RejectConflict
+            })
+            && let (Some(session_id), Some(deployment_id)) = (
+                row.try_get::<Option<Uuid>, _>("session_id")?,
+                row.try_get::<Option<Uuid>, _>("application_deployment_id")?,
+            )
+        {
+            let stored_version: u64 = sqlx::query_scalar("SELECT context_version FROM application_session_contexts WHERE tenant_id=? AND application_deployment_id=? AND session_id=? FOR UPDATE")
+                .bind(tenant_id)
+                .bind(deployment_id)
+                .bind(session_id)
+                .fetch_one(&mut *transaction)
+                .await?;
+            if stored_version != row.try_get::<u64, _>("session_context_version")? {
+                result = TaskResult::Failed {
+                    code: "SESSION_CONTEXT_VERSION_CONFLICT".into(),
+                    message: "Session Context changed after this execution started".into(),
+                    retryable: false,
+                };
+            }
+        }
         let domain_node = NodeExecutionId::from_uuid(node_execution_id);
         let transition = match &result {
             TaskResult::Completed(outputs) => machine.complete(domain_node, outputs.clone()),
@@ -672,6 +815,190 @@ impl RuntimeRepository {
                     .bind(attempt_id)
                     .execute(&mut *transaction)
                     .await?;
+            }
+        }
+        if let TaskResult::Completed(_) = &result
+            && !machine.is_error_collecting()
+            && (is_subworkflow_type(&compiled_node.node_type)
+                || !compiled_node.context_writes.is_empty())
+        {
+            let outputs = load_output_namespace(&mut transaction, tenant_id, execution_id).await?;
+            let mut contexts: Value = row.try_get("context_json")?;
+            let mut child_context_changes = Vec::new();
+            let mut child_overlay = None;
+            let workflow_inputs = row
+                .try_get::<Option<Value>, _>("workflow_input_json")?
+                .unwrap_or(Value::Null);
+            let version: u64 = row.try_get("context_version")?;
+            if is_subworkflow_type(&compiled_node.node_type) {
+                let child = sqlx::query("SELECT context_base_json,context_json FROM workflow_executions WHERE tenant_id=? AND caller_execution_id=? AND caller_node_execution_id=? AND status='succeeded' ORDER BY started_at DESC,id DESC LIMIT 1 FOR UPDATE")
+                        .bind(tenant_id)
+                        .bind(execution_id)
+                        .bind(node_execution_id)
+                        .fetch_optional(&mut *transaction)
+                        .await?;
+                if let Some(child) = child {
+                    let base: Value = child.try_get("context_base_json")?;
+                    let next: Value = child.try_get("context_json")?;
+                    let parent = contexts
+                        .as_object_mut()
+                        .context("EXECUTION_CONTEXT_NOT_OBJECT")?;
+                    for (name, definition) in &machine.workflow().contexts {
+                        if !definition.mutable {
+                            continue;
+                        }
+                        let (Some(base_value), Some(next_value)) = (base.get(name), next.get(name))
+                        else {
+                            continue;
+                        };
+                        if base_value == next_value {
+                            continue;
+                        }
+                        let current = parent
+                            .entry(name.clone())
+                            .or_insert_with(|| definition.default.clone());
+                        merge_context_overlay(
+                            current,
+                            base_value,
+                            next_value,
+                            definition.merge_policy,
+                        )?;
+                        child_context_changes.push((name.clone(), current.clone()));
+                    }
+                    child_overlay = Some((base, next));
+                }
+            }
+            let expression_base = ExpressionContext {
+                inputs: workflow_inputs.clone(),
+                outputs: outputs.clone(),
+                contexts: contexts.clone(),
+                execution: json!({
+                    "executionId": execution_id,
+                    "nodeExecutionId": node_execution_id,
+                    "runIndex": row.try_get::<u32, _>("run_index")?,
+                    "contextVersion": version,
+                }),
+                ..ExpressionContext::default()
+            };
+            if !compiled_node.context_writes.is_empty() {
+                apply_context_writes(
+                    &mut contexts,
+                    &compiled_node.context_writes,
+                    &machine.workflow().contexts,
+                    &expression_base,
+                )?;
+            }
+            let session_writes = compiled_node
+                .context_writes
+                .iter()
+                .filter(|write| {
+                    write
+                        .path
+                        .split('.')
+                        .next()
+                        .and_then(|name| machine.workflow().contexts.get(name))
+                        .is_some_and(|definition| definition.scope == ContextScope::Session)
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            let mut committed_session_version = None;
+            let is_child_execution = row.try_get::<String, _>("execution_type")? == "sub_workflow";
+            if let (Some(session_id), Some(deployment_id)) = (
+                row.try_get::<Option<Uuid>, _>("session_id")?,
+                row.try_get::<Option<Uuid>, _>("application_deployment_id")?,
+            ) && !is_child_execution
+                && (is_subworkflow_type(&compiled_node.node_type) || !session_writes.is_empty())
+            {
+                let stored = sqlx::query("SELECT context_json,context_version FROM application_session_contexts WHERE tenant_id=? AND application_deployment_id=? AND session_id=? FOR UPDATE")
+                        .bind(tenant_id).bind(deployment_id).bind(session_id).fetch_one(&mut *transaction).await?;
+                let mut session_context: Value = stored.try_get("context_json")?;
+                let stored_version: u64 = stored.try_get("context_version")?;
+                let execution_session_version: u64 = row.try_get("session_context_version")?;
+                let rejects_conflict = machine.workflow().contexts.values().any(|definition| {
+                    definition.scope == ContextScope::Session
+                        && definition.merge_policy == ContextMergePolicy::RejectConflict
+                });
+                anyhow::ensure!(
+                    !rejects_conflict || stored_version == execution_session_version,
+                    "SESSION_CONTEXT_VERSION_CONFLICT"
+                );
+                if is_subworkflow_type(&compiled_node.node_type) {
+                    if let Some((child_base, child_next)) = &child_overlay {
+                        for (name, definition) in &machine.workflow().contexts {
+                            if definition.scope != ContextScope::Session || !definition.mutable {
+                                continue;
+                            }
+                            let Some(base) = child_base.get(name) else {
+                                continue;
+                            };
+                            let Some(next) = child_next.get(name) else {
+                                continue;
+                            };
+                            if base == next {
+                                continue;
+                            }
+                            let current = session_context
+                                .as_object_mut()
+                                .context("SESSION_CONTEXT_NOT_OBJECT")?
+                                .entry(name.clone())
+                                .or_insert_with(|| definition.default.clone());
+                            merge_context_overlay(current, base, next, definition.merge_policy)?;
+                        }
+                    }
+                }
+                if !session_writes.is_empty() {
+                    let mut session_expression_base = expression_base.clone();
+                    session_expression_base.contexts = session_context.clone();
+                    apply_context_writes(
+                        &mut session_context,
+                        &session_writes,
+                        &machine.workflow().contexts,
+                        &session_expression_base,
+                    )?;
+                }
+                let changed = sqlx::query("UPDATE application_session_contexts SET context_json=?,context_version=context_version+1 WHERE tenant_id=? AND application_deployment_id=? AND session_id=? AND context_version=?")
+                        .bind(&session_context).bind(tenant_id).bind(deployment_id).bind(session_id).bind(stored_version).execute(&mut *transaction).await?;
+                anyhow::ensure!(
+                    changed.rows_affected() == 1,
+                    "SESSION_CONTEXT_VERSION_CONFLICT"
+                );
+                committed_session_version = Some(stored_version + 1);
+                if let (Some(target), Some(stored_values)) =
+                    (contexts.as_object_mut(), session_context.as_object())
+                {
+                    for (name, definition) in &machine.workflow().contexts {
+                        if definition.scope == ContextScope::Session
+                            && let Some(value) = stored_values.get(name)
+                        {
+                            target.insert(name.clone(), value.clone());
+                        }
+                    }
+                }
+            }
+            let changed = sqlx::query("UPDATE workflow_executions SET context_json=?,context_version=context_version+1,session_context_version=COALESCE(?,session_context_version) WHERE tenant_id=? AND id=? AND context_version=?")
+                    .bind(contexts)
+                    .bind(committed_session_version)
+                    .bind(tenant_id)
+                    .bind(execution_id)
+                    .bind(version)
+                    .execute(&mut *transaction)
+                    .await?;
+            anyhow::ensure!(changed.rows_affected() == 1, "CONTEXT_VERSION_CONFLICT");
+            for (patch_index, write) in compiled_node.context_writes.iter().enumerate() {
+                let operation = serde_json::to_value(write.operation)?
+                    .as_str()
+                    .unwrap_or("unknown")
+                    .to_owned();
+                sqlx::query("INSERT INTO workflow_context_patches(id,tenant_id,execution_id,node_execution_id,attempt_id,patch_index,operation_key,context_path,value_json,context_version_before,context_version_after) VALUES(?,?,?,?,?,?,?,?,?,?,?)")
+                        .bind(Uuid::now_v7()).bind(tenant_id).bind(execution_id).bind(node_execution_id).bind(attempt_id)
+                        .bind(patch_index as u32).bind(operation).bind(&write.path).bind(&write.value).bind(version).bind(version + 1)
+                        .execute(&mut *transaction).await?;
+            }
+            for (offset, (path, value)) in child_context_changes.iter().enumerate() {
+                sqlx::query("INSERT INTO workflow_context_patches(id,tenant_id,execution_id,node_execution_id,attempt_id,patch_index,operation_key,context_path,value_json,context_version_before,context_version_after) VALUES(?,?,?,?,?,?,?,?,?,?,?)")
+                        .bind(Uuid::now_v7()).bind(tenant_id).bind(execution_id).bind(node_execution_id).bind(attempt_id)
+                        .bind((compiled_node.context_writes.len() + offset) as u32).bind("merge_overlay").bind(path).bind(value).bind(version).bind(version + 1)
+                        .execute(&mut *transaction).await?;
             }
         }
         sqlx::query("UPDATE worker_leases SET released_at=CURRENT_TIMESTAMP(6) WHERE node_attempt_id=? AND lease_token=? AND released_at IS NULL")
@@ -738,6 +1065,23 @@ impl RuntimeRepository {
             },
         )
         .await?;
+        let execution_error = transition_error
+            .as_ref()
+            .map(|(code, message)| ((*code).to_owned(), message.clone()))
+            .or_else(|| {
+                if machine.status() == RuntimeExecutionStatus::Failed
+                    && let TaskResult::Failed { code, message, .. } = &result
+                {
+                    Some((code.clone(), message.clone()))
+                } else {
+                    None
+                }
+            });
+        if let Some((code, message)) = execution_error {
+            sqlx::query("UPDATE workflow_executions SET error_code=?,error_message=? WHERE tenant_id=? AND id=?")
+                .bind(code).bind(message).bind(tenant_id).bind(execution_id)
+                .execute(&mut *transaction).await?;
+        }
         sync_execution_status(
             &mut transaction,
             tenant_id,
@@ -747,9 +1091,6 @@ impl RuntimeRepository {
         )
         .await?;
         if let Some((code, message)) = transition_error {
-            sqlx::query("UPDATE workflow_executions SET error_code=?,error_message=? WHERE tenant_id=? AND id=?")
-                .bind(code).bind(&message).bind(tenant_id).bind(execution_id)
-                .execute(&mut *transaction).await?;
             insert_execution_event(
                 &mut transaction,
                 tenant_id,
@@ -805,6 +1146,31 @@ impl RuntimeRepository {
             .bind(tenant_id).bind(execution_id).execute(&mut *transaction).await?;
         sqlx::query("UPDATE approval_tasks SET status='cancelled',resume_status='succeeded',version=version+1 WHERE tenant_id=? AND execution_id=? AND status IN ('pending','claimed')")
             .bind(tenant_id).bind(execution_id).execute(&mut *transaction).await?;
+        let mut pending_parents = vec![execution_id];
+        while let Some(parent_id) = pending_parents.pop() {
+            let children = sqlx::query_scalar::<_, Uuid>("SELECT id FROM workflow_executions WHERE tenant_id=? AND (parent_execution_id=? OR caller_execution_id=?) AND status NOT IN ('succeeded','failed','cancelled','timed_out') FOR UPDATE")
+                .bind(tenant_id).bind(parent_id).bind(parent_id).fetch_all(&mut *transaction).await?;
+            for child_id in children {
+                sqlx::query("UPDATE workflow_executions SET status='cancelled',cancellation_requested_at=CURRENT_TIMESTAMP(6),ended_at=CURRENT_TIMESTAMP(6),duration_ms=TIMESTAMPDIFF(MICROSECOND,started_at,CURRENT_TIMESTAMP(6))/1000,terminal_event_emitted=TRUE WHERE tenant_id=? AND id=?")
+                    .bind(tenant_id).bind(child_id).execute(&mut *transaction).await?;
+                sqlx::query("UPDATE execution_resume_tokens SET status='cancelled' WHERE tenant_id=? AND execution_id=? AND status='active'")
+                    .bind(tenant_id).bind(child_id).execute(&mut *transaction).await?;
+                sqlx::query("UPDATE wait_subscriptions SET status='cancelled' WHERE tenant_id=? AND execution_id=? AND status='waiting'")
+                    .bind(tenant_id).bind(child_id).execute(&mut *transaction).await?;
+                sqlx::query("UPDATE approval_tasks SET status='cancelled',resume_status='succeeded',version=version+1 WHERE tenant_id=? AND execution_id=? AND status IN ('pending','claimed')")
+                    .bind(tenant_id).bind(child_id).execute(&mut *transaction).await?;
+                insert_execution_event(
+                    &mut transaction,
+                    tenant_id,
+                    child_id,
+                    "execution.cancelled",
+                    "cancelled",
+                    json!({"reason":"parent_cancelled","parentExecutionId":parent_id}),
+                )
+                .await?;
+                pending_parents.push(child_id);
+            }
+        }
         crate::quota::release_scope_with_admission(
             &mut transaction,
             tenant_id,
@@ -1001,8 +1367,93 @@ impl RuntimeRepository {
         Ok(recovered)
     }
 
+    pub async fn finalize_error_collections(&self) -> Result<u64> {
+        let rows = sqlx::query("SELECT d.tenant_id,d.execution_id,MIN(d.created_at) started_at FROM execution_end_deliveries d JOIN workflow_executions e ON e.tenant_id=d.tenant_id AND e.id=d.execution_id WHERE d.target_port='error' AND e.status='running' GROUP BY d.tenant_id,d.execution_id ORDER BY started_at LIMIT 100")
+            .fetch_all(&self.pool)
+            .await?;
+        let mut finalized = 0;
+        for row in rows {
+            let tenant_id: Uuid = row.try_get("tenant_id")?;
+            let execution_id: Uuid = row.try_get("execution_id")?;
+            let started_at: OffsetDateTime = row.try_get("started_at")?;
+            let mut transaction = self.pool.begin().await?;
+            let status = sqlx::query_scalar::<_, String>(
+                "SELECT status FROM workflow_executions WHERE tenant_id=? AND id=? FOR UPDATE",
+            )
+            .bind(tenant_id)
+            .bind(execution_id)
+            .fetch_optional(&mut *transaction)
+            .await?;
+            if status.as_deref() != Some("running") {
+                transaction.rollback().await?;
+                continue;
+            }
+            let mut machine = self
+                .load_machine(&mut transaction, tenant_id, execution_id)
+                .await?;
+            let collect_window =
+                Duration::milliseconds(machine.workflow().end.error.collect_window_ms as i64);
+            if !machine.is_error_collecting()
+                || OffsetDateTime::now_utc() < started_at + collect_window
+            {
+                transaction.rollback().await?;
+                continue;
+            }
+            machine.finish_error_collection();
+            persist_machine(
+                &mut transaction,
+                tenant_id,
+                execution_id,
+                &machine,
+                "manual",
+            )
+            .await?;
+            sqlx::query("UPDATE execution_outbox SET status='failed',last_error='END_ERROR_COLLECT_WINDOW_CLOSED',locked_by=NULL,locked_until=NULL WHERE tenant_id=? AND execution_id=? AND status='pending'")
+                .bind(tenant_id)
+                .bind(execution_id)
+                .execute(&mut *transaction)
+                .await?;
+            sqlx::query("UPDATE worker_leases l JOIN node_attempts a ON a.id=l.node_attempt_id SET l.released_at=CURRENT_TIMESTAMP(6) WHERE a.tenant_id=? AND a.execution_id=? AND l.released_at IS NULL")
+                .bind(tenant_id)
+                .bind(execution_id)
+                .execute(&mut *transaction)
+                .await?;
+            sqlx::query("UPDATE execution_resume_tokens SET status='cancelled' WHERE tenant_id=? AND execution_id=? AND status='active'")
+                .bind(tenant_id)
+                .bind(execution_id)
+                .execute(&mut *transaction)
+                .await?;
+            sqlx::query("UPDATE wait_subscriptions SET status='cancelled' WHERE tenant_id=? AND execution_id=? AND status='waiting'")
+                .bind(tenant_id)
+                .bind(execution_id)
+                .execute(&mut *transaction)
+                .await?;
+            sqlx::query("UPDATE approval_tasks SET status='cancelled',resume_status='succeeded',version=version+1 WHERE tenant_id=? AND execution_id=? AND status IN ('pending','claimed')")
+                .bind(tenant_id)
+                .bind(execution_id)
+                .execute(&mut *transaction)
+                .await?;
+            sqlx::query("UPDATE workflow_executions SET error_code='WORKFLOW_FAILED',error_message='Workflow reached End.error' WHERE tenant_id=? AND id=?")
+                .bind(tenant_id)
+                .bind(execution_id)
+                .execute(&mut *transaction)
+                .await?;
+            sync_execution_status(
+                &mut transaction,
+                tenant_id,
+                execution_id,
+                machine.status(),
+                self.quota_admission.as_ref(),
+            )
+            .await?;
+            transaction.commit().await?;
+            finalized += 1;
+        }
+        Ok(finalized)
+    }
+
     async fn load_task(&self, message: &DispatchMessage) -> Result<RuntimeTask> {
-        let row=sqlx::query("SELECT n.node_id,n.node_type,n.node_version,n.input_json,n.run_index,n.iteration_index,n.capability,a.attempt_number,a.idempotency_key,a.deadline_at,e.workflow_id,e.workflow_version_id,e.trace_id,e.execution_type,s.compiled_ir_json,s.definition_json,s.resource_snapshot_json FROM node_attempts a JOIN node_executions n ON n.id=a.node_execution_id JOIN workflow_executions e ON e.id=a.execution_id JOIN execution_snapshots s ON s.execution_id=e.id WHERE a.tenant_id=? AND a.id=?")
+        let row=sqlx::query("SELECT n.node_id,n.node_type,n.node_version,n.input_json,n.run_index,n.iteration_index,n.capability,a.attempt_number,a.idempotency_key,a.deadline_at,e.workflow_id,e.workflow_version_id,e.trace_id,e.execution_type,e.input_json workflow_input_json,e.context_json,e.context_version,s.compiled_ir_json,s.definition_json,s.resource_snapshot_json FROM node_attempts a JOIN node_executions n ON n.id=a.node_execution_id JOIN workflow_executions e ON e.id=a.execution_id JOIN execution_snapshots s ON s.execution_id=e.id WHERE a.tenant_id=? AND a.id=?")
             .bind(message.tenant_id).bind(message.attempt_id).fetch_one(&self.pool).await?;
         let compiled: CompiledWorkflow = serde_json::from_value(row.try_get("compiled_ir_json")?)?;
         let node_id: String = row.try_get("node_id")?;
@@ -1030,23 +1481,14 @@ impl RuntimeRepository {
             .iter()
             .map(|value| value.reference.clone())
             .collect();
-        let linked_rows=sqlx::query("SELECT node_name,run_index,output_json FROM node_executions WHERE tenant_id=? AND execution_id=? AND output_json IS NOT NULL ORDER BY run_index,id")
+        let linked_rows=sqlx::query("SELECT node_key,run_index,output_json FROM node_executions WHERE tenant_id=? AND execution_id=? AND output_json IS NOT NULL ORDER BY run_index,id")
             .bind(message.tenant_id).bind(message.execution_id).fetch_all(&self.pool).await?;
         let mut linked_nodes = serde_json::Map::new();
         for linked in linked_rows {
-            let name: String = linked.try_get("node_name")?;
+            let name: String = linked.try_get("node_key")?;
             let run: u32 = linked.try_get("run_index")?;
             let outputs: Value = linked.try_get("output_json")?;
-            let node = linked_nodes.entry(name).or_insert_with(|| json!({}));
-            if let (Some(node), Some(outputs)) = (node.as_object_mut(), outputs.as_object()) {
-                for (port, items) in outputs {
-                    node.entry(port.clone())
-                        .or_insert_with(|| json!({}))
-                        .as_object_mut()
-                        .expect("port map")
-                        .insert(run.to_string(), items.clone());
-                }
-            }
+            merge_output_namespace(&mut linked_nodes, &name, run, &outputs);
         }
         Ok(RuntimeTask {
             tenant_id: message.tenant_id,
@@ -1060,6 +1502,11 @@ impl RuntimeRepository {
             node_type: row.try_get("node_type")?,
             node_version: row.try_get("node_version")?,
             node_parameters: node.parameters.clone(),
+            workflow_inputs: row
+                .try_get::<Option<Value>, _>("workflow_input_json")?
+                .unwrap_or(Value::Null),
+            contexts: row.try_get("context_json")?,
+            context_version: row.try_get("context_version")?,
             inputs: serde_json::from_value(
                 row.try_get::<Option<Value>, _>("input_json")?
                     .unwrap_or_else(|| json!({})),
@@ -1423,516 +1870,3 @@ async fn side_effect_decision(
             .map(str::to_owned)
     }))
 }
-
-#[allow(clippy::too_many_arguments)]
-async fn complete_without_worker(
-    transaction: &mut Transaction<'_, MySql>,
-    tenant_id: Uuid,
-    execution_id: Uuid,
-    machine: &mut ExecutionMachine,
-    node_execution_id: NodeExecutionId,
-    node: &agentx_runtime::CompiledNode,
-    outputs: BTreeMap<String, Vec<Item>>,
-    decision: &str,
-) -> Result<()> {
-    let attempt_id = machine.start_attempt(node_execution_id)?;
-    let activation = machine
-        .activation(node_execution_id)
-        .expect("activation exists");
-    upsert_activation(transaction, tenant_id, execution_id, activation, node).await?;
-    let output = serde_json::to_value(&outputs)?;
-    sqlx::query("INSERT INTO node_attempts(id,tenant_id,execution_id,node_execution_id,attempt_number,status,idempotency_key,input_json,output_json,started_at,ended_at) VALUES(?,?,?,?,1,'succeeded',?,?,?,CURRENT_TIMESTAMP(6),CURRENT_TIMESTAMP(6))")
-        .bind(attempt_id.as_uuid()).bind(tenant_id).bind(execution_id).bind(node_execution_id.as_uuid())
-        .bind(format!("{execution_id}:{node_execution_id}:side_effect:{decision}"))
-        .bind(serde_json::to_value(&activation.inputs)?).bind(&output).execute(&mut **transaction).await?;
-    machine.complete(node_execution_id, outputs)?;
-    sqlx::query(
-        "UPDATE node_executions SET output_json=?,ended_at=CURRENT_TIMESTAMP(6) WHERE id=?",
-    )
-    .bind(output)
-    .bind(node_execution_id.as_uuid())
-    .execute(&mut **transaction)
-    .await?;
-    let (event_type, summary_key) = if matches!(
-        decision,
-        "pin_data" | "mock_output" | "history_output" | "artifact"
-    ) {
-        ("node.debug_overlay_applied", "overlayKind")
-    } else {
-        ("node.side_effect_resolved", "decision")
-    };
-    insert_execution_event(
-        transaction,
-        tenant_id,
-        execution_id,
-        event_type,
-        "succeeded",
-        json!({"nodeId":node.id,"nodeExecutionId":node_execution_id,(summary_key):decision}),
-    )
-    .await?;
-    Ok(())
-}
-
-fn debug_overlay_for_node<'a>(snapshot: &'a Value, node_id: &str) -> Option<(&'a str, &'a Value)> {
-    snapshot
-        .get("items")?
-        .as_array()?
-        .iter()
-        .find(|item| item.get("nodeId").and_then(Value::as_str) == Some(node_id))
-        .and_then(|item| Some((item.get("kind")?.as_str()?, item.get("payload")?)))
-}
-
-fn overlay_items(payload: &Value) -> BTreeMap<String, Vec<Item>> {
-    serde_json::from_value(payload.clone()).unwrap_or_else(|_| {
-        BTreeMap::from([(
-            "main".into(),
-            vec![Item {
-                json: payload.clone(),
-                ..Item::default()
-            }],
-        )])
-    })
-}
-
-async fn upsert_activation(
-    transaction: &mut Transaction<'_, MySql>,
-    tenant_id: Uuid,
-    execution_id: Uuid,
-    activation: &agentx_runtime::NodeActivation,
-    node: &agentx_runtime::CompiledNode,
-) -> Result<()> {
-    let status = activation_status_name(activation.status);
-    sqlx::query("INSERT INTO node_executions(id,tenant_id,execution_id,node_id,node_name,node_type,node_version,generation,activation_slot,run_index,iteration_index,status,capability,side_effect_level,input_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE status=VALUES(status),input_json=VALUES(input_json),updated_at=CURRENT_TIMESTAMP(6)")
-        .bind(activation.id.as_uuid()).bind(tenant_id).bind(execution_id).bind(&node.id).bind(&node.name).bind(&node.node_type).bind(node.type_version)
-        .bind(activation.generation).bind(activation.slot).bind(activation.run_index).bind(0_u32).bind(status)
-        .bind(capability_name(&node.capability)).bind(side_effect_name(&node.side_effect_level)).bind(serde_json::to_value(&activation.inputs)?)
-        .execute(&mut **transaction).await?;
-    Ok(())
-}
-
-pub(crate) async fn persist_machine(
-    transaction: &mut Transaction<'_, MySql>,
-    tenant_id: Uuid,
-    execution_id: Uuid,
-    machine: &ExecutionMachine,
-    checkpoint_type: &str,
-) -> Result<()> {
-    for activation in machine.activations() {
-        let node = &machine.workflow().nodes[activation.node_index];
-        upsert_activation(transaction, tenant_id, execution_id, activation, node).await?;
-        for attempt in &activation.attempts {
-            let db_status = attempt_status_name(attempt.status);
-            sqlx::query("UPDATE node_attempts SET status=IF(status='running' AND ?='queued','running',?),error_code=?,error_message=?,ended_at=IF(? IN ('succeeded','failed','cancelled'),CURRENT_TIMESTAMP(6),ended_at) WHERE id=?")
-                .bind(db_status).bind(db_status).bind(&attempt.error_code).bind(&attempt.error_message).bind(db_status).bind(attempt.id.as_uuid())
-                .execute(&mut **transaction).await?;
-        }
-    }
-    for delivery in machine.deliveries() {
-        let connection = &machine.workflow().connections[delivery.connection_index];
-        let (kind, items) = match &delivery.kind {
-            agentx_runtime::DeliveryKind::Data(items) => ("data", Some(items)),
-            agentx_runtime::DeliveryKind::ClosedWithoutData => ("closed_without_data", None),
-        };
-        let inserted=sqlx::query("INSERT IGNORE INTO execution_edge_deliveries(id,tenant_id,execution_id,sequence_number,connection_id,source_node_execution_id,source_port,target_node_id,target_port,target_generation,delivery_kind,item_count,payload_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)")
-            .bind(delivery.id).bind(tenant_id).bind(execution_id).bind(delivery.sequence).bind(&connection.id)
-            .bind(delivery.source_node_execution_id.as_uuid()).bind(&connection.source_port).bind(&machine.workflow().nodes[connection.target_node].id)
-            .bind(&connection.target_port).bind(delivery.target_generation).bind(kind).bind(items.map_or(0,Vec::len) as u32).bind(items.map(serde_json::to_value).transpose()?)
-            .execute(&mut **transaction).await?.rows_affected()==1;
-        if inserted && let Some(items) = items {
-            for (target_index, item) in items.iter().enumerate() {
-                for source in &item.lineage {
-                    sqlx::query("INSERT IGNORE INTO item_lineage(tenant_id,execution_id,delivery_id,target_item_index,source_node_execution_id,source_run_index,source_output_index,source_item_index) VALUES(?,?,?,?,?,?,?,?)")
-                        .bind(tenant_id).bind(execution_id).bind(delivery.id).bind(target_index as u32).bind(source.node_execution_id.as_uuid())
-                        .bind(source.run_index).bind(source.output_index).bind(source.item_index).execute(&mut **transaction).await?;
-                }
-            }
-        }
-    }
-    let sequence:u64=sqlx::query_scalar("SELECT CAST(COALESCE(MAX(sequence_number),0)+1 AS UNSIGNED) FROM checkpoints WHERE execution_id=?")
-        .bind(execution_id).fetch_one(&mut **transaction).await?;
-    let payload = serde_json::to_value(machine)?;
-    let hash = hash_json(&payload)?;
-    sqlx::query("INSERT INTO checkpoints(id,tenant_id,execution_id,node_execution_id,sequence_number,checkpoint_type,state_hash,payload_json) VALUES(?,?,?,NULL,?,?,?,?)")
-        .bind(Uuid::now_v7()).bind(tenant_id).bind(execution_id).bind(sequence).bind(checkpoint_type).bind(hash).bind(payload)
-        .execute(&mut **transaction).await?;
-    Ok(())
-}
-
-async fn create_wait(
-    transaction: &mut Transaction<'_, MySql>,
-    tenant_id: Uuid,
-    execution_id: Uuid,
-    node_execution_id: Uuid,
-    contract: &Value,
-) -> Result<()> {
-    let kind = contract
-        .get("kind")
-        .and_then(Value::as_str)
-        .unwrap_or("webhook");
-    let resume_kind = if kind == "approval" {
-        "approval"
-    } else if kind == "time" {
-        "time"
-    } else if kind == "form" {
-        "form"
-    } else {
-        "webhook"
-    };
-    let wait_kind = if kind == "time" {
-        contract
-            .get("waitKind")
-            .and_then(Value::as_str)
-            .filter(|value| matches!(*value, "duration" | "datetime"))
-            .unwrap_or("duration")
-    } else {
-        resume_kind
-    };
-    let authentication = contract
-        .get("authenticationMode")
-        .and_then(Value::as_str)
-        .filter(|value| matches!(*value, "none" | "header" | "basic" | "signed"))
-        .unwrap_or("signed");
-    let authentication_hash = contract
-        .get("authenticationConfigHash")
-        .and_then(Value::as_str);
-    let resume_token = Uuid::now_v7().to_string();
-    let token_hash = format!("{:x}", Sha256::digest(resume_token.as_bytes()));
-    let token_id = Uuid::now_v7();
-    let timeout_at = contract
-        .get("timeoutAt")
-        .and_then(Value::as_str)
-        .and_then(|value| {
-            OffsetDateTime::parse(value, &time::format_description::well_known::Rfc3339).ok()
-        });
-    let wake_at = contract
-        .get("wakeAt")
-        .and_then(Value::as_str)
-        .and_then(|value| {
-            OffsetDateTime::parse(value, &time::format_description::well_known::Rfc3339).ok()
-        });
-    sqlx::query("INSERT INTO execution_resume_tokens(id,tenant_id,execution_id,node_execution_id,token_hash,resume_kind,expires_at) VALUES(?,?,?,?,?,?,?)")
-        .bind(token_id).bind(tenant_id).bind(execution_id).bind(node_execution_id).bind(token_hash).bind(resume_kind).bind(timeout_at).execute(&mut **transaction).await?;
-    let wait_id = Uuid::parse_str(&resume_token)?;
-    sqlx::query("INSERT INTO wait_subscriptions(id,tenant_id,execution_id,node_execution_id,resume_token_id,wait_kind,wake_at,timeout_at,authentication_mode,response_mode,payload_schema_json) VALUES(?,?,?,?,?,?,?,?,?,'accepted',?)")
-        .bind(wait_id).bind(tenant_id).bind(execution_id).bind(node_execution_id).bind(token_id).bind(wait_kind)
-        .bind(wake_at).bind(timeout_at).bind(authentication).bind(contract.get("payloadSchema").cloned()).execute(&mut **transaction).await?;
-    if matches!(resume_kind, "webhook" | "form") {
-        sqlx::query("INSERT INTO resume_webhook_bindings(id,tenant_id,wait_subscription_id,path_token_hash,http_method,authentication_config_hash,status,expires_at) VALUES(?,?,?,?,'POST',?,'active',?)")
-            .bind(wait_id).bind(tenant_id).bind(wait_id).bind(format!("{:x}",Sha256::digest(resume_token.as_bytes()))).bind(authentication_hash).bind(timeout_at).execute(&mut **transaction).await?;
-    }
-    if resume_kind == "approval" {
-        let execution=sqlx::query("SELECT e.workflow_id,e.requested_by,n.node_id FROM workflow_executions e JOIN node_executions n ON n.execution_id=e.id AND n.tenant_id=e.tenant_id WHERE e.tenant_id=? AND e.id=? AND n.id=?")
-            .bind(tenant_id).bind(execution_id).bind(node_execution_id).fetch_one(&mut **transaction).await?;
-        let candidate = contract
-            .get("candidateUserId")
-            .and_then(Value::as_str)
-            .map(Uuid::parse_str)
-            .transpose()?
-            .or(execution.try_get("requested_by")?)
-            .context("Approval candidate is required")?;
-        let title = contract
-            .get("title")
-            .and_then(Value::as_str)
-            .unwrap_or("Workflow approval required");
-        let description = contract.get("description").and_then(Value::as_str);
-        let workflow_id: Uuid = execution.try_get("workflow_id")?;
-        let node_id: String = execution.try_get("node_id")?;
-        sqlx::query("INSERT INTO approval_tasks(id,tenant_id,execution_id,workflow_id,node_id,node_execution_id,resume_token_id,title,description,request_payload_json,deadline_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)")
-            .bind(wait_id).bind(tenant_id).bind(execution_id).bind(workflow_id).bind(node_id).bind(node_execution_id).bind(token_id).bind(title).bind(description).bind(contract).bind(timeout_at).execute(&mut **transaction).await?;
-        sqlx::query("INSERT INTO approval_candidates(tenant_id,approval_task_id,candidate_type,candidate_id) VALUES(?,?,'user',?)")
-            .bind(tenant_id).bind(wait_id).bind(candidate).execute(&mut **transaction).await?;
-        let notification_id = Uuid::now_v7();
-        sqlx::query("INSERT INTO notifications(id,tenant_id,source_event_id,notification_type,title_key,body_key,arguments_json,target_type,target_id,target_path,tone) VALUES(?,?,?,'approval_created','notifications.approvalReassigned.title','notifications.approvalReassigned.body',JSON_OBJECT(),'approval',?,?,'warning')")
-            .bind(notification_id).bind(tenant_id).bind(wait_id).bind(wait_id).bind(format!("/approvals/{wait_id}")).execute(&mut **transaction).await?;
-        sqlx::query(
-            "INSERT INTO notification_receipts(tenant_id,notification_id,user_id) VALUES(?,?,?)",
-        )
-        .bind(tenant_id)
-        .bind(notification_id)
-        .bind(candidate)
-        .execute(&mut **transaction)
-        .await?;
-    }
-    Ok(())
-}
-
-pub(crate) async fn sync_execution_status(
-    transaction: &mut Transaction<'_, MySql>,
-    tenant_id: Uuid,
-    execution_id: Uuid,
-    status: RuntimeExecutionStatus,
-    quota_admission: Option<&QuotaAdmission>,
-) -> Result<()> {
-    let status = execution_status_name(status);
-    let terminal = matches!(status, "succeeded" | "failed" | "cancelled" | "timed_out");
-    sqlx::query("UPDATE workflow_executions SET status=?,ended_at=IF(?,COALESCE(ended_at,CURRENT_TIMESTAMP(6)),NULL),duration_ms=IF(?,TIMESTAMPDIFF(MICROSECOND,started_at,COALESCE(ended_at,CURRENT_TIMESTAMP(6)))/1000,NULL),state_version=state_version+1 WHERE tenant_id=? AND id=?")
-        .bind(status).bind(terminal).bind(terminal).bind(tenant_id).bind(execution_id).execute(&mut **transaction).await?;
-    if !terminal {
-        return Ok(());
-    }
-    crate::quota::release_scope_with_admission(
-        transaction,
-        tenant_id,
-        "execution",
-        &execution_id.to_string(),
-        quota_admission,
-    )
-    .await?;
-    let emitted: bool = sqlx::query_scalar(
-        "SELECT terminal_event_emitted FROM workflow_executions WHERE tenant_id=? AND id=? FOR UPDATE",
-    )
-    .bind(tenant_id)
-    .bind(execution_id)
-    .fetch_one(&mut **transaction)
-    .await?;
-    if emitted {
-        return Ok(());
-    }
-    let result = if status == "succeeded" {
-        let (result, hash) = crate::runtime_results::materialize_execution_result(
-            transaction,
-            tenant_id,
-            execution_id,
-        )
-        .await?;
-        sqlx::query("UPDATE workflow_executions SET result_json=?,result_hash=?,terminal_event_emitted=TRUE WHERE tenant_id=? AND id=?")
-            .bind(&result)
-            .bind(&hash)
-            .bind(tenant_id)
-            .bind(execution_id)
-            .execute(&mut **transaction)
-            .await?;
-        Some(json!({"resultHash":hash}))
-    } else {
-        sqlx::query(
-            "UPDATE workflow_executions SET terminal_event_emitted=TRUE WHERE tenant_id=? AND id=?",
-        )
-        .bind(tenant_id)
-        .bind(execution_id)
-        .execute(&mut **transaction)
-        .await?;
-        None
-    };
-    let mut payload = result.unwrap_or_else(|| json!({}));
-    if let Value::Object(ref mut object) = payload {
-        object.insert("status".into(), Value::String(status.into()));
-    }
-    insert_execution_event(
-        transaction,
-        tenant_id,
-        execution_id,
-        &format!("execution.{status}"),
-        status,
-        payload,
-    )
-    .await?;
-    Ok(())
-}
-
-pub(crate) async fn insert_execution_event(
-    transaction: &mut Transaction<'_, MySql>,
-    tenant_id: Uuid,
-    execution_id: Uuid,
-    event_type: &str,
-    status: &str,
-    summary: Value,
-) -> Result<()> {
-    sqlx::query("SELECT id FROM workflow_executions WHERE tenant_id=? AND id=? FOR UPDATE")
-        .bind(tenant_id)
-        .bind(execution_id)
-        .fetch_one(&mut **transaction)
-        .await?;
-    let sequence:u64=sqlx::query_scalar("SELECT CAST(COALESCE(MAX(sequence_number),0)+1 AS UNSIGNED) FROM execution_events WHERE tenant_id=? AND execution_id=?")
-        .bind(tenant_id).bind(execution_id).fetch_one(&mut **transaction).await?;
-    let mut payload = match summary {
-        Value::Object(object) => Value::Object(object),
-        value => json!({"summary": value}),
-    };
-    if let Value::Object(ref mut object) = payload {
-        object.insert("status".into(), Value::String(status.into()));
-    }
-    append_runtime_event(
-        transaction,
-        &RuntimeEventEnvelope::new(
-            TenantId::from_uuid(tenant_id),
-            event_type,
-            "execution",
-            execution_id.to_string(),
-            Some(agentx_domain::ExecutionId::from_uuid(execution_id)),
-            Some(sequence),
-            payload,
-        ),
-    )
-    .await
-}
-
-struct TraceInsert<'a> {
-    tenant_id: Uuid,
-    execution_id: Uuid,
-    workflow_id: Uuid,
-    workflow_version_id: Option<Uuid>,
-    trace_id: Uuid,
-    node_execution_id: Option<Uuid>,
-    node_id: Option<&'a str>,
-    event_type: &'a str,
-    status: &'a str,
-    run_index: u32,
-    attributes: Value,
-    error_code: Option<String>,
-    error_message: Option<String>,
-}
-async fn insert_trace(
-    transaction: &mut Transaction<'_, MySql>,
-    value: TraceInsert<'_>,
-) -> Result<()> {
-    let event_id = Uuid::now_v7();
-    let payload = json!({"eventId":event_id,"tenantId":value.tenant_id,"traceId":value.trace_id,"spanId":Uuid::now_v7(),"parentSpanId":null,"executionId":value.execution_id,"workflowId":value.workflow_id,"workflowVersionId":value.workflow_version_id,"nodeExecutionId":value.node_execution_id,"nodeId":value.node_id,"eventType":value.event_type,"status":value.status,"eventTime":OffsetDateTime::now_utc(),"durationMs":null,"runIndex":value.run_index,"iterationIndex":0,"modelName":null,"providerName":null,"mcpToolName":null,"inputTokens":null,"outputTokens":null,"costMicros":0,"errorCode":value.error_code,"errorMessage":value.error_message,"attributes":value.attributes,"contentRef":null});
-    sqlx::query("INSERT INTO trace_delivery_outbox(event_id,tenant_id,execution_id,payload_json) VALUES(?,?,?,?)")
-        .bind(event_id).bind(value.tenant_id).bind(value.execution_id).bind(payload).execute(&mut **transaction).await?;
-    Ok(())
-}
-
-pub(crate) fn invocation_items(input: &Value) -> Vec<Item> {
-    match input {
-        Value::Array(values) => values
-            .iter()
-            .cloned()
-            .map(|json| Item {
-                json,
-                ..Item::default()
-            })
-            .collect(),
-        value => vec![Item {
-            json: value.clone(),
-            ..Item::default()
-        }],
-    }
-}
-
-fn resumed_output_map(output_port: &str, payload: &Value) -> BTreeMap<String, Vec<Item>> {
-    BTreeMap::from([(output_port.to_owned(), invocation_items(payload))])
-}
-
-fn hash_json(value: &Value) -> Result<String> {
-    Ok(format!(
-        "sha256:v1:{:x}",
-        Sha256::digest(serde_json::to_vec(value)?)
-    ))
-}
-#[allow(clippy::too_many_arguments)]
-fn execution_snapshot_hash(
-    definition: &Value,
-    compiled_ir_hash: &str,
-    source: &Value,
-    manifest_snapshot: &Value,
-    resources: &Value,
-    runtime_settings: &Value,
-    debug_plan: &Value,
-    debug_overlay: &Value,
-) -> Result<String> {
-    hash_json(&json!({
-        "definition": definition,
-        "compiledIrHash": compiled_ir_hash,
-        "source": source,
-        "manifestSnapshot": manifest_snapshot,
-        "resources": resources,
-        "runtimeSettings": runtime_settings,
-        "debugPlan": debug_plan,
-        "debugOverlay": debug_overlay,
-    }))
-}
-fn draft_resource_snapshots_cover_definition(
-    definition: &WorkflowDefinition,
-    snapshots: &[RuntimeResourceSnapshot],
-) -> bool {
-    if snapshots.iter().any(|snapshot| {
-        !definition
-            .nodes
-            .iter()
-            .any(|node| node.id == snapshot.node_id)
-    }) {
-        return false;
-    }
-    definition.nodes.iter().all(|node| {
-        node.resource_references.iter().all(|expected| {
-            snapshots.iter().any(|snapshot| {
-                snapshot.node_id == node.id
-                    && resolved_resource_reference_matches(expected, &snapshot.reference)
-            })
-        })
-    })
-}
-fn resolved_resource_reference_matches(
-    expected: &ResourceReference,
-    actual: &ResourceReference,
-) -> bool {
-    expected.binding_id == actual.binding_id
-        && expected.binding_role == actual.binding_role
-        && expected.resource_type == actual.resource_type
-        && expected.resource_id == actual.resource_id
-        && expected.operation == actual.operation
-        && expected
-            .resource_version_id
-            .is_none_or(|version| actual.resource_version_id == Some(version))
-}
-fn parse_uuid(value: &Value, key: &str) -> Result<Uuid> {
-    Uuid::parse_str(
-        value
-            .get(key)
-            .and_then(Value::as_str)
-            .context(format!("{key} is missing"))?,
-    )
-    .map_err(Into::into)
-}
-fn checkpoint_type(result: &TaskResult) -> &'static str {
-    match result {
-        TaskResult::Completed(_) | TaskResult::Failed { .. } => "node_completed",
-        TaskResult::Suspended(_) => "node_suspended",
-    }
-}
-fn capability_name(value: &NodeCapability) -> &'static str {
-    value.as_str()
-}
-fn side_effect_name(value: &agentx_node_protocol::SideEffectLevel) -> &'static str {
-    match value {
-        agentx_node_protocol::SideEffectLevel::None => "none",
-        agentx_node_protocol::SideEffectLevel::Idempotent => "idempotent",
-        agentx_node_protocol::SideEffectLevel::Reversible => "reversible",
-        agentx_node_protocol::SideEffectLevel::Irreversible => "irreversible",
-    }
-}
-fn activation_status_name(value: agentx_runtime::ActivationStatus) -> &'static str {
-    match value {
-        agentx_runtime::ActivationStatus::Ready => "ready",
-        agentx_runtime::ActivationStatus::Running => "queued",
-        agentx_runtime::ActivationStatus::Waiting => "waiting",
-        agentx_runtime::ActivationStatus::Succeeded => "succeeded",
-        agentx_runtime::ActivationStatus::Failed => "failed",
-        agentx_runtime::ActivationStatus::Skipped => "skipped",
-        agentx_runtime::ActivationStatus::Cancelled => "cancelled",
-    }
-}
-fn attempt_status_name(value: AttemptStatus) -> &'static str {
-    match value {
-        AttemptStatus::Running => "queued",
-        AttemptStatus::Succeeded => "succeeded",
-        AttemptStatus::Failed => "failed",
-        AttemptStatus::Suspended => "suspended",
-        AttemptStatus::Cancelled => "cancelled",
-    }
-}
-fn execution_status_name(value: RuntimeExecutionStatus) -> &'static str {
-    match value {
-        RuntimeExecutionStatus::Created => "created",
-        RuntimeExecutionStatus::Running => "running",
-        RuntimeExecutionStatus::Waiting => "waiting",
-        RuntimeExecutionStatus::Succeeded => "succeeded",
-        RuntimeExecutionStatus::Failed => "failed",
-        RuntimeExecutionStatus::Cancelled => "cancelled",
-        RuntimeExecutionStatus::TimedOut => "timed_out",
-    }
-}
-
-#[cfg(test)]
-#[path = "runtime_repository_tests.rs"]
-mod tests;

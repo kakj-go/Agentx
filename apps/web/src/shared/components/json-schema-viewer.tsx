@@ -37,12 +37,12 @@ export function JsonSchemaViewer({ schema }: { schema: unknown }) {
   const rows = flattenSchema(value)
 
   if (rows.length === 0) {
-    return <div className="grid min-h-28 place-items-center rounded-md border border-dashed border-border bg-canvas/40 px-4 text-center text-xs text-muted-foreground">{t('schema.empty')}</div>
+    return <div className="grid min-h-28 place-items-center rounded-md border border-dashed border-border bg-canvas/40 px-4 text-center text-xs text-muted-foreground">{t('studio.schema.empty')}</div>
   }
 
   return <div className="overflow-hidden rounded-md border border-border">
     <div className="grid grid-cols-[minmax(180px,1.2fr)_120px_minmax(180px,1fr)_minmax(180px,1fr)] gap-3 bg-muted/45 px-3 py-2 text-[10px] font-medium uppercase text-muted-foreground">
-      <span>{t('schema.field')}</span><span>{t('schema.type')}</span><span>{t('schema.description')}</span><span>{t('schema.constraints')}</span>
+      <span>{t('studio.schema.field')}</span><span>{t('studio.schema.type')}</span><span>{t('studio.schema.description')}</span><span>{t('studio.schema.constraints')}</span>
     </div>
     <div className="divide-y divide-border">
       {rows.map((row, index) => <SchemaField key={`${row.name}-${row.depth}-${index}`} row={row} />)}
@@ -59,7 +59,7 @@ function SchemaField({ row }: { row: SchemaRow }) {
     <div className="flex min-w-0 items-center gap-2" style={{ paddingLeft: `${row.depth * 18}px` }}>
       <Icon className="size-3.5 shrink-0 text-primary" />
       <span className="truncate font-mono font-medium" title={row.name}>{row.name}</span>
-      {row.required && <Badge className="shrink-0 px-1.5 py-0.5 text-[9px]" tone="danger">{t('schema.required')}</Badge>}
+      {row.required && <Badge className="shrink-0 px-1.5 py-0.5 text-[9px]" tone="danger">{t('studio.schema.required')}</Badge>}
     </div>
     <div className="flex flex-wrap gap-1">{type.split(' | ').map((item) => <Badge className="px-1.5 py-0.5 text-[9px]" key={item} tone="primary">{item}</Badge>)}</div>
     <span className="leading-5 text-muted-foreground">{row.schema.description ?? row.schema.title ?? '-'}</span>
@@ -95,13 +95,13 @@ function schemaType(schema: JsonSchema) {
 
 function schemaConstraints(schema: JsonSchema, t: (key: string, options?: Record<string, unknown>) => string) {
   const values: string[] = []
-  if (schema.format) values.push(t('schema.formatValue', { value: schema.format }))
-  if (schema.enum) values.push(t('schema.enumValue', { value: schema.enum.map(displayValue).join(', ') }))
-  if (schema.default !== undefined) values.push(t('schema.defaultValue', { value: displayValue(schema.default) }))
-  if (schema.const !== undefined) values.push(t('schema.constValue', { value: displayValue(schema.const) }))
-  if (schema.minimum !== undefined || schema.maximum !== undefined) values.push(t('schema.rangeValue', { min: schema.minimum ?? '-inf', max: schema.maximum ?? '+inf' }))
-  if (schema.minLength !== undefined || schema.maxLength !== undefined) values.push(t('schema.lengthValue', { min: schema.minLength ?? 0, max: schema.maxLength ?? '+inf' }))
-  if (schema.pattern) values.push(t('schema.patternValue', { value: schema.pattern }))
+  if (schema.format) values.push(t('studio.schema.formatValue', { value: schema.format }))
+  if (schema.enum) values.push(t('studio.schema.enumValue', { value: schema.enum.map(displayValue).join(', ') }))
+  if (schema.default !== undefined) values.push(t('studio.schema.defaultValue', { value: displayValue(schema.default) }))
+  if (schema.const !== undefined) values.push(t('studio.schema.constValue', { value: displayValue(schema.const) }))
+  if (schema.minimum !== undefined || schema.maximum !== undefined) values.push(t('studio.schema.rangeValue', { min: schema.minimum ?? '-inf', max: schema.maximum ?? '+inf' }))
+  if (schema.minLength !== undefined || schema.maxLength !== undefined) values.push(t('studio.schema.lengthValue', { min: schema.minLength ?? 0, max: schema.maxLength ?? '+inf' }))
+  if (schema.pattern) values.push(t('studio.schema.patternValue', { value: schema.pattern }))
   return values
 }
 

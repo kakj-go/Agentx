@@ -73,6 +73,17 @@ fn context(task: &RuntimeTask, item: &Item, index: usize) -> ExpressionContext {
         item_index: index,
         run_index: task.run_index,
         linked_nodes: task.linked_nodes.clone(),
+        inputs: task.workflow_inputs.clone(),
+        outputs: task.linked_nodes.clone(),
+        contexts: task.contexts.clone(),
+        loop_context: serde_json::json!({"iteration": task.iteration_index, "itemIndex": index}),
+        execution: serde_json::json!({
+            "executionId": task.execution_id,
+            "nodeExecutionId": task.node_execution_id,
+            "runIndex": task.run_index,
+            "iterationIndex": task.iteration_index,
+            "contextVersion": task.context_version,
+        }),
     }
 }
 

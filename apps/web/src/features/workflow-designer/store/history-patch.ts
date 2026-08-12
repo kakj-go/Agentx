@@ -1,6 +1,6 @@
 import type { StudioDocument, StudioEdge, StudioNode } from '../model/types'
 
-type DocumentState = Pick<StudioDocument, 'nodes' | 'edges' | 'annotations' | 'groups' | 'settings'>
+type DocumentState = Pick<StudioDocument, 'start' | 'nodes' | 'edges' | 'end' | 'boundaryLayouts' | 'annotations' | 'groups' | 'settings'>
 type Annotation = StudioDocument['annotations'][number]
 type Group = StudioDocument['groups'][number]
 
@@ -18,6 +18,9 @@ export type HistoryPatch = {
   annotations: EntityPatch<Annotation>[]
   groups: EntityPatch<Group>[]
   settings?: { before: StudioDocument['settings']; after: StudioDocument['settings'] }
+  start?: { before: StudioDocument['start']; after: StudioDocument['start'] }
+  end?: { before: StudioDocument['end']; after: StudioDocument['end'] }
+  boundaryLayouts?: { before: StudioDocument['boundaryLayouts']; after: StudioDocument['boundaryLayouts'] }
   graphChanged: boolean
 }
 
@@ -27,21 +30,30 @@ export function createHistoryPatch(before: DocumentState, after: DocumentState):
   const annotations = entityPatches(before.annotations, after.annotations)
   const groups = entityPatches(before.groups, after.groups)
   const settings = equal(before.settings, after.settings) ? undefined : { before: before.settings, after: after.settings }
-  if (!nodes.length && !edges.length && !annotations.length && !groups.length && !settings) return undefined
+  const start = equal(before.start, after.start) ? undefined : { before: before.start, after: after.start }
+  const end = equal(before.end, after.end) ? undefined : { before: before.end, after: after.end }
+  const boundaryLayouts = equal(before.boundaryLayouts, after.boundaryLayouts) ? undefined : { before: before.boundaryLayouts, after: after.boundaryLayouts }
+  if (!nodes.length && !edges.length && !annotations.length && !groups.length && !settings && !start && !end && !boundaryLayouts) return undefined
   return {
     nodes,
     edges,
     annotations,
     groups,
     settings,
+    start,
+    end,
+    boundaryLayouts,
     graphChanged: nodes.some((patch) => !patch.before || !patch.after || nodeStructure(patch.before) !== nodeStructure(patch.after)) || edges.length > 0,
   }
 }
 
 export function applyHistoryPatch(state: DocumentState, patch: HistoryPatch, direction: 'undo' | 'redo'): DocumentState {
   return {
+    start: patch.start ? patch.start[direction === 'undo' ? 'before' : 'after'] : state.start,
     nodes: applyEntities(state.nodes, patch.nodes, direction, mergeNodeInteraction),
     edges: applyEntities(state.edges, patch.edges, direction, mergeEdgeInteraction),
+    end: patch.end ? patch.end[direction === 'undo' ? 'before' : 'after'] : state.end,
+    boundaryLayouts: patch.boundaryLayouts ? patch.boundaryLayouts[direction === 'undo' ? 'before' : 'after'] : state.boundaryLayouts,
     annotations: applyEntities(state.annotations, patch.annotations, direction),
     groups: applyEntities(state.groups, patch.groups, direction),
     settings: patch.settings ? patch.settings[direction === 'undo' ? 'before' : 'after'] : state.settings,

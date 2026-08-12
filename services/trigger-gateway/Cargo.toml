@@ -11,6 +11,7 @@ agentx-application.workspace = true
 agentx-domain.workspace = true
 agentx-infrastructure.workspace = true
 agentx-node-protocol.workspace = true
+agentx-runtime.workspace = true
 agentx-service-kit.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true

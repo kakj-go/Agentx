@@ -22,6 +22,9 @@ Redis 和 ClickHouse 都不能代替 MySQL 中的权威 Execution 状态。
 - user_roles
 - role_permissions
 - resource_grants
+- resource_grant_requests
+- resource_grant_request_items
+- resource_grant_request_reviews
 - workflow_service_identities
 
 核心索引应以 tenant_id 开头，防止跨租户查询和减少扫描。
@@ -152,7 +155,6 @@ Checkpoint 小载荷保存在 `checkpoints.payload_json`。超过配置阈值的
 
 - credentials
 - credential_secret_versions
-- model_providers
 - model_deployments
 - model_aliases
 - model_alias_deployment_history
@@ -178,9 +180,15 @@ Checkpoint 小载荷保存在 `checkpoints.payload_json`。超过配置阈值的
 
 Credential 表只保存加密数据或外部 Secret Reference，不向前端返回明文。
 
+`model_deployments` 是完整且不可变的模型配置修订，直接保存连接名称、Provider 类型、Endpoint、Credential Reference、所属部门、上游模型 ID、输入输出 Token 上限和默认参数；不再使用独立 `model_providers` 表。`model_aliases` 保存 Workflow 引用的稳定模型身份，并指向当前 Deployment Revision。
+
 mcp_servers 保存连接元数据，mcp_server_versions 固化传输、Endpoint、Credential Reference 和非敏感配置 Hash。mcp_tools 及 mcp_tool_versions 只由发现流程写入；用户只能修改 mcp_tool_policies，不能人工维护 Tool Schema。
 
 skills 保存租户内 Skill Definition 和工作区 Revision。skill_workspace_entries 表示目录与文件，文件内容由 Artifact 引用；skill_file_revisions 保存每次 Markdown 修改。skill_versions、skill_version_files 和 skill_file_references 固化发布时每个文件的路径、Hash 和引用目标。skill_dependencies 只允许 Model、MCP Tool、Credential、Skill、RAG 和 Memory 等当前资源类型。
+
+`resource_grant_requests` 保存设计期授权申请聚合、来源 Node/Draft Revision、依赖指纹、开放请求去重键和 `pending/approved/rejected/cancelled/stale` 状态。`open_dedupe_key` 仅在 Pending 时非空，通过 `tenant_id + open_dedupe_key` 唯一约束保证同一 Workflow Service Identity、主资源和操作只有一个开放申请；进入终态后置空，允许重新申请。资源授权相关查询始终以 `tenant_id` 为边界，并把角色 `data_scope=company`、部门闭包与 Department Grant 纳入一致的资源可见性判定。
+
+`resource_grant_request_items` 是申请创建时由服务端展开的不可变授权包快照，记录每项资源、版本、操作、依赖来源和所属部门。`resource_grant_request_reviews` 按所属部门聚合会签，状态为 `pending/approved/rejected` 并使用独立 Version 做并发控制；同一申请与部门只生成一项 Review。全部 Review 通过后，服务端在同一事务按每项所属部门审批人写入 `resource_grants.created_by`；任一 Review 拒绝时不创建授权，运行时 `approval_tasks` 不参与该流程。
 
 ## 6. 应用和会话表
 
@@ -209,6 +217,9 @@ Message Part 支持：
 - approval_tasks
 - approval_candidates
 - approval_actions
+- resource_grant_requests
+- resource_grant_request_items
+- resource_grant_request_reviews
 - notifications
 
 Approval Task 记录：
@@ -221,6 +232,8 @@ Approval Task 记录：
 - context snapshot ref
 - due_at
 - resolved_at
+
+资源授权申请是设计期审批，允许按工作流、申请人或审批部门查询；运行审批继续以 Execution 和 Node Execution 为边界。两类审批只在前端待审批中心聚合展示，不共享表、状态或动作记录。
 
 ## 8. 测试和评测表
 
@@ -295,3 +308,13 @@ Artifact 元数据在 MySQL，内容在对象存储。引用包含：
 - 测试报告保留时间
 
 清理时先检查 Checkpoint、报告和会话是否仍引用 Artifact。
+
+## 12. 删除引用索引和事务边界
+
+`workflow_draft_resources` 是可变 Draft 的资源引用投影，按 `tenant_id + resource_type + resource_id` 建索引。保存 Draft 时从结构化 `resourceReferences` 和 Manifest Provider Binding 在同一事务内重建；不得使用字符串匹配、`LIKE` 或 `JSON_SEARCH` 推断画布引用。不可变引用继续以 `workflow_version_resources`、`skill_dependencies`、`resource_grants` 和直接外键为权威来源。
+
+创建 Draft Reference、Grant、Skill Dependency 等多态引用时，目标按 `tenant/type/id` 稳定排序并锁定；删除在同一事务内锁定目标、复查全部引用、清理聚合子表并写审计事件。该锁顺序保证引用创建与删除并发时不会产生悬空引用。所有查询必须包含 tenant 边界，其他租户的同 ID 或引用不参与预检。
+
+Knowledge Resource 和 Memory Namespace 删除后，只在对应 Connection 不再拥有其他 Resource/Namespace 时清理孤立 Connection。MCP Server 删除前聚合其全部 Tool 的 Draft、Version、Dependency、Grant 和 Runtime 历史引用；Model Revision 只有在不存在其他 Alias、历史或子 Revision 引用时才随 Alias 清理。
+
+用户输入型唯一索引同时承担并发写入的最终保护。Platform API 写入点登记允许映射的索引名，MySQL 1062 按索引精确映射字段错误，未登记索引不得猜测。MCP 配置 Hash 命中当前版本时只更新元数据，命中历史版本时切换指针，全新 Hash 才按历史最大版本号加一；Skill Version 内容 Hash 幂等复用。

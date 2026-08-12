@@ -7,7 +7,12 @@ const password = 'agentx-e2e-admin-password'
 type PageResponse<T> = { items: T[] }
 type Workflow = { id: string; name: string; latestVersion?: number; version: number; description?: string; visibility: string; serviceIdentityId?: string }
 type ResourceReference = { resourceType: string; resourceId: string; resourceVersionId?: string; operation: string }
-type WorkflowVersion = { id: string; versionNumber: number; definition?: { nodes: Array<{ resourceReferences: ResourceReference[] }> } }
+type WorkflowDefinition = {
+  schemaVersion?: string
+  start?: { inputs?: { properties?: Record<string, unknown> } }
+  nodes?: Array<{ type?: string; resourceReferences?: ResourceReference[] }>
+}
+type WorkflowVersion = { id: string; versionNumber: number; schemaVersion?: string; definition?: WorkflowDefinition }
 type Grant = { id: string; subjectType: string; subjectId: string; resourceVersionId?: string; operation: string }
 type Environment = { id: string; code: string }
 type Application = { id: string; name: string; slug: string; status: string; description?: string; visibility: string; version: number }
@@ -97,15 +102,31 @@ async function setTheme(page: Page, theme: 'light' | 'dark') {
   await expect(page.locator('html')).toHaveAttribute('data-theme', theme)
 }
 
+async function findM6Workflow(page: Page, token: string) {
+  const workflows = await request<PageResponse<Workflow>>(page, token, '/workflows?pageSize=100&search=M6%20Studio')
+  const candidates = workflows.items.filter((item) => item.name.startsWith('M6 Studio'))
+  for (const candidate of candidates) {
+    const versions = await request<WorkflowVersion[]>(page, token, `/workflows/${candidate.id}/versions`)
+    const version = versions.find((item) => {
+      const definition = item.definition
+      const properties = definition?.start?.inputs?.properties ?? {}
+      const nodes = definition?.nodes ?? []
+      const hasChatInputs = 'question' in properties && 'attachments' in properties
+      const hasApproval = nodes.some((node) => node.type === 'approval')
+      const hasModel = nodes.some((node) => node.resourceReferences?.some((reference) => reference.resourceType === 'model'))
+      return item.versionNumber === 1 && (item.schemaVersion ?? definition?.schemaVersion) === '4.0' && hasChatInputs && hasApproval && hasModel
+    })
+    if (version) return { workflow: candidate, version }
+  }
+  return { workflow: undefined, version: undefined }
+}
+
 test('M7 closes Application, Trigger, Evaluation, Approval and governance paths on the shared Runtime', async ({ context, page }, testInfo) => {
   const token = await login(page)
   const suffix = Date.now()
-  const workflows = await request<PageResponse<Workflow>>(page, token, '/workflows?pageSize=100&search=M6%20Studio')
-  const workflow = workflows.items.find((item) => item.name.startsWith('M6 Studio'))
+  const { workflow, version } = await findM6Workflow(page, token)
   expect(workflow, 'M6 Studio must publish the Workflow used by M7').toBeTruthy()
-  const versions = await request<WorkflowVersion[]>(page, token, `/workflows/${workflow!.id}/versions`)
-  const version = versions.find((item) => item.versionNumber === 1)
-  expect(version).toBeTruthy()
+  expect(version, 'M6 Studio must publish a 4.0 chat-capable v1').toBeTruthy()
   const environments = await request<Environment[]>(page, token, '/environments')
   const environment = environments.find((item) => item.code === 'development')
   expect(environment).toBeTruthy()
@@ -120,17 +141,30 @@ test('M7 closes Application, Trigger, Evaluation, Approval and governance paths 
   const savedTriggerDraft = await request<{ revision: number }>(page, token, `/workflows/${triggerWorkflow.id}/draft`, 'PUT', {
     expectedRevision: triggerDraft.revision,
     definition: {
-      schemaVersion: '3.0',
+      schemaVersion: '4.0',
+      start: {
+        inputs: { type: 'object', properties: { source: { type: 'string' } }, additionalProperties: true },
+        contexts: {},
+      },
       nodes: [
-        { id: 'remote-trigger', type: 'remote_trigger', typeVersion: 1, name: 'Remote Trigger', disabled: false, parameters: { endpoint: 'http://echo-node:8080', pollIntervalSeconds: 1, eventId: `m7-poll-${suffix}`, pollInput: { source: 'm7-poll' } }, resourceReferences: [], settings: {} },
-        { id: 'set-result', type: 'set', typeVersion: 1, name: 'Set Result', disabled: false, parameters: { values: { triggered: true }, keepOnlySet: false }, resourceReferences: [], settings: {} },
+        { id: 'remote-action', key: 'remote_action', type: 'remote_action', typeVersion: 1, name: 'Remote Action', disabled: false, parameters: { endpoint: 'http://echo-node:8080', pollIntervalSeconds: 1, eventId: `m7-poll-${suffix}`, pollInput: { source: 'm7-poll' } }, outputProjection: {}, contextWrites: [], resourceReferences: [], settings: {} },
+        { id: 'set-result', key: 'set_result', type: 'set', typeVersion: 1, name: 'Set Result', disabled: false, parameters: { values: { triggered: true }, keepOnlySet: false }, outputProjection: {}, contextWrites: [], resourceReferences: [], settings: {} },
       ],
-      connections: [{ id: 'remote-to-set', sourceNodeId: 'remote-trigger', sourceHandle: 'main', targetNodeId: 'set-result', targetHandle: 'main', order: 0 }],
+      connections: [
+        { id: 'start-to-remote', sourceNodeId: '__start__', sourceHandle: 'main', targetNodeId: 'remote-action', targetHandle: 'main', order: 0 },
+        { id: 'remote-to-set', sourceNodeId: 'remote-action', sourceHandle: 'main', targetNodeId: 'set-result', targetHandle: 'main', order: 0 },
+        { id: 'set-to-end', sourceNodeId: 'set-result', sourceHandle: 'main', targetNodeId: '__end__', targetHandle: 'main', order: 0 },
+      ],
+      end: {
+        outputs: {
+          result: { expression: '${{ outputs.set_result.main.current.json }}', schema: { type: 'object' }, required: true, sensitive: false },
+        },
+      },
       settings: { executionOrder: 'deterministic' },
     },
     editorDocument: {
       ...triggerDraft.editorDocument,
-      nodeLayouts: [{ nodeId: 'remote-trigger', x: 80, y: 160 }, { nodeId: 'set-result', x: 360, y: 160 }],
+      nodeLayouts: [{ nodeId: 'remote-action', x: 80, y: 160 }, { nodeId: 'set-result', x: 360, y: 160 }],
       edges: [{ edgeId: 'remote-to-set' }],
     },
   })
@@ -146,9 +180,6 @@ test('M7 closes Application, Trigger, Evaluation, Approval and governance paths 
   await request(page, token, `/applications/${triggerApplication.id}/deployments`, 'POST', {
     workflowVersionId: triggerVersion.id,
     environmentId: environment!.id,
-    inputSchema: {},
-    outputSchema: {},
-    outputExpression: null,
     sessionVersionPolicy: 'pinned',
   })
   const schedule = await request<Schedule>(page, token, `/applications/${triggerApplication.id}/schedules`, 'POST', {
@@ -184,9 +215,6 @@ test('M7 closes Application, Trigger, Evaluation, Approval and governance paths 
   await request(page, token, `/applications/${application.id}/deployments`, 'POST', {
     workflowVersionId: version!.id,
     environmentId: environment!.id,
-    inputSchema: {},
-    outputSchema: {},
-    outputExpression: null,
     sessionVersionPolicy: 'pinned',
   })
 
@@ -212,14 +240,14 @@ test('M7 closes Application, Trigger, Evaluation, Approval and governance paths 
   const invocation = await invocationHttp.json() as Invocation
   const approvalPage = await context.newPage()
   const completed = await approveInvocation(page, approvalPage, token, invocation.id)
-  await expect(page.getByText('completed', { exact: true })).toBeVisible({ timeout: 30_000 })
+  await expect(page.getByText('已完成', { exact: true })).toBeVisible({ timeout: 30_000 })
   await expect(page.getByRole('link', { name: '查看 Trace' })).toHaveAttribute('href', `/executions/${completed.executionId}`)
   await expect.poll(async () => (await request<Array<{ role: string }>>(page, token, `/sessions/${session.id}/messages`, 'GET', undefined, true)).some((message) => message.role === 'assistant'), { timeout: 30_000 }).toBeTruthy()
   await page.unroute('**/gateway/v1/invocations/*/events')
 
   const idempotencyKey = `m7-idempotency-${suffix}`
   const invoke = () => page.request.post(`/gateway/v1/applications/${application.slug}/invocations`, {
-    data: { input: { source: 'idempotency-e2e' } },
+    data: { input: { question: 'idempotency-e2e', attachments: [] } },
     headers: { Authorization: `Bearer ${token}`, 'Idempotency-Key': idempotencyKey },
   })
   const first = await invoke()
@@ -232,7 +260,7 @@ test('M7 closes Application, Trigger, Evaluation, Approval and governance paths 
   await approveInvocation(page, approvalPage, token, firstInvocation.id)
 
   const webhook = await request<Webhook>(page, token, `/applications/${application.id}/webhooks`, 'POST', { name: 'M7 Signed Webhook' })
-  const body = JSON.stringify({ source: 'webhook-e2e' })
+  const body = JSON.stringify({ question: 'webhook-e2e', attachments: [] })
   const timestamp = Math.floor(Date.now() / 1_000).toString()
   const signature = createHmac('sha256', webhook.secret).update(`${timestamp}.${body}`).digest('base64url')
   const webhookResponse = await page.request.post(`/gateway/v1/webhooks/${webhook.publicId}`, {
@@ -256,7 +284,7 @@ test('M7 closes Application, Trigger, Evaluation, Approval and governance paths 
   await request(page, token, `/datasets/${dataset.id}/cases`, 'POST', {
     caseKey: 'm7-closure',
     name: 'M7 Closure Case',
-    input: { source: 'evaluation-e2e' },
+    input: { question: 'evaluation-e2e', attachments: [] },
     expectedOutput: null,
     context: null,
     evaluatorOverride: null,
@@ -316,7 +344,7 @@ test('M7 closes Application, Trigger, Evaluation, Approval and governance paths 
 
   const workflowDetail = await request<Workflow>(page, token, `/workflows/${workflow!.id}`)
   const versionDetail = (await request<WorkflowVersion[]>(page, token, `/workflows/${workflow!.id}/versions`)).find((item) => item.id === version!.id)
-  const modelReference = versionDetail?.definition?.nodes.flatMap((node) => node.resourceReferences).find((reference) => reference.resourceType === 'model')
+  const modelReference = versionDetail?.definition?.nodes?.flatMap((node) => node.resourceReferences ?? []).find((reference) => reference.resourceType === 'model')
   expect(workflowDetail.serviceIdentityId).toBeTruthy()
   expect(modelReference).toBeTruthy()
   const modelGrants = await request<Grant[]>(page, token, `/resources/model/${modelReference!.resourceId}/grants`)
@@ -330,7 +358,7 @@ test('M7 closes Application, Trigger, Evaluation, Approval and governance paths 
   await request(page, token, `/resources/model/${modelReference!.resourceId}/grants/${modelGrant.id}`, 'DELETE')
   try {
     const revokedResponse = await page.request.post(`/gateway/v1/applications/${application.slug}/invocations`, {
-      data: { input: { source: 'revoked-grant-e2e' } },
+      data: { input: { question: 'revoked-grant-e2e', attachments: [] } },
       headers: { Authorization: `Bearer ${token}`, 'Idempotency-Key': `m7-revoked-grant-${suffix}` },
     })
     await expectResponse(revokedResponse, 'revoked resource invocation')
@@ -354,7 +382,7 @@ test('M7 closes Application, Trigger, Evaluation, Approval and governance paths 
     }
   }
   const restoredResponse = await page.request.post(`/gateway/v1/applications/${application.slug}/invocations`, {
-    data: { input: { source: 'restored-grant-e2e' } },
+    data: { input: { question: 'restored-grant-e2e', attachments: [] } },
     headers: { Authorization: `Bearer ${token}`, 'Idempotency-Key': `m7-restored-grant-${suffix}` },
   })
   await expectResponse(restoredResponse, 'restored resource invocation')
@@ -379,7 +407,15 @@ test('M7 closes Application, Trigger, Evaluation, Approval and governance paths 
         await page.setViewportSize(viewport)
         for (const target of pages) {
           await page.goto(target.path)
-          await expect(page.locator('main')).toBeVisible()
+          const main = page.locator('main')
+          await expect(main).toBeVisible()
+          await expect(main).not.toContainText(/(?:common|navigation|applications|approvals|datasets|evaluations|executions|runtime|studio)\.[A-Za-z]/)
+          await expect(page.getByText('Invalid Date', { exact: true })).toHaveCount(0)
+          if (locale === 'zh-CN') {
+            for (const rawValue of ['active', 'completed', 'manual_upgrade', 'resource_missing_or_disabled']) {
+              await expect(main.getByText(rawValue, { exact: true })).toHaveCount(0)
+            }
+          }
           expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy()
           const unnamedButtons = await page.getByRole('button').evaluateAll((buttons) => buttons.filter((button) => {
             const element = button as HTMLElement

@@ -9,18 +9,20 @@ Agentx M4 不发布 Rust、JavaScript、Python 或其他语言的公共 Node SDK
 - `openapi/node-api.json`：Action、动态 Provider 和 Lifecycle OpenAPI 3.1 契约。
 - `schemas/node-manifest.schema.json`：不可变 Node Manifest Version。
 - `schemas/node-action-request.schema.json` 与 `schemas/node-action-result.schema.json`：Action 请求和三类结果。
-- `schemas/workflow-definition.schema.json`：Definition `2.0` 契约。
+- `schemas/workflow-definition.schema.json`：Definition `4.0` 契约。
 - `services/echo-node`：具备认证、协议校验和一致性测试的参考服务。
 
 Node Protocol 当前版本为 `1.0`。Node Manifest 的 `protocolVersion`、Action/Provider/Lifecycle 请求版本必须完全匹配；平台不会把未知版本降级或猜测转换。Node Type Version 由 Workflow Version 固定，已发布版本不得原地修改。
 
 ### 1.1 Manifest UI 画布契约
 
-`uiSchema.canvas.role` 是 Studio 执行节点的唯一视觉角色来源，允许值为 `default`、`trigger`、`branch`、`flow`、`merge`、`loop`、`suspend`、`approval`、`sub_workflow`、`agent`、`code` 和 `error_handler`。内置节点必须在 Rust Registry 中显式写入该字段；Catalog 反序列化时拒绝未知角色，缺少字段的旧 Manifest 仅由前端回退为 `default`，不得再按 `nodeType` 推断形状。
+`uiSchema.canvas.role` 是 Studio 执行节点的唯一视觉角色来源，允许值为 `default`、`trigger`、`branch`、`flow`、`merge`、`loop`、`suspend`、`approval`、`sub_workflow`、`agent`、`code` 和 `error_handler`。内置节点必须在 Rust Registry 中显式写入该字段；Catalog 反序列化时拒绝未知角色，缺少字段的 Manifest 仅由前端回退为 `default`，不得再按 `nodeType` 推断形状。Workflow 4.0 不发布 Trigger 节点，`trigger` role 只保留为 Node Protocol 枚举值，固定 Start 使用独立 Boundary 组件。
 
 该字段只控制编辑器外观，不改变端口、执行能力或 Runtime 语义，并进入现有 Manifest Hash。Model、MCP Tool、Memory、RAG 和 Skill 等资源附件继续由 Editor Document 的 `editorKind=binding` 表示，不进入角色枚举，也不能伪装为可执行节点。已创建的 Execution Snapshot 保留固化 Manifest 和 Hash；Catalog Reconcile 后的新执行使用新的 Manifest Hash。
 
 Manifest 可声明 `localizations.zh-CN/en-US`，覆盖 `displayName`、`description`、`keywords`、输入端口、输出端口和 Binding Slot 的展示名。本地化 Map 的 Key 必须引用真实协议端口或 Slot；Catalog 拒绝未知语言和悬空引用。本地化数据进入 Manifest Hash，端口和 Slot 的协议 ID 始终使用英文且不随界面语言变化。
+
+Workflow 4.0 Manifest 还必须声明 `outputSchema`、`outputCardinality`、`expressionCapabilities`、`contextReadCapability`、`contextWriteCapability`、`outputProjectionSchema` 和 `artifactOutputSchema`。可模板化参数在 Parameter Schema 中声明 `templatable`、`allowedNamespaces`、`expectedType`、`multiline` 和 `richText`；未声明的代码字段不会自动打开 Reference Picker。
 
 内置 `error_handler` 使用 Error 类型输入 `error` 和 Main 类型输出 `recovered`；`mode=recover` 保留原错误 Item 并继续，`mode=fail` 使用原错误 code/message 终止。连接任意 Error 输出时 Studio 同一事务把源节点 `onError` 设为 `continue_error_output`。
 

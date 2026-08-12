@@ -24,10 +24,34 @@ use uuid::Uuid;
 
 use crate::{
     control_common::{audit, require_department_scope, validate_name},
-    error::{AppError, AppResult},
+    deletion,
+    error::{AppError, AppResult, UniqueConstraint, map_unique},
     grants::require_resource_visible,
     security::AuthActor,
     state::AppState,
+};
+
+#[path = "skills_control_rows.rs"]
+mod rows;
+use rows::{entry_from_row, skill_from_row, version_from_row};
+
+pub(crate) const SKILL_NAME: UniqueConstraint = UniqueConstraint {
+    index: "uq_skill_name",
+    code: "SKILL_NAME_EXISTS",
+    field: "name",
+    message: "A Skill with this name already exists",
+};
+pub(crate) const SKILL_ALIAS: UniqueConstraint = UniqueConstraint {
+    index: "uq_skill_alias",
+    code: "SKILL_ALIAS_EXISTS",
+    field: "alias",
+    message: "A Skill with this alias already exists",
+};
+pub(crate) const SKILL_PATH: UniqueConstraint = UniqueConstraint {
+    index: "uq_skill_workspace_path",
+    code: "SKILL_PATH_EXISTS",
+    field: "name",
+    message: "An entry already exists at this workspace path",
 };
 
 const MAX_FILE_SIZE: usize = 20 * 1024 * 1024;
@@ -243,6 +267,7 @@ pub async fn create_skill(
     let name = validate_name(&input.name, 160)?;
     let alias = validate_name(&input.alias, 160)?;
     let description = validate_skill_description(Some(&input.description))?;
+    ensure_skill_identity_available(&state, actor.tenant_id, &name, &alias, None).await?;
     let id = Uuid::now_v7();
     let content = render_skill_document(&name, &description, &format!("# {name}\n"))?;
     let artifact = put_artifact(
@@ -252,13 +277,21 @@ pub async fn create_skill(
         content.into_bytes(),
     )
     .await?;
+    let artifact_id = artifact.id.as_uuid();
     let entry_id = Uuid::now_v7();
-    let mut tx = state.pool.begin().await?;
-    sqlx::query("INSERT INTO skills(id,tenant_id,name,alias,description,owner_department_id,created_by) VALUES(?,?,?,?,?,?,?)").bind(id).bind(actor.tenant_id).bind(&name).bind(&alias).bind(&description).bind(input.owner_department_id).bind(actor.user_id).execute(&mut *tx).await?;
-    sqlx::query("INSERT INTO skill_workspace_entries(id,tenant_id,skill_id,parent_id,name,path,path_hash,entry_type,mime_type,artifact_id,content_hash,size_bytes,editable) VALUES(?,?,?,NULL,'SKILL.md','SKILL.md',?,'file','text/markdown; charset=utf-8',?,?,?,TRUE)").bind(entry_id).bind(actor.tenant_id).bind(id).bind(path_hash("SKILL.md")).bind(artifact.id.as_uuid()).bind(&artifact.sha256).bind(artifact.content.len() as u64).execute(&mut *tx).await?;
-    sqlx::query("INSERT INTO skill_file_revisions(id,tenant_id,skill_id,entry_id,workspace_revision,artifact_id,content_hash,size_bytes,created_by) VALUES(?,?,?,?,1,?,?,?,?)").bind(Uuid::now_v7()).bind(actor.tenant_id).bind(id).bind(entry_id).bind(artifact.id.as_uuid()).bind(&artifact.sha256).bind(artifact.content.len() as u64).bind(actor.user_id).execute(&mut *tx).await?;
-    audit(&mut tx, &actor, "skill.created", "skill", id, json!({})).await?;
-    tx.commit().await?;
+    let persisted: AppResult<()> = async {
+        let mut tx = state.pool.begin().await?;
+        sqlx::query("INSERT INTO skills(id,tenant_id,name,alias,description,owner_department_id,created_by) VALUES(?,?,?,?,?,?,?)").bind(id).bind(actor.tenant_id).bind(&name).bind(&alias).bind(&description).bind(input.owner_department_id).bind(actor.user_id).execute(&mut *tx).await.map_err(|error| map_unique(error, &[SKILL_NAME, SKILL_ALIAS]))?;
+        sqlx::query("INSERT INTO skill_workspace_entries(id,tenant_id,skill_id,parent_id,name,path,path_hash,entry_type,mime_type,artifact_id,content_hash,size_bytes,editable) VALUES(?,?,?,NULL,'SKILL.md','SKILL.md',?,'file','text/markdown; charset=utf-8',?,?,?,TRUE)").bind(entry_id).bind(actor.tenant_id).bind(id).bind(path_hash("SKILL.md")).bind(artifact_id).bind(&artifact.sha256).bind(artifact.content.len() as u64).execute(&mut *tx).await?;
+        sqlx::query("INSERT INTO skill_file_revisions(id,tenant_id,skill_id,entry_id,workspace_revision,artifact_id,content_hash,size_bytes,created_by) VALUES(?,?,?,?,1,?,?,?,?)").bind(Uuid::now_v7()).bind(actor.tenant_id).bind(id).bind(entry_id).bind(artifact_id).bind(&artifact.sha256).bind(artifact.content.len() as u64).bind(actor.user_id).execute(&mut *tx).await?;
+        audit(&mut tx, &actor, "skill.created", "skill", id, json!({})).await?;
+        tx.commit().await?;
+        Ok(())
+    }.await;
+    if let Err(error) = persisted {
+        delete_artifact(&state, actor.tenant_id, artifact_id).await;
+        return Err(error);
+    }
     Ok((
         StatusCode::CREATED,
         Json(load_skill(&state, actor.tenant_id, id).await?),
@@ -288,6 +321,7 @@ pub async fn update_skill(
     let name = validate_name(&input.name, 160)?;
     let alias = validate_name(&input.alias, 160)?;
     let description = validate_skill_description(input.description.as_deref())?;
+    ensure_skill_identity_available(&state, actor.tenant_id, &name, &alias, Some(id)).await?;
     if !matches!(input.status.as_str(), "draft" | "active" | "disabled") {
         return Err(AppError::bad_request(
             "INVALID_STATUS",
@@ -295,6 +329,12 @@ pub async fn update_skill(
         ));
     }
     let current = load_skill(&state, actor.tenant_id, id).await?;
+    if current.version != input.version {
+        return Err(AppError::conflict(
+            "SKILL_VERSION_CONFLICT",
+            "Skill changed",
+        ));
+    }
     let metadata_changed =
         current.name != name || current.description.as_deref().unwrap_or_default() != description;
     let root_update = if metadata_changed {
@@ -330,6 +370,10 @@ pub async fn update_skill(
     } else {
         None
     };
+    let root_artifact_id = root_update
+        .as_ref()
+        .map(|(_, artifact)| artifact.id.as_uuid());
+    let persisted: AppResult<()> = async {
     let mut tx = state.pool.begin().await?;
     if input.status == "active" {
         let exists: bool = sqlx::query_scalar(
@@ -348,10 +392,10 @@ pub async fn update_skill(
     }
     let result = if root_update.is_some() {
         sqlx::query("UPDATE skills SET name=?,alias=?,description=?,status=?,version=version+1,draft_revision=draft_revision+1 WHERE tenant_id=? AND id=? AND version=? AND draft_revision=?")
-            .bind(&name).bind(&alias).bind(&description).bind(&input.status).bind(actor.tenant_id).bind(id).bind(input.version).bind(current.draft_revision).execute(&mut *tx).await?
+            .bind(&name).bind(&alias).bind(&description).bind(&input.status).bind(actor.tenant_id).bind(id).bind(input.version).bind(current.draft_revision).execute(&mut *tx).await.map_err(|error| map_unique(error, &[SKILL_NAME, SKILL_ALIAS]))?
     } else {
         sqlx::query("UPDATE skills SET name=?,alias=?,description=?,status=?,version=version+1 WHERE tenant_id=? AND id=? AND version=?")
-            .bind(&name).bind(&alias).bind(&description).bind(&input.status).bind(actor.tenant_id).bind(id).bind(input.version).execute(&mut *tx).await?
+            .bind(&name).bind(&alias).bind(&description).bind(&input.status).bind(actor.tenant_id).bind(id).bind(input.version).execute(&mut *tx).await.map_err(|error| map_unique(error, &[SKILL_NAME, SKILL_ALIAS]))?
     };
     if result.rows_affected() != 1 {
         return Err(AppError::conflict(
@@ -359,21 +403,29 @@ pub async fn update_skill(
             "Skill changed",
         ));
     }
-    if let Some((entry_id, artifact)) = root_update {
+    if let Some((entry_id, artifact)) = root_update.as_ref() {
         sqlx::query("UPDATE skill_workspace_entries SET artifact_id=?,content_hash=?,size_bytes=? WHERE tenant_id=? AND skill_id=? AND id=?")
             .bind(artifact.id.as_uuid()).bind(&artifact.sha256).bind(artifact.content.len() as u64).bind(actor.tenant_id).bind(id).bind(entry_id).execute(&mut *tx).await?;
         insert_file_revision(
             &mut tx,
             &actor,
             id,
-            entry_id,
+            *entry_id,
             current.draft_revision + 1,
-            &artifact,
+            artifact,
         )
         .await?;
     }
     audit(&mut tx, &actor, "skill.updated", "skill", id, json!({})).await?;
     tx.commit().await?;
+    Ok(())
+    }.await;
+    if let Err(error) = persisted {
+        if let Some(artifact_id) = root_artifact_id {
+            delete_artifact(&state, actor.tenant_id, artifact_id).await;
+        }
+        return Err(error);
+    }
     Ok(Json(load_skill(&state, actor.tenant_id, id).await?))
 }
 
@@ -476,6 +528,12 @@ pub async fn import_workspace(
         .await
         .map_err(AppError::internal)??;
     let skill = load_skill(&state, actor.tenant_id, id).await?;
+    if skill.draft_revision != expected {
+        return Err(AppError::conflict(
+            "SKILL_REVISION_CONFLICT",
+            "Skill workspace changed",
+        ));
+    }
     let root = entries
         .iter()
         .find(|entry| entry.path == "SKILL.md")
@@ -488,16 +546,13 @@ pub async fn import_workspace(
     })?;
     let root = parse_skill_document(&root)?;
     require_skill_document_matches(&root, &skill.name, skill.description.as_deref())?;
-    let mut stored = Vec::new();
-    for entry in entries {
-        let artifact = if let Some(content) = entry.content.as_ref() {
-            Some(put_artifact(&state, actor.tenant_id, &entry.mime_type, content.clone()).await?)
-        } else {
-            None
-        };
-        stored.push((entry, artifact));
-    }
+    let stored = store_import_artifacts(&state, actor.tenant_id, entries, None).await?;
+    let artifact_ids = stored
+        .iter()
+        .filter_map(|(_, artifact)| artifact.as_ref().map(|artifact| artifact.id.as_uuid()))
+        .collect::<Vec<_>>();
     let revision = expected + 1;
+    let persisted: AppResult<()> = async {
     let mut tx = state.pool.begin().await?;
     bump_revision(&mut tx, actor.tenant_id, id, expected).await?;
     sqlx::query("DELETE FROM skill_file_revisions WHERE tenant_id=? AND skill_id=?")
@@ -510,7 +565,7 @@ pub async fn import_workspace(
     for (entry, _) in &stored {
         ids.insert(entry.path.clone(), Uuid::now_v7());
     }
-    for (entry, artifact) in stored {
+    for (entry, artifact) in &stored {
         let entry_id = ids[&entry.path];
         let parent_id = entry
             .path
@@ -530,7 +585,7 @@ pub async fn import_workspace(
             .bind(artifact.as_ref().map(|value| value.sha256.as_str())).bind(artifact.as_ref().map_or(0, |value| value.content.len()) as u64).bind(editable)
             .execute(&mut *tx).await?;
         if let Some(artifact) = artifact {
-            insert_file_revision(&mut tx, &actor, id, entry_id, revision, &artifact).await?;
+            insert_file_revision(&mut tx, &actor, id, entry_id, revision, artifact).await?;
         }
     }
     audit(
@@ -543,6 +598,14 @@ pub async fn import_workspace(
     )
     .await?;
     tx.commit().await?;
+    Ok(())
+    }.await;
+    if let Err(error) = persisted {
+        for artifact_id in artifact_ids {
+            delete_artifact(&state, actor.tenant_id, artifact_id).await;
+        }
+        return Err(error);
+    }
     Ok(Json(load_workspace(&state, actor.tenant_id, id).await?))
 }
 
@@ -561,6 +624,8 @@ pub async fn create_entry(
     }
     let parent = parent_path(&state, actor.tenant_id, id, input.parent_id).await?;
     let path = join_path(&parent, &name)?;
+    ensure_skill_path_available(&state, actor.tenant_id, id, &path, None, "name").await?;
+    ensure_workspace_revision(&state, actor.tenant_id, id, input.expected_revision).await?;
     ensure_capacity(&state, actor.tenant_id, id, 0).await?;
     let artifact = if input.entry_type == "file" {
         Some(
@@ -575,12 +640,14 @@ pub async fn create_entry(
     } else {
         None
     };
+    let artifact_id = artifact.as_ref().map(|artifact| artifact.id.as_uuid());
     let entry_id = Uuid::now_v7();
+    let persisted: AppResult<()> = async {
     let mut tx = state.pool.begin().await?;
     let revision = bump_revision(&mut tx, actor.tenant_id, id, input.expected_revision).await?;
-    sqlx::query("INSERT INTO skill_workspace_entries(id,tenant_id,skill_id,parent_id,name,path,path_hash,entry_type,mime_type,artifact_id,content_hash,size_bytes,editable) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(entry_id).bind(actor.tenant_id).bind(id).bind(input.parent_id).bind(name).bind(&path).bind(path_hash(&path)).bind(&input.entry_type).bind(artifact.as_ref().map(|_|"text/markdown; charset=utf-8")).bind(artifact.as_ref().map(|a|a.id.as_uuid())).bind(artifact.as_ref().map(|a|a.sha256.as_str())).bind(artifact.as_ref().map_or(0,|a|a.content.len()) as u64).bind(artifact.is_some()).execute(&mut *tx).await?;
-    if let Some(a) = artifact {
-        insert_file_revision(&mut tx, &actor, id, entry_id, revision, &a).await?;
+    sqlx::query("INSERT INTO skill_workspace_entries(id,tenant_id,skill_id,parent_id,name,path,path_hash,entry_type,mime_type,artifact_id,content_hash,size_bytes,editable) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(entry_id).bind(actor.tenant_id).bind(id).bind(input.parent_id).bind(name).bind(&path).bind(path_hash(&path)).bind(&input.entry_type).bind(artifact.as_ref().map(|_|"text/markdown; charset=utf-8")).bind(artifact.as_ref().map(|a|a.id.as_uuid())).bind(artifact.as_ref().map(|a|a.sha256.as_str())).bind(artifact.as_ref().map_or(0,|a|a.content.len()) as u64).bind(artifact.is_some()).execute(&mut *tx).await.map_err(|error| map_unique(error, &[SKILL_PATH]))?;
+    if let Some(a) = artifact.as_ref() {
+        insert_file_revision(&mut tx, &actor, id, entry_id, revision, a).await?;
     }
     audit(
         &mut tx,
@@ -592,6 +659,17 @@ pub async fn create_entry(
     )
     .await?;
     tx.commit().await?;
+    Ok(())
+    }.await;
+    if let Err(error) = persisted {
+        if let Some(artifact_id) = artifact_id {
+            delete_artifact(&state, actor.tenant_id, artifact_id).await;
+        }
+        if error.code == "SKILL_REVISION_CONFLICT" {
+            ensure_skill_path_available(&state, actor.tenant_id, id, &path, None, "name").await?;
+        }
+        return Err(error);
+    }
     Ok((
         StatusCode::CREATED,
         Json(load_workspace(&state, actor.tenant_id, id).await?),
@@ -622,20 +700,27 @@ pub async fn move_entry(
     }
     let parent = parent_path(&state, actor.tenant_id, id, input.parent_id).await?;
     let new = join_path(&parent, &name)?;
+    ensure_skill_path_available(&state, actor.tenant_id, id, &new, Some(entry_id), "name").await?;
     if kind == "directory" && (new == old || new.starts_with(&format!("{old}/"))) {
         return Err(AppError::bad_request(
             "SKILL_DIRECTORY_CYCLE",
             "Directory cannot be moved into itself",
         ));
     }
+    ensure_workspace_revision(&state, actor.tenant_id, id, input.expected_revision).await?;
     let rewritten = rewrite_links_for_move(&state, actor.tenant_id, id, &old, &new).await?;
+    let rewritten_ids = rewritten
+        .iter()
+        .map(|(_, artifact)| artifact.id.as_uuid())
+        .collect::<Vec<_>>();
+    let persisted: AppResult<()> = async {
     let mut tx = state.pool.begin().await?;
     let revision = bump_revision(&mut tx, actor.tenant_id, id, input.expected_revision).await?;
-    sqlx::query("UPDATE skill_workspace_entries SET parent_id=?,name=?,path=?,path_hash=? WHERE tenant_id=? AND skill_id=? AND id=?").bind(input.parent_id).bind(name).bind(&new).bind(path_hash(&new)).bind(actor.tenant_id).bind(id).bind(entry_id).execute(&mut *tx).await?;
+    sqlx::query("UPDATE skill_workspace_entries SET parent_id=?,name=?,path=?,path_hash=? WHERE tenant_id=? AND skill_id=? AND id=?").bind(input.parent_id).bind(name).bind(&new).bind(path_hash(&new)).bind(actor.tenant_id).bind(id).bind(entry_id).execute(&mut *tx).await.map_err(|error| map_unique(error, &[SKILL_PATH]))?;
     if kind == "directory" {
         sqlx::query("UPDATE skill_workspace_entries SET path_hash=SHA2(CONCAT(?,SUBSTRING(path,?)),256),path=CONCAT(?,SUBSTRING(path,?)) WHERE tenant_id=? AND skill_id=? AND path LIKE ?").bind(&new).bind((old.len()+1) as u64).bind(&new).bind((old.len()+1) as u64).bind(actor.tenant_id).bind(id).bind(format!("{old}/%")).execute(&mut *tx).await?;
     }
-    for (markdown_entry, artifact) in rewritten {
+    for (markdown_entry, artifact) in &rewritten {
         sqlx::query("UPDATE skill_workspace_entries SET artifact_id=?,content_hash=?,size_bytes=? WHERE tenant_id=? AND skill_id=? AND id=?")
             .bind(artifact.id.as_uuid())
             .bind(&artifact.sha256)
@@ -645,7 +730,7 @@ pub async fn move_entry(
             .bind(markdown_entry)
             .execute(&mut *tx)
             .await?;
-        insert_file_revision(&mut tx, &actor, id, markdown_entry, revision, &artifact).await?;
+        insert_file_revision(&mut tx, &actor, id, *markdown_entry, revision, artifact).await?;
     }
     audit(
         &mut tx,
@@ -657,6 +742,18 @@ pub async fn move_entry(
     )
     .await?;
     tx.commit().await?;
+    Ok(())
+    }.await;
+    if let Err(error) = persisted {
+        for artifact_id in rewritten_ids {
+            delete_artifact(&state, actor.tenant_id, artifact_id).await;
+        }
+        if error.code == "SKILL_REVISION_CONFLICT" {
+            ensure_skill_path_available(&state, actor.tenant_id, id, &new, Some(entry_id), "name")
+                .await?;
+        }
+        return Err(error);
+    }
     Ok(Json(load_workspace(&state, actor.tenant_id, id).await?))
 }
 
@@ -805,6 +902,7 @@ pub async fn update_markdown(
         content.len() as i64 - row.try_get::<u64, _>("size_bytes")? as i64,
     )
     .await?;
+    ensure_workspace_revision(&state, actor.tenant_id, id, expected_revision).await?;
     let artifact = put_artifact(
         &state,
         actor.tenant_id,
@@ -812,6 +910,8 @@ pub async fn update_markdown(
         content.into_bytes(),
     )
     .await?;
+    let artifact_id = artifact.id.as_uuid();
+    let persisted: AppResult<u64> = async {
     let mut tx = state.pool.begin().await?;
     let revision = bump_revision(&mut tx, actor.tenant_id, id, expected_revision).await?;
     sqlx::query("UPDATE skill_workspace_entries SET artifact_id=?,content_hash=?,size_bytes=? WHERE tenant_id=? AND skill_id=? AND id=?").bind(artifact.id.as_uuid()).bind(&artifact.sha256).bind(artifact.content.len() as u64).bind(actor.tenant_id).bind(id).bind(entry_id).execute(&mut *tx).await?;
@@ -834,6 +934,19 @@ pub async fn update_markdown(
     )
     .await?;
     tx.commit().await?;
+    Ok(revision)
+    }.await;
+    let revision = match persisted {
+        Ok(revision) => revision,
+        Err(error) => {
+            delete_artifact(&state, actor.tenant_id, artifact_id).await;
+            if error.code == "SKILL_REVISION_CONFLICT" {
+                ensure_skill_path_available(&state, actor.tenant_id, id, &path, None, "file")
+                    .await?;
+            }
+            return Err(error);
+        }
+    };
     Ok(Json(SkillFileContentResponse {
         entry_id,
         content: String::from_utf8(artifact.content).map_err(AppError::internal)?,
@@ -906,12 +1019,16 @@ pub async fn upload_file(
     ensure_capacity(&state, actor.tenant_id, id, bytes.len() as i64).await?;
     let parent = parent_path(&state, actor.tenant_id, id, parent_id).await?;
     let path = join_path(&parent, &name)?;
+    ensure_skill_path_available(&state, actor.tenant_id, id, &path, None, "file").await?;
+    ensure_workspace_revision(&state, actor.tenant_id, id, expected).await?;
     let artifact = put_artifact(&state, actor.tenant_id, &mime, bytes).await?;
+    let artifact_id = artifact.id.as_uuid();
     let entry_id = Uuid::now_v7();
     let editable = name.to_ascii_lowercase().ends_with(".md");
+    let persisted: AppResult<u64> = async {
     let mut tx = state.pool.begin().await?;
     let revision = bump_revision(&mut tx, actor.tenant_id, id, expected).await?;
-    sqlx::query("INSERT INTO skill_workspace_entries(id,tenant_id,skill_id,parent_id,name,path,path_hash,entry_type,mime_type,artifact_id,content_hash,size_bytes,editable) VALUES(?,?,?,?,?,?,?,'file',?,?,?,?,?)").bind(entry_id).bind(actor.tenant_id).bind(id).bind(parent_id).bind(name).bind(&path).bind(path_hash(&path)).bind(&mime).bind(artifact.id.as_uuid()).bind(&artifact.sha256).bind(artifact.content.len() as u64).bind(editable).execute(&mut *tx).await?;
+    sqlx::query("INSERT INTO skill_workspace_entries(id,tenant_id,skill_id,parent_id,name,path,path_hash,entry_type,mime_type,artifact_id,content_hash,size_bytes,editable) VALUES(?,?,?,?,?,?,?,'file',?,?,?,?,?)").bind(entry_id).bind(actor.tenant_id).bind(id).bind(parent_id).bind(name).bind(&path).bind(path_hash(&path)).bind(&mime).bind(artifact.id.as_uuid()).bind(&artifact.sha256).bind(artifact.content.len() as u64).bind(editable).execute(&mut *tx).await.map_err(|error| map_unique(error, &[UniqueConstraint { field: "file", ..SKILL_PATH }]))?;
     insert_file_revision(&mut tx, &actor, id, entry_id, revision, &artifact).await?;
     audit(
         &mut tx,
@@ -923,6 +1040,15 @@ pub async fn upload_file(
     )
     .await?;
     tx.commit().await?;
+    Ok(revision)
+    }.await;
+    let revision = match persisted {
+        Ok(revision) => revision,
+        Err(error) => {
+            delete_artifact(&state, actor.tenant_id, artifact_id).await;
+            return Err(error);
+        }
+    };
     Ok((
         StatusCode::CREATED,
         Json(ArtifactUploadResponse {
@@ -1021,8 +1147,45 @@ pub async fn create_version(
         }
     }
     let manifest = json!({"name":skill.name,"description":skill.description,"sourceRevision":skill.draft_revision});
-    let hash=canonical_content_hash(&json!({"manifest":manifest,"files":files.iter().map(|f|json!({"path":f.path,"hash":f.content_hash})).collect::<Vec<_>>(),"dependencies":input.dependencies})).map_err(AppError::internal)?;
+    let hash = skill_version_content_hash(&manifest, &files, &input.dependencies)?;
     let mut tx = state.pool.begin().await?;
+    let head: Option<u64> = sqlx::query_scalar(
+        "SELECT draft_revision FROM skills WHERE tenant_id=? AND id=? FOR UPDATE",
+    )
+    .bind(actor.tenant_id)
+    .bind(id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    if head != Some(input.expected_revision) {
+        return Err(AppError::conflict(
+            "SKILL_REVISION_CONFLICT",
+            "Skill workspace changed",
+        ));
+    }
+    if let Some(existing_id) = sqlx::query_scalar::<_, Uuid>(
+        "SELECT id FROM skill_versions WHERE tenant_id=? AND skill_id=? AND content_hash=?",
+    )
+    .bind(actor.tenant_id)
+    .bind(id)
+    .bind(&hash)
+    .fetch_optional(&mut *tx)
+    .await?
+    {
+        sqlx::query("UPDATE skills SET status='active',version=version+1 WHERE tenant_id=? AND id=? AND status<>'active'").bind(actor.tenant_id).bind(id).execute(&mut *tx).await?;
+        tx.commit().await?;
+        let row=sqlx::query("SELECT id,skill_id,version_number,source_revision,manifest_json,content_hash,created_at,(SELECT COUNT(*) FROM skill_version_files f WHERE f.skill_version_id=sv.id) file_count FROM skill_versions sv WHERE id=?").bind(existing_id).fetch_one(&state.pool).await?;
+        return Ok((StatusCode::OK, Json(version_from_row(&state, row).await?)));
+    }
+    deletion::lock_resource_targets(
+        &mut tx,
+        actor.tenant_id,
+        input
+            .dependencies
+            .iter()
+            .map(|dependency| (dependency.resource_type.clone(), dependency.resource_id))
+            .collect(),
+    )
+    .await?;
     let next:u64=sqlx::query_scalar("SELECT CAST(COALESCE(MAX(version_number),0)+1 AS UNSIGNED) FROM skill_versions WHERE tenant_id=? AND skill_id=? FOR UPDATE").bind(actor.tenant_id).bind(id).fetch_one(&mut *tx).await?;
     let version_id = Uuid::now_v7();
     sqlx::query("INSERT INTO skill_versions(id,tenant_id,skill_id,version_number,source_revision,manifest_json,content_hash,created_by) VALUES(?,?,?,?,?,?,?,?)").bind(version_id).bind(actor.tenant_id).bind(id).bind(next).bind(skill.draft_revision).bind(&manifest).bind(&hash).bind(actor.user_id).execute(&mut *tx).await?;
@@ -1085,126 +1248,165 @@ async fn put_artifact(
         .map_err(AppError::internal)
 }
 
-#[derive(Debug)]
-struct ImportedWorkspaceEntry {
-    path: String,
-    mime_type: String,
-    content: Option<Vec<u8>>,
+fn skill_version_content_hash(
+    manifest: &Value,
+    files: &[SkillWorkspaceEntry],
+    dependencies: &[SkillDependencyInput],
+) -> AppResult<String> {
+    let mut dependency_fingerprints = dependencies
+        .iter()
+        .map(|dependency| {
+            json!({
+                "resourceType": dependency.resource_type,
+                "resourceId": dependency.resource_id,
+                "resourceVersionId": dependency.resource_version_id,
+                "operation": dependency.operation,
+            })
+        })
+        .collect::<Vec<_>>();
+    dependency_fingerprints.sort_by_key(Value::to_string);
+    canonical_content_hash(&json!({
+        "manifest": {
+            "name": manifest.get("name"),
+            "description": manifest.get("description"),
+        },
+        "files": files.iter().map(|file| json!({
+            "path": file.path,
+            "hash": file.content_hash,
+        })).collect::<Vec<_>>(),
+        "dependencies": dependency_fingerprints,
+    }))
+    .map_err(AppError::internal)
 }
 
-fn parse_workspace_zip(bytes: &[u8]) -> AppResult<Vec<ImportedWorkspaceEntry>> {
-    let mut archive = zip::ZipArchive::new(Cursor::new(bytes))
-        .map_err(|_| AppError::bad_request("INVALID_WORKSPACE_ZIP", "Workspace ZIP is invalid"))?;
-    let mut entries = HashMap::<String, ImportedWorkspaceEntry>::new();
-    let mut total_size = 0_u64;
-    for index in 0..archive.len() {
-        let mut file = archive.by_index(index).map_err(|_| {
-            AppError::bad_request("INVALID_WORKSPACE_ZIP", "Workspace ZIP entry is invalid")
-        })?;
-        let raw = file.name().trim_end_matches('/');
-        if raw.is_empty() {
-            continue;
-        }
-        let path = validate_archive_path(raw)?;
-        for parent in parent_paths(&path) {
-            entries
-                .entry(parent.clone())
-                .or_insert(ImportedWorkspaceEntry {
-                    path: parent,
-                    mime_type: String::new(),
-                    content: None,
-                });
-        }
-        if file.is_dir() {
-            entries
-                .entry(path.clone())
-                .or_insert(ImportedWorkspaceEntry {
-                    path,
-                    mime_type: String::new(),
-                    content: None,
-                });
-            continue;
-        }
-        if file.size() > MAX_FILE_SIZE as u64 {
-            return Err(AppError::unprocessable(
-                "SKILL_FILE_TOO_LARGE",
-                "Skill file exceeds 20 MiB",
-            ));
-        }
-        total_size = total_size.saturating_add(file.size());
-        if total_size > MAX_WORKSPACE_SIZE {
-            return Err(AppError::unprocessable(
-                "SKILL_WORKSPACE_TOO_LARGE",
-                "Skill workspace exceeds 100 MiB",
-            ));
-        }
-        let mut content = Vec::with_capacity(file.size() as usize);
-        file.read_to_end(&mut content).map_err(|_| {
-            AppError::bad_request(
-                "INVALID_WORKSPACE_ZIP",
-                "Workspace ZIP entry cannot be read",
+async fn delete_artifact(state: &AppState, tenant: Uuid, id: Uuid) {
+    let Some(store) = state.object_store.clone() else {
+        return;
+    };
+    let mut artifacts = MySqlObjectArtifactStore::new(state.pool.clone(), store);
+    if let Some(redis) = state.redis.as_ref() {
+        artifacts = artifacts.with_quota_admission(
+            agentx_infrastructure::quota::QuotaAdmission::new((**redis).clone()),
+        );
+    }
+    if let Err(error) = artifacts
+        .delete(TenantId::from_uuid(tenant), ArtifactId::from_uuid(id))
+        .await
+    {
+        tracing::error!(%tenant, artifact_id=%id, %error, "failed to compensate Skill Artifact; retention will retry");
+    }
+}
+
+pub(crate) async fn store_import_artifacts(
+    state: &AppState,
+    tenant: Uuid,
+    entries: Vec<ImportedWorkspaceEntry>,
+    fail_after: Option<usize>,
+) -> AppResult<
+    Vec<(
+        ImportedWorkspaceEntry,
+        Option<agentx_application::ArtifactRead>,
+    )>,
+> {
+    let mut stored: Vec<(
+        ImportedWorkspaceEntry,
+        Option<agentx_application::ArtifactRead>,
+    )> = Vec::new();
+    for entry in entries {
+        if fail_after
+            == Some(
+                stored
+                    .iter()
+                    .filter(|(_, artifact)| artifact.is_some())
+                    .count(),
             )
-        })?;
-        if entries
-            .insert(
-                path.clone(),
-                ImportedWorkspaceEntry {
-                    mime_type: content_type_for_path(&path),
-                    path,
-                    content: Some(content),
-                },
-            )
-            .is_some()
         {
-            return Err(AppError::bad_request(
-                "SKILL_DUPLICATE_PATH",
-                "Workspace ZIP contains duplicate paths",
-            ));
+            for (_, artifact) in &stored {
+                if let Some(artifact) = artifact {
+                    delete_artifact(state, tenant, artifact.id.as_uuid()).await;
+                }
+            }
+            return Err(AppError::internal("injected Skill import Artifact failure"));
         }
+        let artifact = if let Some(content) = entry.content.as_ref() {
+            match put_artifact(state, tenant, &entry.mime_type, content.clone()).await {
+                Ok(artifact) => Some(artifact),
+                Err(error) => {
+                    for (_, artifact) in &stored {
+                        if let Some(artifact) = artifact {
+                            delete_artifact(state, tenant, artifact.id.as_uuid()).await;
+                        }
+                    }
+                    return Err(error);
+                }
+            }
+        } else {
+            None
+        };
+        stored.push((entry, artifact));
     }
-    if entries.len() > MAX_ENTRIES as usize {
-        return Err(AppError::unprocessable(
-            "SKILL_ENTRY_LIMIT",
-            "Skill workspace contains more than 1000 entries",
-        ));
-    }
-    if !matches!(entries.get("SKILL.md"), Some(entry) if entry.content.is_some()) {
-        return Err(AppError::unprocessable(
-            "SKILL_ROOT_REQUIRED",
-            "Workspace ZIP must contain a root SKILL.md file",
-        ));
-    }
-    let mut values = entries.into_values().collect::<Vec<_>>();
-    values.sort_by_key(|entry| {
-        (
-            entry.path.split('/').count(),
-            entry.content.is_some(),
-            entry.path.clone(),
-        )
-    });
-    Ok(values)
+    Ok(stored)
 }
 
-fn build_workspace_zip(files: Vec<(String, String, Option<Vec<u8>>)>) -> AppResult<Vec<u8>> {
-    let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
-    let options = zip::write::SimpleFileOptions::default()
-        .compression_method(zip::CompressionMethod::Deflated);
-    for (path, kind, content) in files {
-        if kind == "directory" {
-            writer
-                .add_directory(format!("{path}/"), options)
-                .map_err(AppError::internal)?;
-        } else {
-            writer
-                .start_file(path, options)
-                .map_err(AppError::internal)?;
-            writer
-                .write_all(content.as_deref().unwrap_or_default())
-                .map_err(AppError::internal)?;
-        }
+async fn ensure_skill_identity_available(
+    state: &AppState,
+    tenant: Uuid,
+    name: &str,
+    alias: &str,
+    exclude: Option<Uuid>,
+) -> AppResult<()> {
+    let row: Option<(String,)> = sqlx::query_as("SELECT CASE WHEN name=? THEN 'name' ELSE 'alias' END FROM skills WHERE tenant_id=? AND (name=? OR alias=?) AND (? IS NULL OR id<>?) LIMIT 1")
+        .bind(name).bind(tenant).bind(name).bind(alias).bind(exclude).bind(exclude).fetch_optional(&state.pool).await?;
+    match row.as_ref().map(|value| value.0.as_str()) {
+        Some("name") => Err(AppError::unique(SKILL_NAME)),
+        Some(_) => Err(AppError::unique(SKILL_ALIAS)),
+        None => Ok(()),
     }
-    Ok(writer.finish().map_err(AppError::internal)?.into_inner())
 }
+
+async fn ensure_skill_path_available(
+    state: &AppState,
+    tenant: Uuid,
+    skill: Uuid,
+    path: &str,
+    exclude: Option<Uuid>,
+    field: &'static str,
+) -> AppResult<()> {
+    let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM skill_workspace_entries WHERE tenant_id=? AND skill_id=? AND path_hash=? AND (? IS NULL OR id<>?))")
+        .bind(tenant).bind(skill).bind(path_hash(path)).bind(exclude).bind(exclude).fetch_one(&state.pool).await?;
+    if exists {
+        Err(AppError::unique(UniqueConstraint {
+            field,
+            ..SKILL_PATH
+        }))
+    } else {
+        Ok(())
+    }
+}
+
+async fn ensure_workspace_revision(
+    state: &AppState,
+    tenant: Uuid,
+    skill: Uuid,
+    expected: u64,
+) -> AppResult<()> {
+    let revision: Option<u64> =
+        sqlx::query_scalar("SELECT draft_revision FROM skills WHERE tenant_id=? AND id=?")
+            .bind(tenant)
+            .bind(skill)
+            .fetch_optional(&state.pool)
+            .await?;
+    if revision == Some(expected) {
+        Ok(())
+    } else {
+        Err(AppError::conflict(
+            "SKILL_REVISION_CONFLICT",
+            "Skill workspace changed",
+        ))
+    }
+}
+
+include!("skills_workspace_archive.rs");
 
 fn validate_archive_path(value: &str) -> AppResult<String> {
     if value.starts_with('/')
@@ -1533,7 +1735,7 @@ async fn rewrite_links_for_move(
     new_root: &str,
 ) -> AppResult<Vec<(Uuid, agentx_application::ArtifactRead)>> {
     let workspace = load_workspace(state, tenant, skill).await?;
-    let mut rewritten = Vec::new();
+    let mut rewritten: Vec<(Uuid, agentx_application::ArtifactRead)> = Vec::new();
     for entry in workspace.entries.iter().filter(|entry| entry.editable) {
         let artifact = get_artifact(
             state,
@@ -1546,13 +1748,22 @@ async fn rewrite_links_for_move(
         if let Some(content) =
             rewrite_markdown_links(&entry.path, &source_after, &content, old_root, new_root)?
         {
-            let artifact = put_artifact(
+            let artifact = match put_artifact(
                 state,
                 tenant,
                 "text/markdown; charset=utf-8",
                 content.into_bytes(),
             )
-            .await?;
+            .await
+            {
+                Ok(artifact) => artifact,
+                Err(error) => {
+                    for (_, artifact) in rewritten {
+                        delete_artifact(state, tenant, artifact.id.as_uuid()).await;
+                    }
+                    return Err(error);
+                }
+            };
             rewritten.push((entry.id, artifact));
         }
     }
@@ -1768,157 +1979,6 @@ async fn skill_reaches(
     }
     Ok(false)
 }
-async fn version_from_row(
-    state: &AppState,
-    r: sqlx::mysql::MySqlRow,
-) -> AppResult<SkillVersionResponse> {
-    let id: Uuid = r.try_get("id")?;
-    let deps=sqlx::query("SELECT resource_type,resource_id,resource_version_id,operation_key FROM skill_dependencies WHERE skill_version_id=? ORDER BY resource_type").bind(id).fetch_all(&state.pool).await?.into_iter().map(|d|Ok(SkillDependencyInput{resource_type:d.try_get("resource_type")?,resource_id:d.try_get("resource_id")?,resource_version_id:d.try_get("resource_version_id")?,operation:d.try_get("operation_key")?})).collect::<Result<_,sqlx::Error>>()?;
-    Ok(SkillVersionResponse {
-        id,
-        skill_id: r.try_get("skill_id")?,
-        version_number: r.try_get("version_number")?,
-        source_revision: r.try_get("source_revision")?,
-        manifest: r.try_get("manifest_json")?,
-        content_hash: r.try_get("content_hash")?,
-        file_count: r.try_get::<i64, _>("file_count")? as u64,
-        dependencies: deps,
-        created_at: r.try_get("created_at")?,
-    })
-}
-fn skill_from_row(r: sqlx::mysql::MySqlRow) -> Result<SkillResponse, sqlx::Error> {
-    Ok(SkillResponse {
-        id: r.try_get("id")?,
-        name: r.try_get("name")?,
-        alias: r.try_get("alias")?,
-        description: r.try_get("description")?,
-        owner_department_id: r.try_get("owner_department_id")?,
-        status: r.try_get("status")?,
-        draft_revision: r.try_get("draft_revision")?,
-        latest_version: r.try_get("latest_version")?,
-        grant_count: r.try_get::<i64, _>("grant_count")? as u64,
-        version: r.try_get("version")?,
-        updated_at: r.try_get("updated_at")?,
-    })
-}
-fn entry_from_row(r: sqlx::mysql::MySqlRow) -> Result<SkillWorkspaceEntry, sqlx::Error> {
-    Ok(SkillWorkspaceEntry {
-        id: r.try_get("id")?,
-        parent_id: r.try_get("parent_id")?,
-        name: r.try_get("name")?,
-        path: r.try_get("path")?,
-        entry_type: r.try_get("entry_type")?,
-        mime_type: r.try_get("mime_type")?,
-        artifact_id: r.try_get("artifact_id")?,
-        content_hash: r.try_get("content_hash")?,
-        size_bytes: r.try_get("size_bytes")?,
-        editable: r.try_get("editable")?,
-        updated_at: r.try_get("updated_at")?,
-    })
-}
-
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn workspace_zip(entries: &[(&str, Option<&[u8]>)]) -> Vec<u8> {
-        let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
-        let options = zip::write::SimpleFileOptions::default();
-        for (path, content) in entries {
-            if let Some(content) = content {
-                writer.start_file(*path, options).expect("start ZIP file");
-                writer.write_all(content).expect("write ZIP file");
-            } else {
-                writer
-                    .add_directory(format!("{path}/"), options)
-                    .expect("add ZIP directory");
-            }
-        }
-        writer.finish().expect("finish ZIP").into_inner()
-    }
-
-    #[test]
-    fn markdown_links_follow_moved_files_and_sources() {
-        let content = "[guide](docs/guide.md)\n![logo](assets/logo.png)\n";
-        let rewritten = rewrite_markdown_links("SKILL.md", "SKILL.md", content, "docs", "manual")
-            .expect("rewrite links")
-            .expect("content changed");
-        assert!(rewritten.contains("(manual/guide.md)"));
-        assert!(rewritten.contains("(assets/logo.png)"));
-
-        let moved_source = rewrite_markdown_links(
-            "docs/guide.md",
-            "manual/guide.md",
-            "[root](../SKILL.md)\n",
-            "docs",
-            "manual",
-        )
-        .expect("rewrite moved source")
-        .expect("source-relative link changed");
-        assert!(moved_source.contains("(../SKILL.md)"));
-    }
-
-    #[test]
-    fn workspace_zip_requires_root_skill_markdown() {
-        let archive = workspace_zip(&[("README.md", Some(b"# Readme"))]);
-        let error = parse_workspace_zip(&archive).expect_err("missing root must fail");
-        assert_eq!(error.code, "SKILL_ROOT_REQUIRED");
-    }
-
-    #[test]
-    fn workspace_zip_rejects_parent_traversal_and_duplicate_paths() {
-        let traversal = workspace_zip(&[("../SKILL.md", Some(b"# Unsafe"))]);
-        let error = parse_workspace_zip(&traversal).expect_err("Zip Slip must fail");
-        assert_eq!(error.code, "SKILL_PATH_INVALID");
-
-        let duplicate = workspace_zip(&[
-            ("SKILL.md", Some(b"# One")),
-            ("docs/guide.md", Some(b"# Guide")),
-            ("docs", Some(b"conflicts with the implicit directory")),
-        ]);
-        let error = parse_workspace_zip(&duplicate).expect_err("duplicates must fail");
-        assert_eq!(error.code, "SKILL_DUPLICATE_PATH");
-    }
-
-    #[test]
-    fn workspace_zip_accepts_a_valid_workspace() {
-        let archive = workspace_zip(&[
-            (
-                "SKILL.md",
-                Some(b"---\nname: Skill\ndescription: Reusable instructions\n---\n\n# Skill\n[Guide](docs/guide.md)"),
-            ),
-            ("docs", None),
-            ("docs/guide.md", Some(b"# Guide")),
-        ]);
-        let entries = parse_workspace_zip(&archive).expect("valid workspace ZIP");
-        assert_eq!(entries.len(), 3);
-        assert!(entries.iter().any(|entry| entry.path == "SKILL.md"));
-    }
-
-    #[test]
-    fn skill_document_round_trips_description_and_body() {
-        let content = render_skill_document(
-            "browser-helper",
-            "Use tools: safely and consistently",
-            "# Instructions\n\nOpen the requested page.\n",
-        )
-        .expect("render Skill document");
-        let document = parse_skill_document(&content).expect("parse Skill document");
-        assert_eq!(document.metadata.name, "browser-helper");
-        assert_eq!(
-            document.metadata.description,
-            "Use tools: safely and consistently"
-        );
-        assert_eq!(
-            document.body,
-            "# Instructions\n\nOpen the requested page.\n"
-        );
-    }
-
-    #[test]
-    fn skill_document_requires_a_description() {
-        let error = parse_skill_document("---\nname: helper\ndescription: ''\n---\n\n# Body")
-            .expect_err("empty description must fail");
-        assert_eq!(error.code, "SKILL_DESCRIPTION_REQUIRED");
-    }
-}
+#[path = "skills_control_tests.rs"]
+mod tests;

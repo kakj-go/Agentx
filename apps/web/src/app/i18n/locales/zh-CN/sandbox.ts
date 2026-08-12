@@ -1,0 +1,31 @@
+const translations = {
+  "create": "新建沙箱配置",
+  "details": "详情",
+  "saved": "沙箱配置已保存",
+  "department": "所属部门",
+  "description": "管理 OpenSandbox Runner、Tag 镜像、安全边界和不可变版本。",
+  "invalidJson": "JSON 格式无效",
+  "created": "沙箱配置已创建",
+  "timeoutSeconds": "最长运行时间（秒）",
+  "edit": "编辑沙箱配置",
+  "newVersion": "创建不可变版本",
+  "versionCreated": "新版本已创建",
+  "runner": "Runner",
+  "image": "镜像",
+  "imageTag": "镜像 Tag",
+  "invalidImageTag": "镜像必须包含有效 Tag，例如 registry.example/runner:stable",
+  "cpuMillis": "CPU（milliCPU，1000 = 1 核）",
+  "memoryGb": "内存（GB）",
+  "pidsLimit": "进程数（个）",
+  "diskGb": "磁盘（GB）",
+  "outputKb": "输出上限（KB）",
+  "networkPolicy": "网络策略 JSON",
+  "limits": "资源上限",
+  "configurationHash": "配置 Hash",
+  "versionHistory": "不可变版本历史",
+  "title": "沙箱配置",
+  "search": "搜索配置、Runner 或镜像 Tag",
+  "deleted": "删除成功"
+} as const
+
+export default translations

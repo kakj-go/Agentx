@@ -47,7 +47,7 @@ Sticky Note（默认 240×160，最小 150×80）和非嵌套 Group（`collapsed
 | Editor Document | Draft Revision、Workflow Version 的独立字段 | 节点坐标、视口、注释、分组、折叠状态等纯编辑信息 | 否；仅用于再次查看和编辑 |
 | Debug Overlay | 独立调试表和 Artifact | Pin Data、Mock、临时输入、选中的历史输出 | 否；只在手动调试快照中引用 |
 
-引入 `WorkflowDefinition 3.0`，删除 Node 中的 `position`，Connection 增加稳定 `order`。默认 `deterministic` 执行顺序由端口和 Connection Order 决定，编译器不再读取画布坐标；`parallel` 仍是显式设置。项目尚未发布，不保留 2.0 双读逻辑，Migration/Fixture/Schema 一次性升级。
+引入 `WorkflowDefinition 4.0`，删除 Node 中的 `position`，增加固定 Start/End 边界，并为 Connection 增加稳定 `order`。默认 `deterministic` 执行顺序由端口和 Connection Order 决定，编译器不再读取画布坐标；`parallel` 仍是显式设置。项目尚未发布，不保留 3.0 及更早版本双读逻辑，Migration/Fixture/Schema 一次性升级。
 
 Draft 保存请求原子提交 `definition + editorDocument + expectedRevision`。Revision 的 Content Hash 分为 `definitionHash` 和 `editorHash`；只有 Definition 变化影响编译和发布 Diff。Version 保留 Editor Document 快照用于只读查看，但 Worker 永远不读取它。
 
@@ -140,7 +140,7 @@ Studio 使用固定工作区布局：中央无限画布左上角提供按需 Nod
 
 | 模块 | M6 改动 | 不承担内容 |
 |---|---|---|
-| `agentx-domain` | Definition 3.0、显式 Connection Order、Execution Source/Debug Plan 值对象 | React Flow、表单或运行高亮 |
+| `agentx-domain` | Definition 4.0、显式 Start/End 和 Connection Order、Execution Source/Debug Plan 值对象 | React Flow、表单或运行高亮 |
 | `agentx-node-protocol` | Manifest 展示/UI 元数据，运行请求中的 Version 关联可空 | n8n Node/Credential 协议 |
 | `agentx-application` | `ExecutionRuntime` 接收 Version/Draft Revision Source；Node Catalog、Debug Overlay Port | SQL、Axum 和前端 DTO |
 | `agentx-infrastructure` | Catalog/Draft Revision Repository、来源解析、编译与 Execution Snapshot 原子写入 | 页面状态和可变进程内快照 |
@@ -156,7 +156,7 @@ Studio 使用固定工作区布局：中央无限画布左上角提供按需 Nod
 
 | 编号 | 状态 | 依赖 | 交付物 | 验收条件 |
 |---|---|---|---|---|
-| STU-001 | done | RUN-001–005、WCP-001–004 | Definition 3.0、Editor Document、Debug Overlay、Execution Source ADR/Schema/Migration | 运行图不含坐标/Pin/Mock；2.0 无双读；空库、升级库和 Schema Fixture 通过 |
+| STU-001 | done | RUN-001–005、WCP-001–004 | Definition 4.0、Editor Document、Debug Overlay、Execution Source ADR/Schema/Migration | 运行图不含坐标/Pin/Mock；3.0 及更早版本无双读；空库、升级库和 Schema Fixture 通过 |
 | STU-002 | done | STU-001、RUN-002、AGT-013 | Node Catalog Reconcile、Repository、OpenAPI 和 Manifest 补全 | Studio API 与 Compiler 对同一 type/version 返回相同 Manifest Hash，Agent/Code/Approval 在 Catalog 可见 |
 | STU-003 | done | STU-001–002、RUN-014 | Draft Revision Debug Execution Port、gRPC、Repository 和快照创建 | 指定 Revision 被原子固化；后续修改 Draft 不改变运行；Version 与 Draft 共用同一 Runtime |
 
@@ -175,7 +175,7 @@ Studio 使用固定工作区布局：中央无限画布左上角提供按需 Nod
 |---|---|---|---|---|
 | STU-008 | done | STU-002、STU-005 | JSON Schema + UI Schema 表单引擎和统一 Node Inspector | 必填、条件字段、Collection、Mapper、Credential、Provider 和字段错误前后端一致 |
 | STU-009 | done | RES-007/011、STU-008 | Model/MCP Tool/Skill/RAG/Memory/Credential/Sandbox Profile 选择器 | 只展示用户可见且 Workflow Identity 可授权资源，递归依赖和缺失 Grant 可解释 |
-| STU-010 | done | RUN-004、STU-008 | Agentx Expression/Prompt/JSON/Code 编辑器、补全、校验和脱敏预览 | 不执行任意 JavaScript；服务端 AST 校验为权威；Secret 不进入补全、预览和日志 |
+| STU-010 | done | RUN-004、STU-008 | Agentx Expression/JSON/Code 编辑器、普通 Prompt 文本输入、补全、校验和脱敏预览 | 不执行任意 JavaScript；服务端 AST 校验为权威；Secret 不进入补全、预览和日志 |
 
 ### M6-3：真实调试与可观测
 
@@ -191,7 +191,7 @@ Studio 使用固定工作区布局：中央无限画布左上角提供按需 Nod
 |---|---|---|---|---|
 | STU-014 | done | STU-001、STU-007–010 | Draft Diff、发布级校验、Version、Deployment、回滚和只读版本视图 | 发布只固化 Definition/资源/Manifest 和 Editor 快照，任何 Debug Overlay 均不进入运行 Version |
 | STU-015 | done | STU-005–014 | 画布性能、键盘/焦点、中文/英文、浅色/深色和桌面视觉门禁 | 1280x800、1440x900、1920x1080 无遮挡；大型 Workflow 基线和降级策略有自动化证据 |
-| STU-016 | done | STU-001–015 | 临时 Kubernetes Namespace 的完整 Studio Playwright E2E 和验收证据 | 仅通过 UI 创建、拖拽、连线、配置、调试和发布 Agent+MCP Tool+Code+Approval Workflow；`failures=0`、`skipped=0` |
+| STU-016 | done | STU-001–015 | 临时 Kubernetes Namespace 的完整 Studio Playwright E2E 和验收证据 | 仅通过 UI 创建、拖拽、连线、配置、调试和发布 Agent+MCP Tool 附件+Code+Approval Workflow；`failures=0`、`skipped=0` |
 
 ## 6. 依赖与关键路径
 
@@ -220,7 +220,7 @@ STU-005..014 --> STU-015 Quality --> STU-016 E2E
 
 ## 8. 测试策略
 
-- Rust：Definition 3.0、Catalog Reconcile、Manifest Hash、Draft Debug Snapshot、资源快照和四类 Debug Plan 单元/集成测试。
+- Rust：Definition 4.0、Catalog Reconcile、Manifest Hash、Draft Debug Snapshot、资源快照和四类 Debug Plan 单元/集成测试。
 - 前端：Serializer、增量 GraphIndex、Connection 状态机与显式多输入选择、实体 Patch History、引用隔离、Schema Form、Autosave 和 100ms Runtime 批处理测试。
 - 契约：OpenAPI 生成、runtime gRPC、Node/Sandbox Context 中可选 Version 与必填 Snapshot ID 的兼容测试。
 - E2E：按项目标准创建临时 Kubernetes Namespace；Fixture 只准备账号和外部依赖，不能通过 API/SQL 写入被测 Workflow。17 项本地 Builtin 必须通过 Studio UI 创建、配置、Handle 连线、保存和运行三条覆盖变换、多输入与正式错误结果的 Workflow。
@@ -238,7 +238,7 @@ STU-005..014 --> STU-015 Quality --> STU-016 E2E
 
 ## 10. 对 M7 的稳定输出
 
-- Definition 3.0、Editor Document、Node Catalog 和 Manifest UI 契约。
+- Definition 4.0、Editor Document、Node Catalog 和 Manifest UI 契约。
 - Version Source 与 Draft Revision Source 共用的 ExecutionRuntime。
 - 完整 Workflow Studio、调试快照、Trace 和发布闭环。
 - Agentx 自有表达式和资源授权 UI；无 n8n 兼容债务。

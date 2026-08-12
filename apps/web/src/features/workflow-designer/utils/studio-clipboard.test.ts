@@ -22,5 +22,5 @@ describe('Studio clipboard', () => {
   })
 })
 
-function actionNode(id: string): StudioNode { return { id, type: 'manifest', position: { x: 0, y: 0 }, data: { editorKind: 'action', nodeType: 'agent', typeVersion: 1, label: 'Agent', parameters: {}, resourceReferences: [], settings: {}, disabled: false } } }
+function actionNode(id: string): StudioNode { return { id, type: 'manifest', position: { x: 0, y: 0 }, data: { editorKind: 'action', nodeType: 'agent', typeVersion: 1, label: 'Agent', key: 'agent', parameters: {}, outputProjection: {}, contextWrites: [], resourceReferences: [], settings: {}, disabled: false } } }
 function bindingNode(bindingId: string): StudioNode { return { id: `binding:${bindingId}`, type: 'attachment', position: { x: 0, y: 120 }, data: { editorKind: 'binding', bindingId, bindingRole: 'ai_model', resourceType: 'model', resourceId: 'model-1', operation: 'use', label: 'Model' } } }

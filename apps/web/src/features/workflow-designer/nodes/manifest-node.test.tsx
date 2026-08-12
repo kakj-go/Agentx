@@ -62,6 +62,23 @@ describe('ManifestNode roles', () => {
     expect(main).toHaveClass('react-flow__handle-right')
     expect(error).toHaveClass('react-flow__handle-right')
     expect(Number.parseFloat(error.style.top)).toBeGreaterThan(Number.parseFloat(main.style.top))
+    const mainLabel = node.querySelector<HTMLElement>('[data-port-type="source"][data-port-id="main"]')!
+    const errorLabel = node.querySelector<HTMLElement>('[data-port-type="source"][data-port-id="error"]')!
+    expect(mainLabel.style.top).toBe(main.style.top)
+    expect(errorLabel.style.top).toBe(error.style.top)
+    expect(main).toHaveClass('!grid', '!place-items-center')
+    expect(mainLabel).toHaveClass('items-center', 'leading-none')
+  })
+
+  it('centers bottom resource labels beneath their handles', () => {
+    const value = manifest('agent')
+    useCanvasRenderStore.setState({ manifests: new Map([['agent@1', value]]), runtimeStatuses: new Map(), bindingSummaries: new Map(), occupiedHandlesByNodeId: new Map(), zoomTier: 'full' })
+    render(<ReactFlowProvider><ManifestNode {...props('agent')} /></ReactFlowProvider>)
+    const node = screen.getByTestId('studio-node-node-agent')
+    const handle = node.querySelector<HTMLElement>('.react-flow__handle.target[data-handleid="binding:ai_model"]')!
+    const label = node.querySelector<HTMLElement>('[data-port-type="target"][data-port-id="binding:ai_model"]')!
+    expect(label.style.left).toBe(handle.style.left)
+    expect(label).toHaveClass('w-16', 'text-center', '-translate-x-1/2')
   })
 
   it('keeps quick add visible only for unoccupied or repeatable ports', () => {

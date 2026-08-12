@@ -18,7 +18,7 @@
 
 1. 创建 Workflow 时同事务创建 Draft、Owner Member 和 Workflow Service Identity。
 2. 保存 Draft 并对过期 Revision 返回 `DRAFT_REVISION_CONFLICT`，本地未保存内容可由前端冲突对话框保留。
-3. 创建 Credential、Model Provider/Deployment/Alias、Tool/Version、Skill/Version、LightRAG Resource 和 Mem0 Namespace。
+3. 创建 Credential、完整 Model Deployment/Alias、Tool/Version、Skill/Version、LightRAG Resource 和 Mem0 Namespace。
 4. Credential 创建与详情响应不包含明文；跨租户 Credential ID 读取被拒绝。
 5. Skill ZIP 上传、版本固化、直接及间接依赖展开和循环拒绝可用。
 6. 未授权的直接资源和 Skill 递归依赖以结构化 `MissingGrant[]` 返回；补齐 Workflow Service Identity Grant 后校验通过。

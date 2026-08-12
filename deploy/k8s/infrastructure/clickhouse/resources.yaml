@@ -52,7 +52,7 @@ spec:
               command:
                 - sh
                 - -ec
-                - clickhouse-client --user "$CLICKHOUSE_USER" --password "$CLICKHOUSE_PASSWORD" --query "EXISTS DATABASE agentx" | grep -qx 1
+                - clickhouse-client --user "$CLICKHOUSE_USER" --password="$CLICKHOUSE_PASSWORD" --query "EXISTS DATABASE agentx" | grep -qx 1
             initialDelaySeconds: 5
           volumeMounts:
             - name: data

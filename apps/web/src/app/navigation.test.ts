@@ -14,9 +14,9 @@ describe('navigation contract', () => {
 
   it('provides a Chinese and English label for every item', () => {
     for (const item of navigationItems) {
-      const key = item.labelKey.replace('nav.', '') as keyof typeof resources['zh-CN']['translation']['nav']
-      expect(resources['zh-CN'].translation.nav[key]).toBeTruthy()
-      expect(resources['en-US'].translation.nav[key]).toBeTruthy()
+      const key = item.labelKey.replace('navigation.', '') as keyof typeof resources['zh-CN']['translation']['navigation']
+      expect(resources['zh-CN'].translation.navigation[key]).toBeTruthy()
+      expect(resources['en-US'].translation.navigation[key]).toBeTruthy()
     }
   })
 })

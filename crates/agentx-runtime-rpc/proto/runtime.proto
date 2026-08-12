@@ -25,9 +25,13 @@ message RequestExecutionRequest {
   string input_json = 7;
   optional string idempotency_key = 8;
   optional string caller_execution_id = 9;
+  optional string parent_execution_id = 15;
+  optional string trace_id = 16;
+  optional string caller_node_execution_id = 17;
   string debug_plan_json = 11;
   string debug_overlay_json = 12;
   string resource_snapshots_json = 13;
+  string context_json = 14;
 }
 
 message VersionSource {

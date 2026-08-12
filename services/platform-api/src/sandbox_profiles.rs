@@ -14,10 +14,17 @@ use uuid::Uuid;
 
 use crate::{
     control_common::{audit, require_department_scope, validate_name},
-    error::{AppError, AppResult},
+    error::{AppError, AppResult, UniqueConstraint, map_unique},
     grants::require_resource_visible,
     security::AuthActor,
     state::AppState,
+};
+
+pub(crate) const SANDBOX_PROFILE_NAME: UniqueConstraint = UniqueConstraint {
+    index: "uq_sandbox_profile_name",
+    code: "SANDBOX_PROFILE_NAME_EXISTS",
+    field: "name",
+    message: "A Sandbox Profile with this name already exists",
 };
 
 #[derive(Deserialize)]
@@ -144,13 +151,14 @@ pub async fn create_profile(
     actor.require("sandbox:manage")?;
     require_department_scope(&state.pool, &actor, input.owner_department_id).await?;
     let name = validate_name(&input.name, 160)?;
+    ensure_profile_name_available(&state, actor.tenant_id, &name, None).await?;
     let description = validate_description(input.description)?;
     validate_configuration(&input.configuration)?;
     let profile_id = Uuid::now_v7();
     let version_id = Uuid::now_v7();
     let hash = configuration_hash(&input.configuration)?;
     let mut transaction = state.pool.begin().await?;
-    sqlx::query("INSERT INTO sandbox_profiles(id,tenant_id,name,description,owner_department_id,created_by) VALUES(?,?,?,?,?,?)").bind(profile_id).bind(actor.tenant_id).bind(&name).bind(&description).bind(input.owner_department_id).bind(actor.user_id).execute(&mut *transaction).await?;
+    sqlx::query("INSERT INTO sandbox_profiles(id,tenant_id,name,description,owner_department_id,created_by) VALUES(?,?,?,?,?,?)").bind(profile_id).bind(actor.tenant_id).bind(&name).bind(&description).bind(input.owner_department_id).bind(actor.user_id).execute(&mut *transaction).await.map_err(|error| map_unique(error, &[SANDBOX_PROFILE_NAME]))?;
     insert_version(
         &mut transaction,
         &actor,
@@ -198,6 +206,7 @@ pub async fn update_profile(
     actor.require("sandbox:manage")?;
     require_resource_visible(&state, &actor, "sandbox_profile", id).await?;
     let name = validate_name(&input.name, 160)?;
+    ensure_profile_name_available(&state, actor.tenant_id, &name, Some(id)).await?;
     let description = validate_description(input.description)?;
     if !matches!(input.status.as_str(), "active" | "disabled") {
         return Err(AppError::bad_request(
@@ -205,7 +214,7 @@ pub async fn update_profile(
             "Sandbox Profile status is invalid",
         ));
     }
-    let changed=sqlx::query("UPDATE sandbox_profiles SET name=?,description=?,status=?,version=version+1 WHERE tenant_id=? AND id=? AND version=?").bind(name).bind(description).bind(input.status).bind(actor.tenant_id).bind(id).bind(input.version).execute(&state.pool).await?;
+    let changed=sqlx::query("UPDATE sandbox_profiles SET name=?,description=?,status=?,version=version+1 WHERE tenant_id=? AND id=? AND version=?").bind(name).bind(description).bind(input.status).bind(actor.tenant_id).bind(id).bind(input.version).execute(&state.pool).await.map_err(|error| map_unique(error, &[SANDBOX_PROFILE_NAME]))?;
     if changed.rows_affected() != 1 {
         return Err(AppError::conflict(
             "SANDBOX_PROFILE_VERSION_CONFLICT",
@@ -410,6 +419,20 @@ fn validate_description(value: Option<String>) -> AppResult<Option<String>> {
         ))
     } else {
         Ok(value)
+    }
+}
+
+async fn ensure_profile_name_available(
+    state: &AppState,
+    tenant: Uuid,
+    name: &str,
+    exclude: Option<Uuid>,
+) -> AppResult<()> {
+    let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sandbox_profiles WHERE tenant_id=? AND name=? AND (? IS NULL OR id<>?))").bind(tenant).bind(name).bind(exclude).bind(exclude).fetch_one(&state.pool).await?;
+    if exists {
+        Err(AppError::unique(SANDBOX_PROFILE_NAME))
+    } else {
+        Ok(())
     }
 }
 

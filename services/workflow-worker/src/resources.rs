@@ -233,16 +233,21 @@ impl ResourceRuntimes {
                     resource,
                     messages,
                     tools: Vec::new(),
-                    parameters: parameters
-                        .get("parameters")
-                        .cloned()
-                        .unwrap_or_else(|| json!({})),
+                    parameters: json!({}),
                 },
             )
             .await?;
+        let text = response
+            .message
+            .get("content")
+            .and_then(Value::as_str)
+            .or_else(|| response.message.as_str())
+            .map(str::to_owned)
+            .unwrap_or_else(|| response.message.to_string());
+        let structured_json = serde_json::from_str::<Value>(&text).unwrap_or(Value::Null);
         Ok(completed(item(
             task,
-            json!({"message":response.message,"toolCalls":response.tool_calls,"usage":{"inputTokens":response.input_tokens,"outputTokens":response.output_tokens,"costMicros":response.cost_micros,"estimated":response.usage_estimated},"stopReason":response.stop_reason,"partial":response.partial}),
+            json!({"text":text,"message":response.message,"structuredJson":structured_json,"citations":[],"toolCalls":response.tool_calls,"usage":{"inputTokens":response.input_tokens,"outputTokens":response.output_tokens,"costMicros":response.cost_micros,"estimated":response.usage_estimated},"finishReason":response.stop_reason,"stopReason":response.stop_reason,"partial":response.partial}),
         )))
     }
 
@@ -269,7 +274,7 @@ impl ResourceRuntimes {
             .await?;
         Ok(completed(item(
             task,
-            json!({"content":response.content,"structuredContent":response.structured_content,"isError":response.is_error}),
+            json!({"content":response.content,"textContent":response.content,"structuredContent":response.structured_content,"isError":response.is_error}),
         )))
     }
 
@@ -310,7 +315,7 @@ impl ResourceRuntimes {
                 ));
             }
         };
-        let value = self
+        let mut value = self
             .rag
             .execute(
                 context,
@@ -324,6 +329,12 @@ impl ResourceRuntimes {
                 },
             )
             .await?;
+        if let Some(result) = value.as_object_mut() {
+            result.entry("documents").or_insert_with(|| json!([]));
+            result.entry("chunks").or_insert_with(|| json!([]));
+            result.entry("citations").or_insert_with(|| json!([]));
+            result.entry("recordIds").or_insert_with(|| json!([]));
+        }
         Ok(completed(item(task, value)))
     }
 
@@ -351,7 +362,7 @@ impl ResourceRuntimes {
                 ));
             }
         };
-        let value = self
+        let mut value = self
             .memory
             .execute(
                 context,
@@ -365,6 +376,10 @@ impl ResourceRuntimes {
                 },
             )
             .await?;
+        if let Some(result) = value.as_object_mut() {
+            result.entry("records").or_insert_with(|| json!([]));
+            result.entry("recordIds").or_insert_with(|| json!([]));
+        }
         Ok(completed(item(task, value)))
     }
 
@@ -694,9 +709,19 @@ impl ResourceRuntimes {
             );
             return Err(error);
         }
+        let stdout_text = String::from_utf8_lossy(&stdout).into_owned();
+        let structured_outputs = serde_json::from_str::<Value>(&stdout_text)
+            .ok()
+            .and_then(|value| value.get("outputs").cloned())
+            .filter(Value::is_object)
+            .unwrap_or_else(|| json!({}));
+        let downloaded_artifacts = binary
+            .iter()
+            .map(|(name, value)| json!({"name":name,"artifactId":value.artifact_handle,"fileName":value.file_name,"contentType":value.content_type,"sizeBytes":value.size_bytes}))
+            .collect::<Vec<_>>();
         let mut output = item(
             task,
-            json!({"stdout":String::from_utf8_lossy(&stdout),"stderr":String::from_utf8_lossy(&stderr),"exitCode":exit_code,"partial":partial,"sandboxId":lease.sandbox_id}),
+            json!({"stdout":stdout_text,"stderr":String::from_utf8_lossy(&stderr),"exitCode":exit_code,"partial":partial,"sandboxId":lease.sandbox_id,"downloadedArtifacts":downloaded_artifacts,"structuredOutputs":structured_outputs}),
         );
         output.binary = binary;
         Ok(completed(output))
@@ -742,13 +767,32 @@ pub fn reference(task: &RuntimeTask, kind: ResourceType) -> RuntimeResult<Resour
         })
 }
 fn messages(parameters: &Value, task: &RuntimeTask) -> Vec<Value> {
-    if let Some(values) = parameters.get("messages").and_then(Value::as_array) {
-        values.clone()
-    } else {
-        vec![
-            json!({"role":"user","content":parameters.get("prompt").cloned().unwrap_or_else(||first_input(task))}),
-        ]
+    let mut messages = configured_model_messages(parameters);
+    if messages.is_empty() {
+        messages.push(json!({"role":"user","content":first_input(task)}));
     }
+    messages
+}
+
+fn configured_model_messages(parameters: &Value) -> Vec<Value> {
+    let mut messages = Vec::new();
+    if let Some(prompt) = parameters
+        .get("prompt")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|prompt| !prompt.is_empty())
+    {
+        messages.push(json!({"role":"user","content":prompt}));
+    }
+    if let Some(question) = parameters
+        .get("userQuestion")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|question| !question.is_empty())
+    {
+        messages.push(json!({"role":"user","content":question}));
+    }
+    messages
 }
 pub fn first_input(task: &RuntimeTask) -> Value {
     task.inputs
@@ -916,6 +960,20 @@ mod tests {
         assert_eq!(visible, b"abc");
         assert_eq!(full, b"abcdef");
         assert!(partial);
+    }
+
+    #[test]
+    fn model_prompt_and_user_question_become_ordered_user_messages() {
+        assert_eq!(
+            configured_model_messages(&json!({
+                "prompt": "Summarize the input",
+                "userQuestion": "First question"
+            })),
+            vec![
+                json!({"role":"user","content":"Summarize the input"}),
+                json!({"role":"user","content":"First question"}),
+            ]
+        );
     }
 
     #[test]

@@ -100,7 +100,7 @@ M5-0 的固定退出检查：
 `agentx-e2e` Namespace 只承载 Agentx 和测试依赖，OpenSandbox Docker Server 运行在 Docker Desktop 主机或由脚本探测。脚本必须：
 
 1. 检查 OpenSandbox `/health`、固定 Spec/组件兼容矩阵、API Key 和本次测试前 Sandbox 清单。
-2. 使用版本化 Fixture 创建包含 Agent、MCP Tool、Code 和 Approval 的 Workflow，运行一次成功和一次失败分支；只通过 Studio UI 创建和配置该 Workflow 的验收归入 M6 STU-002/005/008～011/016。
+2. 使用版本化 Fixture 创建包含 Agent（挂载 MCP Tool）、Code 和 Approval 的 Workflow，运行一次成功和一次失败分支；只通过 Studio UI 创建和配置该 Workflow 的验收归入 M6 STU-002/005/008～011/016。
 3. 证明 Python/JavaScript/Shell 只在 Sandbox 执行，并验证文件 Artifact、stdout/stderr 和退出码。
 4. 证明默认拒绝网络、允许域名、资源超限、TTL、取消、Worker 强退和 Sandbox Manager 重启后的回收。
 5. 断言每个测试 Sandbox 已销毁，保存 OpenSandbox 和 Kubernetes 日志，最后删除 Namespace；失败时也执行清理，`KeepNamespace` 只保留调试资源。
@@ -150,7 +150,7 @@ Kubernetes E2E 之前必须先运行不依赖集群的协议测试：固定 Open
 |---|---|---|---|
 | Agent/Code 节点画布搜索、拖拽和 Manifest 参数表单 | 移交 M6 | STU-002、STU-005、STU-008 | Node Manifest 驱动，不在画布硬编码节点协议 |
 | Model/MCP/Skill/RAG/Memory/Credential/Sandbox Profile 统一资源选择 | 移交 M6 | STU-009 | 用户可见性和 Workflow Grant 同时通过 |
-| 仅通过 UI 创建 Agent、MCP Tool、Code、Approval Workflow 并运行 | 移交 M6 | STU-005、STU-008–011、STU-016 | Playwright 真实拖拽、连线、Manifest 配置、保存和 Draft Revision 运行，不依赖 Fixture 写入被测业务数据 |
+| 仅通过 UI 创建 Agent、MCP Tool 附件、Code、Approval Workflow 并运行 | 移交 M6 | STU-005、STU-008–011、STU-016 | Playwright 真实拖拽、连线、Manifest 配置、保存和 Draft Revision 运行，不依赖 Fixture 写入被测业务数据 |
 | Agent/Tool/Sandbox Trace 在画布中的定位和调试联动 | 移交 M6 | STU-013 | 从 Trace 定位 iteration、runIndex、Attempt、Artifact 和失败节点 |
 | CPU、PID、磁盘和 TTL 的实际强制及租户配额无相互影响 | 暂不重试，移交 M7 | INT-006、INT-010 | 生产候选集群故障注入、最终 MySQL 状态和残留 Sandbox 断言 |
 | gVisor/Kata RuntimeClass、IPv4/IPv6 egress 和跨租户攻击隔离 | 暂不重试，移交 M7 | INT-010、INT-011 | 实际 Sandbox Pod RuntimeClass、网络策略和两租户安全矩阵 |
@@ -160,7 +160,7 @@ Kubernetes E2E 之前必须先运行不依赖集群的协议测试：固定 Open
 
 ## 10. 向 M6/M7 输出
 
-- Model、MCP Tool、Skill、RAG、Memory、Agent 和 Code Node Manifest/Schema。
+- Model、RAG、Memory、Agent 和 Code Node Manifest/Schema，以及 Agent 的 MCP Tool、Skill Binding Slot 契约。
 - 资源授权解释、预算、循环、Sandbox Profile 和 OpenSandbox Adapter 稳定 API。
 - Agent/Tool/Sandbox Trace、成本和 Artifact 引用。
 - 可由 Studio 配置、由 Application/Evaluation 复用的真实 Execution 运行边界。

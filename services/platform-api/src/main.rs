@@ -8,6 +8,7 @@ mod connection_test;
 mod control_common;
 mod credentials;
 mod datasets;
+mod deletion;
 mod error;
 mod external_resources;
 mod governance;
@@ -18,11 +19,13 @@ mod migration_command;
 mod models;
 mod models_control;
 mod operations;
+mod resource_access;
 mod runtime_operations;
 mod sandbox_profiles;
 mod security;
 mod skills_control;
 mod state;
+mod workflow_packages;
 mod workflow_studio;
 mod workflows;
 use agentx_infrastructure::{
@@ -235,12 +238,15 @@ fn start_health_checks(
 
 #[cfg(test)]
 mod migration_tests;
+#[cfg(test)]
+mod uniqueness_contract_tests;
 
 #[cfg(test)]
 static TESTCONTAINER_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 #[cfg(test)]
 mod integration_tests {
+    use crate::catalog;
     use agentx_application::{
         ArtifactStore, ArtifactWrite, Outbox, OutboxDispatcher, OutboxMessage,
     };
@@ -255,12 +261,11 @@ mod integration_tests {
             RuntimeRepository, TaskResult,
         },
     };
-    use agentx_node_protocol::Item;
     use object_store::memory::InMemory;
     use secrecy::SecretString;
     use serde_json::{Value, json};
     use sqlx::Row;
-    use std::{collections::BTreeMap, sync::Arc, time::Duration};
+    use std::{sync::Arc, time::Duration};
     use testcontainers::{
         GenericImage, ImageExt,
         core::{IntoContainerPort, WaitFor},
@@ -379,6 +384,9 @@ mod integration_tests {
         mysql::run_migrations(&pool)
             .await
             .expect("second migration run");
+        catalog::reconcile_builtin_catalog(&pool)
+            .await
+            .expect("reconcile Workflow 4.0 node catalog");
         let runtime_tables: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name IN ('node_definitions','node_definition_versions','execution_snapshots','node_executions','node_attempts','execution_edge_deliveries','item_lineage','execution_outbox','worker_leases','runtime_idempotency_keys','checkpoints','checkpoint_artifacts','execution_resume_tokens','wait_subscriptions','resume_webhook_bindings','side_effect_confirmations','node_invocation_handles','runtime_commands','projection_receipts','worker_capabilities','evaluation_run_cases','evaluation_rule_results','trigger_bindings','quota_policies','quota_reservations','quota_usage_ledger','artifact_references','retention_policies','retention_runs','retention_items','release_schema_contract')")
             .fetch_one(&pool).await.expect("M4 runtime tables");
         assert_eq!(runtime_tables, 31);
@@ -705,7 +713,7 @@ mod integration_tests {
                 .as_array()
                 .expect("permission list")
                 .len(),
-            57
+            70
         );
         let runtime_permissions: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM permissions WHERE permission_key IN ('execution:run','execution:fork','execution:resume')")
             .fetch_one(&pool).await.expect("M4 runtime permissions");
@@ -790,71 +798,48 @@ mod integration_tests {
         .expect("credential secret versions");
         assert_eq!(secret_versions, 1, "renaming must not rotate the secret");
 
-        let provider = router
-            .clone()
-            .oneshot(json_request(
-                "POST",
-                "/api/v1/models/providers",
-                json!({
-                    "name":"M2 Provider",
-                    "providerType":"openai_compatible",
-                    "endpoint":"https://models.example.test/v1",
-                    "credentialId":credential_id,
-                    "ownerDepartmentId":root_department
-                }),
-                Some(&access_token),
-            ))
-            .await
-            .expect("create provider");
-        assert_eq!(provider.status(), StatusCode::CREATED);
-        let provider_id: uuid::Uuid =
-            serde_json::from_value(response_json(provider).await["id"].clone())
-                .expect("provider id");
-        let deployment = router
-            .clone()
-            .oneshot(json_request(
-                "POST",
-                "/api/v1/models/deployments",
-                json!({
-                    "providerId":provider_id,
-                    "name":"M2 GPT Deployment",
-                    "modelName":"gpt-m2",
-                    "endpointOverride":null,
-                    "credentialId":null,
-                    "defaultParameters":{}
-                }),
-                Some(&access_token),
-            ))
-            .await
-            .expect("create model deployment");
-        assert_eq!(deployment.status(), StatusCode::CREATED);
-        let deployment_id: uuid::Uuid =
-            serde_json::from_value(response_json(deployment).await["id"].clone())
-                .expect("deployment id");
         let model = router
             .clone()
             .oneshot(json_request(
                 "POST",
                 "/api/v1/models/aliases",
-                json!({"alias":"m2-chat","deploymentId":deployment_id}),
+                json!({
+                    "connectionName":"M2 Connection",
+                    "providerType":"openai_compatible",
+                    "endpoint":"https://models.example.test/v1",
+                    "credentialId":credential_id,
+                    "ownerDepartmentId":root_department,
+                    "alias":"m2-chat",
+                    "modelName":"gpt-m2",
+                    "maxInputTokens":32000,
+                    "maxOutputTokens":4096,
+                    "defaultParameters":{}
+                }),
                 Some(&access_token),
             ))
             .await
-            .expect("create model alias");
+            .expect("create model");
         assert_eq!(model.status(), StatusCode::CREATED);
-        let model_id: uuid::Uuid = serde_json::from_value(response_json(model).await["id"].clone())
-            .expect("model alias id");
+        let model = response_json(model).await;
+        let model_id: uuid::Uuid = serde_json::from_value(model["id"].clone()).expect("model id");
+        let deployment_id: uuid::Uuid =
+            serde_json::from_value(model["deploymentId"].clone()).expect("deployment id");
         let revised_model = router
             .clone()
             .oneshot(json_request(
-                "POST",
-                &format!("/api/v1/models/aliases/{model_id}/deployment-revisions"),
+                "PATCH",
+                &format!("/api/v1/models/aliases/{model_id}"),
                 json!({
-                    "providerId":provider_id,
-                    "name":"M2 GPT Deployment",
-                    "modelName":"gpt-m2-r2",
-                    "endpointOverride":"https://models.example.test/v2",
+                    "connectionName":"M2 Connection",
+                    "providerType":"openai_compatible",
+                    "endpoint":"https://models.example.test/v2",
                     "credentialId":credential_id,
+                    "ownerDepartmentId":root_department,
+                    "alias":"m2-chat",
+                    "status":"active",
+                    "modelName":"gpt-m2-r2",
+                    "maxInputTokens":64000,
+                    "maxOutputTokens":8192,
                     "defaultParameters":{"temperature":0.1},
                     "expectedAliasVersion":1,
                     "price":{"currency":"USD","inputPerMillion":"1.25","outputPerMillion":"2.50"}
@@ -862,11 +847,14 @@ mod integration_tests {
                 Some(&access_token),
             ))
             .await
-            .expect("create model deployment revision");
-        assert_eq!(revised_model.status(), StatusCode::CREATED);
+            .expect("update model");
+        assert_eq!(revised_model.status(), StatusCode::OK);
         let revised_model = response_json(revised_model).await;
         assert_eq!(revised_model["modelName"], "gpt-m2-r2");
         assert_eq!(revised_model["aliasVersion"], 2);
+        let revised_deployment_id: uuid::Uuid =
+            serde_json::from_value(revised_model["deploymentId"].clone())
+                .expect("revised deployment id");
         let history = router
             .clone()
             .oneshot(json_request(
@@ -886,13 +874,24 @@ mod integration_tests {
                 .is_some_and(|value| value.ends_with('Z')),
             "timestamps use RFC3339"
         );
-        let original_model_name: String =
-            sqlx::query_scalar("SELECT model_name FROM model_deployments WHERE id=?")
+        let (original_model_name, original_max_input_tokens, original_max_output_tokens): (String, u64, u64) =
+            sqlx::query_as("SELECT model_name,max_input_tokens,max_output_tokens FROM model_deployments WHERE id=?")
                 .bind(deployment_id)
                 .fetch_one(&pool)
                 .await
                 .expect("load original deployment");
         assert_eq!(original_model_name, "gpt-m2");
+        assert_eq!(original_max_input_tokens, 32_000);
+        assert_eq!(original_max_output_tokens, 4_096);
+
+        let revised_limits: (u64, u64) = sqlx::query_as(
+            "SELECT max_input_tokens,max_output_tokens FROM model_deployments WHERE id=?",
+        )
+        .bind(revised_deployment_id)
+        .fetch_one(&pool)
+        .await
+        .expect("load revised deployment limits");
+        assert_eq!(revised_limits, (64_000, 8_192));
 
         let workflow = router
             .clone()
@@ -912,12 +911,16 @@ mod integration_tests {
             serde_json::from_value(workflow["serviceIdentityId"].clone())
                 .expect("workflow service identity id");
         let definition = json!({
-            "schemaVersion":"3.0",
+            "schemaVersion":"4.0",
+            "start":{"inputs":{"type":"object","properties":{},"additionalProperties":false},"contexts":{}},
             "nodes":[
-                {"id":"trigger","type":"manual_trigger","typeVersion":1,"name":"Manual Trigger","disabled":false,"parameters":{},"resourceReferences":[]},
-                {"id":"model","type":"model","typeVersion":1,"name":"Model","disabled":false,"parameters":{},"resourceReferences":[{"resourceType":"model","resourceId":model_id,"resourceVersionId":null,"operation":"use"}]}
+                {"id":"model","key":"model","type":"model","typeVersion":1,"name":"Model","disabled":false,"parameters":{},"resourceReferences":[{"resourceType":"model","resourceId":model_id,"resourceVersionId":null,"operation":"use"}]}
             ],
-            "connections":[{"id":"trigger-model","sourceNodeId":"trigger","sourceHandle":"main","targetNodeId":"model","targetHandle":"main","order":0}],
+            "connections":[
+                {"id":"start-model","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"model","targetHandle":"main","order":0},
+                {"id":"model-end","sourceNodeId":"model","sourceHandle":"main","targetNodeId":"__end__","targetHandle":"main","order":0}
+            ],
+            "end":{"outputs":{}},
             "settings":{}
         });
         let saved = router
@@ -1510,12 +1513,17 @@ mod integration_tests {
         );
 
         let runtime_definition = json!({
-            "schemaVersion":"3.0",
+            "schemaVersion":"4.0",
+            "start":{"inputs":{"type":"object","properties":{"value":{"type":"number"}},"required":["value"],"additionalProperties":false},"contexts":{}},
             "nodes":[
-                {"id":"trigger","type":"manual_trigger","typeVersion":1,"name":"Manual Trigger",},
-                {"id":"wait","type":"wait","typeVersion":1,"name":"Wait","parameters":{"kind":"webhook"}}
+                {"id":"wait","key":"wait","type":"wait","typeVersion":1,"name":"Wait","parameters":{"kind":"webhook"}}
             ],
-            "connections":[{"id":"trigger-wait","sourceNodeId":"trigger","sourceHandle":"main","targetNodeId":"wait","targetHandle":"main","order":0}]
+            "connections":[
+                {"id":"start-wait","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"wait","targetHandle":"main","order":0},
+                {"id":"wait-end","sourceNodeId":"wait","sourceHandle":"resumed","targetNodeId":"__end__","targetHandle":"main","order":0},
+                {"id":"wait-timeout-end","sourceNodeId":"wait","sourceHandle":"timed_out","targetNodeId":"__end__","targetHandle":"main","order":0}
+            ],
+            "end":{"outputs":{}}
         });
         let saved = router
             .clone()
@@ -1528,7 +1536,9 @@ mod integration_tests {
             ))
             .await
             .expect("save M4 runtime draft");
-        assert_eq!(saved.status(), StatusCode::OK);
+        let saved_status = saved.status();
+        let saved_body = response_json(saved).await;
+        assert_eq!(saved_status, StatusCode::OK, "{saved_body}");
         let runtime_version = router
             .clone()
             .oneshot(idempotent_json_request(
@@ -1540,9 +1550,15 @@ mod integration_tests {
             ))
             .await
             .expect("create M4 runtime version");
-        assert_eq!(runtime_version.status(), StatusCode::CREATED);
+        let runtime_version_status = runtime_version.status();
+        let runtime_version_body = response_json(runtime_version).await;
+        assert_eq!(
+            runtime_version_status,
+            StatusCode::CREATED,
+            "{runtime_version_body}"
+        );
         let runtime_version_id: uuid::Uuid =
-            serde_json::from_value(response_json(runtime_version).await["id"].clone())
+            serde_json::from_value(runtime_version_body["id"].clone())
                 .expect("M4 runtime version id");
         let runtime_tenant: uuid::Uuid =
             sqlx::query_scalar("SELECT tenant_id FROM workflows WHERE id=?")
@@ -1566,10 +1582,13 @@ mod integration_tests {
                 requested_by: Some(runtime_user),
                 trigger_type: "manual".into(),
                 input: json!({"value":1}),
+                context_overlay: json!({}),
                 idempotency_key: Some("m4-runtime-execution".into()),
                 caller_execution_id: None,
+                caller_node_execution_id: None,
                 execution_type: "whole".into(),
                 parent_execution_id: None,
+                trace_id: None,
                 fork_checkpoint_id: None,
                 fork_mode: None,
                 runtime_settings: json!({"mode":"whole"}),
@@ -1583,68 +1602,21 @@ mod integration_tests {
         let mut dispatches = runtime
             .claim_outbox(10, 30)
             .await
-            .expect("claim trigger outbox");
+            .expect("claim wait outbox");
         assert_eq!(dispatches.len(), 1);
-        let trigger_dispatch = dispatches.pop().unwrap();
-        let trigger_claim = runtime
-            .claim_task(&trigger_dispatch.payload, "worker-a", 30)
-            .await
-            .expect("claim trigger")
-            .expect("trigger task");
-        assert!(
-            runtime
-                .claim_task(&trigger_dispatch.payload, "worker-b", 30)
-                .await
-                .expect("duplicate claim")
-                .is_none()
-        );
-        assert!(
-            runtime
-                .mark_outbox_published(&trigger_dispatch)
-                .await
-                .unwrap()
-        );
-        let trigger_output = vec![Item {
-            json: json!({"value":1}),
-            ..Item::default()
-        }];
-        assert!(
-            runtime
-                .report_task(
-                    runtime_tenant,
-                    created.execution_id,
-                    trigger_claim.task.node_execution_id,
-                    trigger_claim.task.attempt_id,
-                    trigger_claim.lease_token,
-                    TaskResult::Completed(BTreeMap::from([("main".into(), trigger_output)])),
-                )
-                .await
-                .expect("complete trigger")
-        );
-        assert!(
-            !runtime
-                .report_task(
-                    runtime_tenant,
-                    created.execution_id,
-                    trigger_claim.task.node_execution_id,
-                    trigger_claim.task.attempt_id,
-                    trigger_claim.lease_token,
-                    TaskResult::Completed(BTreeMap::new()),
-                )
-                .await
-                .expect("reject stale result")
-        );
-        let wait_dispatch = runtime
-            .claim_outbox(10, 30)
-            .await
-            .expect("claim wait outbox")
-            .pop()
-            .expect("wait dispatch");
+        let wait_dispatch = dispatches.pop().unwrap();
         let wait_claim = runtime
             .claim_task(&wait_dispatch.payload, "worker-a", 30)
             .await
             .expect("claim wait")
             .expect("wait task");
+        assert!(
+            runtime
+                .claim_task(&wait_dispatch.payload, "worker-b", 30)
+                .await
+                .expect("duplicate claim")
+                .is_none()
+        );
         assert!(runtime.mark_outbox_published(&wait_dispatch).await.unwrap());
         assert!(
             runtime
@@ -1706,10 +1678,13 @@ mod integration_tests {
                 requested_by: Some(runtime_user),
                 trigger_type: "manual".into(),
                 input: json!({"value":2}),
+                context_overlay: json!({}),
                 idempotency_key: Some("m4-timeout-execution".into()),
                 caller_execution_id: None,
+                caller_node_execution_id: None,
                 execution_type: "whole".into(),
                 parent_execution_id: None,
+                trace_id: None,
                 fork_checkpoint_id: None,
                 fork_mode: None,
                 runtime_settings: json!({"mode":"whole"}),
@@ -1720,36 +1695,6 @@ mod integration_tests {
             })
             .await
             .expect("create timeout execution");
-        let timed_trigger_dispatch = runtime
-            .claim_outbox(10, 30)
-            .await
-            .expect("claim timeout trigger outbox")
-            .pop()
-            .expect("timeout trigger dispatch");
-        let timed_trigger = runtime
-            .claim_task(&timed_trigger_dispatch.payload, "worker-a", 30)
-            .await
-            .expect("claim timeout trigger")
-            .expect("timeout trigger task");
-        assert!(
-            runtime
-                .report_task(
-                    runtime_tenant,
-                    timed.execution_id,
-                    timed_trigger.task.node_execution_id,
-                    timed_trigger.task.attempt_id,
-                    timed_trigger.lease_token,
-                    TaskResult::Completed(BTreeMap::from([(
-                        "main".into(),
-                        vec![Item {
-                            json: json!({"value":2}),
-                            ..Item::default()
-                        }],
-                    )])),
-                )
-                .await
-                .expect("complete timeout trigger")
-        );
         let timed_wait_dispatch = runtime
             .claim_outbox(10, 30)
             .await
@@ -1761,6 +1706,12 @@ mod integration_tests {
             .await
             .expect("claim timeout wait")
             .expect("timeout wait task");
+        assert!(
+            runtime
+                .mark_outbox_published(&timed_wait_dispatch)
+                .await
+                .expect("publish timeout wait")
+        );
         assert!(
             runtime
                 .report_task(
@@ -1851,7 +1802,7 @@ mod integration_tests {
                 checkpoint_id,
                 mode: "node".into(),
                 node_id: Some("wait".into()),
-                input_overrides: json!({"forked":true}),
+                input_overrides: json!({"value":3}),
                 side_effect_decisions: json!({}),
                 actor_user_id: runtime_user,
                 idempotency_key: Some("m4-node-fork".into()),

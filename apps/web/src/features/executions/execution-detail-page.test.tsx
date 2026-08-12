@@ -19,7 +19,7 @@ const execution = {
 
 const nodes = { items: [
   {
-    id: 'node-execution-1', executionId: 'execution-1', nodeId: 'trigger', nodeName: 'Manual Trigger', nodeType: 'manual_trigger', nodeVersion: 1,
+    id: 'node-execution-1', executionId: 'execution-1', nodeId: 'source', nodeName: 'Source', nodeType: 'set', nodeVersion: 1,
     generation: 0, activationSlot: 0, runIndex: 0, iterationIndex: 0, status: 'succeeded', capability: 'builtin', sideEffectLevel: 'none',
     input: { main: [{ json: { amount: 42 } }] }, output: { main: [{ json: { amount: 42 } }] }, errorCode: null, errorMessage: null,
     startedAt: '2026-08-03T10:00:00Z', endedAt: '2026-08-03T10:00:00Z', attempts: [{ id: 'attempt-1', attemptNumber: 1, status: 'succeeded', workerInstanceId: 'worker-a', deadlineAt: null, errorCode: null, errorMessage: null, startedAt: '2026-08-03T10:00:00Z', endedAt: '2026-08-03T10:00:00Z' }], lineage: [],
@@ -81,20 +81,20 @@ describe('execution recovery workbench', () => {
     expect(screen.getByText('#2 node_completed')).toBeInTheDocument()
     expect(screen.getByText('/gateway/v1/waits/wait-1/resume')).toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: /Manual Trigger/ }))
-    fireEvent.click(screen.getByRole('tab', { name: 'Input' }))
+    fireEvent.click(screen.getByRole('button', { name: /Source/ }))
+    fireEvent.click(screen.getByRole('tab', { name: '输入' }))
     expect(screen.getByTestId('execution-json')).toHaveTextContent('"amount": 42')
 
-    const forkButton = screen.getByRole('button', { name: 'Fork' })
+    const forkButton = screen.getByRole('button', { name: '派生执行' })
     fireEvent.click(forkButton)
     expect(screen.getByRole('dialog')).toBeVisible()
-    expect(screen.getByText('Execution preview')).toBeInTheDocument()
+    expect(screen.getByText('执行预览')).toBeInTheDocument()
     expect(screen.getByText(/不可逆节点需要明确决策/)).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '取消' }))
     await waitFor(() => expect(forkButton).toHaveFocus())
 
     fireEvent.click(screen.getByRole('button', { name: '处理' }))
-    expect(screen.getByRole('dialog', { name: 'Side effect confirmation' })).toBeVisible()
+    expect(screen.getByRole('dialog', { name: '副作用确认' })).toBeVisible()
     fireEvent.click(screen.getByRole('button', { name: '确认决策' }))
     await waitFor(() => expect(requests).toContain('/api/v1/executions/execution-1/side-effect-confirmations'))
   })
@@ -102,7 +102,7 @@ describe('execution recovery workbench', () => {
   it('does not render recovery commands without their permissions', async () => {
     renderPage([])
     expect(await screen.findByText('Order recovery')).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Fork' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '派生执行' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Cancel' })).not.toBeInTheDocument()
     expect(screen.queryByText('Approve charge')).not.toBeInTheDocument()
   })

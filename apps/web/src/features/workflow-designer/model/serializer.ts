@@ -15,7 +15,7 @@ export function deserializeDraft(value: WorkflowDraft): StudioDocument {
       position: { x: layout?.x ?? 120 + index * 260, y: layout?.y ?? 180 },
       width: layout?.width,
       height: layout?.height,
-      data: { editorKind: 'action', nodeType: item.type, typeVersion: item.typeVersion, label: item.name, disabled: item.disabled, parameters: item.parameters ?? {}, resourceReferences: item.resourceReferences ?? [], settings: item.settings ?? {} },
+      data: { editorKind: 'action', nodeType: item.type, typeVersion: item.typeVersion, label: item.name, key: item.key ?? item.id, disabled: item.disabled, parameters: item.parameters ?? {}, outputProjection: item.outputProjection ?? {}, contextWrites: item.contextWrites ?? [], resourceReferences: item.resourceReferences ?? [], settings: item.settings ?? {} },
     }
   })
   const seen = new Set<string>()
@@ -30,7 +30,7 @@ export function deserializeDraft(value: WorkflowDraft): StudioDocument {
   }
   const executionEdges: StudioEdge[] = definition.connections.map((connection) => ({ id: connection.id, source: connection.sourceNodeId, sourceHandle: connection.sourceHandle, target: connection.targetNodeId, targetHandle: connection.targetHandle, data: { edgeKind: 'execution', order: connection.order }, type: 'studio' }))
   const bindingEdges: StudioEdge[] = editor.bindingEdges.filter((edge) => seen.has(edge.sourceBindingId)).map((edge) => ({ id: edge.edgeId, source: bindingNodeId(edge.sourceBindingId), sourceHandle: 'resource', target: edge.targetNodeId, targetHandle: `binding:${edge.targetSlot}`, data: { edgeKind: 'binding', targetSlot: edge.targetSlot }, type: 'studio' }))
-  return { nodes, edges: [...executionEdges, ...bindingEdges], viewport: editor.viewport, annotations: editor.annotations, groups: editor.groups, settings: definition.settings ?? { executionOrder: 'deterministic', activationBudget: 10_000 } }
+  return { start: definition.start ?? { inputs: {}, contexts: {} }, nodes, edges: [...executionEdges, ...bindingEdges], end: normalizeEnd(definition.end), viewport: editor.viewport, boundaryLayouts: editor.boundaryLayouts, annotations: editor.annotations, groups: editor.groups, settings: definition.settings ?? { executionOrder: 'deterministic', activationBudget: 10_000 } }
 }
 
 export function serializeStudio(document: StudioDocument): { definition: WorkflowDefinition; editorDocument: EditorDocument } {
@@ -51,13 +51,16 @@ export function serializeStudio(document: StudioDocument): { definition: Workflo
   for (const values of grouped.values()) values.sort((a, b) => a.order - b.order || a.id.localeCompare(b.id)).forEach((value, index) => { value.order = index })
   return {
     definition: {
-      schemaVersion: '3.0',
-      settings: document.settings,
-      nodes: actionNodes.map((node) => ({ id: node.id, type: node.data.nodeType, typeVersion: node.data.typeVersion, name: node.data.label, disabled: node.data.disabled, parameters: node.data.parameters, resourceReferences: [...node.data.resourceReferences.filter((reference) => !reference.bindingId), ...(bindingByTarget.get(node.id) ?? [])], settings: node.data.settings })),
+      schemaVersion: '4.0',
+    start: document.start,
+    settings: document.settings,
+      nodes: actionNodes.map((node) => ({ id: node.id, key: node.data.key, type: node.data.nodeType, typeVersion: node.data.typeVersion, name: node.data.label, disabled: node.data.disabled, parameters: node.data.parameters, outputProjection: node.data.outputProjection, contextWrites: node.data.contextWrites, resourceReferences: [...node.data.resourceReferences.filter((reference) => !reference.bindingId), ...(bindingByTarget.get(node.id) ?? [])], settings: node.data.settings })),
       connections,
+      end: document.end,
     },
     editorDocument: {
       nodeLayouts: actionNodes.map((node) => ({ nodeId: node.id, x: node.position.x, y: node.position.y, width: node.measured?.width, height: node.measured?.height })),
+      boundaryLayouts: document.boundaryLayouts,
       bindingLayouts: [...bindingNodes.values()].map((node) => ({ bindingId: node.data.bindingId, x: node.position.x, y: node.position.y })),
       edges: connections.map((edge) => ({ edgeId: edge.id })),
       bindingEdges: document.edges.filter((edge) => edge.data?.edgeKind === 'binding').map((edge) => ({ edgeId: edge.id, sourceBindingId: bindingNodes.get(edge.source)?.data.bindingId ?? '', targetNodeId: edge.target, targetSlot: edge.data?.targetSlot ?? edge.targetHandle?.replace(/^binding:/, '') ?? '' })).filter((edge) => edge.sourceBindingId && edge.targetSlot),
@@ -79,6 +82,17 @@ function normalizeEditor(value: unknown): EditorDocument {
     groups: (input.groups ?? []).map((group) => ({ collapsed: false, ...group })),
     viewport: { ...base.viewport, ...(input.viewport ?? {}) },
   }
+}
+
+function normalizeEnd(value: WorkflowDefinition["end"] | undefined): WorkflowDefinition["end"] {
+  return {
+    outputs: value?.outputs ?? {},
+    error: {
+      strategy: value?.error?.strategy ?? "fail_fast",
+      collectWindowMs: value?.error?.collectWindowMs ?? 5000,
+      outputs: value?.error?.outputs ?? {},
+    },
+  };
 }
 
 export const bindingNodeId = (bindingId: string) => `binding:${bindingId}`
