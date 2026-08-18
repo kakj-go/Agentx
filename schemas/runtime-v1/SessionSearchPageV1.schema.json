@@ -1,0 +1,106 @@
+{
+  "$defs": {
+    "SessionSummaryV1": {
+      "additionalProperties": false,
+      "properties": {
+        "applicationDeploymentId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "applicationId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "bundleId": {
+          "format": "uuid",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "externalUserId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sessionId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "updatedAt": {
+          "type": "string"
+        },
+        "version": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "versionPolicy": {
+          "$ref": "#/$defs/SessionVersionPolicyV1"
+        },
+        "workflowVersionId": {
+          "format": "uuid",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "sessionId",
+        "applicationId",
+        "applicationDeploymentId",
+        "versionPolicy",
+        "status",
+        "version",
+        "updatedAt"
+      ],
+      "type": "object"
+    },
+    "SessionVersionPolicyV1": {
+      "enum": [
+        "pinned",
+        "follow_deployment",
+        "manual_upgrade"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "items": {
+      "items": {
+        "$ref": "#/$defs/SessionSummaryV1"
+      },
+      "type": "array"
+    },
+    "next": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "apiVersion",
+    "items"
+  ],
+  "title": "SessionSearchPageV1",
+  "type": "object"
+}

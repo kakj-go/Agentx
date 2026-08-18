@@ -1,0 +1,490 @@
+use std::collections::BTreeMap;
+
+use agentx_domain::{
+    EditorDocument, WorkflowDefinition, canonical_content_hash, validate_editor_document,
+};
+use axum::{
+    Json, Router,
+    extract::{Path, State},
+    http::StatusCode,
+    routing::{get, post},
+};
+use serde::Deserialize;
+use serde_json::{Value, json};
+use sqlx::Row;
+use uuid::Uuid;
+
+use crate::{
+    api_error::{ApiError, ApiResult},
+    control_api::{Actor, ControlApiState},
+    control_helpers::required_name,
+};
+
+pub fn routes() -> Router<ControlApiState> {
+    Router::new()
+        .route("/api/v1/workflows/{id}/export", get(export_workflow))
+        .route("/api/v1/workflows/import", post(import_workflow))
+        .route("/api/v1/workflows/{id}/run", post(run_workflow))
+        .route(
+            "/api/v1/workflows/{id}/debug-executions",
+            post(debug_execution),
+        )
+        .route(
+            "/api/v1/workflow-versions/{version_id}/executions",
+            post(start_version_execution),
+        )
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RunRequest {
+    #[serde(default)]
+    input: Value,
+    idempotency_key: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DebugRequest {
+    expected_revision: u64,
+    mode: String,
+    target_node_id: Option<String>,
+    #[serde(default)]
+    input: Value,
+    #[serde(default)]
+    context: Value,
+    #[serde(default)]
+    input_source: Value,
+    #[serde(default)]
+    overlay_ids: Vec<Uuid>,
+    #[serde(default)]
+    side_effect_decisions: Value,
+    idempotency_key: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ImportRequest {
+    name: String,
+    description: Option<String>,
+    visibility: String,
+    package: Value,
+    #[serde(default)]
+    resource_bindings: BTreeMap<String, Binding>,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct Binding {
+    resource_id: Uuid,
+    resource_version_id: Option<Uuid>,
+}
+
+async fn export_workflow(
+    State(state): State<ControlApiState>,
+    actor: Actor,
+    Path(id): Path<Uuid>,
+) -> ApiResult<Json<Value>> {
+    actor.require("workflow:view")?;
+    let row=sqlx::query("SELECT w.name,d.definition_json,d.editor_json FROM workflows w JOIN workflow_drafts d ON d.tenant_id=w.tenant_id AND d.workflow_id=w.id WHERE w.tenant_id=? AND w.id=?").bind(actor.tenant_id).bind(id).fetch_optional(&state.pool).await?.ok_or_else(||ApiError::not_found("Workflow"))?;
+    let definition: Value = row.try_get("definition_json")?;
+    let editor: Value = row
+        .try_get::<Option<Value>, _>("editor_json")?
+        .unwrap_or_else(|| json!({}));
+    let package_body = json!({"workflowDefinition":definition,"editorDocument":editor,"nodeLock":[],"subWorkflowReferences":[],"resourceBindingPlaceholders":[],"apiBinding":{}});
+    let hash = canonical_content_hash(&package_body).map_err(ApiError::internal)?;
+    let signature = state.work_packages.sign_content_hash(&hash);
+    Ok(Json(
+        json!({"manifest":{"packageSchemaVersion":"1.0","workflowSchemaVersion":"4.0","name":row.try_get::<String,_>("name")?,"contentHash":hash,"signatureAlgorithm":"ed25519","signingKeyId":state.work_packages.signing_key_id(),"signature":signature},"workflowDefinition":definition,"editorDocument":editor,"nodeLock":[],"subWorkflowReferences":[],"resourceBindingPlaceholders":[],"apiBinding":{}}),
+    ))
+}
+
+async fn import_workflow(
+    State(state): State<ControlApiState>,
+    actor: Actor,
+    Json(input): Json<ImportRequest>,
+) -> ApiResult<(StatusCode, Json<Value>)> {
+    actor.require("workflow:create")?;
+    let name = required_name(&input.name)?;
+    validate_visibility(&input.visibility)?;
+    let manifest = input.package.get("manifest").cloned().ok_or_else(|| {
+        ApiError::bad_request("WORKFLOW_PACKAGE_INVALID", "Package manifest is required")
+    })?;
+    if manifest.get("packageSchemaVersion").and_then(Value::as_str) != Some("1.0")
+        || manifest
+            .get("workflowSchemaVersion")
+            .and_then(Value::as_str)
+            != Some("4.0")
+    {
+        return Err(ApiError::unprocessable(
+            "WORKFLOW_PACKAGE_VERSION_UNSUPPORTED",
+            "Only Workflow Package 1.0 / Definition 4.0 is supported",
+        ));
+    }
+    let mut definition = input
+        .package
+        .get("workflowDefinition")
+        .cloned()
+        .ok_or_else(|| {
+            ApiError::bad_request(
+                "WORKFLOW_PACKAGE_INVALID",
+                "Workflow Definition is required",
+            )
+        })?;
+    let editor = input
+        .package
+        .get("editorDocument")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    let body = json!({"workflowDefinition":&definition,"editorDocument":&editor,"nodeLock":input.package.get("nodeLock").cloned().unwrap_or_else(||json!([])),"subWorkflowReferences":input.package.get("subWorkflowReferences").cloned().unwrap_or_else(||json!([])),"resourceBindingPlaceholders":input.package.get("resourceBindingPlaceholders").cloned().unwrap_or_else(||json!([])),"apiBinding":input.package.get("apiBinding").cloned().unwrap_or_else(||json!({}))});
+    let hash = canonical_content_hash(&body).map_err(ApiError::internal)?;
+    let expected = manifest
+        .get("contentHash")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            ApiError::bad_request("WORKFLOW_PACKAGE_INVALID", "Content hash is required")
+        })?;
+    let signature = manifest
+        .get("signature")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            ApiError::bad_request("WORKFLOW_PACKAGE_INVALID", "Signature is required")
+        })?;
+    if expected != hash || !state.work_packages.verify_content_hash(expected, signature) {
+        return Err(ApiError::unprocessable(
+            "WORKFLOW_PACKAGE_INTEGRITY_FAILED",
+            "Workflow Package hash or signature is invalid",
+        ));
+    }
+    apply_bindings(&mut definition, &input.resource_bindings);
+    let definition: WorkflowDefinition = serde_json::from_value(definition)
+        .map_err(|e| ApiError::unprocessable("INVALID_WORKFLOW_DEFINITION", e.to_string()))?;
+    let editor_doc: EditorDocument = serde_json::from_value(editor.clone())
+        .map_err(|e| ApiError::unprocessable("INVALID_EDITOR_DOCUMENT", e.to_string()))?;
+    if let Some(issue) = validate_editor_document(&definition, &editor_doc).first() {
+        return Err(ApiError::unprocessable(
+            "INVALID_EDITOR_DOCUMENT",
+            issue.message.clone(),
+        ));
+    }
+    let definition = serde_json::to_value(definition).map_err(ApiError::internal)?;
+    let workflow = Uuid::now_v7();
+    let draft = Uuid::now_v7();
+    let identity = Uuid::now_v7();
+    let definition_hash = canonical_content_hash(&definition).map_err(ApiError::internal)?;
+    let editor_hash = canonical_content_hash(&editor).map_err(ApiError::internal)?;
+    let mut tx = state.pool.begin().await?;
+    sqlx::query("INSERT INTO workflows(id,tenant_id,name,description,visibility,owner_user_id,owner_department_id) VALUES(?,?,?,?,?,?,?)").bind(workflow).bind(actor.tenant_id).bind(name).bind(input.description).bind(input.visibility).bind(actor.user_id).bind(actor.department_id).execute(&mut *tx).await?;
+    sqlx::query("INSERT INTO workflow_service_identities(id,tenant_id,workflow_id) VALUES(?,?,?)")
+        .bind(identity)
+        .bind(actor.tenant_id)
+        .bind(workflow)
+        .execute(&mut *tx)
+        .await?;
+    crate::runtime_admission::emit_new_service_identity(&mut tx, actor.tenant_id, identity).await?;
+    sqlx::query("INSERT INTO workflow_members(tenant_id,workflow_id,user_id,member_role,created_by) VALUES(?,?,?,'manager',?)").bind(actor.tenant_id).bind(workflow).bind(actor.user_id).bind(actor.user_id).execute(&mut *tx).await?;
+    crate::workflow_api::emit_workflow_query_grant(
+        &mut tx,
+        actor.tenant_id,
+        workflow,
+        actor.user_id,
+        1,
+        true,
+    )
+    .await?;
+    sqlx::query("INSERT INTO workflow_drafts(id,tenant_id,workflow_id,schema_version,revision,definition_json,editor_json,content_hash,editor_hash,updated_by) VALUES(?,?,?,'4.0',0,?,?,?,?,?)").bind(draft).bind(actor.tenant_id).bind(workflow).bind(definition).bind(editor).bind(&definition_hash).bind(editor_hash).bind(actor.user_id).execute(&mut *tx).await?;
+    tx.commit().await?;
+    Ok((
+        StatusCode::CREATED,
+        Json(json!({"workflowId":workflow,"draftId":draft,"definitionHash":definition_hash})),
+    ))
+}
+
+async fn run_workflow(
+    State(state): State<ControlApiState>,
+    actor: Actor,
+    Path(id): Path<Uuid>,
+    Json(input): Json<RunRequest>,
+) -> ApiResult<(StatusCode, Json<Value>)> {
+    actor.require("execution:run")?;
+    let version:Uuid=sqlx::query_scalar("SELECT id FROM workflow_versions WHERE tenant_id=? AND workflow_id=? ORDER BY version_number DESC LIMIT 1").bind(actor.tenant_id).bind(id).fetch_optional(&state.pool).await?.ok_or_else(||ApiError::unprocessable("WORKFLOW_VERSION_REQUIRED","Publish a Workflow Version before running"))?;
+    invoke_version(&state, &actor, version, input.input, input.idempotency_key).await
+}
+async fn start_version_execution(
+    State(state): State<ControlApiState>,
+    actor: Actor,
+    Path(version): Path<Uuid>,
+    Json(input): Json<RunRequest>,
+) -> ApiResult<(StatusCode, Json<Value>)> {
+    actor.require("execution:run")?;
+    invoke_version(&state, &actor, version, input.input, input.idempotency_key).await
+}
+
+async fn invoke_version(
+    state: &ControlApiState,
+    actor: &Actor,
+    version: Uuid,
+    input: Value,
+    key: Option<String>,
+) -> ApiResult<(StatusCode, Json<Value>)> {
+    let key = key.unwrap_or_else(|| Uuid::now_v7().to_string());
+    let result =
+        crate::work_packages::start_version_execution(state, actor, version, input, key).await?;
+    let execution_id = result.execution_id.ok_or_else(|| {
+        ApiError::conflict(
+            "WORK_PACKAGE_EXECUTION_RECEIPT_INVALID",
+            "Runtime did not return an Execution identifier",
+        )
+    })?;
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(json!({
+            "executionId":execution_id,
+            "status":result.status,
+            "replayed":result.replayed,
+        })),
+    ))
+}
+
+async fn debug_execution(
+    State(state): State<ControlApiState>,
+    actor: Actor,
+    Path(id): Path<Uuid>,
+    Json(input): Json<DebugRequest>,
+) -> ApiResult<(StatusCode, Json<Value>)> {
+    actor.require("execution:run")?;
+    let runtime_mode = runtime_debug_mode(&input.mode)?;
+    let target_node_id = (runtime_mode != agentx_runtime_contracts::PartialExecutionModeV1::Whole)
+        .then(|| input.target_node_id.clone())
+        .flatten();
+    if input.mode != "full" && input.target_node_id.as_deref().is_none_or(str::is_empty) {
+        return Err(ApiError::unprocessable(
+            "DEBUG_TARGET_REQUIRED",
+            "Partial debug execution requires a target node",
+        ));
+    }
+    if matches!(input.mode.as_str(), "single_node" | "from_node")
+        && input
+            .input_source
+            .get("kind")
+            .and_then(Value::as_str)
+            .is_none()
+    {
+        return Err(ApiError::unprocessable(
+            "DEBUG_INPUT_SOURCE_REQUIRED",
+            "This debug mode requires an explicit input source",
+        ));
+    }
+    let revision: u64 = sqlx::query_scalar(
+        "SELECT revision FROM workflow_drafts WHERE tenant_id=? AND workflow_id=?",
+    )
+    .bind(actor.tenant_id)
+    .bind(id)
+    .fetch_optional(&state.pool)
+    .await?
+    .ok_or_else(|| ApiError::not_found("Workflow draft"))?;
+    if revision != input.expected_revision {
+        return Err(ApiError::conflict(
+            "WORKFLOW_REVISION_CONFLICT",
+            "Workflow draft changed",
+        ));
+    }
+    let context = input
+        .context
+        .as_object()
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .collect();
+    let node_parameters =
+        load_debug_overlays(&state.pool, actor.tenant_id, id, &input.overlay_ids).await?;
+    let input_source = (!input.input_source.is_null()
+        && input
+            .input_source
+            .as_object()
+            .is_none_or(|value| !value.is_empty()))
+    .then(|| {
+        serde_json::from_value(input.input_source).map_err(|error| {
+            ApiError::unprocessable(
+                "DEBUG_INPUT_SOURCE_INVALID",
+                format!("Debug input source is invalid: {error}"),
+            )
+        })
+    })
+    .transpose()?;
+    let side_effect_decisions =
+        serde_json::from_value(input.side_effect_decisions).map_err(|error| {
+            ApiError::unprocessable(
+                "DEBUG_SIDE_EFFECT_DECISIONS_INVALID",
+                format!("Debug side-effect decisions are invalid: {error}"),
+            )
+        })?;
+    let (_, Json(result)) = crate::work_packages::start_debug_run(
+        State(state),
+        actor,
+        Path(id),
+        Json(crate::work_packages::StartDebugRunRequest {
+            idempotency_key: input
+                .idempotency_key
+                .unwrap_or_else(|| Uuid::now_v7().to_string()),
+            input: input.input,
+            context,
+            node_parameters,
+            mode: Some(runtime_mode),
+            target_node_id,
+            input_source,
+            side_effect_decisions,
+        }),
+    )
+    .await?;
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(serde_json::to_value(result).map_err(ApiError::internal)?),
+    ))
+}
+
+async fn load_debug_overlays(
+    pool: &sqlx::MySqlPool,
+    tenant_id: Uuid,
+    workflow_id: Uuid,
+    overlay_ids: &[Uuid],
+) -> ApiResult<BTreeMap<String, Value>> {
+    let mut overlays = BTreeMap::new();
+    let mut seen = std::collections::BTreeSet::new();
+    for overlay_id in overlay_ids {
+        if !seen.insert(*overlay_id) {
+            return Err(ApiError::bad_request(
+                "DEBUG_OVERLAY_DUPLICATE",
+                "Debug overlay identifiers must be unique",
+            ));
+        }
+        let row = sqlx::query(
+            "SELECT node_id,kind,payload_json,artifact_id,stale FROM workflow_debug_overlays WHERE tenant_id=? AND workflow_id=? AND id=?",
+        )
+        .bind(tenant_id)
+        .bind(workflow_id)
+        .bind(overlay_id)
+        .fetch_optional(pool)
+        .await?
+        .ok_or_else(|| ApiError::not_found("Debug overlay"))?;
+        if row.try_get::<bool, _>("stale")? {
+            return Err(ApiError::conflict(
+                "DEBUG_OVERLAY_STALE",
+                "Debug overlay must be refreshed before execution",
+            ));
+        }
+        let node_id: String = row.try_get("node_id")?;
+        if overlays.contains_key(&node_id) {
+            return Err(ApiError::conflict(
+                "DEBUG_OVERLAY_NODE_CONFLICT",
+                "Only one Debug overlay can be applied to a node",
+            ));
+        }
+        overlays.insert(
+            node_id,
+            json!({
+                "debugOverlay": {
+                    "id": overlay_id,
+                    "kind": row.try_get::<String, _>("kind")?,
+                    "payload": row.try_get::<Value, _>("payload_json")?,
+                    "artifactId": row.try_get::<Option<Uuid>, _>("artifact_id")?,
+                }
+            }),
+        );
+    }
+    Ok(overlays)
+}
+
+fn runtime_debug_mode(mode: &str) -> ApiResult<agentx_runtime_contracts::PartialExecutionModeV1> {
+    use agentx_runtime_contracts::PartialExecutionModeV1;
+
+    match mode {
+        "full" => Ok(PartialExecutionModeV1::Whole),
+        "single_node" => Ok(PartialExecutionModeV1::Node),
+        "to_node" => Ok(PartialExecutionModeV1::ToNode),
+        "from_node" => Ok(PartialExecutionModeV1::FromNode),
+        _ => Err(ApiError::bad_request(
+            "INVALID_DEBUG_MODE",
+            "Debug mode is invalid",
+        )),
+    }
+}
+
+fn apply_bindings(value: &mut Value, bindings: &BTreeMap<String, Binding>) {
+    match value {
+        Value::Object(map) => {
+            if let Some(binding) = map
+                .get("bindingId")
+                .and_then(Value::as_str)
+                .and_then(|id| bindings.get(id))
+            {
+                map.insert("resourceId".into(), json!(binding.resource_id));
+                map.insert(
+                    "resourceVersionId".into(),
+                    json!(binding.resource_version_id),
+                );
+            }
+            for child in map.values_mut() {
+                apply_bindings(child, bindings);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                apply_bindings(item, bindings)
+            }
+        }
+        _ => {}
+    }
+}
+fn validate_visibility(value: &str) -> ApiResult<()> {
+    if !matches!(value, "private" | "department" | "company") {
+        return Err(ApiError::bad_request(
+            "INVALID_VISIBILITY",
+            "Visibility is invalid",
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn applies_resource_bindings() {
+        let id = Uuid::now_v7();
+        let mut value = json!({"bindingId":"model"});
+        apply_bindings(
+            &mut value,
+            &BTreeMap::from([(
+                "model".into(),
+                Binding {
+                    resource_id: id,
+                    resource_version_id: None,
+                },
+            )]),
+        );
+        assert_eq!(value["resourceId"], json!(id));
+    }
+
+    #[test]
+    fn public_debug_modes_map_to_runtime_modes() {
+        use agentx_runtime_contracts::PartialExecutionModeV1;
+
+        assert_eq!(
+            runtime_debug_mode("full").unwrap(),
+            PartialExecutionModeV1::Whole
+        );
+        assert_eq!(
+            runtime_debug_mode("single_node").unwrap(),
+            PartialExecutionModeV1::Node
+        );
+        assert_eq!(
+            runtime_debug_mode("to_node").unwrap(),
+            PartialExecutionModeV1::ToNode
+        );
+        assert_eq!(
+            runtime_debug_mode("from_node").unwrap(),
+            PartialExecutionModeV1::FromNode
+        );
+        assert!(runtime_debug_mode("whole").is_err());
+    }
+}

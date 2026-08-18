@@ -3,18 +3,19 @@
     "ContextDefinition": {
       "additionalProperties": false,
       "properties": {
-        "description": {
-          "type": ["string", "null"]
-        },
-        "title": {
-          "type": ["string", "null"]
-        },
         "clientWritable": {
           "default": false,
           "type": "boolean"
         },
         "default": {
           "default": null
+        },
+        "description": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "maxSize": {
           "default": null,
@@ -43,6 +44,13 @@
         "sensitive": {
           "default": false,
           "type": "boolean"
+        },
+        "title": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "type": "object"

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { ApiClientError, apiRequest, setAccessToken, setApiErrorTranslator, setRefreshHandler } from './client'
+import { ApiClientError, apiRequest, apiRequestCompleted, setAccessToken, setApiErrorTranslator, setRefreshHandler } from './client'
 
 describe('api client', () => {
   afterEach(() => { vi.unstubAllGlobals(); setAccessToken(); setApiErrorTranslator() })
@@ -63,5 +63,18 @@ describe('api client', () => {
     })))
 
     await expect(apiRequest<{ status: string }>('/commands')).resolves.toEqual({ status: 'queued' })
+  })
+
+  it('treats an accepted-but-incomplete query as a retryable error', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ code: 'TRACE_DELAYED', message: 'trace delayed', requestId: 'trace-1' }), {
+      status: 202,
+      headers: { 'Content-Type': 'application/json', 'Retry-After': '3' },
+    })))
+
+    await expect(apiRequestCompleted('/executions/execution-1/trace')).rejects.toMatchObject({
+      status: 202,
+      retryAfterSeconds: 3,
+      detail: { code: 'TRACE_DELAYED' },
+    })
   })
 })

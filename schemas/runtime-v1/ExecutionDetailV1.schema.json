@@ -1,0 +1,155 @@
+{
+  "$defs": {
+    "ExecutionSummaryV1": {
+      "additionalProperties": false,
+      "properties": {
+        "applicationId": {
+          "format": "uuid",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "bundleId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "completedAt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "costMicros": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "createdAt": {
+          "type": "string"
+        },
+        "durationMs": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "errorCode": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "executionId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "invocationId": {
+          "format": "uuid",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "parentExecutionId": {
+          "format": "uuid",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sessionId": {
+          "format": "uuid",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "type": "string"
+        },
+        "traceId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "triggerType": {
+          "type": "string"
+        },
+        "workflowId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "workflowVersionId": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "executionId",
+        "workflowId",
+        "workflowVersionId",
+        "bundleId",
+        "traceId",
+        "triggerType",
+        "status",
+        "costMicros",
+        "createdAt"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "admissionEpoch": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "apiVersion": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "error": true,
+    "output": true,
+    "parentExecutionId": {
+      "format": "uuid",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "stateVersion": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "summary": {
+      "$ref": "#/$defs/ExecutionSummaryV1"
+    },
+    "traceWatermark": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "workPackageId": {
+      "format": "uuid",
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "apiVersion",
+    "summary",
+    "stateVersion",
+    "admissionEpoch",
+    "traceWatermark"
+  ],
+  "title": "ExecutionDetailV1",
+  "type": "object"
+}

@@ -6,9 +6,12 @@ mod registry;
 mod schema_contract;
 mod state;
 
+pub use agentx_runtime_contracts::{
+    CompiledConnection, CompiledConnectionV1, CompiledNode, CompiledNodeV1,
+    CompiledTerminalConnection, CompiledTerminalConnectionV1, CompiledWorkflow, CompiledWorkflowV1,
+};
 pub use compiler::{
-    COMPILER_VERSION, CompileContext, CompileError, CompileIssue, CompiledConnection, CompiledNode,
-    CompiledTerminalConnection, CompiledWorkflow, WorkflowCompiler,
+    COMPILER_VERSION, CompileContext, CompileError, CompileIssue, WorkflowCompiler,
 };
 pub use expression::{ExpressionContext, ExpressionEngine, ExpressionError};
 pub use input::{StartInputError, materialize_and_validate_start_input};

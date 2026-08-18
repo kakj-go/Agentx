@@ -5,7 +5,7 @@ import { useTranslation } from 'react-i18next'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 
 import { useAuth } from '../../app/providers/auth-provider'
-import { apiRequest, apiRequestBlob, jsonBody } from '../../shared/api/client'
+import { ApiClientError, apiRequest, apiRequestBlob, apiRequestCompleted, jsonBody } from '../../shared/api/client'
 import type { Approval, Checkpoint, Execution, ExecutionWait, ForkExecutionRequest, NodeExecution, PageResponse, RuntimeDetails, SideEffectConfirmationRequest, Trace } from '../../shared/api/types'
 import { ConfirmDialog } from '../../shared/components/confirm-dialog'
 import { EmptyState } from '../../shared/components/empty-state'
@@ -54,7 +54,14 @@ export function ExecutionDetailPage() {
   })
   const checkpoints = useQuery({ queryKey: ['execution-checkpoints', id], queryFn: () => apiRequest<ItemResponse<Checkpoint>>(`/executions/${id}/checkpoints`), refetchInterval: execution.data && !terminalStatuses.has(execution.data.status) ? 2_000 : false })
   const waits = useQuery({ queryKey: ['execution-waits', id], queryFn: () => apiRequest<ItemResponse<ExecutionWait>>(`/executions/${id}/waits`), refetchInterval: execution.data && !terminalStatuses.has(execution.data.status) ? 2_000 : false })
-  const trace = useQuery({ queryKey: ['execution-trace', id], queryFn: () => apiRequest<Trace>(`/executions/${id}/trace?limit=200`), retry: false, refetchInterval: execution.data && !terminalStatuses.has(execution.data.status) ? 3_000 : false })
+  const trace = useQuery({
+    queryKey: ['execution-trace', id],
+    queryFn: () => apiRequestCompleted<Trace>(`/executions/${id}/trace?limit=200`),
+    retry: false,
+    refetchInterval: (query) => query.state.error instanceof ApiClientError && query.state.error.status === 202
+      ? (query.state.error.retryAfterSeconds ?? 2) * 1_000
+      : execution.data && !terminalStatuses.has(execution.data.status) ? 3_000 : false,
+  })
   const runtimeDetails = useQuery({ queryKey: ['execution-runtime-details', id], queryFn: () => apiRequest<RuntimeDetails>(`/executions/${id}/runtime-details`), refetchInterval: execution.data && !terminalStatuses.has(execution.data.status) ? 2_000 : false })
   const approvals = useQuery({ enabled: auth.hasPermission('approval:view'), queryKey: ['approvals', 'execution', id], queryFn: () => apiRequest<PageResponse<Approval>>('/approvals?pageSize=100'), refetchInterval: execution.data && !terminalStatuses.has(execution.data.status) ? 2_000 : false })
 
@@ -115,6 +122,7 @@ export function ExecutionDetailPage() {
   const active = !terminalStatuses.has(value.status)
   const selectedNode = nodeDetail.data ?? nodeItems.find((node) => node.id === selectedId)
   const executionApprovals = approvals.data?.items.filter((approval) => approval.executionId === id) ?? []
+  const traceError = trace.error instanceof ApiClientError ? trace.error : undefined
   const downloadArtifact = async (artifactId: string) => {
     try {
       const blob = await apiRequestBlob(`/executions/${id}/artifacts/${artifactId}`)
@@ -142,6 +150,8 @@ export function ExecutionDetailPage() {
       {(value.parentExecutionId || value.callerExecutionId) && <div className="mt-2 flex flex-wrap gap-3 border-t border-border pt-2 text-[10px] text-muted-foreground">{value.parentExecutionId && <Link className="inline-flex items-center gap-1 text-primary hover:underline" to={`/executions/${value.parentExecutionId}`}><Link2 className="size-3" />{t('executions.parentExecution', { id: value.parentExecutionId })}</Link>}{value.callerExecutionId && <Link className="inline-flex items-center gap-1 text-primary hover:underline" to={`/executions/${value.callerExecutionId}`}><Link2 className="size-3" />{t('executions.callerExecution', { id: value.callerExecutionId })}</Link>}</div>}
       {value.errorMessage && <p className="mt-3 border-l-2 border-danger bg-danger/10 px-3 py-2 text-xs text-danger"><strong>{value.errorCode}</strong> {value.errorMessage}</p>}
     </header>
+
+    {traceError && <div className="flex items-center gap-3 border-b border-border bg-surface px-6 py-3 text-xs text-muted-foreground"><StatusBadge label={traceError.status === 202 ? t('executions.traceDelayed') : t('executions.traceUnavailable')} status={traceError.status === 202 ? 'waiting' : 'failed'} /><span>{traceError.status === 202 ? t('executions.traceDelayedDescription') : t('executions.traceUnavailableDescription')}</span></div>}
 
     <div className="grid min-h-[620px] grid-cols-[240px_minmax(420px,1fr)_320px] overflow-hidden max-xl:grid-cols-[230px_minmax(0,1fr)] max-lg:grid-cols-1">
       <ExecutionOutline nodes={nodeItems} onSelect={setSelectedId} selectedId={selectedId} />

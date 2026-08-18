@@ -1,0 +1,60 @@
+{
+  "$defs": {
+    "RuntimeGovernanceObjectKindV1": {
+      "enum": [
+        "approval",
+        "evaluation",
+        "notification",
+        "debug",
+        "retention"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "limit": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "objectTypes": {
+      "items": {
+        "$ref": "#/$defs/RuntimeGovernanceObjectKindV1"
+      },
+      "type": "array"
+    },
+    "pageCursor": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "snapshotUpperCursor": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "tenantId": {
+      "format": "uuid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "apiVersion",
+    "tenantId",
+    "objectTypes",
+    "limit"
+  ],
+  "title": "GovernanceSnapshotRequestV1",
+  "type": "object"
+}

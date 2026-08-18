@@ -1,0 +1,33 @@
+[package]
+name = "agentx-control-infrastructure"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[build-dependencies]
+
+[dependencies]
+aes-gcm.workspace = true
+agentx-application.workspace = true
+agentx-domain.workspace = true
+agentx-mysql-lease.workspace = true
+anyhow.workspace = true
+async-trait.workspace = true
+base64.workspace = true
+object_store.workspace = true
+rand.workspace = true
+reqwest.workspace = true
+rust_decimal.workspace = true
+secrecy.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+sqlx.workspace = true
+time.workspace = true
+uuid.workspace = true
+zeroize.workspace = true
+
+[dev-dependencies]
+testcontainers = "0.25"
+tokio.workspace = true

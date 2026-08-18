@@ -1,0 +1,99 @@
+{
+  "apiVersion": "agentx.io/deployment/v2alpha2",
+  "environment": "production",
+  "namespaces": {
+    "control": "agentx-v2-control",
+    "runtime": "agentx-v2-runtime",
+    "dependencies": "agentx-v2-deps"
+  },
+  "images": {
+    "registry": "registry.example.com/agentx",
+    "tag": "v2-07a",
+    "pullPolicy": "IfNotPresent",
+    "digests": {
+      "agentx-migrate": "sha256:0000000000000000000000000000000000000000000000000000000000000001",
+      "agentx-bootstrap": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+      "agentx-doctor": "sha256:0000000000000000000000000000000000000000000000000000000000000003",
+      "platform-control": "sha256:0000000000000000000000000000000000000000000000000000000000000004",
+      "web-console": "sha256:0000000000000000000000000000000000000000000000000000000000000005",
+      "runtime-gateway": "sha256:0000000000000000000000000000000000000000000000000000000000000006",
+      "workflow-runtime": "sha256:0000000000000000000000000000000000000000000000000000000000000007",
+      "workflow-worker": "sha256:0000000000000000000000000000000000000000000000000000000000000008",
+      "sandbox-manager": "sha256:0000000000000000000000000000000000000000000000000000000000000009",
+      "observability": "sha256:000000000000000000000000000000000000000000000000000000000000000a"
+    }
+  },
+  "ingress": {
+    "className": "agentx-nginx",
+    "controlHost": "agentx.example.com",
+    "runtimeHost": "run.agentx.example.com",
+    "controlTlsSecretName": "agentx-control-ingress-tls",
+    "runtimeTlsSecretName": "agentx-runtime-ingress-tls"
+  },
+  "services": {
+    "webConsole": { "replicas": 1, "maxReplicas": 4 },
+    "platformControl": { "replicas": 1, "maxReplicas": 4, "roles": ["api", "publisher", "projector", "retention"], "mysqlPool": 10 },
+    "runtimeGateway": { "replicas": 1, "maxReplicas": 4, "mysqlPool": 8 },
+    "workflowRuntime": { "replicas": 1, "maxReplicas": 4, "roles": ["coordinator", "trigger", "command", "outbox", "recovery", "artifact", "quota", "trace-relay"], "mysqlPool": 10 },
+    "workflowWorker": { "replicas": 1, "maxReplicas": 4, "capability": "all", "mysqlPool": 6 },
+    "sandboxManager": { "replicas": 1, "maxReplicas": 4, "mysqlPool": 2 },
+    "observability": { "replicas": 1, "maxReplicas": 4, "roles": ["trace-consumer", "query"] }
+  },
+  "components": {
+    "controlMysql": { "mode": "external", "host": "control-db.example.internal", "port": 3306, "database": "agentx_control", "appUser": "control_app", "migrateUser": "control_migrate", "tlsMode": "verify_identity", "maxConnections": 60, "serverMaxConnections": 200, "caSecretName": "control-mysql-ca" },
+    "runtimeMysql": { "mode": "external", "host": "runtime-db.example.internal", "port": 3306, "database": "agentx_runtime", "appUser": "runtime_app", "migrateUser": "runtime_migrate", "tlsMode": "verify_identity", "maxConnections": 105, "serverMaxConnections": 200, "caSecretName": "runtime-mysql-ca" },
+    "runtimeRedis": { "mode": "external", "url": "rediss://runtime-redis.example.internal:6380/", "caSecretName": "runtime-redis-ca" },
+    "secretProvider": { "mode": "vault_kv_v2", "endpoint": "https://vault.example.internal", "mount": "agentx-v2", "caSecretName": "vault-ca" },
+    "sandbox": { "mode": "external_opensandbox", "endpoint": "https://opensandbox.example.internal", "secureAccess": true, "caSecretName": "opensandbox-ca" },
+    "clickhouse": { "mode": "external", "url": "https://clickhouse.example.internal:8443", "database": "agentx_observability", "queryUser": "observability_query", "consumerUser": "observability_consumer", "migrateUser": "observability_migrate", "caSecretName": "clickhouse-ca" },
+    "objectStorage": {
+      "mode": "external-s3", "endpoint": "https://s3.example.internal", "region": "us-east-1", "allowHttp": false, "pathStyle": false, "caSecretName": "s3-ca",
+      "domains": {
+        "control": { "bucket": "agentx-control", "user": "control_object" },
+        "runtime": { "bucket": "agentx-runtime", "user": "runtime_object" },
+        "observability": { "bucket": "agentx-observability", "user": "observability_object" }
+      }
+    }
+  },
+  "network": {
+    "externalEgress": {
+      "controlMysql": { "cidrs": ["10.20.1.10/32"], "ports": [3306] },
+      "runtimeMysql": { "cidrs": ["10.20.1.11/32"], "ports": [3306] },
+      "runtimeRedis": { "cidrs": ["10.20.1.12/32"], "ports": [6380] },
+      "objectStorage": { "cidrs": ["10.20.1.13/32"], "ports": [443] },
+      "vault": { "cidrs": ["10.20.1.14/32"], "ports": [443] },
+      "opensandbox": { "cidrs": ["10.20.1.15/32"], "ports": [443] },
+      "clickhouse": { "cidrs": ["10.20.1.16/32"], "ports": [8443] }
+    }
+  },
+  "backup": {
+    "mysqlRpoMinutes": 5, "mysqlRtoMinutes": 30,
+    "objectRpoMinutes": 15, "objectRtoMinutes": 60,
+    "clickhouseRpoMinutes": 30, "clickhouseRtoMinutes": 60,
+    "redisRebuildMinutes": 5,
+    "controlBucket": "agentx-control-backup",
+    "runtimeBucket": "agentx-runtime-backup",
+    "observabilityBucket": "agentx-observability-backup"
+  },
+  "secrets": {
+    "mode": "existing-kubernetes",
+    "control": "agentx-control-secrets",
+    "runtime": "agentx-runtime-secrets",
+    "observability": "agentx-observability-secrets",
+    "dependencies": null,
+    "workloads": {
+      "platformControl": "agentx-platform-control-secrets",
+      "controlMigration": "agentx-control-migration-secrets",
+      "runtimeGateway": "agentx-runtime-gateway-secrets",
+      "workflowRuntime": "agentx-workflow-runtime-secrets",
+      "workflowWorker": "agentx-workflow-worker-secrets",
+      "sandboxManager": "agentx-sandbox-manager-secrets",
+      "runtimeMigration": "agentx-runtime-migration-secrets",
+      "observability": "agentx-observability-app-secrets",
+      "observabilityMigration": "agentx-observability-migration-secrets",
+      "controlBackup": "agentx-control-backup-secrets",
+      "runtimeBackup": "agentx-runtime-backup-secrets",
+      "observabilityBackup": "agentx-observability-backup-secrets"
+    }
+  }
+}

@@ -1,0 +1,196 @@
+{
+  "$defs": {
+    "LifecycleOperationV1": {
+      "enum": [
+        "activate",
+        "deactivate"
+      ],
+      "type": "string"
+    },
+    "RuntimeTriggerConfigurationV1": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "webhook",
+              "type": "string"
+            },
+            "publicId": {
+              "type": "string"
+            },
+            "secret": {
+              "$ref": "#/$defs/VaultSecretReferenceV1"
+            }
+          },
+          "required": [
+            "kind",
+            "publicId",
+            "secret"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "cronExpression": {
+              "type": "string"
+            },
+            "graceSeconds": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "input": true,
+            "kind": {
+              "const": "schedule",
+              "type": "string"
+            },
+            "misfirePolicy": {
+              "$ref": "#/$defs/ScheduleMisfirePolicyV1"
+            },
+            "timezone": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "cronExpression",
+            "timezone",
+            "misfirePolicy",
+            "graceSeconds",
+            "input"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "input": true,
+            "intervalSeconds": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "kind": {
+              "const": "poll",
+              "type": "string"
+            },
+            "providerEndpoint": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "intervalSeconds",
+            "providerEndpoint",
+            "input"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "input": true,
+            "kind": {
+              "const": "lifecycle",
+              "type": "string"
+            },
+            "operation": {
+              "$ref": "#/$defs/LifecycleOperationV1"
+            },
+            "providerEndpoint": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "operation",
+            "providerEndpoint",
+            "input"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ScheduleMisfirePolicyV1": {
+      "enum": [
+        "skip",
+        "fire_once"
+      ],
+      "type": "string"
+    },
+    "VaultSecretReferenceV1": {
+      "additionalProperties": false,
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "mount": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "version": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "mount",
+        "path",
+        "key",
+        "version"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "applicationId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "configuration": {
+      "$ref": "#/$defs/RuntimeTriggerConfigurationV1"
+    },
+    "configurationHash": {
+      "type": "string"
+    },
+    "enabled": {
+      "type": "boolean"
+    },
+    "nodeId": {
+      "type": "string"
+    },
+    "revision": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "schemaVersion": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "triggerId": {
+      "format": "uuid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "triggerId",
+    "applicationId",
+    "nodeId",
+    "revision",
+    "configurationHash",
+    "enabled",
+    "configuration"
+  ],
+  "title": "RuntimeTriggerSpecV1",
+  "type": "object"
+}

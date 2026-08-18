@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "items": {
+      "items": true,
+      "type": "array"
+    }
+  },
+  "required": [
+    "apiVersion",
+    "items"
+  ],
+  "title": "ExecutionCollectionPageV1",
+  "type": "object"
+}

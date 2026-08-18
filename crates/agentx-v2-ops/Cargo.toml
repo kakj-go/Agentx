@@ -1,0 +1,45 @@
+[package]
+name = "agentx-v2-ops"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+agentx-control-infrastructure.workspace = true
+agentx-runtime-infrastructure.workspace = true
+anyhow.workspace = true
+argon2.workspace = true
+bytes.workspace = true
+base64.workspace = true
+clickhouse.workspace = true
+ed25519-dalek.workspace = true
+object_store.workspace = true
+rand.workspace = true
+redis.workspace = true
+rsa.workspace = true
+secrecy.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sqlx.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+testcontainers = "0.25"
+
+[[bin]]
+name = "agentx-migrate"
+path = "src/bin/agentx-migrate.rs"
+
+[[bin]]
+name = "agentx-doctor"
+path = "src/bin/agentx-doctor.rs"
+
+[[bin]]
+name = "agentx-bootstrap"
+path = "src/bin/agentx-bootstrap.rs"
+
+[[bin]]
+name = "agentx-keygen"
+path = "src/bin/agentx-keygen.rs"

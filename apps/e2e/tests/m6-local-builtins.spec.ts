@@ -205,12 +205,19 @@ async function connect(page: Page, source: Locator, sourceHandle: string, target
   const count = await edges.count()
   const from = source.locator(`.react-flow__handle.source[data-handleid="${sourceHandle}"]`)
   const to = target.locator(`.react-flow__handle.target[data-handleid="${targetHandle}"]`)
-  const [fromBox, toBox] = await Promise.all([from.boundingBox(), to.boundingBox()])
-  if (!fromBox || !toBox) throw new Error(`Cannot connect ${sourceHandle} to ${targetHandle}`)
-  await page.mouse.move(fromBox.x + fromBox.width / 2, fromBox.y + fromBox.height / 2)
-  await page.mouse.down()
-  await page.mouse.move(toBox.x + toBox.width / 2, toBox.y + toBox.height / 2, { steps: 12 })
-  await page.mouse.up()
+  await expect(from).toBeVisible()
+  await expect(to).toBeVisible()
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const [fromBox, toBox] = await Promise.all([from.boundingBox(), to.boundingBox()])
+    if (!fromBox || !toBox) throw new Error(`Cannot connect ${sourceHandle} to ${targetHandle}`)
+    await page.mouse.move(fromBox.x + fromBox.width / 2, fromBox.y + fromBox.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(toBox.x + toBox.width / 2, toBox.y + toBox.height / 2, { steps: 12 })
+    await page.waitForTimeout(75)
+    await page.mouse.up()
+    await page.waitForTimeout(100)
+    if (await edges.count() === count + 1) return
+  }
   await expect(edges).toHaveCount(count + 1)
 }
 

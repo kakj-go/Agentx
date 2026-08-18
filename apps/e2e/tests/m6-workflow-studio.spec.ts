@@ -1,21 +1,30 @@
 import { expect, type Locator, type Page, test } from '@playwright/test'
 
 const password = 'agentx-e2e-admin-password'
+const gatewayBase = process.env.AGENTX_E2E_RUNTIME_URL ?? ''
+const echoBaseUrl = process.env.AGENTX_E2E_ECHO_BASE_URL ?? 'http://echo-mcp:8090'
+const studioCredentialName = 'M6 Studio Fixture Credential'
+const studioModelName = 'm6-studio-fixture-model'
+const studioMcpName = 'M6 Studio Fixture MCP'
+const studioSandboxName = 'M6 Studio Python Fixture'
 const resourceNames = [
-  ['credential', 'M5 Model Fixture Credential', undefined],
-  ['model', 'm5-fixture-model', undefined],
-  ['mcp_server', 'M5 MCP Fixture', undefined],
-  ['mcp_tool', 'Echo', 'M5 MCP Fixture'],
-  ['sandbox_profile', 'M5 Python Fixture', undefined],
+  ['credential', studioCredentialName, undefined],
+  ['model', studioModelName, undefined],
+  ['mcp_server', studioMcpName, undefined],
+  ['mcp_tool', 'Echo', studioMcpName],
+  ['sandbox_profile', studioSandboxName, undefined],
 ] as const
 const resourceTabs = { credential: '凭证', model: '模型', mcp_server: 'MCP 服务', mcp_tool: 'MCP 工具', sandbox_profile: '沙箱配置' } as const
 
 type Execution = { id: string; status: string }
 type Approval = { id: string; executionId: string; status: string }
 type Application = { id: string; name: string; slug: string }
+type ApplicationDeployment = { id: string; status: string; publishErrorCode?: string | null; publishErrorMessage?: string | null }
 type WorkflowVersion = { id: string; versionNumber: number }
 type GatewayInvocation = { id: string; executionId?: string; status: string; error?: unknown | null }
 type GatewayMessage = { role: string; parts: Array<{ content?: unknown }> }
+type PageResponse<T> = { items: T[] }
+type NamedResource = { id: string; name?: string; alias?: string; serverId?: string }
 type StudioDraft = {
   revision: number
   definition: {
@@ -141,6 +150,83 @@ async function connect(page: Page, source: Locator, sourceHandle: string, target
   await page.waitForTimeout(75)
   await page.mouse.up()
   await expect(edges).toHaveCount(edgeCount + 1)
+}
+
+async function waitApplicationDeployment(page: Page, token: string, applicationId: string, deploymentId: string) {
+  await expect.poll(async () => {
+    const deployments = await api<ApplicationDeployment[]>(page, token, `/applications/${applicationId}/deployments`)
+    const deployment = deployments.find((item) => item.id === deploymentId)
+    if (deployment?.status === 'rejected') {
+      throw new Error(`application deployment ${deploymentId} was rejected: ${deployment.publishErrorCode ?? ''} ${deployment.publishErrorMessage ?? ''}`)
+    }
+    return deployment?.status
+  }, { timeout: 180_000, intervals: [500, 1_000, 2_000] }).toBe('active')
+}
+
+async function ensureStudioResources(page: Page, token: string) {
+  const departments = await api<Array<{ id: string; isRoot: boolean }>>(page, token, '/departments')
+  const department = departments.find((item) => item.isRoot) ?? departments[0]
+  if (!department) throw new Error('M6 Studio requires a Department created through the bootstrap API')
+
+  const credentials = await api<PageResponse<NamedResource>>(page, token, `/credentials?pageSize=100&search=${encodeURIComponent(studioCredentialName)}`)
+  const credential = credentials.items.find((item) => item.name === studioCredentialName)
+    ?? await mutate<NamedResource>(page, token, '/credentials', 'POST', {
+      name: studioCredentialName,
+      credentialType: 'bearer',
+      secret: 'm5-model-secret',
+      ownerDepartmentId: department.id,
+    })
+
+  const models = await api<PageResponse<NamedResource>>(page, token, `/models/aliases?pageSize=100&search=${encodeURIComponent(studioModelName)}`)
+  if (!models.items.some((item) => item.alias === studioModelName)) {
+    await mutate(page, token, '/models/aliases', 'POST', {
+      connectionName: 'M6 Studio Fixture Model',
+      providerType: 'openai_compatible',
+      endpoint: `${echoBaseUrl}/v1`,
+      credentialId: credential.id,
+      ownerDepartmentId: department.id,
+      alias: studioModelName,
+      modelName: 'echo-model-v1',
+      maxInputTokens: 8192,
+      maxOutputTokens: 2048,
+      defaultParameters: { temperature: 0 },
+      price: { currency: 'CNY', inputPerMillion: '0', outputPerMillion: '0' },
+    })
+  }
+
+  const servers = await api<PageResponse<NamedResource>>(page, token, `/mcp/servers?pageSize=100&search=${encodeURIComponent(studioMcpName)}`)
+  const server = servers.items.find((item) => item.name === studioMcpName)
+    ?? await mutate<NamedResource>(page, token, '/mcp/servers', 'POST', {
+      name: studioMcpName,
+      description: 'M6 API-first MCP fixture',
+      ownerDepartmentId: department.id,
+      transport: 'streamable_http',
+      endpoint: `${echoBaseUrl}/mcp`,
+      credentialId: credential.id,
+      configuration: {},
+    })
+  const tools = await api<NamedResource[]>(page, token, `/mcp/tools?pageSize=100&search=Echo`)
+  if (!tools.some((item) => item.name === 'echo' && item.serverId === server.id)) {
+    await mutate(page, token, `/mcp/servers/${server.id}/discover`, 'POST', {})
+  }
+
+  const sandboxes = await api<PageResponse<NamedResource>>(page, token, `/sandbox-profiles?pageSize=100&search=${encodeURIComponent(studioSandboxName)}`)
+  if (!sandboxes.items.some((item) => item.name === studioSandboxName)) {
+    await mutate(page, token, '/sandbox-profiles', 'POST', {
+      name: studioSandboxName,
+      description: 'M6 API-first OpenSandbox fixture',
+      ownerDepartmentId: department.id,
+      runner: 'python',
+      imageDigest: 'opensandbox/code-interpreter@sha256:64cd01f03f54ba347d1a1310dcbc18ac5cb17d01714e23b4ea4b840fbb0d6623',
+      cpuMillis: 500,
+      memoryBytes: 536870912,
+      pidsLimit: 256,
+      diskBytes: 1073741824,
+      timeoutSeconds: 120,
+      outputLimitBytes: 1048576,
+      networkPolicy: { defaultAction: 'deny', allow: [] },
+    })
+  }
 }
 
 async function connectIntoOccupiedBoundary(page: Page, source: Locator, sourceHandle: string, target: Locator, targetHandle: string) {
@@ -352,7 +438,12 @@ async function startDebug(page: Page, action: () => Promise<void>, confirm = tru
 async function waitExecution(page: Page, token: string, executionId: string, statuses: string[], timeout = 180_000) {
   let current: Execution | undefined
   await expect.poll(async () => {
-    current = await api<Execution>(page, token, `/executions/${executionId}`)
+    try {
+      current = await api<Execution>(page, token, `/executions/${executionId}`)
+    } catch (error) {
+      if (error instanceof Error && error.message.includes(': 404 ')) return false
+      throw error
+    }
     return statuses.includes(current.status)
   }, { timeout, intervals: [500, 750, 1000, 2000] }).toBeTruthy()
   return current!
@@ -398,6 +489,7 @@ async function setTheme(page: Page, theme: 'light' | 'dark') {
 
 test('M6 Studio creates, debugs, versions and publishes a manifest-driven Workflow', async ({ context, page }, testInfo) => {
   const { token, userId } = await login(page)
+  await ensureStudioResources(page, token)
   const workflowName = `M6 Studio ${Date.now()}`
   const workflowId = await createWorkflow(page, workflowName)
 
@@ -423,9 +515,9 @@ test('M6 Studio creates, debugs, versions and publishes a manifest-driven Workfl
   await expect(approval).toBeVisible()
 
   await openNodeDetails(page, model)
-  await choose(page, page.getByTestId('attachment-resource'), /m5-fixture-model/)
+  await choose(page, page.getByTestId('attachment-resource'), new RegExp(studioModelName))
   await openNodeDetails(page, tool)
-  await choose(page, page.getByTestId('attachment-resource'), /M5 MCP Fixture/)
+  await choose(page, page.getByTestId('attachment-resource'), new RegExp(studioMcpName))
 
   const agentConfigDetails = await openNodeDetails(page, agent)
   await expect(agentConfigDetails.getByText('节点参数', { exact: true })).toHaveCount(0)
@@ -442,7 +534,7 @@ test('M6 Studio creates, debugs, versions and publishes a manifest-driven Workfl
   const configuredCodeDetails = await openNodeDetails(page, code)
   await choose(page, page.getByTestId('parameter-runner'), /^Python$/)
   await fillMonaco(page, page.getByTestId('parameter-source'), 'print("m6-studio-ok")')
-  await choose(page, page.getByTestId('resource-selector-sandbox_profile'), /M5 Python Fixture/)
+  await choose(page, page.getByTestId('resource-selector-sandbox_profile'), new RegExp(studioSandboxName))
   const codeKey = await configureProjectionAndContextWrite(page, configuredCodeDetails)
 
   await openNodeDetails(page, approval)
@@ -598,11 +690,9 @@ test('M6 Studio creates, debugs, versions and publishes a manifest-driven Workfl
   const forkAccepted = await forkResponse
   expect(forkAccepted.status()).toBe(202)
   const forkExecution = (await forkAccepted.json() as { executionId: string }).executionId
-  const stopFork = page.getByRole('button', { name: '停止', exact: true })
-  if (await stopFork.isVisible()) {
-    await stopFork.click()
-    await waitExecution(page, token, forkExecution, ['cancelled', 'failed', 'succeeded'])
-  } else await expect(studioRun(page)).toBeVisible()
+  await waitExecution(page, token, forkExecution, ['waiting', 'waiting_approval'])
+  await approveExecution(approvalPage, token, forkExecution)
+  await waitExecution(page, token, forkExecution, ['succeeded'])
 
   await selectDebugMode(page, 'full')
   const stoppedExecution = await startDebug(page, () => studioRun(page).click())
@@ -676,10 +766,11 @@ test('M6 Studio creates, debugs, versions and publishes a manifest-driven Workfl
 
 test('M6 Studio makes dual-Agent output selection explicit across serial, parallel and Merge topologies', async ({ page }, testInfo) => {
   const { token } = await login(page)
+  await ensureStudioResources(page, token)
   const workflowName = `M6 Multi Agent ${Date.now()}`
   const workflowId = await createWorkflow(page, workflowName)
-  await grantResource(page, 'credential', 'M5 Model Fixture Credential', undefined, workflowName)
-  await grantResource(page, 'model', 'm5-fixture-model', undefined, workflowName)
+  await grantResource(page, 'credential', studioCredentialName, undefined, workflowName)
+  await grantResource(page, 'model', studioModelName, undefined, workflowName)
 
   await page.goto(`/workflows/${workflowId}/editor`)
   await setStartInputs(page)
@@ -699,7 +790,7 @@ test('M6 Studio makes dual-Agent output selection explicit across serial, parall
 
   const model = page.locator('.react-flow__node-attachment').first()
   await openNodeDetails(page, model)
-  await choose(page, page.getByTestId('attachment-resource'), /m5-fixture-model/)
+  await choose(page, page.getByTestId('attachment-resource'), new RegExp(studioModelName))
   await page.getByTestId('node-details-view').getByRole('button', { name: '关闭' }).first().click()
   await page.getByRole('button', { name: /^(适应画布|Fit View)$/ }).click({ force: true })
 
@@ -741,8 +832,9 @@ test('M6 Studio makes dual-Agent output selection explicit across serial, parall
   const primaryDraft = await saveAndReadDraft(page, token, workflowId)
   const primaryVersion = await mutate<WorkflowVersion>(page, token, `/workflows/${workflowId}/versions`, 'POST', { draftRevision: primaryDraft.revision })
   await mutate<{ id: string }>(page, token, `/workflows/${workflowId}/deployments`, 'POST', { workflowVersionId: primaryVersion.id, environmentId: environment!.id })
-  const deployment = await mutate<{ id: string }>(page, token, `/applications/${application.id}/deployments`, 'POST', { workflowVersionId: primaryVersion.id, environmentId: environment!.id, sessionVersionPolicy: 'pinned' })
+  const deployment = await mutate<ApplicationDeployment>(page, token, `/applications/${application.id}/deployments`, 'POST', { workflowVersionId: primaryVersion.id, environmentId: environment!.id, sessionVersionPolicy: 'pinned' })
   expect(deployment.id).toBeTruthy()
+  await waitApplicationDeployment(page, token, application.id, deployment.id)
 
   await page.goto('/playground')
   await page.getByRole('combobox').click()
@@ -753,15 +845,19 @@ test('M6 Studio makes dual-Agent output selection explicit across serial, parall
   const invocationResponse = page.waitForResponse((value) => value.url().includes('/gateway/v1/sessions/') && value.url().endsWith('/messages') && value.request().method() === 'POST')
   await page.getByPlaceholder('输入消息进行测试…').fill('M6 dual Agent output')
   await page.getByRole('button', { name: '发送' }).click()
-  const invocation = await (await invocationResponse).json() as GatewayInvocation
+  const invocationHttpResponse = await invocationResponse
+  if (!invocationHttpResponse.ok()) {
+    throw new Error(`Session message failed with HTTP ${invocationHttpResponse.status()}: ${await invocationHttpResponse.text()}`)
+  }
+  const invocation = await invocationHttpResponse.json() as GatewayInvocation
   let completed: GatewayInvocation | undefined
   await expect.poll(async () => {
-    const response = await page.request.get(`/gateway/v1/invocations/${invocation.id}`, { headers: { Authorization: `Bearer ${token}` } })
+    const response = await page.request.get(`${gatewayBase}/gateway/v1/invocations/${invocation.id}`, { headers: { Authorization: `Bearer ${token}` } })
     completed = await response.json() as GatewayInvocation
     return completed.status
   }, { timeout: 180_000, intervals: [500, 1_000, 2_000] }).toBe('completed')
   expect(completed?.error).toBeNull()
-  const messagesResponse = await page.request.get(`/gateway/v1/sessions/${session.id}/messages`, { headers: { Authorization: `Bearer ${token}` } })
+  const messagesResponse = await page.request.get(`${gatewayBase}/gateway/v1/sessions/${session.id}/messages`, { headers: { Authorization: `Bearer ${token}` } })
   const messages = await messagesResponse.json() as GatewayMessage[]
   const assistant = messages.find((message) => message.role === 'assistant')
   expect(assistant).toBeTruthy()

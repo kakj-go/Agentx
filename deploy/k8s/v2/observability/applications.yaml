@@ -1,0 +1,68 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: observability, namespace: agentx-v2-runtime }
+spec:
+  replicas: 1
+  strategy: { type: RollingUpdate, rollingUpdate: { maxUnavailable: 1, maxSurge: 1 } }
+  selector: { matchLabels: { app.kubernetes.io/name: observability } }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: observability, agentx.io/plane: observability, agentx.io/internal-api: observability-v1, agentx.io/metrics: enabled }
+    spec:
+      serviceAccountName: observability
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 60
+      securityContext: { runAsNonRoot: true, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: observability
+          image: agentx/observability:dev
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: AGENTX_INSTANCE_ID
+              valueFrom: { fieldRef: { fieldPath: metadata.uid } }
+            - { name: AGENTX_OBSERVABILITY_ROLES, value: "trace-consumer,query" }
+            - { name: AGENTX_CLICKHOUSE_URL, value: http://clickhouse:8123 }
+            - { name: AGENTX_CLICKHOUSE_DATABASE, value: agentx_observability }
+            - { name: AGENTX_CLICKHOUSE_QUERY_USER, value: observability_query }
+            - { name: AGENTX_CLICKHOUSE_CONSUMER_USER, value: observability_consumer }
+            - { name: AGENTX_OBSERVABILITY_REDIS_URL, value: redis://runtime-redis.agentx-v2-runtime.svc:6379/ }
+            - { name: AGENTX_OBSERVABILITY_REDIS_USERNAME, value: observability }
+            - { name: AGENTX_OBSERVABILITY_JWT_ISSUER, value: agentx-control }
+            - name: AGENTX_CLICKHOUSE_QUERY_PASSWORD
+              valueFrom: { secretKeyRef: { name: agentx-observability-secrets, key: AGENTX_CLICKHOUSE_QUERY_PASSWORD } }
+            - name: AGENTX_CLICKHOUSE_CONSUMER_PASSWORD
+              valueFrom: { secretKeyRef: { name: agentx-observability-secrets, key: AGENTX_CLICKHOUSE_CONSUMER_PASSWORD } }
+            - name: AGENTX_OBSERVABILITY_REDIS_PASSWORD
+              valueFrom: { secretKeyRef: { name: agentx-observability-secrets, key: AGENTX_OBSERVABILITY_REDIS_PASSWORD } }
+            - name: AGENTX_OBSERVABILITY_BFF_JWT_PUBLIC_KEYS_JSON
+              valueFrom: { secretKeyRef: { name: agentx-observability-secrets, key: AGENTX_OBSERVABILITY_BFF_JWT_PUBLIC_KEYS_JSON } }
+          ports:
+            - { name: http, containerPort: 8080 }
+            - { name: admin, containerPort: 9091 }
+            - { name: metrics, containerPort: 9092 }
+          resources: { requests: { cpu: 100m, memory: 128Mi, ephemeral-storage: 64Mi }, limits: { cpu: 1, memory: 512Mi, ephemeral-storage: 256Mi } }
+          startupProbe: { httpGet: { path: /health/live, port: http }, periodSeconds: 2, failureThreshold: 30 }
+          readinessProbe: { httpGet: { path: /health/ready, port: http }, periodSeconds: 5, failureThreshold: 2 }
+          livenessProbe: { httpGet: { path: /health/live, port: http }, periodSeconds: 10, failureThreshold: 3 }
+          lifecycle: { preStop: { httpGet: { path: /health/drain, port: admin, scheme: HTTP } } }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities: { drop: [ALL] }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: observability, namespace: agentx-v2-runtime }
+spec:
+  type: ClusterIP
+  selector: { app.kubernetes.io/name: observability }
+  ports: [{ name: http, port: 8080, targetPort: http }]
+---
+apiVersion: v1
+kind: Service
+metadata: { name: observability-metrics, namespace: agentx-v2-runtime }
+spec:
+  clusterIP: None
+  selector: { app.kubernetes.io/name: observability }
+  ports: [{ name: metrics, port: 9092, targetPort: metrics }]

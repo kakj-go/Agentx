@@ -1,0 +1,67 @@
+{
+  "$defs": {
+    "ProjectionStateV1": {
+      "enum": [
+        "ready",
+        "rebuilding",
+        "degraded",
+        "error"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "activeGeneration": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "apiVersion": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "buildingGeneration": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "cursor": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "lastErrorCode": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "projectionName": {
+      "type": "string"
+    },
+    "retentionFloorCursor": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "state": {
+      "$ref": "#/$defs/ProjectionStateV1"
+    }
+  },
+  "required": [
+    "apiVersion",
+    "projectionName",
+    "state",
+    "cursor",
+    "retentionFloorCursor",
+    "activeGeneration"
+  ],
+  "title": "ProjectionStatusV1",
+  "type": "object"
+}

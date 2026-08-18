@@ -1,0 +1,167 @@
+{
+  "$defs": {
+    "RuntimeCheckpointPolicyV1": {
+      "additionalProperties": false,
+      "properties": {
+        "inlineLimitBytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "onExecutionStart": {
+          "type": "boolean"
+        },
+        "onNodeCompleted": {
+          "type": "boolean"
+        },
+        "onSuspended": {
+          "type": "boolean"
+        },
+        "periodicNodeInterval": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "onExecutionStart",
+        "onNodeCompleted",
+        "onSuspended",
+        "inlineLimitBytes"
+      ],
+      "type": "object"
+    },
+    "RuntimeContextPolicyV1": {
+      "additionalProperties": false,
+      "properties": {
+        "compareAndSwapRequired": {
+          "type": "boolean"
+        },
+        "maximumBytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "maximumBytes",
+        "compareAndSwapRequired"
+      ],
+      "type": "object"
+    },
+    "RuntimeOutputPolicyV1": {
+      "additionalProperties": false,
+      "properties": {
+        "externalMediaType": {
+          "type": "string"
+        },
+        "inlineLimitBytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "inlineLimitBytes",
+        "externalMediaType"
+      ],
+      "type": "object"
+    },
+    "RuntimeRetryPolicyV1": {
+      "additionalProperties": false,
+      "properties": {
+        "backoffMultiplierMilli": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "initialBackoffMillis": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maximumAttempts": {
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maximumBackoffMillis": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "maximumAttempts",
+        "initialBackoffMillis",
+        "maximumBackoffMillis",
+        "backoffMultiplierMilli"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "activationBudget": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "checkpoint": {
+      "$ref": "#/$defs/RuntimeCheckpointPolicyV1"
+    },
+    "context": {
+      "$ref": "#/$defs/RuntimeContextPolicyV1"
+    },
+    "credentialHandleTtlSeconds": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "maximumPolicyStalenessSeconds": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "operationDeadlineSeconds": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "output": {
+      "$ref": "#/$defs/RuntimeOutputPolicyV1"
+    },
+    "retry": {
+      "$ref": "#/$defs/RuntimeRetryPolicyV1"
+    },
+    "schemaVersion": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "timeoutSeconds": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "timeoutSeconds",
+    "operationDeadlineSeconds",
+    "activationBudget",
+    "maximumPolicyStalenessSeconds",
+    "credentialHandleTtlSeconds",
+    "retry",
+    "checkpoint",
+    "context",
+    "output"
+  ],
+  "title": "RuntimePolicyV1",
+  "type": "object"
+}

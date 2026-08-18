@@ -25,8 +25,8 @@
 - Workflow、Draft、Version、Deployment
 - Node Definition 和 Node Version
 - Model、Tool、Skill、RAG、Memory、Credential
-- Application、Session、Message
-- Approval Task 和 Notification
+- Application、API Key 和 Trigger 草稿/发布配置
+- Approval、Notification、Evaluation 和 Retention 的治理投影
 - Dataset、Evaluation Profile Version、Evaluation Run
 - Node Catalog、Manifest Version 和动态 Provider
 
@@ -34,14 +34,12 @@
 
 处理所有运行状态：
 
-- Trigger Gateway
-- Execution Coordinator
-- Scheduler
-- Redis Queue
-- Workflow Worker
-- Node Runner
+- Runtime Gateway
+- Workflow Runtime Coordinator/Trigger/Command/Recovery/Quota/Trace Relay
+- Capability Queue 和 Workflow Worker
+- Resource Runtime 和 Node Runner
 - Sandbox Manager
-- Trace Writer
+- Runtime Query、Event Export 和 Trace Outbox
 
 ### 数据层
 
@@ -57,19 +55,19 @@
 
 承载管理控制台、Workflow Studio、Playground、Trace 和评测页面。
 
-### platform-api
+### platform-control
 
-首期采用模块化单体，包含：
+控制面模块化服务，包含：
 
 - IAM
 - Workflow 管理
 - 资源管理
-- 应用和会话
-- 审批和通知
+- 应用发布配置
+- 审批、通知和运行治理投影
 - 测试集和报告
-- ClickHouse 查询 API
+- Runtime/Observability BFF
 
-### trigger-gateway
+### runtime-gateway
 
 负责：
 
@@ -79,9 +77,9 @@
 - 请求认证
 - 输入 Schema 校验
 - 幂等键
-- 创建 Execution 请求
+- 创建 Session、Message、Invocation 和 Runtime Command
 
-### workflow-coordinator
+### workflow-runtime
 
 负责：
 
@@ -92,6 +90,7 @@
 - Join 和 Loop 计算
 - Wait 和 Approval 恢复
 - 超时、取消和故障任务回收
+- Schedule/Poll/Lifecycle Trigger、Outbox、Artifact、Quota 和 Trace Relay
 
 ### workflow-worker
 
@@ -114,14 +113,27 @@
 
 Sandbox disabled 时不部署该服务。remote 模式下一个逻辑 Manager 可多副本共享 MySQL Lease并连接一个 OpenSandbox Lifecycle Endpoint；OpenSandbox 再按会话创建任意多个运行实例。本阶段不实现多 Provider 容量调度。
 
-### trace-writer
+### observability
 
-从 Redis Stream 或专用 Trace Queue 批量写入 ClickHouse。ClickHouse 暂时不可用时，Workflow 执行不能因此失败。
+Trace Consumer 从受限 Runtime Redis Stream 批量写入 ClickHouse，Query Role 提供 Trace、成本和聚合查询。Observability 不持有任何 MySQL Credential；ClickHouse 暂时不可用时，Workflow 执行不能因此失败。
+
+### 指标与扩缩容责任
+
+Agentx 后端常驻服务在独立的 `9092` 端口暴露低基数 Prometheus 文本格式指标，Kubernetes `*-metrics` Service 只提供集群内抓取入口。监控组件所在 Namespace 必须显式添加 `agentx.io/metrics-access=true` 标签才能通过 NetworkPolicy 抓取。Agentx 不安装或管理 Prometheus、Prometheus Adapter、Metrics Server，也不创建 HPA、KEDA `ScaledObject` 或其他自动扩缩容器。
+
+指标抓取、长期存储、告警和扩缩容策略属于用户 Kubernetes 平台的责任。用户可以手工调整 Deployment 副本数，也可以使用自建 Prometheus、云监控、HPA、KEDA 或自定义控制器消费 Agentx 指标。Agentx Profile 中：
+
+- `replicas` 只定义首次安装时的初始副本数；
+- `maxReplicas` 定义连接池和外部依赖容量预算上限，不会自动创建扩缩容资源；
+- Upgrade/Rollback 保留 Deployment 当前副本数，避免覆盖用户或外部控制器已经调整的值；升级器仅在首次迁移时清理历史 Agentx HPA，此后不删除用户创建的 HPA/KEDA；
+- 外部扩缩容不得超过 `maxReplicas`，变更上限前必须重新校验 MySQL、Redis、OSS、ClickHouse 和 Provider 容量预算。
+
+Agentx 继续维护 Readiness/Liveness、Drain、PDB、Claim/Lease/Fencing 和优雅终止契约，使用户执行滚动发布或扩缩容时不会依赖单副本正确性。
 
 ## 3. 模块依赖规则
 
-- Studio 只能通过 Platform API 和 Trigger Gateway 调用后端。
-- Platform API 不直接执行节点。
+- Studio 只能通过 Platform Control BFF 和 Runtime Gateway 调用后端。
+- Platform Control 不直接执行节点，也不直连 Runtime MySQL/Redis/OSS 或 ClickHouse。
 - Worker 不修改 Workflow Draft。
 - Execution 只能运行不可变 Snapshot：生产入口使用 Version Source，Studio 调试使用精确 Draft Revision Source；任何入口都不能运行实时变化的 Draft Head。
 - Workflow Definition、Editor Document 和 Debug Overlay 分离；Compiler/Worker 只读取 Definition 和 Execution Snapshot。
@@ -133,7 +145,7 @@ Sandbox disabled 时不部署该服务。remote 模式下一个逻辑 Manager �
 
 ## 4. 编辑与执行快照边界
 
-Studio 保存 `Definition + Editor Document`，Pin/Mock 进入独立 Debug Overlay。Platform API 对 Draft Revision 或 Version 做权限与资源校验，Coordinator 随后在同一事务中固化 Execution Snapshot；Worker 从此不再读取 Draft、Version Head 或可变 Resource Head。
+Studio 保存 `Definition + Editor Document`，Pin/Mock 进入独立 Debug Overlay。Platform Control 对 Draft Revision 或 Version 做权限与资源校验并生成不可变 Bundle/Work Package；Runtime Coordinator 只从 Runtime 本地制品固化 Execution Snapshot，Worker 不读取 Control Draft、Version Head 或可变 Resource Head。
 
 ```text
 Draft Head --save--> Draft Revision --debug--+
@@ -148,7 +160,7 @@ Draft Debug 和 Version Execution 只在来源解析阶段不同，后续共享�
 结合当前 Rust 项目：
 
 - 后端：Rust、Axum、Tokio、SQLx
-- 内部通信：gRPC
+- 内部通信：版本化 REST/Internal API、MySQL Inbox/Outbox/Cursor；Worker 使用 Runtime-local 协议
 - 外部调用：REST、SSE、Webhook
 - 前端：React、TypeScript、Tailwind CSS、Radix UI、React Flow
 - 前端状态：TanStack Query、Zustand

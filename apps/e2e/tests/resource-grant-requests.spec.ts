@@ -6,6 +6,7 @@ const reviewerPassword = 'agentx-resource-reviewer-password'
 const credentialDepartment = 'Credential Governance'
 const modelDepartment = 'Model Governance'
 const modelName = 'Cross Department Model'
+const echoBaseUrl = process.env.AGENTX_E2E_ECHO_BASE_URL ?? 'http://echo-mcp:8090'
 
 async function dialog(page: Page, title: string | RegExp) {
   const value = page.getByRole('dialog', { name: title })
@@ -102,7 +103,7 @@ async function createCrossDepartmentModel(page: Page) {
   await page.getByRole('button', { name: '新建模型' }).click()
   const model = await dialog(page, '新建模型')
   await (await field(model, '连接名称')).fill('Cross Department Connection')
-  await (await field(model, 'Endpoint')).fill('http://echo-mcp:8090/v1')
+  await (await field(model, 'Endpoint')).fill(`${echoBaseUrl}/v1`)
   await select(model, '凭证', 'Cross Department Credential')
   await (await field(model, '模型名称')).fill(modelName)
   await (await field(model, '上游模型 ID')).fill('cross-department-echo')

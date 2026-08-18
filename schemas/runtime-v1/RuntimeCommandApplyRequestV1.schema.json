@@ -1,0 +1,209 @@
+{
+  "$defs": {
+    "ExecutionCommandV1": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "executionId": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "expectedStateVersion": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "kind": {
+              "const": "cancel",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "executionId",
+            "expectedStateVersion"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "checkpointId": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "kind": {
+              "const": "fork",
+              "type": "string"
+            },
+            "mode": {
+              "$ref": "#/$defs/PartialExecutionModeV1"
+            },
+            "nodeId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "sideEffectResolution": {
+              "$ref": "#/$defs/SideEffectResolutionV1"
+            },
+            "sourceExecutionId": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "sourceExecutionId",
+            "checkpointId",
+            "mode",
+            "sideEffectResolution"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "executionId": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "expectedStateVersion": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "kind": {
+              "const": "side_effect_confirmation",
+              "type": "string"
+            },
+            "nodeExecutionId": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "resolution": {
+              "$ref": "#/$defs/SideEffectResolutionV1"
+            }
+          },
+          "required": [
+            "kind",
+            "executionId",
+            "nodeExecutionId",
+            "resolution",
+            "expectedStateVersion"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "expectedVersion": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "kind": {
+              "const": "work_package_cancel",
+              "type": "string"
+            },
+            "packageId": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "packageId",
+            "expectedVersion"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "dryRun": {
+              "type": "boolean"
+            },
+            "kind": {
+              "const": "retention_run",
+              "type": "string"
+            },
+            "policyVersion": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "runId": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "runId",
+            "dryRun",
+            "policyVersion"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "PartialExecutionModeV1": {
+      "enum": [
+        "whole",
+        "node",
+        "to_node",
+        "from_node"
+      ],
+      "type": "string"
+    },
+    "SideEffectResolutionV1": {
+      "enum": [
+        "execute",
+        "reuse_output",
+        "dry_run"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "command": {
+      "$ref": "#/$defs/ExecutionCommandV1"
+    },
+    "commandId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "idempotencyKey": {
+      "type": "string"
+    },
+    "objectVersion": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "tenantId": {
+      "format": "uuid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "apiVersion",
+    "tenantId",
+    "commandId",
+    "objectVersion",
+    "idempotencyKey",
+    "command"
+  ],
+  "title": "RuntimeCommandApplyRequestV1",
+  "type": "object"
+}

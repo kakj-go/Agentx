@@ -773,6 +773,18 @@ fn default_manifests() -> Vec<NodeManifestVersion> {
             SideEffectLevel::None,
         ),
         m5_manifest(
+            "mcp_tool",
+            NodeCapability::McpTool,
+            json!({"type":"object","properties":{"resourceId":{"type":"string","format":"uuid"},"arguments":{}},"additionalProperties":false}),
+            SideEffectLevel::Irreversible,
+        ),
+        m5_manifest(
+            "skill",
+            NodeCapability::Skill,
+            json!({"type":"object","properties":{"resourceId":{"type":"string","format":"uuid"}},"additionalProperties":false}),
+            SideEffectLevel::None,
+        ),
+        m5_manifest(
             "rag",
             NodeCapability::Rag,
             json!({"type":"object","required":["operation"],"properties":{"operation":{"enum":["query","retrieve","insert","delete","health_check"]},"input":{}},"additionalProperties":false}),
@@ -1365,10 +1377,19 @@ mod tests {
     }
 
     #[test]
-    fn agent_owns_skill_and_tool_resources_as_attachments() {
+    fn agent_and_standalone_nodes_share_skill_and_tool_resources() {
         let registry = NodeRegistry::m5_defaults();
-        assert!(registry.get("mcp_tool", 1).is_none());
-        assert!(registry.get("skill", 1).is_none());
+        assert_eq!(
+            registry
+                .get("mcp_tool", 1)
+                .expect("MCP manifest")
+                .capability,
+            NodeCapability::McpTool
+        );
+        assert_eq!(
+            registry.get("skill", 1).expect("Skill manifest").capability,
+            NodeCapability::Skill
+        );
 
         let agent = registry.get("agent", 1).expect("agent manifest");
         assert_eq!(

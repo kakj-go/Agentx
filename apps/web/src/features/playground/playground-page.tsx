@@ -48,7 +48,7 @@ export function PlaygroundPage() {
     void queryClient.invalidateQueries({ queryKey: ['gateway-messages', session?.id] })
   })
   const createSession = useMutation({
-    mutationFn: () => gatewayRequest<GatewaySession>(`/applications/${selected?.slug}/sessions`, { method: 'POST', body: jsonBody({ title: t('applications.playgroundSession'), externalUserId: null }) }),
+    mutationFn: () => gatewayRequest<GatewaySession>(`/applications/${selected?.slug}/sessions`, { method: 'POST', headers: { 'Idempotency-Key': crypto.randomUUID() }, body: jsonBody({ title: t('applications.playgroundSession'), externalUserId: null }) }),
     onSuccess: (value) => { setSession(value); setInvocationId(undefined) },
     onError: (error: Error) => showToast(error.message),
   })
@@ -62,7 +62,7 @@ export function PlaygroundPage() {
     onError: (error: Error) => showToast(error.message),
   })
   const cancel = useMutation({
-    mutationFn: () => gatewayRequest(`/invocations/${invocationId}/cancel`, { method: 'POST' }),
+    mutationFn: () => gatewayRequest(`/invocations/${invocationId}/cancel`, { method: 'POST', headers: { 'Idempotency-Key': crypto.randomUUID() } }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['gateway-invocation', invocationId] }),
     onError: (error: Error) => showToast(error.message),
   })

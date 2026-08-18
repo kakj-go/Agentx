@@ -1,0 +1,55 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - providers.yaml
+  - ../../../addons/lightrag
+  - ../../../addons/mem0
+labels:
+  - includeSelectors: true
+    includeTemplates: true
+    pairs:
+      agentx.io/plane: dependencies
+      agentx.io/runtime-provider: allowed
+configMapGenerator:
+  - name: agentx-lightrag-config
+    literals:
+      - HOST=0.0.0.0
+      - PORT=9621
+      - WORKING_DIR=/app/data/rag_storage
+      - INPUT_DIR=/app/data/inputs
+      - PROMPT_DIR=/app/data/prompts
+      - LLM_BINDING=openai
+      - LLM_BINDING_HOST=http://echo-mcp:8090/v1
+      - LLM_MODEL=echo-model
+      - EMBEDDING_BINDING=openai
+      - EMBEDDING_BINDING_HOST=http://echo-mcp:8090/v1
+      - EMBEDDING_MODEL=echo-embedding-8
+      - EMBEDDING_DIM=8
+      - EMBEDDING_USE_BASE64=false
+  - name: agentx-mem0-config
+    literals:
+      - AUTH_DISABLED=true
+      - MEM0_TELEMETRY=false
+      - APP_DB_NAME=mem0_app
+      - HISTORY_DB_PATH=/app/history/history.db
+      - OPENAI_BASE_URL=http://echo-mcp:8090/v1
+      - MEM0_DEFAULT_LLM_MODEL=echo-model
+      - MEM0_DEFAULT_EMBEDDER_MODEL=echo-embedding-1536
+      - POSTGRES_HOST=mem0-postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=postgres
+      - POSTGRES_DB=postgres
+      - POSTGRES_COLLECTION_NAME=memories
+secretGenerator:
+  - name: agentx-lightrag-secrets
+    literals:
+      - LIGHTRAG_API_KEY=agentx-v2-04-rag-key
+      - LLM_BINDING_API_KEY=m5-model-secret
+      - EMBEDDING_BINDING_API_KEY=m5-model-secret
+  - name: agentx-mem0-secrets
+    literals:
+      - JWT_SECRET=agentx-v2-04-mem0-jwt
+      - OPENAI_API_KEY=m5-model-secret
+      - POSTGRES_PASSWORD=agentx-v2-04-postgres
+generatorOptions:
+  disableNameSuffixHash: true

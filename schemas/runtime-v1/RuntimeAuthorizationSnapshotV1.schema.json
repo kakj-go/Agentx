@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "capabilities": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array",
+      "uniqueItems": true
+    },
+    "capturedAt": {
+      "type": "string"
+    },
+    "grantIds": {
+      "items": {
+        "format": "uuid",
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "maximumPolicyStalenessSeconds": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "policyEpoch": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "schemaVersion": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "serviceIdentityId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "tenantId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "workflowId": {
+      "format": "uuid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "tenantId",
+    "serviceIdentityId",
+    "workflowId",
+    "policyEpoch",
+    "grantIds",
+    "capabilities",
+    "maximumPolicyStalenessSeconds",
+    "capturedAt"
+  ],
+  "title": "RuntimeAuthorizationSnapshotV1",
+  "type": "object"
+}

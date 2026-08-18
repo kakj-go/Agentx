@@ -1,0 +1,53 @@
+[package]
+name = "platform-control"
+default-run = "platform-control"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+agentx-bundle-builder.workspace = true
+agentx-application.workspace = true
+agentx-api-types.workspace = true
+agentx-control-infrastructure.workspace = true
+agentx-domain.workspace = true
+agentx-mysql-lease.workspace = true
+agentx-node-protocol.workspace = true
+agentx-runtime-contracts.workspace = true
+agentx-runtime.workspace = true
+agentx-service-kit.workspace = true
+anyhow.workspace = true
+axum.workspace = true
+axum-extra.workspace = true
+argon2.workspace = true
+base64.workspace = true
+bytes.workspace = true
+chrono-tz.workspace = true
+cron.workspace = true
+csv.workspace = true
+ed25519-dalek.workspace = true
+object_store.workspace = true
+jsonwebtoken.workspace = true
+jsonschema.workspace = true
+rand.workspace = true
+regex.workspace = true
+reqwest.workspace = true
+secrecy.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+sha2.workspace = true
+sqlx.workspace = true
+time.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+zip.workspace = true
+
+[dev-dependencies]
+http-body-util.workspace = true
+serial_test = "3.2"
+testcontainers = "0.25"
+tower.workspace = true

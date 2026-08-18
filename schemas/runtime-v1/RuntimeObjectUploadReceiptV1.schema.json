@@ -1,0 +1,77 @@
+{
+  "$defs": {
+    "RuntimeObjectReferenceV1": {
+      "additionalProperties": false,
+      "properties": {
+        "contentHash": {
+          "type": "string"
+        },
+        "mediaType": {
+          "type": "string"
+        },
+        "objectId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "objectKey": {
+          "type": "string"
+        },
+        "sizeBytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "storageDomain": {
+          "$ref": "#/$defs/StorageDomain"
+        },
+        "tenantId": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tenantId",
+        "storageDomain",
+        "objectId",
+        "objectKey",
+        "contentHash",
+        "sizeBytes",
+        "mediaType"
+      ],
+      "type": "object"
+    },
+    "StorageDomain": {
+      "enum": [
+        "runtime",
+        "observability"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "acceptedAt": {
+      "type": "string"
+    },
+    "apiVersion": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "object": {
+      "$ref": "#/$defs/RuntimeObjectReferenceV1"
+    },
+    "replayed": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "apiVersion",
+    "object",
+    "replayed",
+    "acceptedAt"
+  ],
+  "title": "RuntimeObjectUploadReceiptV1",
+  "type": "object"
+}

@@ -109,6 +109,8 @@ async fn main() -> anyhow::Result<()> {
         )
         .route("/v1/chat/completions", post(chat_completions))
         .route("/v1/embeddings", post(embeddings))
+        .route("/v2/runtime/model", post(v2_runtime_model))
+        .route("/v2/runtime/mcp", post(v2_runtime_mcp))
         .nest_service("/mcp", service);
     let listener = tokio::net::TcpListener::bind(bind_addr).await?;
     tracing::info!(%bind_addr, "Echo MCP is listening");
@@ -120,6 +122,61 @@ async fn main() -> anyhow::Result<()> {
         })
         .await?;
     Ok(())
+}
+
+async fn v2_runtime_model(headers: HeaderMap, AxumJson(request): AxumJson<Value>) -> Response {
+    if headers
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        != Some("Bearer m5-model-secret")
+    {
+        return (
+            StatusCode::UNAUTHORIZED,
+            AxumJson(json!({"error":{"message":"invalid fixture credential"}})),
+        )
+            .into_response();
+    }
+    let input = request.get("input").cloned().unwrap_or(Value::Null);
+    let agent_call = request
+        .pointer("/parameters/maxIterations")
+        .and_then(Value::as_u64)
+        .is_some();
+    let has_tool_result = input.get("tool").is_some();
+    if agent_call && !has_tool_result {
+        return AxumJson(json!({
+            "toolCall":{"text":"agentx-v2-tool"},
+            "usage":{"inputTokens":12,"outputTokens":8,"tokens":20,"costMicros":5}
+        }))
+        .into_response();
+    }
+    AxumJson(json!({
+        "done":true,
+        "answer":"agentx-v2-model",
+        "input":input,
+        "usage":{"inputTokens":12,"outputTokens":8,"tokens":20,"costMicros":5}
+    }))
+    .into_response()
+}
+
+async fn v2_runtime_mcp(headers: HeaderMap, AxumJson(request): AxumJson<Value>) -> Response {
+    if headers
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        != Some("Bearer m5-model-secret")
+    {
+        return (
+            StatusCode::UNAUTHORIZED,
+            AxumJson(json!({"error":{"message":"invalid fixture credential"}})),
+        )
+            .into_response();
+    }
+    AxumJson(json!({
+        "content":{
+            "text":"agentx-v2-mcp",
+            "arguments":request.pointer("/params/arguments").cloned().unwrap_or(Value::Null)
+        }
+    }))
+    .into_response()
 }
 
 async fn embeddings(headers: HeaderMap, AxumJson(request): AxumJson<Value>) -> Response {

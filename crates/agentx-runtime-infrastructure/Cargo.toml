@@ -1,0 +1,22 @@
+[package]
+name = "agentx-runtime-infrastructure"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[build-dependencies]
+
+[dependencies]
+agentx-mysql-lease.workspace = true
+anyhow.workspace = true
+object_store.workspace = true
+redis.workspace = true
+secrecy.workspace = true
+sqlx.workspace = true
+tokio.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+testcontainers = "0.25"
+tokio.workspace = true

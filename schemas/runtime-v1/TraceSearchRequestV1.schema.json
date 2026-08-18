@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "cursor": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "eventTypes": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "executionId": {
+      "format": "uuid",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "from": {
+      "type": "string"
+    },
+    "limit": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "statuses": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "tenantId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "to": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "apiVersion",
+    "tenantId",
+    "eventTypes",
+    "statuses",
+    "from",
+    "to",
+    "limit"
+  ],
+  "title": "TraceSearchRequestV1",
+  "type": "object"
+}

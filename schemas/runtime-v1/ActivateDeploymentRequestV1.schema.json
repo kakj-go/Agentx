@@ -1,0 +1,128 @@
+{
+  "$defs": {
+    "ActivationManifestV1": {
+      "additionalProperties": false,
+      "properties": {
+        "activationSequence": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "apiVersion": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "applicationId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "bundleId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "deploymentId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "expectedHeadVersion": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "minimumAdmissionEpoch": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "runtimeConfigRevision": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "runtimePolicy": {
+          "$ref": "#/$defs/ApplicationRuntimePolicyV1"
+        },
+        "tenantId": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "apiVersion",
+        "tenantId",
+        "applicationId",
+        "deploymentId",
+        "bundleId",
+        "activationSequence",
+        "minimumAdmissionEpoch",
+        "runtimeConfigRevision",
+        "runtimePolicy"
+      ],
+      "type": "object"
+    },
+    "ApplicationRuntimePolicyV1": {
+      "additionalProperties": false,
+      "properties": {
+        "maximumJsonBytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maximumMultipartBytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sessionVersionPolicy": {
+          "$ref": "#/$defs/SessionVersionPolicyV1"
+        },
+        "synchronousWaitSeconds": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "sessionVersionPolicy",
+        "synchronousWaitSeconds",
+        "maximumJsonBytes",
+        "maximumMultipartBytes"
+      ],
+      "type": "object"
+    },
+    "SessionVersionPolicyV1": {
+      "enum": [
+        "pinned",
+        "follow_deployment",
+        "manual_upgrade"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "idempotencyKey": {
+      "type": "string"
+    },
+    "manifest": {
+      "$ref": "#/$defs/ActivationManifestV1"
+    }
+  },
+  "required": [
+    "apiVersion",
+    "idempotencyKey",
+    "manifest"
+  ],
+  "title": "ActivateDeploymentRequestV1",
+  "type": "object"
+}

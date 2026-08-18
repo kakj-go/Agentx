@@ -1,0 +1,142 @@
+{
+  "$defs": {
+    "ApplyReceiptV1": {
+      "additionalProperties": false,
+      "properties": {
+        "apiVersion": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "applied": {
+          "type": "boolean"
+        },
+        "eventId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "objectVersion": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "replayed": {
+          "type": "boolean"
+        },
+        "result": true
+      },
+      "required": [
+        "apiVersion",
+        "eventId",
+        "applied",
+        "replayed",
+        "objectVersion",
+        "result"
+      ],
+      "type": "object"
+    },
+    "PublishReceiptStatusV1": {
+      "enum": [
+        "accepted",
+        "rejected"
+      ],
+      "type": "string"
+    },
+    "PublishRejectionV1": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/RuntimePublishErrorCodeV1"
+        },
+        "details": true,
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "details"
+      ],
+      "type": "object"
+    },
+    "RuntimePublishErrorCodeV1": {
+      "enum": [
+        "UNSUPPORTED_API_VERSION",
+        "UNSUPPORTED_BUNDLE_VERSION",
+        "UNSUPPORTED_IR_VERSION",
+        "INVALID_SIGNATURE",
+        "CONTENT_HASH_MISMATCH",
+        "OBJECT_MISSING",
+        "OBJECT_HASH_MISMATCH",
+        "OBJECT_SIZE_MISMATCH",
+        "OBJECT_MEDIA_TYPE_MISMATCH",
+        "UNSUPPORTED_CAPABILITY",
+        "ADMISSION_PREREQUISITE_MISSING",
+        "HEAD_VERSION_CONFLICT",
+        "ACTIVATION_SEQUENCE_CONFLICT",
+        "IDEMPOTENCY_CONFLICT",
+        "BUNDLE_REFERENCE_CONFLICT",
+        "TENANT_MISMATCH"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "acceptedAt": {
+      "type": "string"
+    },
+    "activationSequence": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "apiVersion": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "bundleId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "headVersion": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "receipt": {
+      "$ref": "#/$defs/ApplyReceiptV1"
+    },
+    "rejection": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PublishRejectionV1"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "status": {
+      "$ref": "#/$defs/PublishReceiptStatusV1"
+    }
+  },
+  "required": [
+    "apiVersion",
+    "receipt",
+    "bundleId",
+    "status",
+    "acceptedAt"
+  ],
+  "title": "PublishReceiptV1",
+  "type": "object"
+}

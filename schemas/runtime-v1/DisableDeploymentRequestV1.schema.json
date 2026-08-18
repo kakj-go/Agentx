@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "admissionEpoch": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "apiVersion": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "applicationId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "idempotencyKey": {
+      "type": "string"
+    },
+    "tenantId": {
+      "format": "uuid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "apiVersion",
+    "idempotencyKey",
+    "tenantId",
+    "applicationId",
+    "admissionEpoch"
+  ],
+  "title": "DisableDeploymentRequestV1",
+  "type": "object"
+}

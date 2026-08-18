@@ -38,7 +38,7 @@
   "credentialHandles": [],
   "idempotencyKey": "echo-fixture-completed-v1",
   "deadline": "2099-01-01T00:00:00Z",
-  "cancellationUrl": "http://workflow-coordinator:8080/internal/cancellations/018f0000-0000-7000-8000-000000000004",
+  "cancellationUrl": "http://workflow-runtime:8080/internal/runtime/v1/cancellations/018f0000-0000-7000-8000-000000000004",
   "traceContext": {
     "traceId": "018f0000-0000-7000-8000-000000000007",
     "spanId": "018f0000-0000-7000-8000-000000000008",

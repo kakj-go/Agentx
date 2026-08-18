@@ -1,0 +1,288 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["apiVersion", "environment", "namespaces", "images", "services", "components", "ingress", "secrets"],
+  "properties": {
+    "apiVersion": { "const": "agentx.io/deployment/v2alpha2" },
+    "environment": { "enum": ["local", "test", "production"] },
+    "namespaces": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["control", "runtime", "dependencies"],
+      "properties": {
+        "control": { "$ref": "#/$defs/namespace" },
+        "runtime": { "$ref": "#/$defs/namespace" },
+        "dependencies": { "$ref": "#/$defs/namespace" }
+      }
+    },
+    "images": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["registry", "tag", "pullPolicy"],
+      "properties": {
+        "registry": { "type": "string", "minLength": 1 },
+        "tag": { "type": "string", "minLength": 1 },
+        "pullPolicy": { "enum": ["Always", "IfNotPresent", "Never"] },
+        "digests": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "agentx-migrate": { "$ref": "#/$defs/digest" },
+            "agentx-bootstrap": { "$ref": "#/$defs/digest" },
+            "agentx-doctor": { "$ref": "#/$defs/digest" },
+            "platform-control": { "$ref": "#/$defs/digest" },
+            "web-console": { "$ref": "#/$defs/digest" },
+            "runtime-gateway": { "$ref": "#/$defs/digest" },
+            "workflow-runtime": { "$ref": "#/$defs/digest" },
+            "workflow-worker": { "$ref": "#/$defs/digest" },
+            "sandbox-manager": { "$ref": "#/$defs/digest" },
+            "observability": { "$ref": "#/$defs/digest" }
+          }
+        }
+      }
+    },
+    "services": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["webConsole", "platformControl", "runtimeGateway", "workflowRuntime", "workflowWorker", "sandboxManager", "observability"],
+      "properties": {
+        "webConsole": { "$ref": "#/$defs/stateless" },
+        "platformControl": { "$ref": "#/$defs/controlService" },
+        "runtimeGateway": { "$ref": "#/$defs/mysqlService" },
+        "workflowRuntime": { "$ref": "#/$defs/runtimeService" },
+        "workflowWorker": { "$ref": "#/$defs/workerService" },
+        "sandboxManager": { "$ref": "#/$defs/mysqlService" },
+        "observability": { "$ref": "#/$defs/observabilityService" }
+      }
+    },
+    "ingress": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["className", "controlHost", "runtimeHost", "controlTlsSecretName", "runtimeTlsSecretName"],
+      "properties": {
+        "className": { "type": "string", "minLength": 1 },
+        "controlHost": { "type": "string", "minLength": 1 },
+        "runtimeHost": { "type": "string", "minLength": 1 },
+        "controlTlsSecretName": { "type": ["string", "null"] },
+        "runtimeTlsSecretName": { "type": ["string", "null"] }
+      }
+    },
+    "components": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["controlMysql", "runtimeMysql", "runtimeRedis", "clickhouse", "objectStorage", "secretProvider", "sandbox"],
+      "properties": {
+        "controlMysql": { "$ref": "#/$defs/mysql" },
+        "runtimeMysql": { "$ref": "#/$defs/mysql" },
+        "runtimeRedis": { "$ref": "#/$defs/redis" },
+        "secretProvider": {
+          "type": "object", "additionalProperties": false,
+          "required": ["mode", "endpoint", "mount"],
+          "properties": {
+            "mode": { "const": "vault_kv_v2" },
+            "endpoint": { "type": "string", "pattern": "^https?://" },
+            "mount": { "type": "string", "minLength": 1 },
+            "caSecretName": { "type": ["string", "null"], "minLength": 1 }
+          }
+        },
+        "sandbox": {
+          "type": "object", "additionalProperties": false,
+          "required": ["mode", "endpoint", "secureAccess"],
+          "properties": {
+            "mode": { "const": "external_opensandbox" },
+            "endpoint": { "type": "string", "pattern": "^https?://" },
+            "secureAccess": { "type": "boolean" },
+            "caSecretName": { "type": ["string", "null"], "minLength": 1 }
+          }
+        },
+        "clickhouse": { "$ref": "#/$defs/clickhouse" },
+        "objectStorage": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode", "endpoint", "region", "allowHttp", "pathStyle", "domains"],
+          "properties": {
+            "mode": { "enum": ["bundled-minio", "external-s3"] },
+            "endpoint": { "type": "string", "pattern": "^https?://" },
+            "region": { "type": "string", "minLength": 1 },
+            "allowHttp": { "type": "boolean" },
+            "pathStyle": { "type": "boolean" },
+            "caSecretName": { "type": ["string", "null"], "minLength": 1 },
+            "domains": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["control", "runtime", "observability"],
+              "properties": {
+                "control": { "$ref": "#/$defs/bucket" },
+                "runtime": { "$ref": "#/$defs/bucket" },
+                "observability": { "$ref": "#/$defs/bucket" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "network": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "externalEgress": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/egressTarget" }
+        }
+      }
+    },
+    "backup": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mysqlRpoMinutes": { "const": 5 },
+        "mysqlRtoMinutes": { "const": 30 },
+        "objectRpoMinutes": { "const": 15 },
+        "objectRtoMinutes": { "const": 60 },
+        "clickhouseRpoMinutes": { "const": 30 },
+        "clickhouseRtoMinutes": { "const": 60 },
+        "redisRebuildMinutes": { "const": 5 },
+        "controlBucket": { "type": "string", "minLength": 3 },
+        "runtimeBucket": { "type": "string", "minLength": 3 },
+        "observabilityBucket": { "type": "string", "minLength": 3 }
+      }
+    },
+    "secrets": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["control", "runtime", "observability", "dependencies"],
+      "properties": {
+        "mode": { "enum": ["generated-local", "existing-kubernetes"] },
+        "control": { "const": "agentx-control-secrets" },
+        "runtime": { "const": "agentx-runtime-secrets" },
+        "observability": { "const": "agentx-observability-secrets" },
+        "dependencies": { "type": ["string", "null"] },
+        "workloads": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "platformControl": { "$ref": "#/$defs/secretName" },
+            "controlMigration": { "$ref": "#/$defs/secretName" },
+            "runtimeGateway": { "$ref": "#/$defs/secretName" },
+            "workflowRuntime": { "$ref": "#/$defs/secretName" },
+            "workflowWorker": { "$ref": "#/$defs/secretName" },
+            "sandboxManager": { "$ref": "#/$defs/secretName" },
+            "runtimeMigration": { "$ref": "#/$defs/secretName" },
+            "observability": { "$ref": "#/$defs/secretName" },
+            "observabilityMigration": { "$ref": "#/$defs/secretName" },
+            "controlBackup": { "$ref": "#/$defs/secretName" },
+            "runtimeBackup": { "$ref": "#/$defs/secretName" },
+            "observabilityBackup": { "$ref": "#/$defs/secretName" }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "stateless": {
+      "type": "object", "additionalProperties": false, "required": ["replicas", "maxReplicas"],
+      "properties": { "replicas": { "type": "integer", "minimum": 1 }, "maxReplicas": { "type": "integer", "minimum": 1 } }
+    },
+    "mysqlService": {
+      "type": "object", "additionalProperties": false, "required": ["replicas", "maxReplicas", "mysqlPool"],
+      "properties": { "replicas": { "type": "integer", "minimum": 1 }, "maxReplicas": { "type": "integer", "minimum": 1 }, "mysqlPool": { "type": "integer", "minimum": 1 } }
+    },
+    "controlService": {
+      "type": "object", "additionalProperties": false, "required": ["replicas", "maxReplicas", "roles", "mysqlPool"],
+      "properties": {
+        "replicas": { "type": "integer", "minimum": 1 }, "maxReplicas": { "type": "integer", "minimum": 1 }, "mysqlPool": { "type": "integer", "minimum": 1 },
+        "roles": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "enum": ["api", "publisher", "projector", "retention"] } }
+      }
+    },
+    "runtimeService": {
+      "type": "object", "additionalProperties": false, "required": ["replicas", "maxReplicas", "roles", "mysqlPool"],
+      "properties": {
+        "replicas": { "type": "integer", "minimum": 1 }, "maxReplicas": { "type": "integer", "minimum": 1 }, "mysqlPool": { "type": "integer", "minimum": 1 },
+        "roles": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "enum": ["coordinator", "trigger", "command", "outbox", "recovery", "artifact", "quota", "trace-relay"] } }
+      }
+    },
+    "observabilityService": {
+      "type": "object", "additionalProperties": false, "required": ["replicas", "maxReplicas", "roles"],
+      "properties": {
+        "replicas": { "type": "integer", "minimum": 1 }, "maxReplicas": { "type": "integer", "minimum": 1 },
+        "roles": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "enum": ["trace-consumer", "query"] } }
+      }
+    },
+    "workerService": {
+      "type": "object", "additionalProperties": false, "required": ["replicas", "maxReplicas", "capability", "mysqlPool"],
+      "properties": {
+        "replicas": { "type": "integer", "minimum": 1 }, "maxReplicas": { "type": "integer", "minimum": 1 }, "mysqlPool": { "type": "integer", "minimum": 1 },
+        "capability": { "enum": ["all", "builtin", "declarative_http", "remote_action", "agent", "model", "mcp_tool", "rag", "memory", "skill", "sandbox"] }
+      }
+    },
+    "namespace": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", "maxLength": 63 },
+    "secretName": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", "maxLength": 253 },
+    "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "egressTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cidrs", "ports"],
+      "properties": {
+        "cidrs": {
+          "type": "array", "minItems": 1, "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^(?!0\\.0\\.0\\.0/0$)(?!::/0$).+/[0-9]{1,3}$" }
+        },
+        "ports": {
+          "type": "array", "minItems": 1, "uniqueItems": true,
+          "items": { "type": "integer", "minimum": 1, "maximum": 65535 }
+        }
+      }
+    },
+    "mysql": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "host", "port", "database", "appUser", "migrateUser", "tlsMode", "maxConnections", "serverMaxConnections"],
+      "properties": {
+        "mode": { "enum": ["bundled", "external"] },
+        "host": { "type": "string", "minLength": 1 },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "database": { "type": "string", "minLength": 1 },
+        "appUser": { "type": "string", "minLength": 1 },
+        "migrateUser": { "type": "string", "minLength": 1 },
+        "tlsMode": { "enum": ["disabled", "preferred", "required", "verify_ca", "verify_identity"] },
+        "maxConnections": { "type": "integer", "minimum": 1 },
+        "serverMaxConnections": { "type": "integer", "minimum": 1 },
+        "caSecretName": { "type": ["string", "null"], "minLength": 1 }
+      }
+    },
+    "redis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "url"],
+      "properties": {
+        "mode": { "enum": ["bundled", "external"] },
+        "url": { "type": "string", "pattern": "^rediss?://" },
+        "caSecretName": { "type": ["string", "null"], "minLength": 1 }
+      }
+    },
+    "clickhouse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "url", "database", "queryUser", "consumerUser", "migrateUser"],
+      "properties": {
+        "mode": { "enum": ["bundled", "external"] },
+        "url": { "type": "string", "pattern": "^https?://" },
+        "database": { "type": "string", "minLength": 1 },
+        "queryUser": { "type": "string", "minLength": 1 },
+        "consumerUser": { "type": "string", "minLength": 1 },
+        "migrateUser": { "type": "string", "minLength": 1 },
+        "caSecretName": { "type": ["string", "null"], "minLength": 1 }
+      }
+    },
+    "bucket": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["bucket", "user"],
+      "properties": {
+        "bucket": { "type": "string", "minLength": 3 },
+        "user": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

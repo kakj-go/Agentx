@@ -25,4 +25,27 @@ describe('nodeTraceView', () => {
     expect(result.sandboxes.map((item) => item.id)).toEqual(['sandbox-a'])
     expect(result.traceEvents.map((item) => item.eventId)).toEqual(['event-a'])
   })
+
+  it('keeps the inspector usable while runtime details or trace are still delayed', () => {
+    const selected = {
+      id: 'run-a',
+      nodeId: 'node-a',
+      attempts: undefined,
+      input: { hidden: true },
+      output: { hidden: true },
+    } as unknown as NodeExecution
+
+    const result = nodeTraceView(
+      'node-a',
+      [selected],
+      { executionId: 'execution-a' } as unknown as RuntimeDetails,
+      { code: 'TRACE_DELAYED' } as unknown as Trace,
+    )
+
+    expect(result.agentRuns).toEqual([])
+    expect(result.iterations).toEqual([])
+    expect(result.calls).toEqual([])
+    expect(result.sandboxes).toEqual([])
+    expect(result.traceEvents).toEqual([])
+  })
 })

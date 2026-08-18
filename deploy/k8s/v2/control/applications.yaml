@@ -1,0 +1,155 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: platform-control, namespace: agentx-v2-control }
+spec:
+  replicas: 1
+  strategy: { type: RollingUpdate, rollingUpdate: { maxUnavailable: 1, maxSurge: 1 } }
+  selector: { matchLabels: { app.kubernetes.io/name: platform-control } }
+  template:
+    metadata: { labels: { app.kubernetes.io/name: platform-control, agentx.io/plane: control, agentx.io/public-api: control, agentx.io/metrics: enabled } }
+    spec:
+      serviceAccountName: platform-control
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 60
+      securityContext: { runAsNonRoot: true, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: platform-control
+          image: agentx/platform-control:dev
+          imagePullPolicy: IfNotPresent
+          args: []
+          env:
+            - name: AGENTX_INSTANCE_ID
+              valueFrom: { fieldRef: { fieldPath: metadata.uid } }
+            - { name: AGENTX_CONTROL_ROLES, value: "api,publisher,projector,retention" }
+            - { name: AGENTX_CONTROL_API_JWT_ISSUER, value: agentx-platform }
+            - { name: AGENTX_CONTROL_API_JWT_AUDIENCE, value: agentx-web }
+            - { name: AGENTX_CONTROL_API_COOKIE_SECURE, value: "false" }
+            - { name: AGENTX_CONTROL_MYSQL_HOST, value: control-mysql }
+            - { name: AGENTX_CONTROL_MYSQL_PORT, value: "3306" }
+            - { name: AGENTX_CONTROL_MYSQL_DATABASE, value: agentx_control }
+            - { name: AGENTX_CONTROL_MYSQL_USER, value: control_app }
+            - { name: AGENTX_CONTROL_MYSQL_MAX_CONNECTIONS, value: "10" }
+            - { name: AGENTX_CONTROL_MYSQL_TLS_MODE, value: disabled }
+            - { name: AGENTX_CONTROL_S3_ENDPOINT, value: http://object-storage.agentx-v2-deps.svc:9000 }
+            - { name: AGENTX_CONTROL_S3_BUCKET, value: agentx-control }
+            - { name: AGENTX_CONTROL_S3_REGION, value: us-east-1 }
+            - { name: AGENTX_CONTROL_S3_ALLOW_HTTP, value: "true" }
+            - { name: AGENTX_CONTROL_S3_PATH_STYLE, value: "true" }
+            - { name: AGENTX_RUNTIME_INTERNAL_URL, value: http://runtime-gateway-internal.agentx-v2-runtime.svc:8080 }
+            - { name: AGENTX_OBSERVABILITY_INTERNAL_URL, value: http://observability.agentx-v2-runtime.svc:8080 }
+            - { name: AGENTX_CONTROL_VAULT_ENDPOINT, value: http://vault.agentx-v2-deps.svc:8200 }
+            - { name: AGENTX_CONTROL_VAULT_MOUNT, value: secret }
+            - name: AGENTX_CONTROL_MYSQL_PASSWORD
+              valueFrom: { secretKeyRef: { name: agentx-control-secrets, key: AGENTX_CONTROL_MYSQL_PASSWORD } }
+            - name: AGENTX_CONTROL_S3_ACCESS_KEY
+              valueFrom: { secretKeyRef: { name: agentx-control-secrets, key: AGENTX_CONTROL_S3_ACCESS_KEY } }
+            - name: AGENTX_CONTROL_S3_SECRET_KEY
+              valueFrom: { secretKeyRef: { name: agentx-control-secrets, key: AGENTX_CONTROL_S3_SECRET_KEY } }
+            - name: AGENTX_CONTROL_PUBLISHER_JWT_KID
+              valueFrom: { secretKeyRef: { name: agentx-control-secrets, key: AGENTX_CONTROL_PUBLISHER_JWT_KID } }
+            - name: AGENTX_CONTROL_PUBLISHER_JWT_PRIVATE_KEY_PEM
+              valueFrom: { secretKeyRef: { name: agentx-control-secrets, key: AGENTX_CONTROL_PUBLISHER_JWT_PRIVATE_KEY_PEM } }
+            - name: AGENTX_CONTROL_PROJECTOR_JWT_KID
+              valueFrom: { secretKeyRef: { name: agentx-control-secrets, key: AGENTX_CONTROL_PROJECTOR_JWT_KID } }
+            - name: AGENTX_CONTROL_PROJECTOR_JWT_PRIVATE_KEY_PEM
+              valueFrom: { secretKeyRef: { name: agentx-control-secrets, key: AGENTX_CONTROL_PROJECTOR_JWT_PRIVATE_KEY_PEM } }
+            - name: AGENTX_CONTROL_BFF_JWT_KID
+              valueFrom: { secretKeyRef: { name: agentx-control-secrets, key: AGENTX_CONTROL_BFF_JWT_KID } }
+            - name: AGENTX_CONTROL_BFF_JWT_PRIVATE_KEY_PEM
+              valueFrom: { secretKeyRef: { name: agentx-control-secrets, key: AGENTX_CONTROL_BFF_JWT_PRIVATE_KEY_PEM } }
+            - name: AGENTX_CONTROL_BUNDLE_KEY_ID
+              valueFrom: { secretKeyRef: { name: agentx-control-secrets, key: AGENTX_CONTROL_BUNDLE_KEY_ID } }
+            - name: AGENTX_CONTROL_BUNDLE_ED25519_PRIVATE_KEY_PEM
+              valueFrom: { secretKeyRef: { name: agentx-control-secrets, key: AGENTX_CONTROL_BUNDLE_ED25519_PRIVATE_KEY_PEM } }
+            - name: AGENTX_CONTROL_WORK_PACKAGE_KEY_ID
+              valueFrom: { secretKeyRef: { name: agentx-control-secrets, key: AGENTX_CONTROL_WORK_PACKAGE_KEY_ID } }
+            - name: AGENTX_CONTROL_WORK_PACKAGE_ED25519_PRIVATE_KEY_PEM
+              valueFrom: { secretKeyRef: { name: agentx-control-secrets, key: AGENTX_CONTROL_WORK_PACKAGE_ED25519_PRIVATE_KEY_PEM } }
+            - name: AGENTX_CONTROL_API_REFRESH_JWT_SIGNING_SECRET
+              valueFrom: { secretKeyRef: { name: agentx-control-secrets, key: AGENTX_CONTROL_API_REFRESH_JWT_SIGNING_SECRET } }
+            - name: AGENTX_CONTROL_USER_JWT_KID
+              valueFrom: { secretKeyRef: { name: agentx-control-secrets, key: AGENTX_CONTROL_USER_JWT_KID } }
+            - name: AGENTX_CONTROL_USER_JWT_PRIVATE_KEY_PEM
+              valueFrom: { secretKeyRef: { name: agentx-control-secrets, key: AGENTX_CONTROL_USER_JWT_PRIVATE_KEY_PEM } }
+            - name: AGENTX_CONTROL_USER_JWT_PUBLIC_KEYS_JSON
+              valueFrom: { secretKeyRef: { name: agentx-control-secrets, key: AGENTX_CONTROL_USER_JWT_PUBLIC_KEYS_JSON } }
+            - name: AGENTX_CONTROL_VAULT_TOKEN
+              valueFrom: { secretKeyRef: { name: agentx-control-secrets, key: AGENTX_CONTROL_VAULT_TOKEN } }
+          ports:
+            - { name: http, containerPort: 8080 }
+            - { name: admin, containerPort: 9091 }
+            - { name: metrics, containerPort: 9092 }
+          resources: { requests: { cpu: 100m, memory: 128Mi, ephemeral-storage: 64Mi }, limits: { cpu: 1, memory: 512Mi, ephemeral-storage: 256Mi } }
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, runAsNonRoot: true, capabilities: { drop: [ALL] } }
+          startupProbe: { httpGet: { path: /health/live, port: http }, periodSeconds: 2, failureThreshold: 30 }
+          readinessProbe: { httpGet: { path: /health/ready, port: http }, periodSeconds: 5, failureThreshold: 2 }
+          livenessProbe: { httpGet: { path: /health/live, port: http }, periodSeconds: 10, failureThreshold: 3 }
+          lifecycle: { preStop: { httpGet: { path: /health/drain, port: admin, scheme: HTTP } } }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: platform-control, namespace: agentx-v2-control }
+spec:
+  selector: { app.kubernetes.io/name: platform-control }
+  ports: [{ name: http, port: 8080, targetPort: http }]
+---
+apiVersion: v1
+kind: Service
+metadata: { name: platform-control-metrics, namespace: agentx-v2-control }
+spec:
+  clusterIP: None
+  selector: { app.kubernetes.io/name: platform-control }
+  ports: [{ name: metrics, port: 9092, targetPort: metrics }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: web-console, namespace: agentx-v2-control }
+spec:
+  replicas: 1
+  strategy: { type: RollingUpdate, rollingUpdate: { maxUnavailable: 1, maxSurge: 1 } }
+  selector: { matchLabels: { app.kubernetes.io/name: web-console } }
+  template:
+    metadata: { labels: { app.kubernetes.io/name: web-console, agentx.io/plane: control, agentx.io/public-api: control } }
+    spec:
+      serviceAccountName: platform-control
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 60
+      securityContext: { runAsNonRoot: true, seccompProfile: { type: RuntimeDefault } }
+      initContainers:
+        - name: copy-web-assets
+          image: agentx/web-console:dev
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-c", "cp -a /opt/agentx-web/. /work/"]
+          volumeMounts: [{ name: web-assets, mountPath: /work }]
+          resources: { requests: { cpu: 10m, memory: 16Mi, ephemeral-storage: 16Mi }, limits: { cpu: 100m, memory: 64Mi, ephemeral-storage: 64Mi } }
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, runAsNonRoot: true, capabilities: { drop: [ALL] } }
+      containers:
+        - name: web-console
+          image: agentx/web-console:dev
+          imagePullPolicy: IfNotPresent
+          env:
+            - { name: AGENTX_RUNTIME_PUBLIC_BASE_URL, value: http://run.agentx.localhost }
+          ports: [{ name: http, containerPort: 8080 }]
+          volumeMounts:
+            - { name: web-assets, mountPath: /usr/share/nginx/html }
+            - { name: web-tmp, mountPath: /tmp }
+            - { name: web-cache, mountPath: /var/cache/nginx }
+          resources: { requests: { cpu: 25m, memory: 32Mi, ephemeral-storage: 32Mi }, limits: { cpu: 500m, memory: 128Mi, ephemeral-storage: 128Mi } }
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, runAsNonRoot: true, capabilities: { drop: [ALL] } }
+          startupProbe: { httpGet: { path: /health/live, port: http }, periodSeconds: 2, failureThreshold: 30 }
+          readinessProbe: { httpGet: { path: /health/ready, port: http }, periodSeconds: 5, failureThreshold: 2 }
+          livenessProbe: { httpGet: { path: /health/live, port: http }, periodSeconds: 10, failureThreshold: 3 }
+          lifecycle:
+            preStop:
+              exec: { command: ["/bin/sh", "-c", "nginx -s quit; while kill -0 1 2>/dev/null; do sleep 1; done"] }
+      volumes:
+        - { name: web-assets, emptyDir: {} }
+        - { name: web-tmp, emptyDir: {} }
+        - { name: web-cache, emptyDir: {} }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: web-console, namespace: agentx-v2-control }
+spec:
+  selector: { app.kubernetes.io/name: web-console }
+  ports: [{ name: http, port: 8080, targetPort: http }]

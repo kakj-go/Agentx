@@ -1,0 +1,648 @@
+use agentx_runtime_infrastructure::{RuntimeRedisSettings, connect_runtime_redis};
+use anyhow::Result;
+use redis::AsyncCommands;
+use redis::aio::ConnectionManager;
+use std::{env, future::Future, time::Duration};
+use uuid::Uuid;
+
+#[path = "support/runtime_task_queue.rs"]
+mod runtime_task_queue;
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+    let _ = tracing_subscriber::fmt()
+        .json()
+        .with_env_filter(filter)
+        .try_init();
+    let roles = runtime_roles()?;
+    let state = agentx_v2_runtime::RuntimeState::maintenance_from_env().await?;
+    let pool = state.pool.clone();
+    let redis_settings = RuntimeRedisSettings::from_env()?;
+    let mut bootstrap_redis = connect_runtime_redis(&redis_settings).await?;
+    runtime_task_queue::ensure_groups(&mut bootstrap_redis).await?;
+    drop(bootstrap_redis);
+    let owner = agentx_mysql_lease::LeaseOwner::for_process()?.0;
+    let lifecycle = agentx_service_kit::ServiceLifecycle::default();
+    let metrics = agentx_service_kit::MetricsRegistry::default();
+    let health = agentx_service_kit::HealthRegistry::default();
+    health.register("runtime_mysql", true).await;
+    health.register("runtime_redis", true).await;
+    health.set_status("runtime_mysql", "ready").await;
+    health.set_status("runtime_redis", "ready").await;
+    let mut tasks = tokio::task::JoinSet::new();
+    if roles.contains("command") || roles.contains("coordinator") {
+        let command_state = state.clone();
+        let role_lifecycle = lifecycle.clone();
+        tasks.spawn(supervise_role(
+            "command",
+            lifecycle.clone(),
+            health.clone(),
+            metrics.clone(),
+            move |progress| {
+                let state = command_state.clone();
+                let lifecycle = role_lifecycle.clone();
+                async move { command_loop(state, owner, lifecycle, progress).await }
+            },
+        ));
+    }
+    if roles.contains("outbox") {
+        let sequencer_pool = pool.clone();
+        let sequencer_settings = redis_settings.clone();
+        let sequencer_lifecycle = lifecycle.clone();
+        tasks.spawn(supervise_role(
+            "event-sequencer",
+            lifecycle.clone(),
+            health.clone(),
+            metrics.clone(),
+            move |progress| {
+                let pool = sequencer_pool.clone();
+                let settings = sequencer_settings.clone();
+                let lifecycle = sequencer_lifecycle.clone();
+                async move {
+                    let redis = connect_runtime_redis(&settings).await?;
+                    event_sequencer_loop(pool, redis, owner, lifecycle, progress).await
+                }
+            },
+        ));
+        let dispatch_pool = pool.clone();
+        let dispatch_settings = redis_settings.clone();
+        let dispatch_lifecycle = lifecycle.clone();
+        tasks.spawn(supervise_role(
+            "execution-outbox",
+            lifecycle.clone(),
+            health.clone(),
+            metrics.clone(),
+            move |progress| {
+                let pool = dispatch_pool.clone();
+                let settings = dispatch_settings.clone();
+                let lifecycle = dispatch_lifecycle.clone();
+                async move {
+                    // Sequencing and dispatch use independent connections and
+                    // supervisors so an invalid Integration Event cannot
+                    // starve authoritative execution work.
+                    let redis = connect_runtime_redis(&settings).await?;
+                    dispatch_loop(pool, redis, owner, lifecycle, progress).await
+                }
+            },
+        ));
+    }
+    if roles.contains("recovery") {
+        let pool = pool.clone();
+        let settings = redis_settings.clone();
+        let maintenance_state = state.clone();
+        let recovery_lifecycle = lifecycle.clone();
+        tasks.spawn(supervise_role(
+            "recovery",
+            lifecycle.clone(),
+            health.clone(),
+            metrics.clone(),
+            move |progress| {
+                let pool = pool.clone();
+                let settings = settings.clone();
+                let lifecycle = recovery_lifecycle.clone();
+                async move {
+                    let redis = connect_runtime_redis(&settings).await?;
+                    recovery_loop(pool, redis, owner, lifecycle, progress).await
+                }
+            },
+        ));
+        let maintenance_lifecycle = lifecycle.clone();
+        tasks.spawn(supervise_role(
+            "maintenance",
+            lifecycle.clone(),
+            health.clone(),
+            metrics.clone(),
+            move |progress| {
+                let state = maintenance_state.clone();
+                let lifecycle = maintenance_lifecycle.clone();
+                async move { maintenance_loop(state, owner, lifecycle, progress).await }
+            },
+        ));
+    }
+    if roles.contains("artifact") || roles.contains("quota") {
+        let retention_state = state.clone();
+        let artifact_state = state.clone();
+        let retention_lifecycle = lifecycle.clone();
+        tasks.spawn(supervise_role(
+            "retention",
+            lifecycle.clone(),
+            health.clone(),
+            metrics.clone(),
+            move |progress| {
+                let state = retention_state.clone();
+                let lifecycle = retention_lifecycle.clone();
+                async move { retention_loop(state, owner, lifecycle, progress).await }
+            },
+        ));
+        let artifact_lifecycle = lifecycle.clone();
+        tasks.spawn(supervise_role(
+            "artifact",
+            lifecycle.clone(),
+            health.clone(),
+            metrics.clone(),
+            move |progress| {
+                let state = artifact_state.clone();
+                let lifecycle = artifact_lifecycle.clone();
+                async move { artifact_loop(state, lifecycle, progress).await }
+            },
+        ));
+    }
+    if roles.contains("quota") {
+        let quota_pool = pool.clone();
+        let settings = redis_settings.clone();
+        let role_lifecycle = lifecycle.clone();
+        tasks.spawn(supervise_role(
+            "quota",
+            lifecycle.clone(),
+            health.clone(),
+            metrics.clone(),
+            move |progress| {
+                let pool = quota_pool.clone();
+                let settings = settings.clone();
+                let lifecycle = role_lifecycle.clone();
+                async move {
+                    let redis = connect_runtime_redis(&settings).await?;
+                    quota_projection_loop(pool, redis, owner, lifecycle, progress).await
+                }
+            },
+        ));
+    }
+    if roles.contains("trigger") {
+        let pool = pool.clone();
+        let role_lifecycle = lifecycle.clone();
+        tasks.spawn(supervise_role(
+            "trigger",
+            lifecycle.clone(),
+            health.clone(),
+            metrics.clone(),
+            move |progress| {
+                let pool = pool.clone();
+                let lifecycle = role_lifecycle.clone();
+                async move { trigger_loop(pool, owner, lifecycle, progress).await }
+            },
+        ));
+    }
+    if roles.contains("trace-relay") {
+        let trace_pool = pool.clone();
+        let settings = redis_settings.clone();
+        let role_lifecycle = lifecycle.clone();
+        tasks.spawn(supervise_role(
+            "trace-relay",
+            lifecycle.clone(),
+            health.clone(),
+            metrics.clone(),
+            move |progress| {
+                let pool = trace_pool.clone();
+                let settings = settings.clone();
+                let lifecycle = role_lifecycle.clone();
+                async move {
+                    let redis = connect_runtime_redis(&settings).await?;
+                    trace_relay_loop(pool, redis, owner, lifecycle, progress).await
+                }
+            },
+        ));
+    }
+    anyhow::ensure!(!tasks.is_empty(), "AGENTX_RUNTIME_ROLES selected no role");
+    let service_lifecycle = lifecycle.clone();
+    let service_metrics = metrics.clone();
+    let metrics_health = health.clone();
+    let metrics_redis = redis_settings.clone();
+    tasks.spawn(async move {
+        agentx_service_kit::serve_with_lifecycle(
+            "workflow-runtime",
+            axum::Router::new(),
+            health,
+            service_lifecycle,
+            service_metrics,
+        )
+        .await
+    });
+    let metrics_lifecycle = lifecycle.clone();
+    tasks.spawn(async move {
+        collect_runtime_metrics(
+            pool,
+            metrics_redis,
+            metrics,
+            metrics_health,
+            metrics_lifecycle,
+        )
+        .await
+    });
+    while let Some(result) = tasks.join_next().await {
+        result??;
+    }
+    Ok(())
+}
+
+async fn supervise_role<F, Fut>(
+    role: &'static str,
+    lifecycle: agentx_service_kit::ServiceLifecycle,
+    health: agentx_service_kit::HealthRegistry,
+    metrics: agentx_service_kit::MetricsRegistry,
+    mut run: F,
+) -> Result<()>
+where
+    F: FnMut(agentx_service_kit::RoleProgressWatchdog) -> Fut,
+    Fut: Future<Output = Result<()>>,
+{
+    let progress = agentx_service_kit::RoleProgressWatchdog::start(
+        role,
+        Duration::from_secs(agentx_service_kit::ROLE_WATCHDOG_TIMEOUT_SECONDS),
+        health,
+        lifecycle.clone(),
+        metrics,
+    )
+    .await;
+    let mut consecutive_failures = 0u32;
+    loop {
+        if lifecycle.is_draining() {
+            return Ok(());
+        }
+        let started = tokio::time::Instant::now();
+        progress.progress();
+        match run(progress.clone()).await {
+            Ok(()) => tracing::warn!(role, "Runtime background role exited unexpectedly"),
+            Err(error) => tracing::error!(%error, role, "Runtime background role failed"),
+        }
+        if started.elapsed() >= Duration::from_secs(30) {
+            consecutive_failures = 0;
+        } else {
+            consecutive_failures = consecutive_failures.saturating_add(1).min(6);
+        }
+        let backoff_ms = 100u64
+            .saturating_mul(1u64 << consecutive_failures)
+            .min(5_000);
+        tracing::warn!(role, backoff_ms, "Runtime background role will restart");
+        tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+    }
+}
+
+async fn artifact_loop(
+    state: agentx_v2_runtime::RuntimeState,
+    lifecycle: agentx_service_kit::ServiceLifecycle,
+    progress: agentx_service_kit::RoleProgressWatchdog,
+) -> Result<()> {
+    loop {
+        if lifecycle.is_draining() {
+            return Ok(());
+        }
+        let started = std::time::Instant::now();
+        if !agentx_v2_runtime::artifact::externalize_one(&state).await? {
+            progress.processed_since(started).await;
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        } else {
+            progress.processed_since(started).await;
+        }
+    }
+}
+
+async fn quota_projection_loop(
+    pool: sqlx::MySqlPool,
+    mut redis: ConnectionManager,
+    owner: Uuid,
+    lifecycle: agentx_service_kit::ServiceLifecycle,
+    progress: agentx_service_kit::RoleProgressWatchdog,
+) -> Result<()> {
+    loop {
+        if lifecycle.is_draining() {
+            return Ok(());
+        }
+        progress.progress();
+        let Some(lease) = agentx_v2_runtime::quota::claim_projection(&pool, owner).await? else {
+            tokio::time::sleep(Duration::from_secs(10)).await;
+            continue;
+        };
+        loop {
+            let started = std::time::Instant::now();
+            for counter in agentx_v2_runtime::quota::counter_projection(&pool).await? {
+                let prefix = format!(
+                    "agentx:v2:quota:v1:{}:{}",
+                    counter.tenant_id, counter.dimension
+                );
+                let _: () = redis
+                    .set(format!("{prefix}:limit"), counter.hard_limit)
+                    .await?;
+                let _: () = redis
+                    .set(
+                        format!("{prefix}:used"),
+                        counter.active.saturating_add(counter.committed),
+                    )
+                    .await?;
+            }
+            let _: () = redis
+                .set(
+                    "agentx:v2:quota:v1:projection-ready",
+                    time::OffsetDateTime::now_utc().unix_timestamp(),
+                )
+                .await?;
+            if agentx_v2_runtime::quota::heartbeat_projection(&pool, lease)
+                .await
+                .is_err()
+            {
+                break;
+            }
+            progress.processed_since(started).await;
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+    }
+}
+
+fn runtime_roles() -> Result<std::collections::BTreeSet<String>> {
+    let roles = env::var("AGENTX_RUNTIME_ROLES")
+        .unwrap_or_else(|_| "coordinator,command,outbox,recovery,artifact,quota".into())
+        .split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .collect::<std::collections::BTreeSet<_>>();
+    anyhow::ensure!(
+        roles.iter().all(|role| matches!(
+            role.as_str(),
+            "coordinator"
+                | "command"
+                | "outbox"
+                | "recovery"
+                | "trigger"
+                | "artifact"
+                | "quota"
+                | "trace-relay"
+        )),
+        "AGENTX_RUNTIME_ROLES contains an unsupported role"
+    );
+    Ok(roles)
+}
+
+async fn trigger_loop(
+    pool: sqlx::MySqlPool,
+    owner: Uuid,
+    lifecycle: agentx_service_kit::ServiceLifecycle,
+    progress: agentx_service_kit::RoleProgressWatchdog,
+) -> Result<()> {
+    loop {
+        if lifecycle.is_draining() {
+            return Ok(());
+        }
+        let started = std::time::Instant::now();
+        let claims = agentx_v2_runtime::trigger::claim(&pool, owner, 100).await?;
+        if claims.is_empty() {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            progress.processed_since(started).await;
+            continue;
+        }
+        let mut executions = tokio::task::JoinSet::new();
+        for claim in claims {
+            let pool = pool.clone();
+            executions.spawn(async move {
+                let binding_id = claim.binding_id;
+                (
+                    binding_id,
+                    agentx_v2_runtime::trigger::execute_with_heartbeat(&pool, &claim).await,
+                )
+            });
+        }
+        while let Some(result) = executions.join_next().await {
+            let (binding_id, result) = result?;
+            if let Err(error) = result {
+                tracing::warn!(%error,%binding_id,"Runtime Trigger failed");
+            }
+        }
+        progress.processed_since(started).await;
+    }
+}
+
+async fn maintenance_loop(
+    state: agentx_v2_runtime::RuntimeState,
+    owner: Uuid,
+    lifecycle: agentx_service_kit::ServiceLifecycle,
+    progress: agentx_service_kit::RoleProgressWatchdog,
+) -> Result<()> {
+    loop {
+        if lifecycle.is_draining() {
+            return Ok(());
+        }
+        let started = std::time::Instant::now();
+        agentx_v2_runtime::gc::cleanup_expired_temporary_objects(&state, 100).await?;
+        let run_id = Uuid::now_v7();
+        agentx_v2_runtime::gc::mark_collectable(&state, run_id).await?;
+        while agentx_v2_runtime::gc::sweep_one(&state, run_id, owner).await? {}
+        progress.processed_since(started).await;
+        tokio::time::sleep(Duration::from_secs(60)).await;
+    }
+}
+
+async fn retention_loop(
+    state: agentx_v2_runtime::RuntimeState,
+    owner: Uuid,
+    lifecycle: agentx_service_kit::ServiceLifecycle,
+    progress: agentx_service_kit::RoleProgressWatchdog,
+) -> Result<()> {
+    loop {
+        if lifecycle.is_draining() {
+            return Ok(());
+        }
+        let started = std::time::Instant::now();
+        if !agentx_v2_runtime::retention::run_once(&state, owner).await? {
+            progress.processed_since(started).await;
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        } else {
+            progress.processed_since(started).await;
+        }
+    }
+}
+
+async fn command_loop(
+    state: agentx_v2_runtime::RuntimeState,
+    owner: Uuid,
+    lifecycle: agentx_service_kit::ServiceLifecycle,
+    progress: agentx_service_kit::RoleProgressWatchdog,
+) -> Result<()> {
+    loop {
+        if lifecycle.is_draining() {
+            return Ok(());
+        }
+        let started = std::time::Instant::now();
+        let claims = agentx_v2_runtime::execution::claim_commands(&state.pool, owner, 100).await?;
+        if claims.is_empty() {
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            progress.processed_since(started).await;
+            continue;
+        }
+        for claim in claims {
+            if let Err(error) =
+                agentx_v2_runtime::execution::process_command_with_state(&state, &claim).await
+            {
+                tracing::warn!(%error,command_id=%claim.command_id,"Runtime command failed")
+            }
+        }
+        progress.processed_since(started).await;
+    }
+}
+
+async fn event_sequencer_loop(
+    pool: sqlx::MySqlPool,
+    mut redis: ConnectionManager,
+    owner: Uuid,
+    lifecycle: agentx_service_kit::ServiceLifecycle,
+    progress: agentx_service_kit::RoleProgressWatchdog,
+) -> Result<()> {
+    loop {
+        if lifecycle.is_draining() {
+            return Ok(());
+        }
+        let started = std::time::Instant::now();
+        if let Some(event) = agentx_v2_runtime::event_export::sequence_one(&pool, owner).await? {
+            if let Some(invocation_id) = event.invocation_id {
+                agentx_v2_runtime::sse_wakeup::publish_connection(&mut redis, invocation_id)
+                    .await?;
+            }
+            progress.processed_since(started).await;
+            continue;
+        }
+        progress.processed_since(started).await;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+async fn dispatch_loop(
+    pool: sqlx::MySqlPool,
+    mut redis: ConnectionManager,
+    owner: Uuid,
+    lifecycle: agentx_service_kit::ServiceLifecycle,
+    progress: agentx_service_kit::RoleProgressWatchdog,
+) -> Result<()> {
+    loop {
+        if lifecycle.is_draining() {
+            return Ok(());
+        }
+        let started = std::time::Instant::now();
+        let Some(claim) = agentx_v2_runtime::execution::claim_dispatch(&pool, owner).await? else {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            progress.processed_since(started).await;
+            continue;
+        };
+        runtime_task_queue::publish(&mut redis, &claim.task()?).await?;
+        agentx_v2_runtime::execution::complete_dispatch(&pool, &claim).await?;
+        progress.processed_since(started).await;
+    }
+}
+
+async fn trace_relay_loop(
+    pool: sqlx::MySqlPool,
+    mut redis: ConnectionManager,
+    owner: Uuid,
+    lifecycle: agentx_service_kit::ServiceLifecycle,
+    progress: agentx_service_kit::RoleProgressWatchdog,
+) -> Result<()> {
+    let mut last_stream_check = tokio::time::Instant::now() - Duration::from_secs(1);
+    loop {
+        if lifecycle.is_draining() {
+            return Ok(());
+        }
+        let started = std::time::Instant::now();
+        if last_stream_check.elapsed() >= Duration::from_secs(1) {
+            if agentx_v2_runtime::trace_delivery::ensure_stream(&mut redis).await? {
+                let requeued =
+                    agentx_v2_runtime::trace_delivery::requeue_after_stream_loss(&pool).await?;
+                tracing::warn!(
+                    requeued,
+                    "Runtime Trace Stream was rebuilt from MySQL Outbox"
+                );
+            }
+            last_stream_check = tokio::time::Instant::now();
+        }
+        let Some(claim) = agentx_v2_runtime::trace_delivery::claim(&pool, owner).await? else {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            progress.processed_since(started).await;
+            continue;
+        };
+        match agentx_v2_runtime::trace_delivery::publish(&mut redis, &claim).await {
+            Ok(stream_id) => {
+                agentx_v2_runtime::trace_delivery::complete(&pool, &claim, &stream_id).await?;
+            }
+            Err(error) => {
+                tracing::warn!(%error,event_id=%claim.event_id,"Trace Relay publish failed");
+                agentx_v2_runtime::trace_delivery::fail(&pool, &claim, &error.to_string()).await?;
+            }
+        }
+        progress.processed_since(started).await;
+    }
+}
+
+async fn recovery_loop(
+    pool: sqlx::MySqlPool,
+    mut redis: ConnectionManager,
+    owner: Uuid,
+    lifecycle: agentx_service_kit::ServiceLifecycle,
+    progress: agentx_service_kit::RoleProgressWatchdog,
+) -> Result<()> {
+    loop {
+        if lifecycle.is_draining() {
+            return Ok(());
+        }
+        let started = std::time::Instant::now();
+        agentx_v2_runtime::enqueue_due_waits(&pool, owner, 100).await?;
+        agentx_v2_runtime::composite_execution::enqueue_overdue(&pool, 100).await?;
+        for message in agentx_v2_runtime::execution::recover_dispatches(&pool, 100).await? {
+            runtime_task_queue::publish(&mut redis, &message).await?;
+        }
+        runtime_task_queue::ensure_groups(&mut redis).await?;
+        progress.processed_since(started).await;
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+}
+
+async fn collect_runtime_metrics(
+    pool: sqlx::MySqlPool,
+    redis_settings: RuntimeRedisSettings,
+    metrics: agentx_service_kit::MetricsRegistry,
+    health: agentx_service_kit::HealthRegistry,
+    lifecycle: agentx_service_kit::ServiceLifecycle,
+) -> Result<()> {
+    while !lifecycle.is_draining() {
+        let sample = async {
+            let row = sqlx::query("SELECT COUNT(*) ready_items,CAST(COALESCE(MAX(TIMESTAMPDIFF(MICROSECOND,available_at,UTC_TIMESTAMP(6))),0)/1000000.0 AS DOUBLE) oldest_seconds FROM execution_outbox WHERE status='pending' AND available_at<=UTC_TIMESTAMP(6)").fetch_one(&pool).await?;
+            let active: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM node_attempts WHERE status='running' AND locked_until>UTC_TIMESTAMP(6)").fetch_one(&pool).await?;
+            Ok::<_, sqlx::Error>((sqlx::Row::try_get::<i64, _>(&row, "ready_items")?, sqlx::Row::try_get::<f64, _>(&row, "oldest_seconds")?, active))
+        }.await;
+        match sample {
+            Ok((ready, oldest, active)) => {
+                health.set_status("runtime_mysql", "ready").await;
+                metrics.set("agentx_queue_ready_items", ready as f64).await;
+                metrics
+                    .set("agentx_queue_oldest_ready_seconds", oldest)
+                    .await;
+                metrics.set("agentx_active_leases", active as f64).await;
+            }
+            Err(error) => {
+                health.set_status("runtime_mysql", "unavailable").await;
+                tracing::warn!(%error, "Runtime metrics refresh failed");
+            }
+        }
+        match connect_runtime_redis(&redis_settings).await {
+            Ok(mut redis) => match redis::cmd("PING").query_async::<String>(&mut redis).await {
+                Ok(_) => health.set_status("runtime_redis", "ready").await,
+                Err(error) => {
+                    health.set_status("runtime_redis", "unavailable").await;
+                    tracing::warn!(%error, "Runtime Redis readiness probe failed");
+                }
+            },
+            Err(error) => {
+                health.set_status("runtime_redis", "unavailable").await;
+                tracing::warn!(%error, "Runtime Redis readiness connection failed");
+            }
+        }
+        metrics
+            .set(
+                "agentx_mysql_pool_waiters",
+                pool.size().saturating_sub(pool.num_idle() as u32) as f64,
+            )
+            .await;
+        tokio::select! {
+            () = lifecycle.cancelled() => break,
+            () = tokio::time::sleep(Duration::from_secs(5)) => {}
+        }
+    }
+    Ok(())
+}

@@ -1,0 +1,298 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata: { name: runtime-gateway, namespace: agentx-v2-runtime }
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: { name: workflow-worker, namespace: agentx-v2-runtime }
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: { name: sandbox-manager, namespace: agentx-v2-runtime }
+automountServiceAccountToken: false
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: runtime-gateway, namespace: agentx-v2-runtime }
+spec:
+  replicas: 1
+  strategy: { type: RollingUpdate, rollingUpdate: { maxUnavailable: 1, maxSurge: 1 } }
+  selector: { matchLabels: { app.kubernetes.io/name: runtime-gateway } }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: runtime-gateway, agentx.io/plane: runtime, agentx.io/internal-api: runtime-v1, agentx.io/public-api: runtime, agentx.io/metrics: enabled }
+    spec:
+      serviceAccountName: runtime-gateway
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 60
+      securityContext: { runAsNonRoot: true, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: runtime-gateway
+          image: agentx/runtime-gateway:dev
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: AGENTX_INSTANCE_ID
+              valueFrom: { fieldRef: { fieldPath: metadata.uid } }
+            - { name: AGENTX_RUNTIME_MYSQL_HOST, value: runtime-mysql }
+            - { name: AGENTX_RUNTIME_MYSQL_PORT, value: "3306" }
+            - { name: AGENTX_RUNTIME_MYSQL_DATABASE, value: agentx_runtime }
+            - { name: AGENTX_RUNTIME_MYSQL_USER, value: runtime_app }
+            - { name: AGENTX_RUNTIME_MYSQL_MAX_CONNECTIONS, value: "8" }
+            - { name: AGENTX_RUNTIME_MYSQL_TLS_MODE, value: disabled }
+            - { name: AGENTX_RUNTIME_REDIS_URL, value: redis://runtime-redis:6379/ }
+            - { name: AGENTX_RUNTIME_GATEWAY_RATE_LIMIT_RPS, value: "50" }
+            - { name: AGENTX_RUNTIME_GATEWAY_RATE_LIMIT_BURST, value: "100" }
+            - { name: AGENTX_RUNTIME_USER_JWT_ISSUER, value: agentx-platform }
+            - { name: AGENTX_RUNTIME_USER_JWT_AUDIENCE, value: agentx-runtime-gateway }
+            - { name: AGENTX_RUNTIME_VAULT_ENDPOINT, value: http://vault.agentx-v2-deps.svc:8200 }
+            - { name: AGENTX_RUNTIME_S3_ENDPOINT, value: http://object-storage.agentx-v2-deps.svc:9000 }
+            - { name: AGENTX_RUNTIME_S3_BUCKET, value: agentx-runtime }
+            - { name: AGENTX_RUNTIME_S3_REGION, value: us-east-1 }
+            - { name: AGENTX_RUNTIME_S3_ALLOW_HTTP, value: "true" }
+            - { name: AGENTX_RUNTIME_S3_PATH_STYLE, value: "true" }
+            - name: AGENTX_RUNTIME_MYSQL_PASSWORD
+              valueFrom: { secretKeyRef: { name: agentx-runtime-secrets, key: AGENTX_RUNTIME_MYSQL_PASSWORD } }
+            - name: AGENTX_RUNTIME_S3_ACCESS_KEY
+              valueFrom: { secretKeyRef: { name: agentx-runtime-secrets, key: AGENTX_RUNTIME_S3_ACCESS_KEY } }
+            - name: AGENTX_RUNTIME_S3_SECRET_KEY
+              valueFrom: { secretKeyRef: { name: agentx-runtime-secrets, key: AGENTX_RUNTIME_S3_SECRET_KEY } }
+            - name: AGENTX_RUNTIME_SERVICE_JWT_PUBLIC_KEYS_JSON
+              valueFrom: { secretKeyRef: { name: agentx-runtime-secrets, key: AGENTX_RUNTIME_SERVICE_JWT_PUBLIC_KEYS_JSON } }
+            - name: AGENTX_RUNTIME_BUNDLE_PUBLIC_KEYS_JSON
+              valueFrom: { secretKeyRef: { name: agentx-runtime-secrets, key: AGENTX_RUNTIME_BUNDLE_PUBLIC_KEYS_JSON } }
+            - name: AGENTX_RUNTIME_WORK_PACKAGE_PUBLIC_KEYS_JSON
+              valueFrom: { secretKeyRef: { name: agentx-runtime-secrets, key: AGENTX_RUNTIME_WORK_PACKAGE_PUBLIC_KEYS_JSON } }
+            - name: AGENTX_RUNTIME_USER_JWT_PUBLIC_KEYS_JSON
+              valueFrom: { secretKeyRef: { name: agentx-runtime-secrets, key: AGENTX_RUNTIME_USER_JWT_PUBLIC_KEYS_JSON } }
+            - name: AGENTX_RUNTIME_REDIS_PASSWORD
+              valueFrom: { secretKeyRef: { name: agentx-runtime-secrets, key: AGENTX_RUNTIME_REDIS_PASSWORD } }
+            - name: AGENTX_RUNTIME_VAULT_TOKEN
+              valueFrom: { secretKeyRef: { name: agentx-runtime-secrets, key: AGENTX_RUNTIME_VAULT_TOKEN } }
+          ports:
+            - { name: http, containerPort: 8080 }
+            - { name: admin, containerPort: 9091 }
+            - { name: metrics, containerPort: 9092 }
+          resources: { requests: { cpu: 100m, memory: 128Mi, ephemeral-storage: 64Mi }, limits: { cpu: 1, memory: 512Mi, ephemeral-storage: 256Mi } }
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, runAsNonRoot: true, capabilities: { drop: [ALL] } }
+          startupProbe: { httpGet: { path: /health/live, port: http }, periodSeconds: 2, failureThreshold: 30 }
+          readinessProbe: { httpGet: { path: /health/ready, port: http }, periodSeconds: 5, failureThreshold: 2 }
+          livenessProbe: { httpGet: { path: /health/live, port: http }, periodSeconds: 10, failureThreshold: 3 }
+          lifecycle: { preStop: { httpGet: { path: /health/drain, port: admin, scheme: HTTP } } }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: runtime-gateway-public, namespace: agentx-v2-runtime }
+spec:
+  selector: { app.kubernetes.io/name: runtime-gateway }
+  ports: [{ name: http, port: 8080, targetPort: http }]
+---
+apiVersion: v1
+kind: Service
+metadata: { name: runtime-gateway-internal, namespace: agentx-v2-runtime }
+spec:
+  selector: { app.kubernetes.io/name: runtime-gateway }
+  ports: [{ name: http, port: 8080, targetPort: http }]
+---
+apiVersion: v1
+kind: Service
+metadata: { name: runtime-gateway-metrics, namespace: agentx-v2-runtime }
+spec:
+  clusterIP: None
+  selector: { app.kubernetes.io/name: runtime-gateway }
+  ports: [{ name: metrics, port: 9092, targetPort: metrics }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: workflow-runtime, namespace: agentx-v2-runtime }
+spec:
+  replicas: 1
+  strategy: { type: RollingUpdate, rollingUpdate: { maxUnavailable: 1, maxSurge: 1 } }
+  selector: { matchLabels: { app.kubernetes.io/name: workflow-runtime } }
+  template:
+    metadata: { labels: { app.kubernetes.io/name: workflow-runtime, agentx.io/plane: runtime, agentx.io/runtime-data: mysql-redis, agentx.io/metrics: enabled } }
+    spec:
+      serviceAccountName: workflow-runtime
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 60
+      securityContext: { runAsNonRoot: true, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: workflow-runtime
+          image: agentx/workflow-runtime:dev
+          imagePullPolicy: IfNotPresent
+          env: &runtime-env
+            - name: AGENTX_INSTANCE_ID
+              valueFrom: { fieldRef: { fieldPath: metadata.uid } }
+            - { name: AGENTX_RUNTIME_ROLES, value: "coordinator,trigger,command,outbox,recovery,artifact,quota,trace-relay" }
+            - { name: AGENTX_RUNTIME_MYSQL_HOST, value: runtime-mysql }
+            - { name: AGENTX_RUNTIME_MYSQL_PORT, value: "3306" }
+            - { name: AGENTX_RUNTIME_MYSQL_DATABASE, value: agentx_runtime }
+            - { name: AGENTX_RUNTIME_MYSQL_USER, value: runtime_app }
+            - { name: AGENTX_RUNTIME_MYSQL_MAX_CONNECTIONS, value: "10" }
+            - { name: AGENTX_RUNTIME_MYSQL_TLS_MODE, value: disabled }
+            - { name: AGENTX_RUNTIME_REDIS_URL, value: redis://runtime-redis:6379/ }
+            - { name: AGENTX_RUNTIME_S3_ENDPOINT, value: http://object-storage.agentx-v2-deps.svc:9000 }
+            - { name: AGENTX_RUNTIME_S3_BUCKET, value: agentx-runtime }
+            - { name: AGENTX_RUNTIME_S3_REGION, value: us-east-1 }
+            - { name: AGENTX_RUNTIME_S3_ALLOW_HTTP, value: "true" }
+            - { name: AGENTX_RUNTIME_S3_PATH_STYLE, value: "true" }
+            - name: AGENTX_RUNTIME_MYSQL_PASSWORD
+              valueFrom: { secretKeyRef: { name: agentx-runtime-secrets, key: AGENTX_RUNTIME_MYSQL_PASSWORD } }
+            - name: AGENTX_RUNTIME_REDIS_PASSWORD
+              valueFrom: { secretKeyRef: { name: agentx-runtime-secrets, key: AGENTX_RUNTIME_REDIS_PASSWORD } }
+            - name: AGENTX_RUNTIME_S3_ACCESS_KEY
+              valueFrom: { secretKeyRef: { name: agentx-runtime-secrets, key: AGENTX_RUNTIME_S3_ACCESS_KEY } }
+            - name: AGENTX_RUNTIME_S3_SECRET_KEY
+              valueFrom: { secretKeyRef: { name: agentx-runtime-secrets, key: AGENTX_RUNTIME_S3_SECRET_KEY } }
+            - name: AGENTX_RUNTIME_SERVICE_JWT_PUBLIC_KEYS_JSON
+              valueFrom: { secretKeyRef: { name: agentx-runtime-secrets, key: AGENTX_RUNTIME_SERVICE_JWT_PUBLIC_KEYS_JSON } }
+            - name: AGENTX_RUNTIME_BUNDLE_PUBLIC_KEYS_JSON
+              valueFrom: { secretKeyRef: { name: agentx-runtime-secrets, key: AGENTX_RUNTIME_BUNDLE_PUBLIC_KEYS_JSON } }
+            - name: AGENTX_RUNTIME_WORK_PACKAGE_PUBLIC_KEYS_JSON
+              valueFrom: { secretKeyRef: { name: agentx-runtime-secrets, key: AGENTX_RUNTIME_WORK_PACKAGE_PUBLIC_KEYS_JSON } }
+          ports:
+            - { name: http, containerPort: 8080 }
+            - { name: admin, containerPort: 9091 }
+            - { name: metrics, containerPort: 9092 }
+          resources: { requests: { cpu: 100m, memory: 128Mi, ephemeral-storage: 64Mi }, limits: { cpu: 1, memory: 512Mi, ephemeral-storage: 256Mi } }
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, runAsNonRoot: true, capabilities: { drop: [ALL] } }
+          startupProbe: { httpGet: { path: /health/live, port: http }, periodSeconds: 2, failureThreshold: 30 }
+          readinessProbe: { httpGet: { path: /health/ready, port: http }, periodSeconds: 5, failureThreshold: 2 }
+          livenessProbe: { httpGet: { path: /health/live, port: http }, periodSeconds: 10, failureThreshold: 3 }
+          lifecycle: { preStop: { httpGet: { path: /health/drain, port: admin, scheme: HTTP } } }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: workflow-runtime-metrics, namespace: agentx-v2-runtime }
+spec:
+  clusterIP: None
+  selector: { app.kubernetes.io/name: workflow-runtime }
+  ports: [{ name: metrics, port: 9092, targetPort: metrics }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: workflow-worker, namespace: agentx-v2-runtime }
+spec:
+  replicas: 1
+  strategy: { type: RollingUpdate, rollingUpdate: { maxUnavailable: 1, maxSurge: 1 } }
+  selector: { matchLabels: { app.kubernetes.io/name: workflow-worker } }
+  template:
+    metadata: { labels: { app.kubernetes.io/name: workflow-worker, agentx.io/plane: runtime, agentx.io/runtime-data: mysql-redis, agentx.io/capability: general, agentx.io/metrics: enabled } }
+    spec:
+      serviceAccountName: workflow-worker
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 60
+      securityContext: { runAsNonRoot: true, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: workflow-worker
+          image: agentx/workflow-worker:dev
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: AGENTX_INSTANCE_ID
+              valueFrom: { fieldRef: { fieldPath: metadata.uid } }
+            - name: AGENTX_WORKER_ID
+              valueFrom: { fieldRef: { fieldPath: metadata.uid } }
+            - { name: AGENTX_WORKER_CAPABILITIES, value: all }
+            - { name: AGENTX_RUNTIME_MYSQL_HOST, value: runtime-mysql }
+            - { name: AGENTX_RUNTIME_MYSQL_PORT, value: "3306" }
+            - { name: AGENTX_RUNTIME_MYSQL_DATABASE, value: agentx_runtime }
+            - { name: AGENTX_RUNTIME_MYSQL_USER, value: runtime_app }
+            - { name: AGENTX_RUNTIME_MYSQL_MAX_CONNECTIONS, value: "6" }
+            - { name: AGENTX_RUNTIME_MYSQL_TLS_MODE, value: disabled }
+            - { name: AGENTX_RUNTIME_REDIS_URL, value: redis://runtime-redis:6379/ }
+            - { name: AGENTX_RUNTIME_VAULT_ENDPOINT, value: http://vault.agentx-v2-deps.svc:8200 }
+            - { name: AGENTX_RUNTIME_VAULT_MOUNT, value: secret }
+            - { name: AGENTX_SANDBOX_MANAGER_ENDPOINT, value: http://sandbox-manager:8080 }
+            - { name: AGENTX_RUNTIME_S3_ENDPOINT, value: http://object-storage.agentx-v2-deps.svc:9000 }
+            - { name: AGENTX_RUNTIME_S3_BUCKET, value: agentx-runtime }
+            - { name: AGENTX_RUNTIME_S3_REGION, value: us-east-1 }
+            - { name: AGENTX_RUNTIME_S3_ALLOW_HTTP, value: "true" }
+            - { name: AGENTX_RUNTIME_S3_PATH_STYLE, value: "true" }
+            - name: AGENTX_RUNTIME_MYSQL_PASSWORD
+              valueFrom: { secretKeyRef: { name: agentx-runtime-secrets, key: AGENTX_RUNTIME_MYSQL_PASSWORD } }
+            - name: AGENTX_RUNTIME_REDIS_PASSWORD
+              valueFrom: { secretKeyRef: { name: agentx-runtime-secrets, key: AGENTX_RUNTIME_REDIS_PASSWORD } }
+            - name: AGENTX_RUNTIME_S3_ACCESS_KEY
+              valueFrom: { secretKeyRef: { name: agentx-runtime-secrets, key: AGENTX_RUNTIME_S3_ACCESS_KEY } }
+            - name: AGENTX_RUNTIME_S3_SECRET_KEY
+              valueFrom: { secretKeyRef: { name: agentx-runtime-secrets, key: AGENTX_RUNTIME_S3_SECRET_KEY } }
+            - name: AGENTX_RUNTIME_VAULT_TOKEN
+              valueFrom: { secretKeyRef: { name: agentx-runtime-secrets, key: AGENTX_RUNTIME_VAULT_TOKEN } }
+          ports:
+            - { name: http, containerPort: 8080 }
+            - { name: admin, containerPort: 9091 }
+            - { name: metrics, containerPort: 9092 }
+          resources: { requests: { cpu: 100m, memory: 128Mi, ephemeral-storage: 64Mi }, limits: { cpu: 2, memory: 1Gi, ephemeral-storage: 512Mi } }
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, runAsNonRoot: true, capabilities: { drop: [ALL] } }
+          startupProbe: { httpGet: { path: /health/live, port: http }, periodSeconds: 2, failureThreshold: 30 }
+          readinessProbe: { httpGet: { path: /health/ready, port: http }, periodSeconds: 5, failureThreshold: 2 }
+          livenessProbe: { httpGet: { path: /health/live, port: http }, periodSeconds: 10, failureThreshold: 3 }
+          lifecycle: { preStop: { httpGet: { path: /health/drain, port: admin, scheme: HTTP } } }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: workflow-worker-metrics, namespace: agentx-v2-runtime }
+spec:
+  clusterIP: None
+  selector: { app.kubernetes.io/name: workflow-worker }
+  ports: [{ name: metrics, port: 9092, targetPort: metrics }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: sandbox-manager, namespace: agentx-v2-runtime }
+spec:
+  replicas: 1
+  strategy: { type: RollingUpdate, rollingUpdate: { maxUnavailable: 1, maxSurge: 1 } }
+  selector: { matchLabels: { app.kubernetes.io/name: sandbox-manager } }
+  template:
+    metadata: { labels: { app.kubernetes.io/name: sandbox-manager, agentx.io/plane: runtime, agentx.io/runtime-data: mysql, agentx.io/metrics: enabled } }
+    spec:
+      serviceAccountName: sandbox-manager
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 60
+      securityContext: { runAsNonRoot: true, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: sandbox-manager
+          image: agentx/sandbox-manager:dev
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: AGENTX_INSTANCE_ID
+              valueFrom: { fieldRef: { fieldPath: metadata.uid } }
+            - { name: AGENTX_RUNTIME_MYSQL_HOST, value: runtime-mysql }
+            - { name: AGENTX_RUNTIME_MYSQL_PORT, value: "3306" }
+            - { name: AGENTX_RUNTIME_MYSQL_DATABASE, value: agentx_runtime }
+            - { name: AGENTX_RUNTIME_MYSQL_USER, value: runtime_app }
+            - { name: AGENTX_RUNTIME_MYSQL_MAX_CONNECTIONS, value: "2" }
+            - { name: AGENTX_RUNTIME_MYSQL_TLS_MODE, value: disabled }
+            - { name: AGENTX_OPENSANDBOX_ENDPOINT, value: http://opensandbox.agentx-v2-deps.svc:8080 }
+            - { name: AGENTX_OPENSANDBOX_SECURE_ACCESS, value: "true" }
+            - name: AGENTX_OPENSANDBOX_API_KEY
+              valueFrom: { secretKeyRef: { name: agentx-runtime-secrets, key: AGENTX_OPENSANDBOX_API_KEY } }
+            - name: AGENTX_RUNTIME_MYSQL_PASSWORD
+              valueFrom: { secretKeyRef: { name: agentx-runtime-secrets, key: AGENTX_RUNTIME_MYSQL_PASSWORD } }
+          ports:
+            - { name: http, containerPort: 8080 }
+            - { name: admin, containerPort: 9091 }
+            - { name: metrics, containerPort: 9092 }
+          resources: { requests: { cpu: 50m, memory: 64Mi, ephemeral-storage: 32Mi }, limits: { cpu: 500m, memory: 256Mi, ephemeral-storage: 128Mi } }
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, runAsNonRoot: true, capabilities: { drop: [ALL] } }
+          startupProbe: { httpGet: { path: /health/live, port: http }, periodSeconds: 2, failureThreshold: 30 }
+          readinessProbe: { httpGet: { path: /health/ready, port: http }, periodSeconds: 5, failureThreshold: 2 }
+          livenessProbe: { httpGet: { path: /health/live, port: http }, periodSeconds: 10, failureThreshold: 3 }
+          lifecycle: { preStop: { httpGet: { path: /health/drain, port: admin, scheme: HTTP } } }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: sandbox-manager, namespace: agentx-v2-runtime }
+spec:
+  selector: { app.kubernetes.io/name: sandbox-manager }
+  ports: [{ name: http, port: 8080, targetPort: http }]
+---
+apiVersion: v1
+kind: Service
+metadata: { name: sandbox-manager-metrics, namespace: agentx-v2-runtime }
+spec:
+  clusterIP: None
+  selector: { app.kubernetes.io/name: sandbox-manager }
+  ports: [{ name: metrics, port: 9092, targetPort: metrics }]

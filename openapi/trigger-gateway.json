@@ -1,248 +1,56 @@
 {
-  "openapi": "3.1.0",
-  "info": {
-    "title": "trigger-gateway",
-    "description": "",
-    "license": {
-      "name": "Apache-2.0",
-      "identifier": "Apache-2.0"
-    },
-    "version": "0.1.0"
-  },
-  "paths": {
-    "/gateway/v1/applications/{slug}/invocations": {
-      "post": {
-        "tags": [],
-        "operationId": "create_invocation",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/InvocationRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {}
-      }
-    },
-    "/gateway/v1/applications/{slug}/sessions": {
-      "post": {
-        "tags": [],
-        "operationId": "create_session",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CreateSessionRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {}
-      }
-    },
-    "/gateway/v1/artifacts": {
-      "post": {
-        "tags": [],
-        "operationId": "upload_artifact",
-        "requestBody": {
-          "content": {
-            "multipart/form-data": {
-              "schema": {
-                "type": "string"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ArtifactUploadResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/gateway/v1/invocations/{id}": {
-      "get": {
-        "tags": [],
-        "operationId": "get_invocation",
-        "responses": {}
-      }
-    },
-    "/gateway/v1/invocations/{id}/cancel": {
-      "post": {
-        "tags": [],
-        "operationId": "cancel_invocation",
-        "responses": {}
-      }
-    },
-    "/gateway/v1/invocations/{id}/events": {
-      "get": {
-        "tags": [],
-        "operationId": "invocation_events",
-        "responses": {}
-      }
-    },
-    "/gateway/v1/sessions/{id}": {
-      "get": {
-        "tags": [],
-        "operationId": "get_session",
-        "responses": {}
-      }
-    },
-    "/gateway/v1/sessions/{id}/messages": {
-      "get": {
-        "tags": [],
-        "operationId": "list_messages",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          }
-        ],
-        "responses": {}
-      },
-      "post": {
-        "tags": [],
-        "operationId": "send_message",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/MessageRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {}
-      }
-    },
-    "/gateway/v1/waits/{binding_id}/resume": {
-      "post": {
-        "tags": [],
-        "operationId": "resume_wait",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/WaitResumeRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/WaitResumeResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/gateway/v1/webhooks/{public_id}": {
-      "post": {
-        "tags": [],
-        "operationId": "webhook_trigger",
-        "responses": {}
-      }
-    },
-    "/gateway/v1/workflows/{slug}/invoke": {
-      "post": {
-        "tags": [],
-        "operationId": "invoke_workflow",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/InvocationRequest"
-              }
-            },
-            "multipart/form-data": {
-              "schema": {
-                "type": "string"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {}
-      }
-    }
-  },
   "components": {
     "schemas": {
-      "ApiErrorResponse": {
-        "type": "object",
-        "required": [
-          "code",
-          "message",
-          "requestId"
-        ],
-        "properties": {
-          "code": {
-            "type": "string"
-          },
-          "fieldErrors": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/FieldError"
-            }
-          },
-          "message": {
-            "type": "string"
-          },
-          "requestId": {
-            "type": "string",
-            "format": "uuid"
-          }
-        }
-      },
       "ArtifactUploadResponse": {
-        "type": "object",
-        "required": [
-          "artifactId",
-          "contentType",
-          "sizeBytes"
-        ],
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
         "properties": {
           "artifactId": {
-            "type": "string",
-            "format": "uuid"
+            "format": "uuid",
+            "type": "string"
           },
           "contentType": {
             "type": "string"
           },
+          "sha256": {
+            "type": "string"
+          },
           "sizeBytes": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
           }
-        }
+        },
+        "required": [
+          "artifactId",
+          "contentType",
+          "sizeBytes",
+          "sha256"
+        ],
+        "title": "ArtifactUploadResponseV1",
+        "type": "object"
+      },
+      "CommandAccepted": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "accepted": {
+            "type": "boolean"
+          },
+          "replayed": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "accepted",
+          "replayed"
+        ],
+        "title": "CommandAcceptedV1",
+        "type": "object"
       },
       "CreateSessionRequest": {
-        "type": "object",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
         "properties": {
           "externalUserId": {
             "type": [
@@ -256,34 +64,33 @@
               "null"
             ]
           }
-        }
+        },
+        "title": "CreateSessionRequestV1",
+        "type": "object"
       },
-      "FieldError": {
-        "type": "object",
-        "required": [
-          "field",
-          "code",
-          "message"
-        ],
+      "GatewayError": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
         "properties": {
           "code": {
-            "type": "string"
-          },
-          "field": {
             "type": "string"
           },
           "message": {
             "type": "string"
           }
-        }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "GatewayErrorV1",
+        "type": "object"
       },
       "InvocationRequest": {
-        "type": "object",
-        "required": [
-          "input"
-        ],
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
         "properties": {
-          "input": {},
+          "input": true,
           "responseMode": {
             "type": [
               "string",
@@ -291,110 +98,190 @@
             ]
           },
           "sessionId": {
+            "format": "uuid",
             "type": [
               "string",
               "null"
-            ],
-            "format": "uuid"
+            ]
           }
-        }
+        },
+        "required": [
+          "input"
+        ],
+        "title": "InvocationRequestV1",
+        "type": "object"
       },
       "InvocationResponse": {
-        "type": "object",
-        "required": [
-          "id",
-          "applicationId",
-          "status",
-          "createdAt"
-        ],
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
         "properties": {
+          "admissionEpoch": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
           "applicationId": {
-            "type": "string",
-            "format": "uuid"
+            "format": "uuid",
+            "type": "string"
+          },
+          "bundleId": {
+            "format": "uuid",
+            "type": "string"
           },
           "createdAt": {
-            "type": "string",
-            "format": "date-time"
+            "type": "string"
           },
-          "error": {},
+          "error": true,
           "executionId": {
+            "format": "uuid",
             "type": [
               "string",
               "null"
-            ],
-            "format": "uuid"
+            ]
           },
           "id": {
-            "type": "string",
-            "format": "uuid"
+            "format": "uuid",
+            "type": "string"
           },
-          "outputs": {},
+          "outputs": true,
           "sessionId": {
+            "format": "uuid",
             "type": [
               "string",
               "null"
-            ],
-            "format": "uuid"
+            ]
           },
           "status": {
             "type": "string"
           }
-        }
+        },
+        "required": [
+          "id",
+          "applicationId",
+          "bundleId",
+          "admissionEpoch",
+          "status",
+          "createdAt"
+        ],
+        "title": "InvocationResponseV1",
+        "type": "object"
       },
       "MessagePartInput": {
-        "type": "object",
-        "required": [
-          "partType"
-        ],
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
         "properties": {
           "artifactId": {
+            "format": "uuid",
             "type": [
               "string",
               "null"
-            ],
-            "format": "uuid"
+            ]
           },
-          "content": {},
+          "content": true,
           "partType": {
             "type": "string"
           }
-        }
-      },
-      "MessagePartResponse": {
-        "type": "object",
+        },
         "required": [
           "partType"
         ],
-        "properties": {
-          "artifactId": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "uuid"
-          },
-          "content": {},
-          "partType": {
-            "type": "string"
-          }
-        }
+        "title": "MessagePartInputV1",
+        "type": "object"
       },
       "MessageRequest": {
-        "type": "object",
+        "$defs": {
+          "MessagePartInputV1": {
+            "additionalProperties": false,
+            "properties": {
+              "artifactId": {
+                "format": "uuid",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "content": true,
+              "partType": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "partType"
+            ],
+            "type": "object"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "parts": {
+            "items": {
+              "$ref": "#/components/schemas/MessageRequest/$defs/MessagePartInputV1"
+            },
+            "type": "array"
+          }
+        },
         "required": [
           "parts"
         ],
-        "properties": {
-          "parts": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/MessagePartInput"
-            }
-          }
-        }
+        "title": "MessageRequestV1",
+        "type": "object"
       },
       "MessageResponse": {
-        "type": "object",
+        "$defs": {
+          "MessagePartInputV1": {
+            "additionalProperties": false,
+            "properties": {
+              "artifactId": {
+                "format": "uuid",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "content": true,
+              "partType": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "partType"
+            ],
+            "type": "object"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "createdAt": {
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "invocationId": {
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "parts": {
+            "items": {
+              "$ref": "#/components/schemas/MessageResponse/$defs/MessagePartInputV1"
+            },
+            "type": "array"
+          },
+          "role": {
+            "type": "string"
+          },
+          "sequence": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
         "required": [
           "id",
           "sequence",
@@ -402,57 +289,37 @@
           "parts",
           "createdAt"
         ],
+        "title": "MessageResponseV1",
+        "type": "object"
+      },
+      "SessionResponse": {
+        "$defs": {
+          "SessionVersionPolicyV1": {
+            "enum": [
+              "pinned",
+              "follow_deployment",
+              "manual_upgrade"
+            ],
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
         "properties": {
-          "createdAt": {
-            "type": "string",
-            "format": "date-time"
+          "applicationDeploymentId": {
+            "format": "uuid",
+            "type": "string"
           },
-          "id": {
-            "type": "string",
-            "format": "uuid"
+          "applicationId": {
+            "format": "uuid",
+            "type": "string"
           },
-          "invocationId": {
+          "bundleId": {
+            "format": "uuid",
             "type": [
               "string",
               "null"
-            ],
-            "format": "uuid"
-          },
-          "parts": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/MessagePartResponse"
-            }
-          },
-          "role": {
-            "type": "string"
-          },
-          "sequence": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          }
-        }
-      },
-      "SessionResponse": {
-        "type": "object",
-        "required": [
-          "id",
-          "applicationId",
-          "applicationDeploymentId",
-          "versionPolicy",
-          "status",
-          "version",
-          "updatedAt"
-        ],
-        "properties": {
-          "applicationDeploymentId": {
-            "type": "string",
-            "format": "uuid"
-          },
-          "applicationId": {
-            "type": "string",
-            "format": "uuid"
+            ]
           },
           "externalUserId": {
             "type": [
@@ -461,8 +328,8 @@
             ]
           },
           "id": {
-            "type": "string",
-            "format": "uuid"
+            "format": "uuid",
+            "type": "string"
           },
           "status": {
             "type": "string"
@@ -474,28 +341,39 @@
             ]
           },
           "updatedAt": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "version": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          },
-          "versionPolicy": {
             "type": "string"
           },
+          "version": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "versionPolicy": {
+            "$ref": "#/components/schemas/SessionResponse/$defs/SessionVersionPolicyV1"
+          },
           "workflowVersionId": {
+            "format": "uuid",
             "type": [
               "string",
               "null"
-            ],
-            "format": "uuid"
+            ]
           }
-        }
+        },
+        "required": [
+          "id",
+          "applicationId",
+          "applicationDeploymentId",
+          "versionPolicy",
+          "status",
+          "version",
+          "updatedAt"
+        ],
+        "title": "SessionResponseV1",
+        "type": "object"
       },
       "WaitResumeRequest": {
-        "type": "object",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
         "properties": {
           "outputPort": {
             "type": [
@@ -503,30 +381,1200 @@
               "null"
             ]
           },
-          "payload": {}
-        }
-      },
-      "WaitResumeResponse": {
-        "type": "object",
-        "required": [
-          "accepted",
-          "replayed"
-        ],
-        "properties": {
-          "accepted": {
-            "type": "boolean"
-          },
-          "replayed": {
-            "type": "boolean"
+          "payload": {
+            "default": null
           }
-        }
+        },
+        "title": "WaitResumeRequestV1",
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "runtimeBearer": {
+        "bearerFormat": "RS256 JWT or Agentx API Key",
+        "scheme": "bearer",
+        "type": "http"
       }
     }
   },
-  "tags": [
-    {
-      "name": "Agentx Gateway",
-      "description": "Application invocation and runtime wait API"
+  "info": {
+    "description": "Production Runtime ingress. All write operations require Idempotency-Key.",
+    "title": "Agentx Runtime Gateway API",
+    "version": "1"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/gateway/v1/applications/{slug}/invocations": {
+      "post": {
+        "operationId": "createInvocation",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 192,
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InvocationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvocationResponse"
+                }
+              }
+            },
+            "description": "Successful Runtime response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayError"
+                }
+              }
+            },
+            "description": "Runtime error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayError"
+                }
+              }
+            },
+            "description": "Runtime error"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayError"
+                }
+              }
+            },
+            "description": "Runtime error"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayError"
+                }
+              }
+            },
+            "description": "Runtime error"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayError"
+                }
+              }
+            },
+            "description": "Runtime error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayError"
+                }
+              }
+            },
+            "description": "Runtime error"
+          }
+        },
+        "security": [
+          {
+            "runtimeBearer": []
+          }
+        ]
+      }
+    },
+    "/gateway/v1/applications/{slug}/sessions": {
+      "post": {
+        "operationId": "createSession",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 192,
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSessionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionResponse"
+                }
+              }
+            },
+            "description": "Successful Runtime response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayError"
+                }
+              }
+            },
+            "description": "Runtime error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayError"
+                }
+              }
+            },
+            "description": "Runtime error"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayError"
+                }
+              }
+            },
+            "description": "Runtime error"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayError"
+                }
+              }
+            },
+            "description": "Runtime error"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayError"
+                }
+              }
+            },
+            "description": "Runtime error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayError"
+                }
+              }
+            },
+            "description": "Runtime error"
+          }
+        },
+        "security": [
+          {
+            "runtimeBearer": []
+          }
+        ]
+      }
+    },
+    "/gateway/v1/artifacts": {
+      "post": {
+        "operationId": "uploadArtifact",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 192,
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "properties": {
+                  "content": {
+                    "format": "binary",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "content"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtifactUploadResponse"
+                }
+              }
+            },
+            "description": "Successful Runtime response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayError"
+                }
+              }
+            },
+            "description": "Runtime error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayError"
+                }
+              }
+            },
+            "description": "Runtime error"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayError"
+                }
+              }
+            },
+            "description": "Runtime error"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayError"
+                }
+              }
+            },
+            "description": "Runtime error"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayError"
+                }
+              }
+            },
+            "description": "Runtime error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayError"
+                }
+              }
+            },
+            "description": "Runtime error"
+          }
+        },
+        "security": [
+          {
+            "runtimeBearer": []
+          }
+        ]
+      }
+    },
+    "/gateway/v1/invocations/{id}": {
+      "get": {
+        "operationId": "getInvocation",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvocationResponse"
+                }
+              }
+            },
+            "description": "Successful Runtime response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayError"
+                }
+              }
+            },
+            "description": "Runtime error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayError"
+                }
+              }
+            },
+            "description": "Runtime error"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayError"
+                }
+              }
+            },
+            "description": "Runtime error"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayError"
+                }
+              }
+            },
+            "description": "Runtime error"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayError"
+                }
+              }
+            },
+            "description": "Runtime error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayError"
+                }
+              }
+            },
+            "description": "Runtime error"
+          }
+        },
+        "security": [
+          {
+            "runtimeBearer": []
+          }
+        ]
+      }
+    },
+    "/gateway/v1/invocations/{id}/cancel": {
+      "post": {
+        "operationId": "cancelInvocation",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 192,
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandAccepted"
+                }
+              }
+            },
+            "description": "Successful Runtime response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayError"
+                }
+              }
+            },
+            "description": "Runtime error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayError"
+                }
+              }
+            },
+            "description": "Runtime error"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayError"
+                }
+              }
+            },
+            "description": "Runtime error"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayError"
+                }
+              }
+            },
+            "description": "Runtime error"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayError"
+                }
+              }
+            },
+            "description": "Runtime error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayError"
+                }
+              }
+            },
+            "description": "Runtime error"
+          }
+        },
+        "security": [
+          {
+            "runtimeBearer": []
+          }
+        ]
+      }
+    },
+    "/gateway/v1/invocations/{id}/events": {
+      "get": {
+        "operationId": "streamInvocationEvents",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Last-Event-ID",
+            "required": false,
+            "schema": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "MySQL-cursor Server-Sent Event stream"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayError"
+                }
+              }
+            },
+            "description": "Runtime error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayError"
+                }
+              }
+            },
+            "description": "Runtime error"
+          }
+        },
+        "security": [
+          {
+            "runtimeBearer": []
+          }
+        ]
+      }
+    },
+    "/gateway/v1/sessions/{id}": {
+      "get": {
+        "operationId": "getSession",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionResponse"
+                }
+              }
+            },
+            "description": "Successful Runtime response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayError"
+                }
+              }
+            },
+            "description": "Runtime error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayError"
+                }
+              }
+            },
+            "description": "Runtime error"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayError"
+                }
+              }
+            },
+            "description": "Runtime error"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayError"
+                }
+              }
+            },
+            "description": "Runtime error"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayError"
+                }
+              }
+            },
+            "description": "Runtime error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayError"
+                }
+              }
+            },
+            "description": "Runtime error"
+          }
+        },
+        "security": [
+          {
+            "runtimeBearer": []
+          }
+        ]
+      }
+    },
+    "/gateway/v1/sessions/{id}/messages": {
+      "get": {
+        "operationId": "listMessages",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/MessageResponse"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Runtime response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayError"
+                }
+              }
+            },
+            "description": "Runtime error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayError"
+                }
+              }
+            },
+            "description": "Runtime error"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayError"
+                }
+              }
+            },
+            "description": "Runtime error"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayError"
+                }
+              }
+            },
+            "description": "Runtime error"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayError"
+                }
+              }
+            },
+            "description": "Runtime error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayError"
+                }
+              }
+            },
+            "description": "Runtime error"
+          }
+        },
+        "security": [
+          {
+            "runtimeBearer": []
+          }
+        ]
+      },
+      "post": {
+        "operationId": "sendMessage",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 192,
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MessageRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvocationResponse"
+                }
+              }
+            },
+            "description": "Successful Runtime response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayError"
+                }
+              }
+            },
+            "description": "Runtime error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayError"
+                }
+              }
+            },
+            "description": "Runtime error"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayError"
+                }
+              }
+            },
+            "description": "Runtime error"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayError"
+                }
+              }
+            },
+            "description": "Runtime error"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayError"
+                }
+              }
+            },
+            "description": "Runtime error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayError"
+                }
+              }
+            },
+            "description": "Runtime error"
+          }
+        },
+        "security": [
+          {
+            "runtimeBearer": []
+          }
+        ]
+      }
+    },
+    "/gateway/v1/waits/{resume_token}/resume": {
+      "post": {
+        "operationId": "resumeWait",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 192,
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WaitResumeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandAccepted"
+                }
+              }
+            },
+            "description": "Successful Runtime response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayError"
+                }
+              }
+            },
+            "description": "Runtime error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayError"
+                }
+              }
+            },
+            "description": "Runtime error"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayError"
+                }
+              }
+            },
+            "description": "Runtime error"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayError"
+                }
+              }
+            },
+            "description": "Runtime error"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayError"
+                }
+              }
+            },
+            "description": "Runtime error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayError"
+                }
+              }
+            },
+            "description": "Runtime error"
+          }
+        },
+        "security": [
+          {
+            "runtimeBearer": []
+          }
+        ]
+      }
+    },
+    "/gateway/v1/webhooks/{public_id}": {
+      "post": {
+        "operationId": "invokeWebhook",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 192,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Agentx-Timestamp",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Agentx-Signature",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {}
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvocationResponse"
+                }
+              }
+            },
+            "description": "Successful Runtime response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayError"
+                }
+              }
+            },
+            "description": "Runtime error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayError"
+                }
+              }
+            },
+            "description": "Runtime error"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayError"
+                }
+              }
+            },
+            "description": "Runtime error"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayError"
+                }
+              }
+            },
+            "description": "Runtime error"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayError"
+                }
+              }
+            },
+            "description": "Runtime error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayError"
+                }
+              }
+            },
+            "description": "Runtime error"
+          }
+        }
+      }
+    },
+    "/gateway/v1/workflows/{slug}/invoke": {
+      "post": {
+        "operationId": "invokeWorkflow",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 192,
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InvocationRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "properties": {
+                  "attachments": {
+                    "items": {
+                      "format": "binary",
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "input": {
+                    "description": "Optional JSON object containing Workflow input fields",
+                    "type": "string"
+                  },
+                  "question": {
+                    "type": "string"
+                  },
+                  "responseMode": {
+                    "enum": [
+                      "async",
+                      "sync"
+                    ],
+                    "type": "string"
+                  },
+                  "sessionId": {
+                    "format": "uuid",
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvocationResponse"
+                }
+              }
+            },
+            "description": "Successful Runtime response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayError"
+                }
+              }
+            },
+            "description": "Runtime error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayError"
+                }
+              }
+            },
+            "description": "Runtime error"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayError"
+                }
+              }
+            },
+            "description": "Runtime error"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayError"
+                }
+              }
+            },
+            "description": "Runtime error"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayError"
+                }
+              }
+            },
+            "description": "Runtime error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayError"
+                }
+              }
+            },
+            "description": "Runtime error"
+          }
+        },
+        "security": [
+          {
+            "runtimeBearer": []
+          }
+        ]
+      }
     }
-  ]
+  }
 }

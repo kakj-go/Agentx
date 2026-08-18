@@ -1,4 +1,6 @@
 controller:
+  podLabels:
+    agentx.io/ingress-client: "allowed"
   ingressClass: agentx-nginx
   ingressClassResource:
     name: agentx-nginx

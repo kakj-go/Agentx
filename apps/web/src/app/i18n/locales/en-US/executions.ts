@@ -1,5 +1,9 @@
 const translations = {
   "trace": "View trace",
+  "traceDelayed": "Trace delayed",
+  "traceDelayedDescription": "The authoritative execution state is available; trace ingestion is still catching up.",
+  "traceUnavailable": "Trace unavailable",
+  "traceUnavailableDescription": "The authoritative execution state is still available while observability recovers.",
   "runVersion": "Run version",
   "loadingRuntime": "Loading Agent Runtime details…",
   "noRuntimeDetails": "This Execution has no Agent, Runtime Call, or Sandbox records.",

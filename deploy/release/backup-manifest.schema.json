@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "backupId", "target", "operation", "status", "startedAt", "completedAt", "recoveryPointUtc", "objectCount", "contentSha256", "schemaVersionObserved", "providerReceipt"],
+  "properties": {
+    "schemaVersion": { "const": "agentx.io/backup-manifest/v1" },
+    "backupId": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" },
+    "target": { "enum": ["control-mysql", "runtime-mysql", "control-objects", "runtime-objects", "observability-objects", "clickhouse", "runtime-redis"] },
+    "operation": { "enum": ["backup", "restore", "verify", "rebuild"] },
+    "status": { "const": "passed" },
+    "startedAt": { "type": "string", "format": "date-time" },
+    "completedAt": { "type": "string", "format": "date-time" },
+    "recoveryPointUtc": { "type": "string", "format": "date-time" },
+    "objectCount": { "type": "integer", "minimum": 0 },
+    "contentSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "schemaVersionObserved": { "type": "string", "minLength": 1 },
+    "restoreTarget": { "type": ["string", "null"] },
+    "providerReceipt": { "type": "object" }
+  }
+}

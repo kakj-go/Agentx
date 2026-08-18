@@ -1,0 +1,60 @@
+{
+  "$defs": {
+    "RuntimeReferenceBlockV1": {
+      "additionalProperties": false,
+      "properties": {
+        "bundleId": {
+          "format": "uuid",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "objectId": {
+          "format": "uuid",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ownerId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "referenceKind": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "referenceKind",
+        "ownerId"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "blockingReferences": {
+      "items": {
+        "$ref": "#/$defs/RuntimeReferenceBlockV1"
+      },
+      "type": "array"
+    },
+    "safeToDelete": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "apiVersion",
+    "safeToDelete",
+    "blockingReferences"
+  ],
+  "title": "ReferenceCheckReceiptV1",
+  "type": "object"
+}

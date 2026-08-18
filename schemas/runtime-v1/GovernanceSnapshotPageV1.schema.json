@@ -1,0 +1,570 @@
+{
+  "$defs": {
+    "RuntimeApprovalCandidateKindV1": {
+      "enum": [
+        "user",
+        "role",
+        "department"
+      ],
+      "type": "string"
+    },
+    "RuntimeApprovalCandidateV1": {
+      "additionalProperties": false,
+      "properties": {
+        "candidateId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "candidateType": {
+          "$ref": "#/$defs/RuntimeApprovalCandidateKindV1"
+        }
+      },
+      "required": [
+        "candidateType",
+        "candidateId"
+      ],
+      "type": "object"
+    },
+    "RuntimeEvaluationCaseResultV1": {
+      "additionalProperties": false,
+      "properties": {
+        "actualOutput": true,
+        "costMicros": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "durationMs": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "errorCode": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "errorMessage": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "rules": {
+          "items": {
+            "$ref": "#/$defs/RuntimeEvaluationRuleResultV1"
+          },
+          "type": "array"
+        },
+        "sourceCaseId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "targetCommandId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "targetExecutionId": {
+          "format": "uuid",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "sourceCaseId",
+        "targetCommandId",
+        "status",
+        "costMicros",
+        "rules"
+      ],
+      "type": "object"
+    },
+    "RuntimeEvaluationMetricsV1": {
+      "additionalProperties": false,
+      "properties": {
+        "completedCases": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "errorRules": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "failedRules": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "passedRules": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "totalCases": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "totalCostMicros": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "totalCases",
+        "completedCases",
+        "passedRules",
+        "failedRules",
+        "errorRules",
+        "totalCostMicros"
+      ],
+      "type": "object"
+    },
+    "RuntimeEvaluationReportV1": {
+      "additionalProperties": false,
+      "properties": {
+        "cases": {
+          "items": {
+            "$ref": "#/$defs/RuntimeEvaluationCaseResultV1"
+          },
+          "type": "array"
+        },
+        "metrics": {
+          "$ref": "#/$defs/RuntimeEvaluationMetricsV1"
+        }
+      },
+      "required": [
+        "cases",
+        "metrics"
+      ],
+      "type": "object"
+    },
+    "RuntimeEvaluationRuleResultV1": {
+      "additionalProperties": false,
+      "properties": {
+        "costMicros": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "detail": true,
+        "durationMs": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "passed": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "profileRuleId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "score": {
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "profileRuleId",
+        "status",
+        "detail",
+        "costMicros"
+      ],
+      "type": "object"
+    },
+    "RuntimeGovernanceObjectKindV1": {
+      "enum": [
+        "approval",
+        "evaluation",
+        "notification",
+        "debug",
+        "retention"
+      ],
+      "type": "string"
+    },
+    "RuntimeGovernanceSnapshotItemV1": {
+      "additionalProperties": false,
+      "properties": {
+        "deleted": {
+          "type": "boolean"
+        },
+        "lastEventCursor": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "objectId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "objectType": {
+          "$ref": "#/$defs/RuntimeGovernanceObjectKindV1"
+        },
+        "objectVersion": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "payload": {
+          "$ref": "#/$defs/RuntimeGovernanceSnapshotPayloadV1"
+        }
+      },
+      "required": [
+        "objectType",
+        "objectId",
+        "objectVersion",
+        "lastEventCursor",
+        "deleted",
+        "payload"
+      ],
+      "type": "object"
+    },
+    "RuntimeGovernanceSnapshotPayloadV1": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "candidates": {
+              "items": {
+                "$ref": "#/$defs/RuntimeApprovalCandidateV1"
+              },
+              "type": "array"
+            },
+            "claimedBy": {
+              "format": "uuid",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "deadlineAt": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "decision": true,
+            "description": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "executionId": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "kind": {
+              "const": "approval",
+              "type": "string"
+            },
+            "nodeId": {
+              "type": "string"
+            },
+            "request": true,
+            "resumeStatus": {
+              "type": "string"
+            },
+            "status": {
+              "type": "string"
+            },
+            "title": {
+              "type": "string"
+            },
+            "workflowId": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "executionId",
+            "workflowId",
+            "nodeId",
+            "title",
+            "status",
+            "resumeStatus",
+            "candidates"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "completedCases": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "kind": {
+              "const": "evaluation",
+              "type": "string"
+            },
+            "report": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/RuntimeEvaluationReportV1"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "status": {
+              "type": "string"
+            },
+            "totalCases": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "workPackageId": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "workPackageId",
+            "status",
+            "completedCases",
+            "totalCases"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "arguments": true,
+            "bodyKey": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "notification",
+              "type": "string"
+            },
+            "notificationType": {
+              "type": "string"
+            },
+            "targetId": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "targetPath": {
+              "type": "string"
+            },
+            "targetType": {
+              "type": "string"
+            },
+            "titleKey": {
+              "type": "string"
+            },
+            "tone": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "notificationType",
+            "titleKey",
+            "bodyKey",
+            "arguments",
+            "targetType",
+            "targetId",
+            "targetPath",
+            "tone"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "expiresAt": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "debug",
+              "type": "string"
+            },
+            "result": true,
+            "status": {
+              "type": "string"
+            },
+            "workPackageId": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "workPackageId",
+            "status",
+            "expiresAt"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "deletedCount": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "dryRun": {
+              "type": "boolean"
+            },
+            "failedCount": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "items": {
+              "items": {
+                "$ref": "#/$defs/RuntimeRetentionItemV1"
+              },
+              "type": "array"
+            },
+            "kind": {
+              "const": "retention",
+              "type": "string"
+            },
+            "markedCount": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "status": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "status",
+            "markedCount",
+            "deletedCount",
+            "failedCount",
+            "dryRun",
+            "items"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "RuntimeRetentionItemV1": {
+      "additionalProperties": false,
+      "properties": {
+        "attemptCount": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "dataType": {
+          "type": "string"
+        },
+        "id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "type": "string"
+        },
+        "targetId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "dataType",
+        "targetId",
+        "status",
+        "attemptCount"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "generatedAt": {
+      "type": "string"
+    },
+    "nextPageCursor": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "objects": {
+      "items": {
+        "$ref": "#/$defs/RuntimeGovernanceSnapshotItemV1"
+      },
+      "type": "array"
+    },
+    "retentionFloorCursor": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "snapshotUpperCursor": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "apiVersion",
+    "snapshotUpperCursor",
+    "retentionFloorCursor",
+    "objects",
+    "generatedAt"
+  ],
+  "title": "GovernanceSnapshotPageV1",
+  "type": "object"
+}

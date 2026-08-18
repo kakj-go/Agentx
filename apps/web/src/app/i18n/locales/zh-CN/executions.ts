@@ -1,5 +1,9 @@
 const translations = {
   "trace": "查看 Trace",
+  "traceDelayed": "Trace 延迟",
+  "traceDelayedDescription": "权威执行状态已可用，Trace 摄取仍在追赶。",
+  "traceUnavailable": "Trace 不可用",
+  "traceUnavailableDescription": "可观测服务恢复期间，权威执行状态仍可正常查看。",
   "runVersion": "运行版本",
   "loadingRuntime": "正在加载智能体 Runtime 明细…",
   "noRuntimeDetails": "该执行没有智能体、Runtime 调用或沙箱记录。",

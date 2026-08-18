@@ -55,6 +55,9 @@ export interface components {
             id: string;
             inputSchema: unknown;
             outputSchema: unknown;
+            publishAttemptId?: string | null;
+            publishErrorCode?: string | null;
+            publishErrorMessage?: string | null;
             sequenceNumber: number;
             sessionVersionPolicy: string;
             status: string;
@@ -68,6 +71,8 @@ export interface components {
             id: string;
             name: string;
             ownerDepartmentId: string;
+            publishedRuntimeConfigRevision: number;
+            runtimeConfigRevision: number;
             slug: string;
             status: string;
             updatedAt: string;
@@ -934,6 +939,18 @@ export interface components {
             description?: string | null;
             key: string;
             name: string;
+        };
+        PublishAttemptResponse: {
+            activationSequence: number;
+            bundleId?: string | null;
+            deploymentId: string;
+            errorCode?: string | null;
+            errorMessage?: string | null;
+            id: string;
+            nextAction: string;
+            previousAttemptId?: string | null;
+            state: string;
+            updatedAt: string;
         };
         PublishSkillVersionRequest: {
             dependencies?: components["schemas"]["SkillDependencyInput"][];

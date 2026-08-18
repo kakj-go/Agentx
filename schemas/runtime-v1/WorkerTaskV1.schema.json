@@ -1,0 +1,88 @@
+{
+  "$defs": {
+    "NodeCapability": {
+      "enum": [
+        "builtin",
+        "declarative_http",
+        "remote_action",
+        "agent",
+        "model",
+        "mcp_tool",
+        "skill",
+        "rag",
+        "memory",
+        "sandbox"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "attemptId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "bundleId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "capability": {
+      "$ref": "#/$defs/NodeCapability"
+    },
+    "compatibilityHash": {
+      "type": "string"
+    },
+    "deadlineAt": {
+      "type": "string"
+    },
+    "executionId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "nodeExecutionId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "protocolVersion": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "stateVersion": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "taskId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "tenantId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "workPackageId": {
+      "format": "uuid",
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "protocolVersion",
+    "taskId",
+    "tenantId",
+    "executionId",
+    "nodeExecutionId",
+    "attemptId",
+    "capability",
+    "bundleId",
+    "stateVersion",
+    "compatibilityHash",
+    "deadlineAt"
+  ],
+  "title": "WorkerTaskV1",
+  "type": "object"
+}

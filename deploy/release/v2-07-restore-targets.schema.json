@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["control-mysql", "runtime-mysql", "control-objects", "runtime-objects", "observability-objects", "clickhouse"],
+  "properties": {
+    "control-mysql": { "type": "string", "minLength": 3 },
+    "runtime-mysql": { "type": "string", "minLength": 3 },
+    "control-objects": { "type": "string", "minLength": 3 },
+    "runtime-objects": { "type": "string", "minLength": 3 },
+    "observability-objects": { "type": "string", "minLength": 3 },
+    "clickhouse": { "type": "string", "minLength": 3 }
+  }
+}

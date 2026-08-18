@@ -1,0 +1,139 @@
+{
+  "$defs": {
+    "PartialExecutionModeV1": {
+      "enum": [
+        "whole",
+        "node",
+        "to_node",
+        "from_node"
+      ],
+      "type": "string"
+    },
+    "RuntimeDebugInputSourceV1": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "manual",
+              "type": "string"
+            },
+            "value": true
+          },
+          "required": [
+            "kind",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "executionId": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "kind": {
+              "const": "history_output",
+              "type": "string"
+            },
+            "nodeExecutionId": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "outputPort": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "executionId",
+            "nodeExecutionId",
+            "outputPort"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "artifactId": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "executionId": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "kind": {
+              "const": "artifact",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "executionId",
+            "artifactId"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "SideEffectResolutionV1": {
+      "enum": [
+        "execute",
+        "reuse_output",
+        "dry_run"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "includedNodeIds": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "inputSource": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/RuntimeDebugInputSourceV1"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "mode": {
+      "$ref": "#/$defs/PartialExecutionModeV1"
+    },
+    "sideEffectDecisions": {
+      "additionalProperties": {
+        "$ref": "#/$defs/SideEffectResolutionV1"
+      },
+      "type": "object"
+    },
+    "skippedNodeIds": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "targetNodeId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "mode",
+    "includedNodeIds",
+    "skippedNodeIds",
+    "sideEffectDecisions"
+  ],
+  "title": "RuntimeDebugPlanV1",
+  "type": "object"
+}

@@ -25,10 +25,10 @@ Agentx 是一个采用 n8n 式画布交互、但使用 Agentx 原生 Workflow/No
 | [11-node-integration.md](11-node-integration.md) | Node Manifest、Action/Provider/Lifecycle HTTP 协议与接入验证 |
 | [12-workflow-4.md](12-workflow-4.md) | Workflow Definition 4.0、Expression、Context、Composite、Gateway 与导入导出契约 |
 | [13-architecture-service-data-map.md](13-architecture-service-data-map.md) | 当前架构、服务访问链路、全量表目录和跨域 ER 关系 |
-| [reference/mysql-schema-catalog.md](reference/mysql-schema-catalog.md) | 从完整迁移后的 MySQL 8.4 information_schema 导出的全部字段、索引与外键 |
-| [reference/table-business-purpose.md](reference/table-business-purpose.md) | 全部 MySQL/ClickHouse 表的业务归属、作用和必要性判断 |
+| [reference/mysql-schema-catalog.md](reference/mysql-schema-catalog.md) | V2-00 逐表处置使用的历史 V1 MySQL 字段、索引与外键快照 |
+| [planv2/contracts/table-disposition.json](planv2/contracts/table-disposition.json) | 历史 133 表迁往 Control/Runtime/Split/Delete 的机器可读处置输入 |
 | [plan/README.md](plan/README.md) | 全量实施顺序、阶段任务、依赖、验收门禁和功能追踪 |
-| [planv2/README.md](planv2/README.md) | 下一阶段控制面、执行面与可观测面分离的破坏性重构计划；当前全部阶段为 planned |
+| [planv2/README.md](planv2/README.md) | 控制面、执行面与可观测面分离的破坏性重构计划；V2-08A 本地功能闭环与 V1 删除已完成，生产容量、安全、恢复和发布认证仍在 08B |
 | [plan/m2-task-list.md](plan/m2-task-list.md) | M2 Workflow 控制面与资源中心的详细实施批次和任务清单 |
 | [plan/m2.1-resource-redesign.md](plan/m2.1-resource-redesign.md) | M2.1 MCP、Skill Workspace、Kubernetes Addon 与全局 E2E 重构任务 |
 | [plan/m2.1-acceptance-evidence.md](plan/m2.1-acceptance-evidence.md) | M2.1 当前验收状态和最终证据入口 |
@@ -58,7 +58,7 @@ Agentx 是一个采用 n8n 式画布交互、但使用 Agentx 原生 Workflow/No
 3. 阅读对应阶段实施手册，按任务依赖推进并保存验收证据。
 4. 当前产品能力和历史证据查 [功能追踪矩阵](plan/99-feature-traceability.md)；V2 重构实施状态查 [V2 架构与产品能力矩阵](planv2/99-traceability.md)。
 
-现有 `01` 至 `13` 文档回答“当前系统是什么以及为什么这样设计”，`plan/` 保存当前能力的实施历史和验收基线，`planv2/` 回答下一阶段控制面/执行面分离“按什么顺序重构、如何保持能力等价以及如何证明完成”。V2 落地前，[当前架构全景](13-architecture-service-data-map.md)仍以代码和 Schema 事实为准，不把计划目标描述成已实现状态。
+现有 `01` 至 `13` 文档回答“当前系统是什么以及为什么这样设计”，`plan/` 保存历史能力和验收基线，`planv2/` 保存三域架构的实施状态与生产认证边界。[当前架构全景](13-architecture-service-data-map.md)以 V2-08A 后的代码、清单和分域 Schema 事实为准。
 
 ## 核心设计结论
 

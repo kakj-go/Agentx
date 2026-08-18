@@ -1,0 +1,73 @@
+{
+  "$defs": {
+    "ExecutionCheckpointV1": {
+      "additionalProperties": false,
+      "properties": {
+        "checkpointId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "checkpointType": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string"
+        },
+        "nodeExecutionId": {
+          "format": "uuid",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "payloadHash": {
+          "type": "string"
+        },
+        "sequenceNumber": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "stateHash": {
+          "type": "string"
+        },
+        "stateVersion": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "checkpointId",
+        "sequenceNumber",
+        "checkpointType",
+        "stateHash",
+        "payloadHash",
+        "stateVersion",
+        "createdAt"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "items": {
+      "items": {
+        "$ref": "#/$defs/ExecutionCheckpointV1"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "apiVersion",
+    "items"
+  ],
+  "title": "ExecutionCollectionPageV1",
+  "type": "object"
+}

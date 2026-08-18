@@ -4,11 +4,13 @@ let accessToken: string | undefined
 let refreshHandler: (() => Promise<boolean>) | undefined
 let refreshPromise: Promise<boolean> | undefined
 let apiErrorTranslator: ((detail: ApiError, status: number) => string) | undefined
+const runtimeBaseUrl = (window as Window & { __AGENTX_RUNTIME__?: { runtimeBaseUrl?: string } }).__AGENTX_RUNTIME__?.runtimeBaseUrl?.replace(/\/$/, '') ?? ''
 
 export class ApiClientError extends Error {
   status: number
   detail: ApiError
-  constructor(status: number, detail: ApiError) { super(apiErrorTranslator?.(detail, status) ?? detail.message); this.status = status; this.detail = detail }
+  retryAfterSeconds?: number
+  constructor(status: number, detail: ApiError, retryAfterSeconds?: number) { super(apiErrorTranslator?.(detail, status) ?? detail.message); this.status = status; this.detail = detail; this.retryAfterSeconds = retryAfterSeconds }
 }
 
 export function setAccessToken(value?: string | null) { accessToken = value ?? undefined }
@@ -50,9 +52,18 @@ async function send<T>(basePath: string, path: string, init: RequestInit, retry:
 }
 
 export function apiRequest<T>(path: string, init: RequestInit = {}) { return send<T>('/api/v1', path, init, true) }
+export async function apiRequestCompleted<T>(path: string, init: RequestInit = {}) {
+  const response = await sendRaw('/api/v1', path, init, true)
+  if (response.status === 202) {
+    const retryAfter = Number.parseInt(response.headers.get('retry-after') ?? '', 10)
+    throw new ApiClientError(response.status, await parseError(response), Number.isFinite(retryAfter) ? retryAfter : undefined)
+  }
+  const body = await response.text()
+  return body ? JSON.parse(body) as T : undefined as T
+}
 export function publicRequest<T>(path: string, init: RequestInit = {}) { return send<T>('/api/v1', path, init, false) }
-export function gatewayRequest<T>(path: string, init: RequestInit = {}) { return send<T>('/gateway/v1', path, init, true) }
-export function gatewayRequestStream(path: string, init: RequestInit = {}) { return sendRaw('/gateway/v1', path, init, true) }
+export function gatewayRequest<T>(path: string, init: RequestInit = {}) { return send<T>(`${runtimeBaseUrl}/gateway/v1`, path, init, true) }
+export function gatewayRequestStream(path: string, init: RequestInit = {}) { return sendRaw(`${runtimeBaseUrl}/gateway/v1`, path, init, true) }
 export async function apiRequestText(path: string, init: RequestInit = {}) { return (await sendRaw('/api/v1', path, init, true)).text() }
 export async function apiRequestBlob(path: string, init: RequestInit = {}) { return (await sendRaw('/api/v1', path, init, true)).blob() }
 export const jsonBody = (value: unknown) => JSON.stringify(value)

@@ -1,0 +1,99 @@
+use std::collections::{BTreeMap, BTreeSet};
+
+use agentx_domain::{
+    ContextDefinition, ContextWrite, ExecutionOrder, NodeSettings, WorkflowEnd, WorkflowStart,
+};
+use agentx_node_protocol::{
+    ExecutionStyle, NodeCapability, PortKind, ReadinessPolicy, SideEffectLevel,
+};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CompiledWorkflowV1 {
+    #[serde(deserialize_with = "crate::deserialize_v1")]
+    pub contract_version: u32,
+    pub schema_version: String,
+    pub compiler_version: String,
+    pub canonical_hash: String,
+    pub definition_hash: String,
+    pub execution_order: ExecutionOrder,
+    pub activation_budget: u32,
+    pub start: WorkflowStart,
+    pub contexts: BTreeMap<String, ContextDefinition>,
+    pub end: WorkflowEnd,
+    pub nodes: Vec<CompiledNodeV1>,
+    pub connections: Vec<CompiledConnectionV1>,
+    pub terminal_connections: Vec<CompiledTerminalConnectionV1>,
+    pub start_to_end: bool,
+    pub start_nodes: Vec<usize>,
+    pub strongly_connected_components: Vec<Vec<usize>>,
+    pub subworkflow_version_ids: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CompiledNodeV1 {
+    pub index: usize,
+    pub id: String,
+    pub key: String,
+    pub name: String,
+    pub node_type: String,
+    pub type_version: u32,
+    pub parameters: Value,
+    pub output_projection: Value,
+    pub context_writes: Vec<ContextWrite>,
+    pub settings: NodeSettings,
+    pub capability: NodeCapability,
+    pub execution_style: ExecutionStyle,
+    pub readiness: ReadinessPolicy,
+    pub required_input_ports: Vec<String>,
+    pub output_ports: Vec<String>,
+    pub side_effect_level: SideEffectLevel,
+    pub incoming_connections: Vec<usize>,
+    pub outgoing_connections: Vec<usize>,
+    pub component_index: usize,
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CompiledConnectionV1 {
+    pub index: usize,
+    pub id: String,
+    pub source_node: usize,
+    pub source_port: String,
+    pub source_port_kind: PortKind,
+    pub target_node: usize,
+    pub target_port: String,
+    pub target_port_kind: PortKind,
+    pub branch_order: u32,
+    pub back_edge: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CompiledTerminalConnectionV1 {
+    pub id: String,
+    pub source_node: usize,
+    pub source_port: String,
+    pub target_port: String,
+    pub branch_order: u32,
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WorkerCompatibilityV1 {
+    #[serde(deserialize_with = "crate::deserialize_v1")]
+    pub protocol_version: u32,
+    pub ir_versions: BTreeSet<u32>,
+    pub compiler_versions: BTreeSet<String>,
+    pub capabilities: BTreeSet<String>,
+    pub manifest_versions: BTreeSet<String>,
+}
+
+pub type CompiledWorkflow = CompiledWorkflowV1;
+pub type CompiledNode = CompiledNodeV1;
+pub type CompiledConnection = CompiledConnectionV1;
+pub type CompiledTerminalConnection = CompiledTerminalConnectionV1;

@@ -1,0 +1,18 @@
+[package]
+name = "agentx-mysql-lease"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+sqlx.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+time.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+anyhow.workspace = true
+testcontainers = "0.25"
+tokio.workspace = true

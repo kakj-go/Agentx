@@ -1,0 +1,232 @@
+{
+  "$defs": {
+    "BinaryReference": {
+      "additionalProperties": false,
+      "properties": {
+        "artifactHandle": {
+          "type": "string"
+        },
+        "contentType": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "fileName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sizeBytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "artifactHandle",
+        "sizeBytes"
+      ],
+      "type": "object"
+    },
+    "Item": {
+      "additionalProperties": false,
+      "properties": {
+        "binary": {
+          "additionalProperties": {
+            "$ref": "#/$defs/BinaryReference"
+          },
+          "type": "object"
+        },
+        "json": true,
+        "lineage": {
+          "items": {
+            "$ref": "#/$defs/ItemSource"
+          },
+          "type": "array"
+        },
+        "metadata": {
+          "additionalProperties": true,
+          "type": "object"
+        }
+      },
+      "required": [
+        "json"
+      ],
+      "type": "object"
+    },
+    "ItemSource": {
+      "additionalProperties": false,
+      "properties": {
+        "itemIndex": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "nodeExecutionId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "nodeId": {
+          "type": "string"
+        },
+        "outputIndex": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "runIndex": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "nodeExecutionId",
+        "nodeId",
+        "runIndex",
+        "outputIndex",
+        "itemIndex"
+      ],
+      "type": "object"
+    },
+    "RuntimeObjectReferenceV1": {
+      "additionalProperties": false,
+      "properties": {
+        "contentHash": {
+          "type": "string"
+        },
+        "mediaType": {
+          "type": "string"
+        },
+        "objectId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "objectKey": {
+          "type": "string"
+        },
+        "sizeBytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "storageDomain": {
+          "$ref": "#/$defs/StorageDomain"
+        },
+        "tenantId": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tenantId",
+        "storageDomain",
+        "objectId",
+        "objectKey",
+        "contentHash",
+        "sizeBytes",
+        "mediaType"
+      ],
+      "type": "object"
+    },
+    "StorageDomain": {
+      "enum": [
+        "runtime",
+        "observability"
+      ],
+      "type": "string"
+    },
+    "WorkerResultStatusV1": {
+      "enum": [
+        "succeeded",
+        "failed",
+        "suspended",
+        "cancelled",
+        "outcome_unknown"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "attemptId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "errorCode": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "errorMessage": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "fencingToken": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "outputObject": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/RuntimeObjectReferenceV1"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "outputs": {
+      "additionalProperties": {
+        "items": {
+          "$ref": "#/$defs/Item"
+        },
+        "type": "array"
+      },
+      "type": "object"
+    },
+    "partialOutputObject": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/RuntimeObjectReferenceV1"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "protocolVersion": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "resultHash": {
+      "type": "string"
+    },
+    "status": {
+      "$ref": "#/$defs/WorkerResultStatusV1"
+    },
+    "workerId": {
+      "format": "uuid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "protocolVersion",
+    "attemptId",
+    "workerId",
+    "fencingToken",
+    "status",
+    "resultHash",
+    "outputs"
+  ],
+  "title": "WorkerResultV1",
+  "type": "object"
+}

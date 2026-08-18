@@ -1,0 +1,24 @@
+{
+  "runtime_packages": [
+    "agentx-runtime",
+    "agentx-runtime-infrastructure",
+    "agentx-v2-runtime"
+  ],
+  "control_packages": [
+    "agentx-control-infrastructure",
+    "platform-control"
+  ],
+  "observability_packages": [
+    "agentx-observability"
+  ],
+  "runtime_gateway_redis_allowed_modules": [
+    "services/agentx-v2-runtime/src/sse_wakeup.rs",
+    "services/agentx-v2-runtime/src/trace_delivery.rs"
+  ],
+  "legacy_direct_dependencies": [],
+  "legacy_rust_imports": [],
+  "legacy_sql_references": [],
+  "legacy_dynamic_sql": [],
+  "legacy_boundary_tokens": [],
+  "legacy_network_policy_files": []
+}

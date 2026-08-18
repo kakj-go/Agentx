@@ -1,13 +1,13 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use agentx_domain::{
-    ContextDefinition, ContextWrite, ContextWriteOperation, ExecutionOrder, NodeSettings,
-    WORKFLOW_END_NODE_ID, WORKFLOW_START_NODE_ID, WorkflowDefinition, WorkflowEnd, WorkflowNode,
-    WorkflowOutput, WorkflowStart, canonical_content_hash, validate_definition,
+    ContextDefinition, ContextWriteOperation, WORKFLOW_END_NODE_ID, WORKFLOW_START_NODE_ID,
+    WorkflowDefinition, WorkflowNode, WorkflowOutput, canonical_content_hash, validate_definition,
 };
-use agentx_node_protocol::{
-    ExecutionStyle, NodeCapability, NodeManifestVersion, OutputCardinality, PortKind,
-    ReadinessPolicy, SideEffectLevel,
+use agentx_node_protocol::{NodeManifestVersion, OutputCardinality, PortKind};
+use agentx_runtime_contracts::{
+    CompiledConnection, CompiledNode, CompiledTerminalConnection, CompiledWorkflow,
+    IR_SCHEMA_VERSION,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -47,76 +47,6 @@ impl CompileError {
         let issues_len = issues.len();
         Self { issues, issues_len }
     }
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CompiledWorkflow {
-    pub schema_version: String,
-    pub compiler_version: String,
-    pub canonical_hash: String,
-    pub definition_hash: String,
-    pub execution_order: ExecutionOrder,
-    pub activation_budget: u32,
-    pub start: WorkflowStart,
-    pub contexts: BTreeMap<String, ContextDefinition>,
-    pub end: WorkflowEnd,
-    pub nodes: Vec<CompiledNode>,
-    pub connections: Vec<CompiledConnection>,
-    pub terminal_connections: Vec<CompiledTerminalConnection>,
-    pub start_to_end: bool,
-    pub start_nodes: Vec<usize>,
-    pub strongly_connected_components: Vec<Vec<usize>>,
-    pub subworkflow_version_ids: Vec<String>,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CompiledNode {
-    pub index: usize,
-    pub id: String,
-    pub key: String,
-    pub name: String,
-    pub node_type: String,
-    pub type_version: u32,
-    pub parameters: Value,
-    pub output_projection: Value,
-    pub context_writes: Vec<ContextWrite>,
-    pub settings: NodeSettings,
-    pub capability: NodeCapability,
-    pub execution_style: ExecutionStyle,
-    pub readiness: ReadinessPolicy,
-    pub required_input_ports: Vec<String>,
-    pub output_ports: Vec<String>,
-    pub side_effect_level: SideEffectLevel,
-    pub incoming_connections: Vec<usize>,
-    pub outgoing_connections: Vec<usize>,
-    pub component_index: usize,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CompiledConnection {
-    pub index: usize,
-    pub id: String,
-    pub source_node: usize,
-    pub source_port: String,
-    pub source_port_kind: PortKind,
-    pub target_node: usize,
-    pub target_port: String,
-    pub target_port_kind: PortKind,
-    pub branch_order: u32,
-    pub back_edge: bool,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CompiledTerminalConnection {
-    pub id: String,
-    pub source_node: usize,
-    pub source_port: String,
-    pub target_port: String,
-    pub branch_order: u32,
 }
 
 pub struct WorkflowCompiler<'a> {
@@ -621,6 +551,7 @@ impl<'a> WorkflowCompiler<'a> {
         let bytes = serde_json::to_vec(&hash_source).expect("compiled workflow serializes");
         let canonical_hash = format!("sha256:ir-v1:{:x}", Sha256::digest(bytes));
         Ok(CompiledWorkflow {
+            contract_version: IR_SCHEMA_VERSION,
             schema_version: definition.schema_version.clone(),
             compiler_version: COMPILER_VERSION.into(),
             canonical_hash,

@@ -115,7 +115,15 @@ spec:
         - name: migrate
           image: agentx/mem0-server:v2.0.15
           imagePullPolicy: IfNotPresent
-          command: ["alembic", "upgrade", "head"]
+          command:
+            - sh
+            - -ec
+            - |
+              for attempt in $(seq 1 60); do
+                alembic upgrade head && exit 0
+                sleep 2
+              done
+              exit 1
           envFrom:
             - configMapRef:
                 name: agentx-mem0-config

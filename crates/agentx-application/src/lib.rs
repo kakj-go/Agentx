@@ -14,9 +14,11 @@ use uuid::Uuid;
 use zeroize::Zeroize;
 
 pub mod runtime;
+pub use agentx_runtime_contracts::{
+    CancelExecutionCommandPayload, ExecutionResult, ResumeExecutionCommandPayload, RuntimeCommand,
+    RuntimeCommandType, RuntimeEventEnvelope, StartExecutionCommandPayload,
+};
 pub use runtime::*;
-pub mod runtime_integration;
-pub use runtime_integration::*;
 
 #[async_trait]
 pub trait WorkflowRepository: Send + Sync {

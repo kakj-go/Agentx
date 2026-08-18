@@ -8,6 +8,7 @@ version.workspace = true
 [dependencies]
 agentx-domain.workspace = true
 agentx-node-protocol.workspace = true
+agentx-runtime-contracts.workspace = true
 cel-interpreter.workspace = true
 jsonschema.workspace = true
 serde.workspace = true

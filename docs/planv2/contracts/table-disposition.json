@@ -1,0 +1,1770 @@
+[
+  {
+    "current_table": "_sqlx_migrations",
+    "decision": "split",
+    "control_replacement": "control._sqlx_migrations",
+    "runtime_replacement": "runtime._sqlx_migrations",
+    "authoritative_writer": "control for control replacement; runtime for runtime replacement",
+    "allowed_readers": [
+      "control:control replacement",
+      "runtime:runtime replacement"
+    ],
+    "cross_plane_contract": "versioned Bundle, Admission Command, Runtime Event/Snapshot Export, Receipt or Runtime Query as assigned by the owning task",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2D-001/V2D-002"
+  },
+  {
+    "current_table": "agent_iterations",
+    "decision": "runtime",
+    "control_replacement": null,
+    "runtime_replacement": "runtime.agent_iterations",
+    "authoritative_writer": "runtime",
+    "allowed_readers": [
+      "runtime"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2R-001..015"
+  },
+  {
+    "current_table": "agent_runs",
+    "decision": "runtime",
+    "control_replacement": null,
+    "runtime_replacement": "runtime.agent_runs",
+    "authoritative_writer": "runtime",
+    "allowed_readers": [
+      "runtime"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2R-001..015"
+  },
+  {
+    "current_table": "application_api_keys",
+    "decision": "split",
+    "control_replacement": "control.application_api_keys",
+    "runtime_replacement": "runtime.api_key_admission",
+    "authoritative_writer": "control for control replacement; runtime for runtime replacement",
+    "allowed_readers": [
+      "control:control replacement",
+      "runtime:runtime replacement"
+    ],
+    "cross_plane_contract": "versioned Bundle, Admission Command, Runtime Event/Snapshot Export, Receipt or Runtime Query as assigned by the owning task",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2G-001..008"
+  },
+  {
+    "current_table": "application_deployment_heads",
+    "decision": "split",
+    "control_replacement": "control.application_deployment_heads",
+    "runtime_replacement": "runtime.deployment_heads",
+    "authoritative_writer": "control for control replacement; runtime for runtime replacement",
+    "allowed_readers": [
+      "control:control replacement",
+      "runtime:runtime replacement"
+    ],
+    "cross_plane_contract": "versioned Bundle, Admission Command, Runtime Event/Snapshot Export, Receipt or Runtime Query as assigned by the owning task",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2G-001..008"
+  },
+  {
+    "current_table": "application_deployments",
+    "decision": "split",
+    "control_replacement": "control.application_deployments",
+    "runtime_replacement": "runtime.deployment_bundles",
+    "authoritative_writer": "control for control replacement; runtime for runtime replacement",
+    "allowed_readers": [
+      "control:control replacement",
+      "runtime:runtime replacement"
+    ],
+    "cross_plane_contract": "versioned Bundle, Admission Command, Runtime Event/Snapshot Export, Receipt or Runtime Query as assigned by the owning task",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2G-001..008"
+  },
+  {
+    "current_table": "application_invocations",
+    "decision": "runtime",
+    "control_replacement": null,
+    "runtime_replacement": "runtime.application_invocations",
+    "authoritative_writer": "runtime",
+    "allowed_readers": [
+      "runtime"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2G-001..008"
+  },
+  {
+    "current_table": "application_message_parts",
+    "decision": "runtime",
+    "control_replacement": null,
+    "runtime_replacement": "runtime.application_message_parts",
+    "authoritative_writer": "runtime",
+    "allowed_readers": [
+      "runtime"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2G-001..008"
+  },
+  {
+    "current_table": "application_messages",
+    "decision": "runtime",
+    "control_replacement": null,
+    "runtime_replacement": "runtime.application_messages",
+    "authoritative_writer": "runtime",
+    "allowed_readers": [
+      "runtime"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2G-001..008"
+  },
+  {
+    "current_table": "application_schedules",
+    "decision": "split",
+    "control_replacement": "control.application_schedules",
+    "runtime_replacement": "runtime.schedule_bindings",
+    "authoritative_writer": "control for control replacement; runtime for runtime replacement",
+    "allowed_readers": [
+      "control:control replacement",
+      "runtime:runtime replacement"
+    ],
+    "cross_plane_contract": "versioned Bundle, Admission Command, Runtime Event/Snapshot Export, Receipt or Runtime Query as assigned by the owning task",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2G-001..008"
+  },
+  {
+    "current_table": "application_session_contexts",
+    "decision": "runtime",
+    "control_replacement": null,
+    "runtime_replacement": "runtime.application_session_contexts",
+    "authoritative_writer": "runtime",
+    "allowed_readers": [
+      "runtime"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2G-001..008"
+  },
+  {
+    "current_table": "application_session_version_history",
+    "decision": "runtime",
+    "control_replacement": null,
+    "runtime_replacement": "runtime.application_session_version_history",
+    "authoritative_writer": "runtime",
+    "allowed_readers": [
+      "runtime"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2G-001..008"
+  },
+  {
+    "current_table": "application_sessions",
+    "decision": "runtime",
+    "control_replacement": null,
+    "runtime_replacement": "runtime.application_sessions",
+    "authoritative_writer": "runtime",
+    "allowed_readers": [
+      "runtime"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2G-001..008"
+  },
+  {
+    "current_table": "application_webhooks",
+    "decision": "split",
+    "control_replacement": "control.application_webhooks",
+    "runtime_replacement": "runtime.webhook_bindings",
+    "authoritative_writer": "control for control replacement; runtime for runtime replacement",
+    "allowed_readers": [
+      "control:control replacement",
+      "runtime:runtime replacement"
+    ],
+    "cross_plane_contract": "versioned Bundle, Admission Command, Runtime Event/Snapshot Export, Receipt or Runtime Query as assigned by the owning task",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2G-001..008"
+  },
+  {
+    "current_table": "applications",
+    "decision": "split",
+    "control_replacement": "control.applications",
+    "runtime_replacement": "runtime.application_routes",
+    "authoritative_writer": "control for control replacement; runtime for runtime replacement",
+    "allowed_readers": [
+      "control:control replacement",
+      "runtime:runtime replacement"
+    ],
+    "cross_plane_contract": "versioned Bundle, Admission Command, Runtime Event/Snapshot Export, Receipt or Runtime Query as assigned by the owning task",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2G-001..008"
+  },
+  {
+    "current_table": "approval_actions",
+    "decision": "split",
+    "control_replacement": "control.approval_action_submissions",
+    "runtime_replacement": "runtime.approval_decisions",
+    "authoritative_writer": "control for control replacement; runtime for runtime replacement",
+    "allowed_readers": [
+      "control:control replacement",
+      "runtime:runtime replacement"
+    ],
+    "cross_plane_contract": "versioned Bundle, Admission Command, Runtime Event/Snapshot Export, Receipt or Runtime Query as assigned by the owning task",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2R-010/V2Q-007"
+  },
+  {
+    "current_table": "approval_candidates",
+    "decision": "split",
+    "control_replacement": "control.approval_candidate_projection",
+    "runtime_replacement": "runtime.approval_candidates",
+    "authoritative_writer": "control for control replacement; runtime for runtime replacement",
+    "allowed_readers": [
+      "control:control replacement",
+      "runtime:runtime replacement"
+    ],
+    "cross_plane_contract": "versioned Bundle, Admission Command, Runtime Event/Snapshot Export, Receipt or Runtime Query as assigned by the owning task",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2R-010/V2Q-007"
+  },
+  {
+    "current_table": "approval_tasks",
+    "decision": "split",
+    "control_replacement": "control.approval_task_projection",
+    "runtime_replacement": "runtime.approval_tasks",
+    "authoritative_writer": "control for control replacement; runtime for runtime replacement",
+    "allowed_readers": [
+      "control:control replacement",
+      "runtime:runtime replacement"
+    ],
+    "cross_plane_contract": "versioned Bundle, Admission Command, Runtime Event/Snapshot Export, Receipt or Runtime Query as assigned by the owning task",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2R-010/V2Q-007"
+  },
+  {
+    "current_table": "artifact_references",
+    "decision": "split",
+    "control_replacement": "control.artifact_references",
+    "runtime_replacement": "runtime.artifact_references",
+    "authoritative_writer": "control for control replacement; runtime for runtime replacement",
+    "allowed_readers": [
+      "control:control replacement",
+      "runtime:runtime replacement"
+    ],
+    "cross_plane_contract": "versioned Bundle, Admission Command, Runtime Event/Snapshot Export, Receipt or Runtime Query as assigned by the owning task",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2R-015"
+  },
+  {
+    "current_table": "artifacts",
+    "decision": "split",
+    "control_replacement": "control.artifacts",
+    "runtime_replacement": "runtime.artifacts",
+    "authoritative_writer": "control for control replacement; runtime for runtime replacement",
+    "allowed_readers": [
+      "control:control replacement",
+      "runtime:runtime replacement"
+    ],
+    "cross_plane_contract": "versioned Bundle, Admission Command, Runtime Event/Snapshot Export, Receipt or Runtime Query as assigned by the owning task",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2R-015"
+  },
+  {
+    "current_table": "audit_events",
+    "decision": "split",
+    "control_replacement": "control.audit_events",
+    "runtime_replacement": "runtime.audit_events",
+    "authoritative_writer": "control for control replacement; runtime for runtime replacement",
+    "allowed_readers": [
+      "control:control replacement",
+      "runtime:runtime replacement"
+    ],
+    "cross_plane_contract": "versioned Bundle, Admission Command, Runtime Event/Snapshot Export, Receipt or Runtime Query as assigned by the owning task",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2D-001/V2D-002"
+  },
+  {
+    "current_table": "auth_login_attempts",
+    "decision": "control",
+    "control_replacement": "control.auth_login_attempts",
+    "runtime_replacement": null,
+    "authoritative_writer": "control",
+    "allowed_readers": [
+      "control"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2D-001"
+  },
+  {
+    "current_table": "bootstrap_state",
+    "decision": "control",
+    "control_replacement": "control.bootstrap_state",
+    "runtime_replacement": null,
+    "authoritative_writer": "control",
+    "allowed_readers": [
+      "control"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2D-001"
+  },
+  {
+    "current_table": "checkpoint_artifacts",
+    "decision": "runtime",
+    "control_replacement": null,
+    "runtime_replacement": "runtime.checkpoint_artifacts",
+    "authoritative_writer": "runtime",
+    "allowed_readers": [
+      "runtime"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2R-001..015"
+  },
+  {
+    "current_table": "checkpoints",
+    "decision": "runtime",
+    "control_replacement": null,
+    "runtime_replacement": "runtime.checkpoints",
+    "authoritative_writer": "runtime",
+    "allowed_readers": [
+      "runtime"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2R-001..015"
+  },
+  {
+    "current_table": "credential_secret_versions",
+    "decision": "split",
+    "control_replacement": "control.credential_secret_versions",
+    "runtime_replacement": "runtime.credential_secret_versions",
+    "authoritative_writer": "control for control replacement; runtime for runtime replacement",
+    "allowed_readers": [
+      "control:control replacement",
+      "runtime:runtime replacement"
+    ],
+    "cross_plane_contract": "versioned Bundle, Admission Command, Runtime Event/Snapshot Export, Receipt or Runtime Query as assigned by the owning task",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2D-001/V2D-002"
+  },
+  {
+    "current_table": "credentials",
+    "decision": "split",
+    "control_replacement": "control.credentials",
+    "runtime_replacement": "runtime.credentials",
+    "authoritative_writer": "control for control replacement; runtime for runtime replacement",
+    "allowed_readers": [
+      "control:control replacement",
+      "runtime:runtime replacement"
+    ],
+    "cross_plane_contract": "versioned Bundle, Admission Command, Runtime Event/Snapshot Export, Receipt or Runtime Query as assigned by the owning task",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2D-001/V2D-002"
+  },
+  {
+    "current_table": "dataset_cases",
+    "decision": "control",
+    "control_replacement": "control.dataset_cases",
+    "runtime_replacement": null,
+    "authoritative_writer": "control",
+    "allowed_readers": [
+      "control"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2R-012"
+  },
+  {
+    "current_table": "dataset_version_cases",
+    "decision": "control",
+    "control_replacement": "control.dataset_version_cases",
+    "runtime_replacement": null,
+    "authoritative_writer": "control",
+    "allowed_readers": [
+      "control"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2R-012"
+  },
+  {
+    "current_table": "dataset_versions",
+    "decision": "control",
+    "control_replacement": "control.dataset_versions",
+    "runtime_replacement": null,
+    "authoritative_writer": "control",
+    "allowed_readers": [
+      "control"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2R-012"
+  },
+  {
+    "current_table": "datasets",
+    "decision": "control",
+    "control_replacement": "control.datasets",
+    "runtime_replacement": null,
+    "authoritative_writer": "control",
+    "allowed_readers": [
+      "control"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2D-001"
+  },
+  {
+    "current_table": "department_closure",
+    "decision": "control",
+    "control_replacement": "control.department_closure",
+    "runtime_replacement": null,
+    "authoritative_writer": "control",
+    "allowed_readers": [
+      "control"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2D-001"
+  },
+  {
+    "current_table": "departments",
+    "decision": "control",
+    "control_replacement": "control.departments",
+    "runtime_replacement": null,
+    "authoritative_writer": "control",
+    "allowed_readers": [
+      "control"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2D-001"
+  },
+  {
+    "current_table": "deployment_history",
+    "decision": "split",
+    "control_replacement": "control.deployment_history",
+    "runtime_replacement": "runtime.deployment_history",
+    "authoritative_writer": "control for control replacement; runtime for runtime replacement",
+    "allowed_readers": [
+      "control:control replacement",
+      "runtime:runtime replacement"
+    ],
+    "cross_plane_contract": "versioned Bundle, Admission Command, Runtime Event/Snapshot Export, Receipt or Runtime Query as assigned by the owning task",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2D-001/V2D-002"
+  },
+  {
+    "current_table": "evaluation_case_results",
+    "decision": "split",
+    "control_replacement": "control.evaluation_case_results",
+    "runtime_replacement": "runtime.evaluation_case_results",
+    "authoritative_writer": "control for control replacement; runtime for runtime replacement",
+    "allowed_readers": [
+      "control:control replacement",
+      "runtime:runtime replacement"
+    ],
+    "cross_plane_contract": "versioned Bundle, Admission Command, Runtime Event/Snapshot Export, Receipt or Runtime Query as assigned by the owning task",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2R-012"
+  },
+  {
+    "current_table": "evaluation_comparisons",
+    "decision": "split",
+    "control_replacement": "control.evaluation_comparisons",
+    "runtime_replacement": "runtime.evaluation_comparisons",
+    "authoritative_writer": "control for control replacement; runtime for runtime replacement",
+    "allowed_readers": [
+      "control:control replacement",
+      "runtime:runtime replacement"
+    ],
+    "cross_plane_contract": "versioned Bundle, Admission Command, Runtime Event/Snapshot Export, Receipt or Runtime Query as assigned by the owning task",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2R-012"
+  },
+  {
+    "current_table": "evaluation_metrics",
+    "decision": "split",
+    "control_replacement": "control.evaluation_metrics",
+    "runtime_replacement": "runtime.evaluation_metrics",
+    "authoritative_writer": "control for control replacement; runtime for runtime replacement",
+    "allowed_readers": [
+      "control:control replacement",
+      "runtime:runtime replacement"
+    ],
+    "cross_plane_contract": "versioned Bundle, Admission Command, Runtime Event/Snapshot Export, Receipt or Runtime Query as assigned by the owning task",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2R-012"
+  },
+  {
+    "current_table": "evaluation_profile_rules",
+    "decision": "control",
+    "control_replacement": "control.evaluation_profile_rules",
+    "runtime_replacement": null,
+    "authoritative_writer": "control",
+    "allowed_readers": [
+      "control"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2R-012"
+  },
+  {
+    "current_table": "evaluation_profile_versions",
+    "decision": "control",
+    "control_replacement": "control.evaluation_profile_versions",
+    "runtime_replacement": null,
+    "authoritative_writer": "control",
+    "allowed_readers": [
+      "control"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2R-012"
+  },
+  {
+    "current_table": "evaluation_profiles",
+    "decision": "control",
+    "control_replacement": "control.evaluation_profiles",
+    "runtime_replacement": null,
+    "authoritative_writer": "control",
+    "allowed_readers": [
+      "control"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2R-012"
+  },
+  {
+    "current_table": "evaluation_rule_results",
+    "decision": "split",
+    "control_replacement": "control.evaluation_rule_results",
+    "runtime_replacement": "runtime.evaluation_rule_results",
+    "authoritative_writer": "control for control replacement; runtime for runtime replacement",
+    "allowed_readers": [
+      "control:control replacement",
+      "runtime:runtime replacement"
+    ],
+    "cross_plane_contract": "versioned Bundle, Admission Command, Runtime Event/Snapshot Export, Receipt or Runtime Query as assigned by the owning task",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2R-012"
+  },
+  {
+    "current_table": "evaluation_run_cases",
+    "decision": "split",
+    "control_replacement": "control.evaluation_case_projection",
+    "runtime_replacement": "runtime.evaluation_run_cases",
+    "authoritative_writer": "control for control replacement; runtime for runtime replacement",
+    "allowed_readers": [
+      "control:control replacement",
+      "runtime:runtime replacement"
+    ],
+    "cross_plane_contract": "versioned Bundle, Admission Command, Runtime Event/Snapshot Export, Receipt or Runtime Query as assigned by the owning task",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2R-012"
+  },
+  {
+    "current_table": "evaluation_runs",
+    "decision": "split",
+    "control_replacement": "control.evaluation_runs",
+    "runtime_replacement": "runtime.evaluation_runs",
+    "authoritative_writer": "control for control replacement; runtime for runtime replacement",
+    "allowed_readers": [
+      "control:control replacement",
+      "runtime:runtime replacement"
+    ],
+    "cross_plane_contract": "versioned Bundle, Admission Command, Runtime Event/Snapshot Export, Receipt or Runtime Query as assigned by the owning task",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2R-012"
+  },
+  {
+    "current_table": "execution_edge_deliveries",
+    "decision": "runtime",
+    "control_replacement": null,
+    "runtime_replacement": "runtime.execution_edge_deliveries",
+    "authoritative_writer": "runtime",
+    "allowed_readers": [
+      "runtime"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2R-001..015"
+  },
+  {
+    "current_table": "execution_end_deliveries",
+    "decision": "runtime",
+    "control_replacement": null,
+    "runtime_replacement": "runtime.execution_end_deliveries",
+    "authoritative_writer": "runtime",
+    "allowed_readers": [
+      "runtime"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2R-001..015"
+  },
+  {
+    "current_table": "execution_events",
+    "decision": "runtime",
+    "control_replacement": null,
+    "runtime_replacement": "runtime.execution_events",
+    "authoritative_writer": "runtime",
+    "allowed_readers": [
+      "runtime"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2R-001..015"
+  },
+  {
+    "current_table": "execution_outbox",
+    "decision": "runtime",
+    "control_replacement": null,
+    "runtime_replacement": "runtime.execution_outbox",
+    "authoritative_writer": "runtime",
+    "allowed_readers": [
+      "runtime"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2R-001..015"
+  },
+  {
+    "current_table": "execution_resume_tokens",
+    "decision": "runtime",
+    "control_replacement": null,
+    "runtime_replacement": "runtime.execution_resume_tokens",
+    "authoritative_writer": "runtime",
+    "allowed_readers": [
+      "runtime"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2R-001..015"
+  },
+  {
+    "current_table": "execution_snapshots",
+    "decision": "runtime",
+    "control_replacement": null,
+    "runtime_replacement": "runtime.execution_snapshots",
+    "authoritative_writer": "runtime",
+    "allowed_readers": [
+      "runtime"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2R-001..015"
+  },
+  {
+    "current_table": "idempotency_records",
+    "decision": "control",
+    "control_replacement": "control.idempotency_records",
+    "runtime_replacement": null,
+    "authoritative_writer": "control",
+    "allowed_readers": [
+      "control"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2D-001"
+  },
+  {
+    "current_table": "invocation_events",
+    "decision": "runtime",
+    "control_replacement": null,
+    "runtime_replacement": "runtime.invocation_events",
+    "authoritative_writer": "runtime",
+    "allowed_readers": [
+      "runtime"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2G-001..008"
+  },
+  {
+    "current_table": "item_lineage",
+    "decision": "runtime",
+    "control_replacement": null,
+    "runtime_replacement": "runtime.item_lineage",
+    "authoritative_writer": "runtime",
+    "allowed_readers": [
+      "runtime"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2R-001..015"
+  },
+  {
+    "current_table": "mcp_discovery_runs",
+    "decision": "control",
+    "control_replacement": "control.mcp_discovery_runs",
+    "runtime_replacement": null,
+    "authoritative_writer": "control",
+    "allowed_readers": [
+      "control"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2D-001"
+  },
+  {
+    "current_table": "mcp_server_versions",
+    "decision": "control",
+    "control_replacement": "control.mcp_server_versions",
+    "runtime_replacement": null,
+    "authoritative_writer": "control",
+    "allowed_readers": [
+      "control"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2D-001"
+  },
+  {
+    "current_table": "mcp_servers",
+    "decision": "control",
+    "control_replacement": "control.mcp_servers",
+    "runtime_replacement": null,
+    "authoritative_writer": "control",
+    "allowed_readers": [
+      "control"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2D-001"
+  },
+  {
+    "current_table": "mcp_tool_policies",
+    "decision": "control",
+    "control_replacement": "control.mcp_tool_policies",
+    "runtime_replacement": null,
+    "authoritative_writer": "control",
+    "allowed_readers": [
+      "control"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2D-001"
+  },
+  {
+    "current_table": "mcp_tool_versions",
+    "decision": "control",
+    "control_replacement": "control.mcp_tool_versions",
+    "runtime_replacement": null,
+    "authoritative_writer": "control",
+    "allowed_readers": [
+      "control"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2D-001"
+  },
+  {
+    "current_table": "mcp_tools",
+    "decision": "control",
+    "control_replacement": "control.mcp_tools",
+    "runtime_replacement": null,
+    "authoritative_writer": "control",
+    "allowed_readers": [
+      "control"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2D-001"
+  },
+  {
+    "current_table": "memory_connections",
+    "decision": "control",
+    "control_replacement": "control.memory_connections",
+    "runtime_replacement": null,
+    "authoritative_writer": "control",
+    "allowed_readers": [
+      "control"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2D-001"
+  },
+  {
+    "current_table": "memory_namespaces",
+    "decision": "control",
+    "control_replacement": "control.memory_namespaces",
+    "runtime_replacement": null,
+    "authoritative_writer": "control",
+    "allowed_readers": [
+      "control"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2D-001"
+  },
+  {
+    "current_table": "model_alias_deployment_history",
+    "decision": "control",
+    "control_replacement": "control.model_alias_deployment_history",
+    "runtime_replacement": null,
+    "authoritative_writer": "control",
+    "allowed_readers": [
+      "control"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2D-001"
+  },
+  {
+    "current_table": "model_aliases",
+    "decision": "control",
+    "control_replacement": "control.model_aliases",
+    "runtime_replacement": null,
+    "authoritative_writer": "control",
+    "allowed_readers": [
+      "control"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2D-001"
+  },
+  {
+    "current_table": "model_deployments",
+    "decision": "control",
+    "control_replacement": "control.model_deployments",
+    "runtime_replacement": null,
+    "authoritative_writer": "control",
+    "allowed_readers": [
+      "control"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2D-001"
+  },
+  {
+    "current_table": "model_price_versions",
+    "decision": "control",
+    "control_replacement": "control.model_price_versions",
+    "runtime_replacement": null,
+    "authoritative_writer": "control",
+    "allowed_readers": [
+      "control"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2D-001"
+  },
+  {
+    "current_table": "node_attempts",
+    "decision": "runtime",
+    "control_replacement": null,
+    "runtime_replacement": "runtime.node_attempts",
+    "authoritative_writer": "runtime",
+    "allowed_readers": [
+      "runtime"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2R-001..015"
+  },
+  {
+    "current_table": "node_definition_versions",
+    "decision": "control",
+    "control_replacement": "control.node_definition_versions",
+    "runtime_replacement": null,
+    "authoritative_writer": "control",
+    "allowed_readers": [
+      "control"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2D-001"
+  },
+  {
+    "current_table": "node_definitions",
+    "decision": "control",
+    "control_replacement": "control.node_definitions",
+    "runtime_replacement": null,
+    "authoritative_writer": "control",
+    "allowed_readers": [
+      "control"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2D-001"
+  },
+  {
+    "current_table": "node_executions",
+    "decision": "runtime",
+    "control_replacement": null,
+    "runtime_replacement": "runtime.node_executions",
+    "authoritative_writer": "runtime",
+    "allowed_readers": [
+      "runtime"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2R-001..015"
+  },
+  {
+    "current_table": "node_invocation_handles",
+    "decision": "runtime",
+    "control_replacement": null,
+    "runtime_replacement": "runtime.node_invocation_handles",
+    "authoritative_writer": "runtime",
+    "allowed_readers": [
+      "runtime"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2R-001..015"
+  },
+  {
+    "current_table": "notification_receipts",
+    "decision": "split",
+    "control_replacement": "control.notification_receipts",
+    "runtime_replacement": "runtime.notification_receipts",
+    "authoritative_writer": "control for control replacement; runtime for runtime replacement",
+    "allowed_readers": [
+      "control:control replacement",
+      "runtime:runtime replacement"
+    ],
+    "cross_plane_contract": "versioned Bundle, Admission Command, Runtime Event/Snapshot Export, Receipt or Runtime Query as assigned by the owning task",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2R-010/V2Q-007"
+  },
+  {
+    "current_table": "notifications",
+    "decision": "split",
+    "control_replacement": "control.notifications",
+    "runtime_replacement": "runtime.notifications",
+    "authoritative_writer": "control for control replacement; runtime for runtime replacement",
+    "allowed_readers": [
+      "control:control replacement",
+      "runtime:runtime replacement"
+    ],
+    "cross_plane_contract": "versioned Bundle, Admission Command, Runtime Event/Snapshot Export, Receipt or Runtime Query as assigned by the owning task",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2R-010/V2Q-007"
+  },
+  {
+    "current_table": "outbox_events",
+    "decision": "split",
+    "control_replacement": "control.outbox",
+    "runtime_replacement": "runtime.integration_event_log",
+    "authoritative_writer": "control for control replacement; runtime for runtime replacement",
+    "allowed_readers": [
+      "control:control replacement",
+      "runtime:runtime replacement"
+    ],
+    "cross_plane_contract": "versioned Bundle, Admission Command, Runtime Event/Snapshot Export, Receipt or Runtime Query as assigned by the owning task",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2D-001/V2D-002"
+  },
+  {
+    "current_table": "permissions",
+    "decision": "control",
+    "control_replacement": "control.permissions",
+    "runtime_replacement": null,
+    "authoritative_writer": "control",
+    "allowed_readers": [
+      "control"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2D-001"
+  },
+  {
+    "current_table": "projection_receipts",
+    "decision": "split",
+    "control_replacement": "control.projection_receipts",
+    "runtime_replacement": "runtime.command_receipts",
+    "authoritative_writer": "control for control replacement; runtime for runtime replacement",
+    "allowed_readers": [
+      "control:control replacement",
+      "runtime:runtime replacement"
+    ],
+    "cross_plane_contract": "versioned Bundle, Admission Command, Runtime Event/Snapshot Export, Receipt or Runtime Query as assigned by the owning task",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2D-001/V2D-002"
+  },
+  {
+    "current_table": "quota_policies",
+    "decision": "split",
+    "control_replacement": "control.quota_policies",
+    "runtime_replacement": "runtime.quota_policy_projection",
+    "authoritative_writer": "control for control replacement; runtime for runtime replacement",
+    "allowed_readers": [
+      "control:control replacement",
+      "runtime:runtime replacement"
+    ],
+    "cross_plane_contract": "versioned Bundle, Admission Command, Runtime Event/Snapshot Export, Receipt or Runtime Query as assigned by the owning task",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2R-015"
+  },
+  {
+    "current_table": "quota_reservations",
+    "decision": "split",
+    "control_replacement": "control.quota_admin_reservations",
+    "runtime_replacement": "runtime.quota_reservations",
+    "authoritative_writer": "control for control replacement; runtime for runtime replacement",
+    "allowed_readers": [
+      "control:control replacement",
+      "runtime:runtime replacement"
+    ],
+    "cross_plane_contract": "versioned Bundle, Admission Command, Runtime Event/Snapshot Export, Receipt or Runtime Query as assigned by the owning task",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2R-015"
+  },
+  {
+    "current_table": "quota_usage_ledger",
+    "decision": "split",
+    "control_replacement": "control.quota_usage_projection",
+    "runtime_replacement": "runtime.quota_usage_ledger",
+    "authoritative_writer": "control for control replacement; runtime for runtime replacement",
+    "allowed_readers": [
+      "control:control replacement",
+      "runtime:runtime replacement"
+    ],
+    "cross_plane_contract": "versioned Bundle, Admission Command, Runtime Event/Snapshot Export, Receipt or Runtime Query as assigned by the owning task",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2R-015"
+  },
+  {
+    "current_table": "rag_connections",
+    "decision": "control",
+    "control_replacement": "control.rag_connections",
+    "runtime_replacement": null,
+    "authoritative_writer": "control",
+    "allowed_readers": [
+      "control"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2D-001"
+  },
+  {
+    "current_table": "rag_resources",
+    "decision": "control",
+    "control_replacement": "control.rag_resources",
+    "runtime_replacement": null,
+    "authoritative_writer": "control",
+    "allowed_readers": [
+      "control"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2D-001"
+  },
+  {
+    "current_table": "refresh_sessions",
+    "decision": "control",
+    "control_replacement": "control.refresh_sessions",
+    "runtime_replacement": null,
+    "authoritative_writer": "control",
+    "allowed_readers": [
+      "control"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2D-001"
+  },
+  {
+    "current_table": "release_schema_contract",
+    "decision": "delete",
+    "control_replacement": null,
+    "runtime_replacement": null,
+    "authoritative_writer": "none after replacement",
+    "allowed_readers": [
+      "none"
+    ],
+    "cross_plane_contract": "none; callers must be removed before deletion",
+    "retention_and_delete_rule": "Delete in V2C-001 after the replacement task and regression evidence pass; no history migration.",
+    "owning_task": "V2C-001"
+  },
+  {
+    "current_table": "resource_grant_request_items",
+    "decision": "control",
+    "control_replacement": "control.resource_grant_request_items",
+    "runtime_replacement": null,
+    "authoritative_writer": "control",
+    "allowed_readers": [
+      "control"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2D-001"
+  },
+  {
+    "current_table": "resource_grant_request_reviews",
+    "decision": "control",
+    "control_replacement": "control.resource_grant_request_reviews",
+    "runtime_replacement": null,
+    "authoritative_writer": "control",
+    "allowed_readers": [
+      "control"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2D-001"
+  },
+  {
+    "current_table": "resource_grant_requests",
+    "decision": "control",
+    "control_replacement": "control.resource_grant_requests",
+    "runtime_replacement": null,
+    "authoritative_writer": "control",
+    "allowed_readers": [
+      "control"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2D-001"
+  },
+  {
+    "current_table": "resource_grants",
+    "decision": "split",
+    "control_replacement": "control.resource_grants",
+    "runtime_replacement": "runtime.resource_grant_projection",
+    "authoritative_writer": "control for control replacement; runtime for runtime replacement",
+    "allowed_readers": [
+      "control:control replacement",
+      "runtime:runtime replacement"
+    ],
+    "cross_plane_contract": "versioned Bundle, Admission Command, Runtime Event/Snapshot Export, Receipt or Runtime Query as assigned by the owning task",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2D-001/V2D-002"
+  },
+  {
+    "current_table": "resource_health_checks",
+    "decision": "control",
+    "control_replacement": "control.resource_health_checks",
+    "runtime_replacement": null,
+    "authoritative_writer": "control",
+    "allowed_readers": [
+      "control"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2D-001"
+  },
+  {
+    "current_table": "resume_webhook_bindings",
+    "decision": "runtime",
+    "control_replacement": null,
+    "runtime_replacement": "runtime.resume_webhook_bindings",
+    "authoritative_writer": "runtime",
+    "allowed_readers": [
+      "runtime"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2R-001..015"
+  },
+  {
+    "current_table": "retention_items",
+    "decision": "split",
+    "control_replacement": "control.retention_items",
+    "runtime_replacement": "runtime.retention_items",
+    "authoritative_writer": "control for control replacement; runtime for runtime replacement",
+    "allowed_readers": [
+      "control:control replacement",
+      "runtime:runtime replacement"
+    ],
+    "cross_plane_contract": "versioned Bundle, Admission Command, Runtime Event/Snapshot Export, Receipt or Runtime Query as assigned by the owning task",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2R-015"
+  },
+  {
+    "current_table": "retention_policies",
+    "decision": "split",
+    "control_replacement": "control.retention_policies",
+    "runtime_replacement": "runtime.retention_policy_projection",
+    "authoritative_writer": "control for control replacement; runtime for runtime replacement",
+    "allowed_readers": [
+      "control:control replacement",
+      "runtime:runtime replacement"
+    ],
+    "cross_plane_contract": "versioned Bundle, Admission Command, Runtime Event/Snapshot Export, Receipt or Runtime Query as assigned by the owning task",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2R-015"
+  },
+  {
+    "current_table": "retention_runs",
+    "decision": "split",
+    "control_replacement": "control.retention_runs",
+    "runtime_replacement": "runtime.retention_runs",
+    "authoritative_writer": "control for control replacement; runtime for runtime replacement",
+    "allowed_readers": [
+      "control:control replacement",
+      "runtime:runtime replacement"
+    ],
+    "cross_plane_contract": "versioned Bundle, Admission Command, Runtime Event/Snapshot Export, Receipt or Runtime Query as assigned by the owning task",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2R-015"
+  },
+  {
+    "current_table": "role_permissions",
+    "decision": "control",
+    "control_replacement": "control.role_permissions",
+    "runtime_replacement": null,
+    "authoritative_writer": "control",
+    "allowed_readers": [
+      "control"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2D-001"
+  },
+  {
+    "current_table": "roles",
+    "decision": "control",
+    "control_replacement": "control.roles",
+    "runtime_replacement": null,
+    "authoritative_writer": "control",
+    "allowed_readers": [
+      "control"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2D-001"
+  },
+  {
+    "current_table": "runtime_calls",
+    "decision": "runtime",
+    "control_replacement": null,
+    "runtime_replacement": "runtime.runtime_calls",
+    "authoritative_writer": "runtime",
+    "allowed_readers": [
+      "runtime"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2R-001..015"
+  },
+  {
+    "current_table": "runtime_commands",
+    "decision": "runtime",
+    "control_replacement": null,
+    "runtime_replacement": "runtime.runtime_commands",
+    "authoritative_writer": "runtime",
+    "allowed_readers": [
+      "runtime"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2R-001..015"
+  },
+  {
+    "current_table": "runtime_idempotency_keys",
+    "decision": "runtime",
+    "control_replacement": null,
+    "runtime_replacement": "runtime.runtime_idempotency_keys",
+    "authoritative_writer": "runtime",
+    "allowed_readers": [
+      "runtime"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2R-001..015"
+  },
+  {
+    "current_table": "runtime_service_heartbeats",
+    "decision": "runtime",
+    "control_replacement": null,
+    "runtime_replacement": "runtime.runtime_service_heartbeats",
+    "authoritative_writer": "runtime",
+    "allowed_readers": [
+      "runtime"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2R-001..015"
+  },
+  {
+    "current_table": "sandbox_leases",
+    "decision": "runtime",
+    "control_replacement": null,
+    "runtime_replacement": "runtime.sandbox_leases",
+    "authoritative_writer": "runtime",
+    "allowed_readers": [
+      "runtime"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2R-001..015"
+  },
+  {
+    "current_table": "sandbox_profile_versions",
+    "decision": "control",
+    "control_replacement": "control.sandbox_profile_versions",
+    "runtime_replacement": null,
+    "authoritative_writer": "control",
+    "allowed_readers": [
+      "control"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2D-001"
+  },
+  {
+    "current_table": "sandbox_profiles",
+    "decision": "control",
+    "control_replacement": "control.sandbox_profiles",
+    "runtime_replacement": null,
+    "authoritative_writer": "control",
+    "allowed_readers": [
+      "control"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2D-001"
+  },
+  {
+    "current_table": "side_effect_confirmations",
+    "decision": "runtime",
+    "control_replacement": null,
+    "runtime_replacement": "runtime.side_effect_confirmations",
+    "authoritative_writer": "runtime",
+    "allowed_readers": [
+      "runtime"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2R-001..015"
+  },
+  {
+    "current_table": "skill_dependencies",
+    "decision": "control",
+    "control_replacement": "control.skill_dependencies",
+    "runtime_replacement": null,
+    "authoritative_writer": "control",
+    "allowed_readers": [
+      "control"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2D-001"
+  },
+  {
+    "current_table": "skill_file_references",
+    "decision": "control",
+    "control_replacement": "control.skill_file_references",
+    "runtime_replacement": null,
+    "authoritative_writer": "control",
+    "allowed_readers": [
+      "control"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2D-001"
+  },
+  {
+    "current_table": "skill_file_revisions",
+    "decision": "control",
+    "control_replacement": "control.skill_file_revisions",
+    "runtime_replacement": null,
+    "authoritative_writer": "control",
+    "allowed_readers": [
+      "control"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2D-001"
+  },
+  {
+    "current_table": "skill_version_files",
+    "decision": "control",
+    "control_replacement": "control.skill_version_files",
+    "runtime_replacement": null,
+    "authoritative_writer": "control",
+    "allowed_readers": [
+      "control"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2D-001"
+  },
+  {
+    "current_table": "skill_versions",
+    "decision": "control",
+    "control_replacement": "control.skill_versions",
+    "runtime_replacement": null,
+    "authoritative_writer": "control",
+    "allowed_readers": [
+      "control"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2D-001"
+  },
+  {
+    "current_table": "skill_workspace_entries",
+    "decision": "control",
+    "control_replacement": "control.skill_workspace_entries",
+    "runtime_replacement": null,
+    "authoritative_writer": "control",
+    "allowed_readers": [
+      "control"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2D-001"
+  },
+  {
+    "current_table": "skills",
+    "decision": "control",
+    "control_replacement": "control.skills",
+    "runtime_replacement": null,
+    "authoritative_writer": "control",
+    "allowed_readers": [
+      "control"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2D-001"
+  },
+  {
+    "current_table": "tenant_settings",
+    "decision": "split",
+    "control_replacement": "control.tenant_settings",
+    "runtime_replacement": "runtime.tenant_policy_projection",
+    "authoritative_writer": "control for control replacement; runtime for runtime replacement",
+    "allowed_readers": [
+      "control:control replacement",
+      "runtime:runtime replacement"
+    ],
+    "cross_plane_contract": "versioned Bundle, Admission Command, Runtime Event/Snapshot Export, Receipt or Runtime Query as assigned by the owning task",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2D-001/V2D-002"
+  },
+  {
+    "current_table": "tenants",
+    "decision": "split",
+    "control_replacement": "control.tenants",
+    "runtime_replacement": "runtime.tenant_admission",
+    "authoritative_writer": "control for control replacement; runtime for runtime replacement",
+    "allowed_readers": [
+      "control:control replacement",
+      "runtime:runtime replacement"
+    ],
+    "cross_plane_contract": "versioned Bundle, Admission Command, Runtime Event/Snapshot Export, Receipt or Runtime Query as assigned by the owning task",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2D-001/V2D-002"
+  },
+  {
+    "current_table": "trace_delivery_offsets",
+    "decision": "delete",
+    "control_replacement": null,
+    "runtime_replacement": null,
+    "authoritative_writer": "none after replacement",
+    "allowed_readers": [
+      "none"
+    ],
+    "cross_plane_contract": "none; callers must be removed before deletion",
+    "retention_and_delete_rule": "Delete in V2C-001 after the replacement task and regression evidence pass; no history migration.",
+    "owning_task": "V2C-001"
+  },
+  {
+    "current_table": "trace_delivery_outbox",
+    "decision": "split",
+    "control_replacement": "control.trace_delivery_status",
+    "runtime_replacement": "runtime.trace_outbox",
+    "authoritative_writer": "control for control replacement; runtime for runtime replacement",
+    "allowed_readers": [
+      "control:control replacement",
+      "runtime:runtime replacement"
+    ],
+    "cross_plane_contract": "versioned Bundle, Admission Command, Runtime Event/Snapshot Export, Receipt or Runtime Query as assigned by the owning task",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2Q-005"
+  },
+  {
+    "current_table": "trigger_bindings",
+    "decision": "runtime",
+    "control_replacement": null,
+    "runtime_replacement": "runtime.trigger_bindings",
+    "authoritative_writer": "runtime",
+    "allowed_readers": [
+      "runtime"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2G-001..008"
+  },
+  {
+    "current_table": "user_credentials",
+    "decision": "control",
+    "control_replacement": "control.user_credentials",
+    "runtime_replacement": null,
+    "authoritative_writer": "control",
+    "allowed_readers": [
+      "control"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2D-001"
+  },
+  {
+    "current_table": "user_departments",
+    "decision": "control",
+    "control_replacement": "control.user_departments",
+    "runtime_replacement": null,
+    "authoritative_writer": "control",
+    "allowed_readers": [
+      "control"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2D-001"
+  },
+  {
+    "current_table": "user_roles",
+    "decision": "control",
+    "control_replacement": "control.user_roles",
+    "runtime_replacement": null,
+    "authoritative_writer": "control",
+    "allowed_readers": [
+      "control"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2D-001"
+  },
+  {
+    "current_table": "users",
+    "decision": "control",
+    "control_replacement": "control.users",
+    "runtime_replacement": null,
+    "authoritative_writer": "control",
+    "allowed_readers": [
+      "control"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2D-001"
+  },
+  {
+    "current_table": "wait_subscriptions",
+    "decision": "runtime",
+    "control_replacement": null,
+    "runtime_replacement": "runtime.wait_subscriptions",
+    "authoritative_writer": "runtime",
+    "allowed_readers": [
+      "runtime"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2R-001..015"
+  },
+  {
+    "current_table": "worker_capabilities",
+    "decision": "runtime",
+    "control_replacement": null,
+    "runtime_replacement": "runtime.worker_capabilities",
+    "authoritative_writer": "runtime",
+    "allowed_readers": [
+      "runtime"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2R-001..015"
+  },
+  {
+    "current_table": "worker_leases",
+    "decision": "runtime",
+    "control_replacement": null,
+    "runtime_replacement": "runtime.worker_leases",
+    "authoritative_writer": "runtime",
+    "allowed_readers": [
+      "runtime"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2R-001..015"
+  },
+  {
+    "current_table": "workflow_context_patches",
+    "decision": "runtime",
+    "control_replacement": null,
+    "runtime_replacement": "runtime.workflow_context_patches",
+    "authoritative_writer": "runtime",
+    "allowed_readers": [
+      "runtime"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2R-001..015"
+  },
+  {
+    "current_table": "workflow_debug_overlays",
+    "decision": "control",
+    "control_replacement": "control.workflow_debug_overlays",
+    "runtime_replacement": null,
+    "authoritative_writer": "control",
+    "allowed_readers": [
+      "control"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2D-001"
+  },
+  {
+    "current_table": "workflow_deployment_heads",
+    "decision": "split",
+    "control_replacement": "control.workflow_deployment_heads",
+    "runtime_replacement": "runtime.workflow_deployment_heads",
+    "authoritative_writer": "control for control replacement; runtime for runtime replacement",
+    "allowed_readers": [
+      "control:control replacement",
+      "runtime:runtime replacement"
+    ],
+    "cross_plane_contract": "versioned Bundle, Admission Command, Runtime Event/Snapshot Export, Receipt or Runtime Query as assigned by the owning task",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2D-001/V2D-002"
+  },
+  {
+    "current_table": "workflow_deployments",
+    "decision": "split",
+    "control_replacement": "control.workflow_deployments",
+    "runtime_replacement": "runtime.workflow_deployments",
+    "authoritative_writer": "control for control replacement; runtime for runtime replacement",
+    "allowed_readers": [
+      "control:control replacement",
+      "runtime:runtime replacement"
+    ],
+    "cross_plane_contract": "versioned Bundle, Admission Command, Runtime Event/Snapshot Export, Receipt or Runtime Query as assigned by the owning task",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2D-001/V2D-002"
+  },
+  {
+    "current_table": "workflow_draft_resources",
+    "decision": "control",
+    "control_replacement": "control.workflow_draft_resources",
+    "runtime_replacement": null,
+    "authoritative_writer": "control",
+    "allowed_readers": [
+      "control"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2D-001"
+  },
+  {
+    "current_table": "workflow_draft_revisions",
+    "decision": "control",
+    "control_replacement": "control.workflow_draft_revisions",
+    "runtime_replacement": null,
+    "authoritative_writer": "control",
+    "allowed_readers": [
+      "control"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2D-001"
+  },
+  {
+    "current_table": "workflow_drafts",
+    "decision": "control",
+    "control_replacement": "control.workflow_drafts",
+    "runtime_replacement": null,
+    "authoritative_writer": "control",
+    "allowed_readers": [
+      "control"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2D-001"
+  },
+  {
+    "current_table": "workflow_environments",
+    "decision": "control",
+    "control_replacement": "control.workflow_environments",
+    "runtime_replacement": null,
+    "authoritative_writer": "control",
+    "allowed_readers": [
+      "control"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2D-001"
+  },
+  {
+    "current_table": "workflow_executions",
+    "decision": "runtime",
+    "control_replacement": null,
+    "runtime_replacement": "runtime.workflow_executions",
+    "authoritative_writer": "runtime",
+    "allowed_readers": [
+      "runtime"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2R-001..015"
+  },
+  {
+    "current_table": "workflow_members",
+    "decision": "control",
+    "control_replacement": "control.workflow_members",
+    "runtime_replacement": null,
+    "authoritative_writer": "control",
+    "allowed_readers": [
+      "control"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2D-001"
+  },
+  {
+    "current_table": "workflow_service_identities",
+    "decision": "split",
+    "control_replacement": "control.workflow_service_identities",
+    "runtime_replacement": "runtime.service_identity_projection",
+    "authoritative_writer": "control for control replacement; runtime for runtime replacement",
+    "allowed_readers": [
+      "control:control replacement",
+      "runtime:runtime replacement"
+    ],
+    "cross_plane_contract": "versioned Bundle, Admission Command, Runtime Event/Snapshot Export, Receipt or Runtime Query as assigned by the owning task",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2D-001/V2D-002"
+  },
+  {
+    "current_table": "workflow_version_resources",
+    "decision": "control",
+    "control_replacement": "control.workflow_version_resources",
+    "runtime_replacement": null,
+    "authoritative_writer": "control",
+    "allowed_readers": [
+      "control"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2D-001"
+  },
+  {
+    "current_table": "workflow_versions",
+    "decision": "control",
+    "control_replacement": "control.workflow_versions",
+    "runtime_replacement": null,
+    "authoritative_writer": "control",
+    "allowed_readers": [
+      "control"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2D-001"
+  },
+  {
+    "current_table": "workflows",
+    "decision": "control",
+    "control_replacement": "control.workflows",
+    "runtime_replacement": null,
+    "authoritative_writer": "control",
+    "allowed_readers": [
+      "control"
+    ],
+    "cross_plane_contract": "none; same-plane access only",
+    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
+    "owning_task": "V2D-001"
+  }
+]

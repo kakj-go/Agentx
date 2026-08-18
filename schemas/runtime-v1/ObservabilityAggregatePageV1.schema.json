@@ -1,0 +1,46 @@
+{
+  "$defs": {
+    "ObservabilityAggregateRowV1": {
+      "additionalProperties": false,
+      "properties": {
+        "dimensions": true,
+        "metrics": true
+      },
+      "required": [
+        "dimensions",
+        "metrics"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "degraded": {
+      "type": "boolean"
+    },
+    "queryId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "rows": {
+      "items": {
+        "$ref": "#/$defs/ObservabilityAggregateRowV1"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "apiVersion",
+    "queryId",
+    "rows",
+    "degraded"
+  ],
+  "title": "ObservabilityAggregatePageV1",
+  "type": "object"
+}

@@ -3,6 +3,7 @@ import { createHmac } from 'node:crypto'
 import { expect, type APIResponse, type Page, test } from '@playwright/test'
 
 const password = 'agentx-e2e-admin-password'
+const gatewayBase = process.env.AGENTX_E2E_RUNTIME_URL ?? ''
 
 type PageResponse<T> = { items: T[] }
 type Workflow = { id: string; name: string; latestVersion?: number; version: number; description?: string; visibility: string; serviceIdentityId?: string }
@@ -16,8 +17,9 @@ type WorkflowVersion = { id: string; versionNumber: number; schemaVersion?: stri
 type Grant = { id: string; subjectType: string; subjectId: string; resourceVersionId?: string; operation: string }
 type Environment = { id: string; code: string }
 type Application = { id: string; name: string; slug: string; status: string; description?: string; visibility: string; version: number }
+type ApplicationDeployment = { id: string; status: string; publishErrorCode?: string | null; publishErrorMessage?: string | null }
 type Invocation = { id: string; executionId?: string; status: string }
-type Approval = { id: string; executionId: string; status: string }
+type Approval = { id: string; executionId: string; workflowId: string; status: string }
 type Dataset = { id: string; revision: number }
 type DatasetVersion = { id: string }
 type EvaluationProfile = { versionId: string }
@@ -29,7 +31,7 @@ type EvaluationReport = {
 type Webhook = { publicId: string; secret: string }
 type RetentionRun = { id: string; status: string; dryRun: boolean }
 type Schedule = { id: string; name: string; cronExpression: string; timezone: string; input: unknown; misfirePolicy: string; status: string; version: number }
-type ExecutionPage = { items: Array<{ id: string; workflowName: string; status: string }>; total: number }
+type ExecutionPage = { items: Array<{ id: string; workflowName: string; triggerType: string; status: string }>; total: number }
 
 async function login(page: Page) {
   await page.goto('/login')
@@ -42,7 +44,7 @@ async function login(page: Page) {
 }
 
 async function request<T>(page: Page, token: string, path: string, method = 'GET', body?: unknown, gateway = false): Promise<T> {
-  const response = await page.request.fetch(`${gateway ? '/gateway/v1' : '/api/v1'}${path}`, {
+  const response = await page.request.fetch(`${gateway ? `${gatewayBase}/gateway/v1` : '/api/v1'}${path}`, {
     method,
     data: body,
     headers: { Authorization: `Bearer ${token}` },
@@ -71,13 +73,18 @@ async function approveExecution(page: Page, token: string, executionId: string) 
     approval = result.items.find((item) => item.executionId === executionId && item.status === 'pending')
     return approval?.id
   }, { timeout: 150_000, intervals: [500, 1_000, 2_000] }).toBeTruthy()
-  await page.goto(`/approvals/${approval!.id}`)
+  await approveApproval(page, token, approval!)
+  return approval!
+}
+
+async function approveApproval(page: Page, token: string, approval: Approval) {
+  await page.goto(`/approvals/${approval.id}`)
   await page.getByRole('button', { name: '领取' }).click()
   await page.getByRole('button', { name: '通过' }).click()
   await page.getByRole('dialog', { name: '通过' }).getByRole('button', { name: '通过' }).click()
   await expect.poll(async () => {
     const values = await request<PageResponse<Approval>>(page, token, '/approvals?pageSize=100')
-    return values.items.find((item) => item.id === approval!.id)?.status
+    return values.items.find((item) => item.id === approval.id)?.status
   }).toBe('approved')
 }
 
@@ -87,6 +94,17 @@ async function approveInvocation(page: Page, approvalPage: Page, token: string, 
   const completed = await waitInvocation(page, token, invocationId, true)
   expect(completed.status).toBe('completed')
   return completed
+}
+
+async function waitApplicationDeployment(page: Page, token: string, applicationId: string, deploymentId: string) {
+  await expect.poll(async () => {
+    const deployments = await request<ApplicationDeployment[]>(page, token, `/applications/${applicationId}/deployments`)
+    const deployment = deployments.find((item) => item.id === deploymentId)
+    if (deployment?.status === 'failed') {
+      throw new Error(`Application Deployment failed: ${deployment.publishErrorCode ?? 'UNKNOWN'} ${deployment.publishErrorMessage ?? ''}`)
+    }
+    return deployment?.status
+  }, { timeout: 120_000, intervals: [500, 1_000, 2_000] }).toBe('active')
 }
 
 async function setLocale(page: Page, locale: 'zh-CN' | 'en-US') {
@@ -124,6 +142,7 @@ async function findM6Workflow(page: Page, token: string) {
 test('M7 closes Application, Trigger, Evaluation, Approval and governance paths on the shared Runtime', async ({ context, page }, testInfo) => {
   const token = await login(page)
   const suffix = Date.now()
+  const remoteNodeEndpoint = process.env.AGENTX_E2E_REMOTE_NODE_ENDPOINT ?? 'http://echo-node:8080'
   const { workflow, version } = await findM6Workflow(page, token)
   expect(workflow, 'M6 Studio must publish the Workflow used by M7').toBeTruthy()
   expect(version, 'M6 Studio must publish a 4.0 chat-capable v1').toBeTruthy()
@@ -147,7 +166,7 @@ test('M7 closes Application, Trigger, Evaluation, Approval and governance paths 
         contexts: {},
       },
       nodes: [
-        { id: 'remote-action', key: 'remote_action', type: 'remote_action', typeVersion: 1, name: 'Remote Action', disabled: false, parameters: { endpoint: 'http://echo-node:8080', pollIntervalSeconds: 1, eventId: `m7-poll-${suffix}`, pollInput: { source: 'm7-poll' } }, outputProjection: {}, contextWrites: [], resourceReferences: [], settings: {} },
+        { id: 'remote-action', key: 'remote_action', type: 'remote_action', typeVersion: 1, name: 'Remote Action', disabled: false, parameters: { endpoint: remoteNodeEndpoint, pollIntervalSeconds: 1, eventId: `m7-poll-${suffix}`, pollInput: { source: 'm7-poll' } }, outputProjection: {}, contextWrites: [], resourceReferences: [], settings: {} },
         { id: 'set-result', key: 'set_result', type: 'set', typeVersion: 1, name: 'Set Result', disabled: false, parameters: { values: { triggered: true }, keepOnlySet: false }, outputProjection: {}, contextWrites: [], resourceReferences: [], settings: {} },
       ],
       connections: [
@@ -177,24 +196,31 @@ test('M7 closes Application, Trigger, Evaluation, Approval and governance paths 
     description: 'M7 Poll and Lifecycle Application',
     visibility: 'company',
   })
-  await request(page, token, `/applications/${triggerApplication.id}/deployments`, 'POST', {
+  const initialTriggerDeployment = await request<ApplicationDeployment>(page, token, `/applications/${triggerApplication.id}/deployments`, 'POST', {
     workflowVersionId: triggerVersion.id,
     environmentId: environment!.id,
     sessionVersionPolicy: 'pinned',
   })
+  await waitApplicationDeployment(page, token, triggerApplication.id, initialTriggerDeployment.id)
   const schedule = await request<Schedule>(page, token, `/applications/${triggerApplication.id}/schedules`, 'POST', {
     name: 'M7 Fire Once',
-    cronExpression: '*/5 * * * *',
+    cronExpression: '*/5 * * * * *',
     timezone: 'Asia/Shanghai',
     input: { source: 'm7-schedule' },
     misfirePolicy: 'fire_once',
   })
   expect(schedule.misfirePolicy).toBe('fire_once')
-  await expect.poll(async () => (await request<ExecutionPage>(page, token, `/executions?pageSize=100&search=${encodeURIComponent(triggerName)}`)).total, { timeout: 120_000, intervals: [500, 1_000, 2_000] }).toBeGreaterThanOrEqual(2)
-  await new Promise((resolve) => setTimeout(resolve, 3_000))
-  const triggerExecutions = await request<ExecutionPage>(page, token, `/executions?pageSize=100&search=${encodeURIComponent(triggerName)}`)
-  expect(triggerExecutions.total).toBe(2)
-  expect(triggerExecutions.items.every((item) => item.status === 'succeeded')).toBeTruthy()
+  await new Promise((resolve) => setTimeout(resolve, 6_000))
+  const triggerExecutionPath = `/executions?pageSize=100&applicationId=${triggerApplication.id}`
+  const draftTriggerExecutions = await request<ExecutionPage>(page, token, triggerExecutionPath)
+  expect(draftTriggerExecutions.items.filter((item) => item.triggerType === 'schedule'), 'Schedule drafts must not activate before the next Application Deployment').toHaveLength(0)
+  const publishedTriggerDeployment = await request<ApplicationDeployment>(page, token, `/applications/${triggerApplication.id}/deployments`, 'POST', {
+    workflowVersionId: triggerVersion.id,
+    environmentId: environment!.id,
+    sessionVersionPolicy: 'pinned',
+  })
+  await waitApplicationDeployment(page, token, triggerApplication.id, publishedTriggerDeployment.id)
+  await expect.poll(async () => (await request<ExecutionPage>(page, token, triggerExecutionPath)).items.filter((item) => item.triggerType === 'schedule' && item.status === 'succeeded').length, { timeout: 120_000, intervals: [500, 1_000, 2_000] }).toBeGreaterThanOrEqual(2)
   const currentTriggerApplication = await request<Application>(page, token, `/applications/${triggerApplication.id}`)
   const disabledTriggerApplication = await request<Application>(page, token, `/applications/${triggerApplication.id}`, 'PATCH', {
     name: currentTriggerApplication.name,
@@ -204,6 +230,10 @@ test('M7 closes Application, Trigger, Evaluation, Approval and governance paths 
     version: currentTriggerApplication.version,
   })
   expect(disabledTriggerApplication.status).toBe('disabled')
+  const triggerExecutions = await request<ExecutionPage>(page, token, triggerExecutionPath)
+  const scheduleExecutions = triggerExecutions.items.filter((item) => item.triggerType === 'schedule')
+  expect(scheduleExecutions.length).toBeGreaterThanOrEqual(2)
+  expect(scheduleExecutions.every((item) => item.status === 'succeeded')).toBeTruthy()
 
   const application = await request<Application>(page, token, '/applications', 'POST', {
     workflowId: workflow!.id,
@@ -212,11 +242,12 @@ test('M7 closes Application, Trigger, Evaluation, Approval and governance paths 
     description: 'M7 Kubernetes business closure',
     visibility: 'company',
   })
-  await request(page, token, `/applications/${application.id}/deployments`, 'POST', {
+  const applicationDeployment = await request<ApplicationDeployment>(page, token, `/applications/${application.id}/deployments`, 'POST', {
     workflowVersionId: version!.id,
     environmentId: environment!.id,
     sessionVersionPolicy: 'pinned',
   })
+  await waitApplicationDeployment(page, token, application.id, applicationDeployment.id)
 
   await page.goto('/playground')
   await page.getByRole('combobox').click()
@@ -246,7 +277,7 @@ test('M7 closes Application, Trigger, Evaluation, Approval and governance paths 
   await page.unroute('**/gateway/v1/invocations/*/events')
 
   const idempotencyKey = `m7-idempotency-${suffix}`
-  const invoke = () => page.request.post(`/gateway/v1/applications/${application.slug}/invocations`, {
+  const invoke = () => page.request.post(`${gatewayBase}/gateway/v1/applications/${application.slug}/invocations`, {
     data: { input: { question: 'idempotency-e2e', attachments: [] } },
     headers: { Authorization: `Bearer ${token}`, 'Idempotency-Key': idempotencyKey },
   })
@@ -261,9 +292,30 @@ test('M7 closes Application, Trigger, Evaluation, Approval and governance paths 
 
   const webhook = await request<Webhook>(page, token, `/applications/${application.id}/webhooks`, 'POST', { name: 'M7 Signed Webhook' })
   const body = JSON.stringify({ question: 'webhook-e2e', attachments: [] })
+  const draftTimestamp = Math.floor(Date.now() / 1_000).toString()
+  const draftSignature = createHmac('sha256', webhook.secret).update(`${draftTimestamp}.${body}`).digest('base64url')
+  const draftWebhookResponse = await page.request.post(`${gatewayBase}/gateway/v1/webhooks/${webhook.publicId}`, {
+    data: body,
+    headers: {
+      'Content-Type': 'application/json',
+      'Idempotency-Key': `m7-webhook-draft-${suffix}`,
+      'X-Agentx-Signature': draftSignature,
+      'X-Agentx-Timestamp': draftTimestamp,
+    },
+  })
+  expect(draftWebhookResponse.status(), 'Webhook drafts must not activate before the next Application Deployment').toBe(404)
+  expect((await draftWebhookResponse.json() as { code: string }).code).toBe('NOT_FOUND')
+
+  const webhookDeployment = await request<ApplicationDeployment>(page, token, `/applications/${application.id}/deployments`, 'POST', {
+    workflowVersionId: version!.id,
+    environmentId: environment!.id,
+    sessionVersionPolicy: 'pinned',
+  })
+  await waitApplicationDeployment(page, token, application.id, webhookDeployment.id)
+
   const timestamp = Math.floor(Date.now() / 1_000).toString()
   const signature = createHmac('sha256', webhook.secret).update(`${timestamp}.${body}`).digest('base64url')
-  const webhookResponse = await page.request.post(`/gateway/v1/webhooks/${webhook.publicId}`, {
+  const webhookResponse = await page.request.post(`${gatewayBase}/gateway/v1/webhooks/${webhook.publicId}`, {
     data: body,
     headers: {
       'Content-Type': 'application/json',
@@ -308,18 +360,26 @@ test('M7 closes Application, Trigger, Evaluation, Approval and governance paths 
     parameters: {},
     visibility: 'company',
   })
+  const approvalsBeforeEvaluation = await request<PageResponse<Approval>>(page, token, '/approvals?pageSize=100')
+  const existingApprovalIds = new Set(approvalsBeforeEvaluation.items.map((item) => item.id))
   await request(page, token, `/evaluations/${evaluation.id}/start`, 'POST')
-  let report: EvaluationReport | undefined
+  let evaluationApproval: Approval | undefined
   await expect.poll(async () => {
-    report = await request<EvaluationReport>(page, token, `/evaluations/${evaluation.id}/report`)
-    return report.results[0]?.targetExecutionId
-  }, { timeout: 120_000, intervals: [500, 1_000, 2_000] }).toBeTruthy()
-  await approveExecution(approvalPage, token, report!.results[0].targetExecutionId!)
+    const approvals = await request<PageResponse<Approval>>(page, token, '/approvals?pageSize=100')
+    evaluationApproval = approvals.items.find((item) =>
+      item.workflowId === workflow!.id
+      && item.status === 'pending'
+      && !existingApprovalIds.has(item.id))
+    return evaluationApproval?.id
+  }, { timeout: 150_000, intervals: [500, 1_000, 2_000] }).toBeTruthy()
+  await approveApproval(approvalPage, token, evaluationApproval!)
+  let report: EvaluationReport | undefined
   await expect.poll(async () => {
     report = await request<EvaluationReport>(page, token, `/evaluations/${evaluation.id}/report`)
     return report.run.status
   }, { timeout: 180_000, intervals: [750, 1_000, 2_000] }).toBe('completed')
-  expect(report!.results[0].status).toBe('passed')
+  expect(report!.results[0].targetExecutionId).toBe(evaluationApproval!.executionId)
+  expect(report!.results[0].status).toBe('completed')
   expect(report!.results[0].ruleResults[0].status).toBe('passed')
 
   const capabilities = await request<Array<{ status: string }>>(page, token, '/runtime/capabilities')
@@ -357,7 +417,7 @@ test('M7 closes Application, Trigger, Evaluation, Approval and governance paths 
   })
   await request(page, token, `/resources/model/${modelReference!.resourceId}/grants/${modelGrant.id}`, 'DELETE')
   try {
-    const revokedResponse = await page.request.post(`/gateway/v1/applications/${application.slug}/invocations`, {
+    const revokedResponse = await page.request.post(`${gatewayBase}/gateway/v1/applications/${application.slug}/invocations`, {
       data: { input: { question: 'revoked-grant-e2e', attachments: [] } },
       headers: { Authorization: `Bearer ${token}`, 'Idempotency-Key': `m7-revoked-grant-${suffix}` },
     })
@@ -381,7 +441,7 @@ test('M7 closes Application, Trigger, Evaluation, Approval and governance paths 
       })
     }
   }
-  const restoredResponse = await page.request.post(`/gateway/v1/applications/${application.slug}/invocations`, {
+  const restoredResponse = await page.request.post(`${gatewayBase}/gateway/v1/applications/${application.slug}/invocations`, {
     data: { input: { question: 'restored-grant-e2e', attachments: [] } },
     headers: { Authorization: `Bearer ${token}`, 'Idempotency-Key': `m7-restored-grant-${suffix}` },
   })

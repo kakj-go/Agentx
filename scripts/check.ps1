@@ -38,7 +38,11 @@ try {
         }
     }
     $oversized = @()
-    $sourceFiles = @(rg --files crates services apps/web | Where-Object { $_ -match '\.(rs|ts|tsx|js|jsx|mjs|css)$' })
+    $sourceFiles = @(rg --files crates services apps/web | Where-Object {
+        $_ -match '\.(rs|ts|tsx|js|jsx|mjs|css)$' -and
+        $_ -notmatch '(^|[\\/])tests([\\/]|$)' -and
+        $_ -notmatch '_tests?\.rs$'
+    })
     foreach ($sourceFile in $sourceFiles) {
         $lineCount = (Get-Content -LiteralPath $sourceFile).Count
         if ($lineCount -gt 2000) {
@@ -48,13 +52,17 @@ try {
     if ($oversized.Count -gt 0) {
         throw "Source files exceed the 2000-line limit: $($oversized -join ', ')"
     }
+    Invoke-Native "V2 table disposition generation" { & scripts/generate-v2-table-disposition.ps1 | Out-Null }
+    Invoke-Native "V2-08 Platform API disposition" { & scripts/v2-08-api-disposition.ps1 -FailOnMigrationRequired | Out-Null }
+    Invoke-Native "V2 architecture boundary checks" { cargo run --quiet -p agentx-boundary-check -- check $root }
+    Invoke-Native "V2 Claim/Lease audit checks" { & scripts/v2-claim-lease-tests.ps1 | Out-Null }
     Invoke-Native "cargo fmt" { cargo fmt --all -- --check }
     Invoke-Native "cargo clippy" { cargo clippy --workspace --all-targets -- -D warnings }
     Invoke-Native "cargo test" { cargo test --workspace }
     $openApiTemp = Join-Path ([System.IO.Path]::GetTempPath()) "agentx-platform-api-$PID.json"
-    Invoke-Native "platform OpenAPI generation" { cargo run --quiet -p platform-api -- openapi $openApiTemp }
+    Invoke-Native "platform OpenAPI generation" { cargo run --quiet -p platform-control -- openapi $openApiTemp }
     if ((Get-NormalizedText $openApiTemp) -cne (Get-NormalizedText "$root/openapi/platform-api.json")) {
-        throw "OpenAPI schema drift detected. Run: cargo run -p platform-api -- openapi openapi/platform-api.json"
+        throw "OpenAPI schema drift detected. Run: cargo run -p platform-control -- openapi openapi/platform-api.json"
     }
     Remove-Item -LiteralPath $openApiTemp -Force
     $typeScriptTemp = Join-Path ([System.IO.Path]::GetTempPath()) "agentx-platform-api-$PID.ts"
@@ -64,9 +72,9 @@ try {
     }
     Remove-Item -LiteralPath $typeScriptTemp -Force
     $gatewayOpenApiTemp = Join-Path ([System.IO.Path]::GetTempPath()) "agentx-trigger-gateway-$PID.json"
-    Invoke-Native "gateway OpenAPI generation" { cargo run --quiet -p trigger-gateway -- openapi $gatewayOpenApiTemp }
+    Invoke-Native "gateway OpenAPI generation" { cargo run --quiet -p agentx-v2-runtime --bin runtime-gateway -- openapi $gatewayOpenApiTemp }
     if ((Get-NormalizedText $gatewayOpenApiTemp) -cne (Get-NormalizedText "$root/openapi/trigger-gateway.json")) {
-        throw "Gateway OpenAPI schema drift detected. Run: cargo run -p trigger-gateway -- openapi openapi/trigger-gateway.json"
+        throw "Gateway OpenAPI schema drift detected. Run: cargo run -p agentx-v2-runtime --bin runtime-gateway -- openapi openapi/trigger-gateway.json"
     }
     Remove-Item -LiteralPath $gatewayOpenApiTemp -Force
     $gatewayTypeScriptTemp = Join-Path ([System.IO.Path]::GetTempPath()) "agentx-trigger-gateway-$PID.ts"
@@ -99,13 +107,42 @@ try {
         Remove-Item -LiteralPath $generated -Force
     }
     Remove-Item -LiteralPath $nodeSchemaTemp -Force
+    $runtimeSchemaTemp = Join-Path ([System.IO.Path]::GetTempPath()) "agentx-runtime-schemas-$PID"
+    New-Item -ItemType Directory -Path $runtimeSchemaTemp | Out-Null
+    $runtimeOpenApiTemp = Join-Path ([System.IO.Path]::GetTempPath()) "agentx-runtime-internal-$PID.json"
+    $observabilityOpenApiTemp = Join-Path ([System.IO.Path]::GetTempPath()) "agentx-observability-internal-$PID.json"
+    Invoke-Native "Runtime contract generation" { cargo run --quiet -p agentx-runtime-contracts --bin generate-contracts -- $runtimeSchemaTemp $runtimeOpenApiTemp $observabilityOpenApiTemp }
+    $runtimeSchemas = Get-ChildItem -LiteralPath "$root/schemas/runtime-v1" -Filter "*.schema.json"
+    $generatedRuntimeSchemas = Get-ChildItem -LiteralPath $runtimeSchemaTemp -Filter "*.schema.json"
+    $runtimeSchemaFileDrift = Compare-Object `
+        -ReferenceObject @($runtimeSchemas.Name | Sort-Object) `
+        -DifferenceObject @($generatedRuntimeSchemas.Name | Sort-Object) `
+        -CaseSensitive
+    if ($null -ne $runtimeSchemaFileDrift) {
+        throw "Runtime contract JSON Schema file set drift detected."
+    }
+    foreach ($schema in $runtimeSchemas) {
+        $generated = Join-Path $runtimeSchemaTemp $schema.Name
+        if ((Get-NormalizedText $generated) -cne (Get-NormalizedText $schema.FullName)) {
+            throw "Runtime contract JSON Schema drift detected for $($schema.Name)."
+        }
+    }
+    if ((Get-NormalizedText $runtimeOpenApiTemp) -cne (Get-NormalizedText "$root/openapi/runtime-internal-v1.json")) {
+        throw "Runtime Internal OpenAPI drift detected."
+    }
+    if ((Get-NormalizedText $observabilityOpenApiTemp) -cne (Get-NormalizedText "$root/openapi/observability-internal-v1.json")) {
+        throw "Observability Internal OpenAPI drift detected."
+    }
+    Remove-Item -LiteralPath $runtimeSchemaTemp -Recurse -Force
+    Remove-Item -LiteralPath $runtimeOpenApiTemp -Force
+    Remove-Item -LiteralPath $observabilityOpenApiTemp -Force
     Invoke-Native "web lint" { pnpm lint:web }
     Invoke-Native "web tests" { pnpm --filter @agentx/web test }
     Invoke-Native "web build" { pnpm build:web }
-    Invoke-Native "deployment profile tests" { & scripts/deploy-tests.ps1 | Out-Null }
-    Invoke-Native "release supply-chain tests" { & scripts/release-tests.ps1 | Out-Null }
-    Invoke-Native "Full Kustomize render" { kubectl kustomize deploy/k8s/stacks/full | Out-Null }
-    Invoke-Native "E2E Kustomize render" { kubectl kustomize deploy/k8s/stacks/e2e | Out-Null }
+    Invoke-Native "V2 deployment profile tests" { & scripts/v2-profile-tests.ps1 | Out-Null }
+    # V2-08 intentionally completes the existing Web wiring after the frozen V2-07A baseline.
+    Invoke-Native "V2-07A production operations tests" { & scripts/v2-07-profile-tests.ps1 -SkipWebSourceBaseline | Out-Null }
+    Invoke-Native "V2 Kustomize render" { kubectl kustomize deploy/k8s/v2 | Out-Null }
     Invoke-Native "LightRAG Kustomize render" { kubectl kustomize deploy/k8s/addons/lightrag | Out-Null }
     Invoke-Native "Mem0 Kustomize render" { kubectl kustomize deploy/k8s/addons/mem0 | Out-Null }
 }

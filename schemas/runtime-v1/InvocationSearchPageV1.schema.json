@@ -1,0 +1,107 @@
+{
+  "$defs": {
+    "InvocationSummaryV1": {
+      "additionalProperties": false,
+      "properties": {
+        "admissionEpoch": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "applicationId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "bundleId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "callerType": {
+          "type": "string"
+        },
+        "completedAt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "createdAt": {
+          "type": "string"
+        },
+        "executionId": {
+          "format": "uuid",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "invocationId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "sessionId": {
+          "format": "uuid",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "invocationId",
+        "applicationId",
+        "bundleId",
+        "admissionEpoch",
+        "callerType",
+        "status",
+        "createdAt"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "items": {
+      "items": {
+        "$ref": "#/$defs/InvocationSummaryV1"
+      },
+      "type": "array"
+    },
+    "next": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "snapshotId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "snapshotUpperBound": {
+      "type": "string"
+    },
+    "total": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "apiVersion",
+    "snapshotId",
+    "snapshotUpperBound",
+    "total",
+    "items"
+  ],
+  "title": "InvocationSearchPageV1",
+  "type": "object"
+}

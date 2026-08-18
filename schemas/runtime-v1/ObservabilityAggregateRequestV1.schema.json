@@ -1,0 +1,77 @@
+{
+  "$defs": {
+    "ObservabilityDimensionV1": {
+      "enum": [
+        "hour",
+        "day",
+        "workflow",
+        "application",
+        "status",
+        "error_code",
+        "provider",
+        "resource_type"
+      ],
+      "type": "string"
+    },
+    "ObservabilityMetricV1": {
+      "enum": [
+        "count",
+        "duration_millis",
+        "cost_micros",
+        "input_tokens",
+        "output_tokens",
+        "error_rate"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "dimensions": {
+      "items": {
+        "$ref": "#/$defs/ObservabilityDimensionV1"
+      },
+      "type": "array"
+    },
+    "filters": true,
+    "from": {
+      "type": "string"
+    },
+    "limit": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "metrics": {
+      "items": {
+        "$ref": "#/$defs/ObservabilityMetricV1"
+      },
+      "type": "array"
+    },
+    "tenantId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "to": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "apiVersion",
+    "tenantId",
+    "from",
+    "to",
+    "metrics",
+    "dimensions",
+    "filters",
+    "limit"
+  ],
+  "title": "ObservabilityAggregateRequestV1",
+  "type": "object"
+}

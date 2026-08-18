@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "applicationIds": {
+      "items": {
+        "format": "uuid",
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "executionIds": {
+      "items": {
+        "format": "uuid",
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "operations": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "sessionIds": {
+      "items": {
+        "format": "uuid",
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "subjectId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "tenantId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "tenantWide": {
+      "type": "boolean"
+    },
+    "tokenVersion": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "workflowIds": {
+      "items": {
+        "format": "uuid",
+        "type": "string"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "tenantId",
+    "subjectId",
+    "tokenVersion",
+    "tenantWide",
+    "operations",
+    "applicationIds",
+    "workflowIds",
+    "executionIds",
+    "sessionIds"
+  ],
+  "title": "DelegationScopeV1",
+  "type": "object"
+}

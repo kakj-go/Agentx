@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "scenario", "status", "observedAt", "assertions", "contentSha256"],
+  "properties": {
+    "schemaVersion": { "const": "agentx.io/v2-07a-scenario-receipt/v1" },
+    "scenario": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" },
+    "status": { "const": "passed" },
+    "observedAt": { "type": "string", "format": "date-time" },
+    "assertions": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 3 }
+    },
+    "contentSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+  }
+}

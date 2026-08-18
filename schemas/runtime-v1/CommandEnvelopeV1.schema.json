@@ -1,0 +1,80 @@
+{
+  "$defs": {
+    "Plane": {
+      "enum": [
+        "control",
+        "runtime",
+        "observability"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "aggregateId": {
+      "type": "string"
+    },
+    "aggregateType": {
+      "type": "string"
+    },
+    "causationId": {
+      "format": "uuid",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "contentHash": {
+      "type": "string"
+    },
+    "correlationId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "eventId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "idempotencyKey": {
+      "type": "string"
+    },
+    "objectVersion": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "occurredAt": {
+      "type": "string"
+    },
+    "payload": true,
+    "schemaVersion": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "sourcePlane": {
+      "$ref": "#/$defs/Plane"
+    },
+    "tenantId": {
+      "format": "uuid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "eventId",
+    "sourcePlane",
+    "tenantId",
+    "aggregateType",
+    "aggregateId",
+    "objectVersion",
+    "occurredAt",
+    "payload",
+    "contentHash",
+    "correlationId",
+    "idempotencyKey"
+  ],
+  "title": "CommandEnvelopeV1",
+  "type": "object"
+}

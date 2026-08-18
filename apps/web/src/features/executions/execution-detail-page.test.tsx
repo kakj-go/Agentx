@@ -36,7 +36,7 @@ function response(value: unknown, status = 200) {
   return new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } })
 }
 
-function installFetch(options: { execution?: unknown; nodes?: unknown; onRequest?: (path: string) => void } = {}) {
+function installFetch(options: { execution?: unknown; nodes?: unknown; traceStatus?: number; onRequest?: (path: string) => void } = {}) {
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
     const path = new URL(String(input), 'http://agentx.test').pathname
     options.onRequest?.(path)
@@ -45,7 +45,9 @@ function installFetch(options: { execution?: unknown; nodes?: unknown; onRequest
     if (path.includes('/nodes/')) return response(nodes.items.find((node) => path.endsWith(node.id)))
     if (path.endsWith('/checkpoints')) return response({ items: [{ id: 'checkpoint-1', executionId: 'execution-1', nodeExecutionId: 'node-execution-1', sequenceNumber: 2, checkpointType: 'node_completed', stateHash: 'sha256-state', activationCount: 2, deliveryCount: 1, createdAt: '2026-08-03T10:00:01Z' }] })
     if (path.endsWith('/waits')) return response({ items: [{ id: 'wait-1', executionId: 'execution-1', nodeExecutionId: 'node-execution-2', waitKind: 'approval', status: 'waiting', wakeAt: null, timeoutAt: '2026-08-04T10:00:00Z', authenticationMode: 'signed', resumeUrl: '/gateway/v1/waits/wait-1/resume' }] })
-    if (path.endsWith('/trace')) return response({ executionId: 'execution-1', traceId: 'trace-1', nextCursor: null, events: [{ eventId: 'event-1', traceId: 'trace-1', spanId: 'span-1', parentSpanId: null, executionId: 'execution-1', nodeExecutionId: 'node-execution-2', nodeId: 'remote-charge', eventType: 'node.suspended', status: 'waiting', eventTime: '2026-08-03T10:00:01Z', durationMs: 1, runIndex: 0, iterationIndex: 0, modelName: null, providerName: null, mcpToolName: null, inputTokens: null, outputTokens: null, costMicros: 0, errorCode: null, errorMessage: null, attributes: { reason: 'approval' }, contentRef: null }] })
+    if (path.endsWith('/trace')) return options.traceStatus === 202
+      ? response({ code: 'TRACE_DELAYED', message: 'Trace is catching up', requestId: 'trace-request' }, 202)
+      : response({ executionId: 'execution-1', traceId: 'trace-1', nextCursor: null, events: [{ eventId: 'event-1', traceId: 'trace-1', spanId: 'span-1', parentSpanId: null, executionId: 'execution-1', nodeExecutionId: 'node-execution-2', nodeId: 'remote-charge', eventType: 'node.suspended', status: 'waiting', eventTime: '2026-08-03T10:00:01Z', durationMs: 1, runIndex: 0, iterationIndex: 0, modelName: null, providerName: null, mcpToolName: null, inputTokens: null, outputTokens: null, costMicros: 0, errorCode: null, errorMessage: null, attributes: { reason: 'approval' }, contentRef: null }] })
     if (path.endsWith('/side-effect-confirmations')) return response({ accepted: true, replayed: false })
     if (path === '/api/v1/approvals') return response({ items: [{ id: 'approval-1', executionId: 'execution-1', workflowId: 'workflow-1', workflowName: 'Order recovery', nodeId: 'remote-charge', title: 'Approve charge', description: null, status: 'pending', claimedBy: null, claimedByName: null, resumeStatus: 'pending', requestPayload: {}, deadlineAt: null, version: 1, createdAt: '2026-08-03T10:00:01Z' }], page: 1, pageSize: 100, total: 1 })
     return response({ code: 'NOT_FOUND', message: path, requestId: 'test' }, 404)
@@ -117,5 +119,18 @@ describe('execution recovery workbench', () => {
 
     expect(await screen.findByText('Order recovery')).toBeInTheDocument()
     await waitFor(() => expect(nodeRequests).toBeGreaterThanOrEqual(2))
+  })
+
+  it('keeps the authoritative terminal state visible while trace ingestion is delayed', async () => {
+    installFetch({
+      execution: { ...execution, status: 'succeeded', endedAt: '2026-08-03T10:00:03Z' },
+      traceStatus: 202,
+    })
+    renderPage([])
+
+    expect(await screen.findByText('Order recovery')).toBeInTheDocument()
+    expect(await screen.findByText('Trace 延迟')).toBeInTheDocument()
+    expect(screen.getByText('权威执行状态已可用，Trace 摄取仍在追赶。')).toBeInTheDocument()
+    expect(screen.getByText('成功')).toBeInTheDocument()
   })
 })

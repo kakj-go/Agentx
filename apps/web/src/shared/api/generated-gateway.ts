@@ -4,39 +4,45 @@
 
 export interface components {
     schemas: {
-        ApiErrorResponse: {
-            code: string;
-            fieldErrors?: components["schemas"]["FieldError"][];
-            message: string;
-            /** Format: uuid */
-            requestId: string;
-        };
+        /** ArtifactUploadResponseV1 */
         ArtifactUploadResponse: {
             /** Format: uuid */
             artifactId: string;
             contentType: string;
-            /** Format: int64 */
+            sha256: string;
+            /** Format: uint64 */
             sizeBytes: number;
         };
+        /** CommandAcceptedV1 */
+        CommandAccepted: {
+            accepted: boolean;
+            replayed: boolean;
+        };
+        /** CreateSessionRequestV1 */
         CreateSessionRequest: {
             externalUserId?: string | null;
             title?: string | null;
         };
-        FieldError: {
+        /** GatewayErrorV1 */
+        GatewayError: {
             code: string;
-            field: string;
             message: string;
         };
+        /** InvocationRequestV1 */
         InvocationRequest: {
             input: unknown;
             responseMode?: string | null;
             /** Format: uuid */
             sessionId?: string | null;
         };
+        /** InvocationResponseV1 */
         InvocationResponse: {
+            /** Format: uint64 */
+            admissionEpoch: number;
             /** Format: uuid */
             applicationId: string;
-            /** Format: date-time */
+            /** Format: uuid */
+            bundleId: string;
             createdAt: string;
             error?: unknown;
             /** Format: uuid */
@@ -48,58 +54,74 @@ export interface components {
             sessionId?: string | null;
             status: string;
         };
+        /** MessagePartInputV1 */
         MessagePartInput: {
             /** Format: uuid */
             artifactId?: string | null;
             content?: unknown;
             partType: string;
         };
-        MessagePartResponse: {
-            /** Format: uuid */
-            artifactId?: string | null;
-            content?: unknown;
-            partType: string;
-        };
+        /** MessageRequestV1 */
         MessageRequest: {
-            parts: components["schemas"]["MessagePartInput"][];
+            parts: components["schemas"]["MessageRequest"]["$defs"]["MessagePartInputV1"][];
+            $defs: {
+                MessagePartInputV1: {
+                    /** Format: uuid */
+                    artifactId?: string | null;
+                    content?: unknown;
+                    partType: string;
+                };
+            };
         };
+        /** MessageResponseV1 */
         MessageResponse: {
-            /** Format: date-time */
             createdAt: string;
             /** Format: uuid */
             id: string;
             /** Format: uuid */
             invocationId?: string | null;
-            parts: components["schemas"]["MessagePartResponse"][];
+            parts: components["schemas"]["MessageResponse"]["$defs"]["MessagePartInputV1"][];
             role: string;
-            /** Format: int64 */
+            /** Format: uint64 */
             sequence: number;
+            $defs: {
+                MessagePartInputV1: {
+                    /** Format: uuid */
+                    artifactId?: string | null;
+                    content?: unknown;
+                    partType: string;
+                };
+            };
         };
+        /** SessionResponseV1 */
         SessionResponse: {
             /** Format: uuid */
             applicationDeploymentId: string;
             /** Format: uuid */
             applicationId: string;
+            /** Format: uuid */
+            bundleId?: string | null;
             externalUserId?: string | null;
             /** Format: uuid */
             id: string;
             status: string;
             title?: string | null;
-            /** Format: date-time */
             updatedAt: string;
-            /** Format: int64 */
+            /** Format: uint64 */
             version: number;
-            versionPolicy: string;
+            versionPolicy: components["schemas"]["SessionResponse"]["$defs"]["SessionVersionPolicyV1"];
             /** Format: uuid */
             workflowVersionId?: string | null;
+            $defs: {
+                /** @enum {string} */
+                SessionVersionPolicyV1: "pinned" | "follow_deployment" | "manual_upgrade";
+            };
         };
+        /** WaitResumeRequestV1 */
         WaitResumeRequest: {
             outputPort?: string | null;
-            payload?: unknown;
-        };
-        WaitResumeResponse: {
-            accepted: boolean;
-            replayed: boolean;
+            /** @default null */
+            payload: unknown;
         };
     };
     responses: never;

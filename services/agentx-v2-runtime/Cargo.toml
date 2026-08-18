@@ -1,0 +1,73 @@
+[package]
+name = "agentx-v2-runtime"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+agentx-mysql-lease.workspace = true
+agentx-domain.workspace = true
+agentx-node-protocol.workspace = true
+agentx-runtime.workspace = true
+agentx-runtime-contracts.workspace = true
+agentx-runtime-infrastructure.workspace = true
+agentx-service-kit.workspace = true
+anyhow.workspace = true
+async-stream.workspace = true
+axum.workspace = true
+base64.workspace = true
+bytes.workspace = true
+chrono.workspace = true
+chrono-tz.workspace = true
+cron.workspace = true
+ed25519-dalek.workspace = true
+futures.workspace = true
+hmac.workspace = true
+jsonschema.workspace = true
+object_store.workspace = true
+rand.workspace = true
+regex.workspace = true
+redis.workspace = true
+reqwest.workspace = true
+rust_decimal.workspace = true
+schemars.workspace = true
+secrecy.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+sqlx.workspace = true
+thiserror.workspace = true
+time.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+agentx-bundle-builder.workspace = true
+async-trait.workspace = true
+http-body-util.workspace = true
+rand.workspace = true
+testcontainers = "0.25"
+tower.workspace = true
+
+[[bin]]
+name = "runtime-gateway"
+path = "src/bin/runtime-gateway.rs"
+
+[[bin]]
+name = "workflow-runtime"
+path = "src/bin/workflow-runtime.rs"
+
+[[bin]]
+name = "workflow-worker"
+path = "src/bin/workflow-worker.rs"
+
+[[bin]]
+name = "runtime-fault-proxy"
+path = "src/bin/runtime-fault-proxy.rs"
+
+[[bin]]
+name = "sandbox-manager"
+path = "src/bin/sandbox-manager.rs"

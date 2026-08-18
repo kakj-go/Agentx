@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "contentHash": {
+      "type": "string"
+    },
+    "idempotencyKey": {
+      "type": "string"
+    },
+    "mediaType": {
+      "type": "string"
+    },
+    "objectId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "sizeBytes": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "tenantId": {
+      "format": "uuid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "apiVersion",
+    "idempotencyKey",
+    "tenantId",
+    "objectId",
+    "contentHash",
+    "sizeBytes",
+    "mediaType"
+  ],
+  "title": "RuntimeObjectUploadMetadataV1",
+  "type": "object"
+}

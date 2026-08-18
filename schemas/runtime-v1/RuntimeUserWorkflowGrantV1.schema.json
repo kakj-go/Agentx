@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "canQuery": {
+      "type": "boolean"
+    },
+    "grantVersion": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "tenantId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "userId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "workflowId": {
+      "format": "uuid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "tenantId",
+    "userId",
+    "workflowId",
+    "grantVersion",
+    "canQuery"
+  ],
+  "title": "RuntimeUserWorkflowGrantV1",
+  "type": "object"
+}

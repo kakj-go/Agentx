@@ -1,0 +1,114 @@
+{
+  "$defs": {
+    "RuntimeResourceOperationV1": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "mcp_discover",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "arguments": true,
+            "kind": {
+              "const": "mcp_call",
+              "type": "string"
+            },
+            "toolName": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "toolName",
+            "arguments"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "VaultSecretReferenceV1": {
+      "additionalProperties": false,
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "mount": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "version": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "mount",
+        "path",
+        "key",
+        "version"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "credential": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/VaultSecretReferenceV1"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "endpoint": {
+      "type": "string"
+    },
+    "operation": {
+      "$ref": "#/$defs/RuntimeResourceOperationV1"
+    },
+    "operationId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "schemaVersion": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "tenantId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "timeoutSeconds": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "operationId",
+    "tenantId",
+    "endpoint",
+    "timeoutSeconds",
+    "operation"
+  ],
+  "title": "RuntimeResourceOperationRequestV1",
+  "type": "object"
+}

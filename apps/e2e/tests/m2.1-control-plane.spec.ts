@@ -2,6 +2,9 @@ import { expect, type Browser, type Locator, type Page, test } from '@playwright
 
 const company = 'Agentx E2E'
 const adminPassword = 'agentx-e2e-admin-password'
+const echoBaseUrl = process.env.AGENTX_E2E_ECHO_BASE_URL ?? 'http://echo-mcp:8090'
+const lightRagBaseUrl = process.env.AGENTX_E2E_LIGHTRAG_BASE_URL ?? 'http://lightrag:9621'
+const mem0BaseUrl = process.env.AGENTX_E2E_MEM0_BASE_URL ?? 'http://mem0:8000'
 
 async function dialog(page: Page, title: string) {
   const value = page.getByRole('dialog', { name: title })
@@ -77,13 +80,17 @@ async function grantResource(page: Page, name: string, resourceType: string, sub
 
 async function bootstrap(page: Page) {
   await page.goto('/')
-  await expect(page).toHaveURL(/\/setup$/)
-  await page.getByLabel('公司名称').fill(company)
-  await page.getByLabel('用户名').fill('admin')
-  await page.getByLabel('管理员姓名').fill('E2E Admin')
-  await page.getByLabel('密码').fill(adminPassword)
-  await page.getByRole('button', { name: '初始化并进入工作台' }).click()
-  await expect(page).toHaveURL(/\/$/)
+  await page.waitForURL((url) => ['/setup', '/login', '/'].includes(url.pathname))
+  if (new URL(page.url()).pathname === '/setup') {
+    await page.getByLabel('公司名称').fill(company)
+    await page.getByLabel('用户名').fill('admin')
+    await page.getByLabel('管理员姓名').fill('E2E Admin')
+    await page.getByLabel('密码').fill(adminPassword)
+    await page.getByRole('button', { name: '初始化并进入工作台' }).click()
+    await expect(page).toHaveURL(/\/$/)
+  } else {
+    await loginIfNeeded(page)
+  }
   await expect(page.getByRole('main').getByText(new RegExp(company))).toBeVisible()
 }
 
@@ -132,7 +139,7 @@ async function createAndReviseModel(page: Page) {
   await page.getByRole('button', { name: '新建模型' }).click()
   const create = await dialog(page, '新建模型')
   await (await field(create, '连接名称')).fill('E2E Model Connection')
-  await (await field(create, 'Endpoint')).fill('http://echo-mcp:8090/v1')
+  await (await field(create, 'Endpoint')).fill(`${echoBaseUrl}/v1`)
   await select(create, '凭证', 'Echo Credential Renamed')
   await (await field(create, '模型名称')).fill('echo-chat')
   await (await field(create, '上游模型 ID')).fill('echo-model-v1')
@@ -144,7 +151,7 @@ async function createAndReviseModel(page: Page) {
   await page.getByRole('button', { name: '新建模型' }).click()
   const duplicate = await dialog(page, '新建模型')
   await (await field(duplicate, '连接名称')).fill('Duplicate Model Connection')
-  await (await field(duplicate, 'Endpoint')).fill('http://echo-mcp:8090/v1')
+  await (await field(duplicate, 'Endpoint')).fill(`${echoBaseUrl}/v1`)
   await select(duplicate, '凭证', 'Echo Credential Renamed')
   await (await field(duplicate, '模型名称')).fill('echo-chat')
   await (await field(duplicate, '上游模型 ID')).fill('echo-model-v1')
@@ -188,7 +195,7 @@ async function createAndExerciseMcp(page: Page) {
   await page.getByRole('button', { name: '接入 MCP 服务' }).click()
   const create = await dialog(page, '接入 MCP 服务')
   await (await field(create, '名称')).fill('Echo MCP')
-  await (await field(create, 'Endpoint')).fill('http://echo-mcp:8090/mcp')
+  await (await field(create, 'Endpoint')).fill(`${echoBaseUrl}/mcp`)
   await select(create, '凭证', 'Echo Credential Renamed')
   await select(create, '所属部门', company)
   await submit(create, '保存')
@@ -226,7 +233,7 @@ async function createAndExerciseMcp(page: Page) {
   await page.getByRole('button', { name: '接入 MCP 服务' }).click()
   const unavailable = await dialog(page, '接入 MCP 服务')
   await (await field(unavailable, '名称')).fill('Unavailable MCP')
-  await (await field(unavailable, 'Endpoint')).fill('http://echo-mcp:65530/mcp')
+  await (await field(unavailable, 'Endpoint')).fill(`${new URL(echoBaseUrl).protocol}//${new URL(echoBaseUrl).hostname}:65530/mcp`)
   await select(unavailable, '所属部门', company)
   await unavailable.getByRole('button', { name: '保存', exact: true }).click()
   await expect(unavailable).toBeHidden()
@@ -295,6 +302,9 @@ async function createSkillWorkspace(page: Page) {
   const publish = await dialog(page, '发布工作区版本')
   await submit(publish, '发布')
   await expect(page.getByText('v1', { exact: true })).toBeVisible()
+
+  await page.getByRole('button', { name: '启用', exact: true }).click()
+  await expect(page.getByRole('button', { name: '停用', exact: true })).toBeVisible()
 }
 
 async function configureCentralResourceGrants(page: Page) {
@@ -590,7 +600,7 @@ async function verifyExternalResourceUniqueness(page: Page) {
   await page.getByRole('button', { name: '接入知识库' }).click()
   let form = await dialog(page, '接入知识库')
   await (await field(form, '连接名称')).fill('唯一性知识连接')
-  await (await field(form, 'Endpoint')).fill('http://lightrag:9621')
+  await (await field(form, 'Endpoint')).fill(lightRagBaseUrl)
   await select(form, '所属部门', company)
   await (await field(form, '资源名称')).fill('知识资源一')
   await (await field(form, '外部资源 ID')).fill('knowledge-001')
@@ -610,7 +620,7 @@ async function verifyExternalResourceUniqueness(page: Page) {
   await page.getByRole('button', { name: '接入记忆服务' }).click()
   form = await dialog(page, '接入记忆服务')
   await (await field(form, '连接名称')).fill('唯一性记忆连接')
-  await (await field(form, 'Endpoint')).fill('http://mem0:8000')
+  await (await field(form, 'Endpoint')).fill(mem0BaseUrl)
   await select(form, '所属部门', company)
   await (await field(form, '资源名称')).fill('记忆资源一')
   await (await field(form, '记忆命名空间')).fill('memory-001')

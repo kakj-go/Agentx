@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "durationMs": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "operationId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "result": true,
+    "schemaVersion": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "operationId",
+    "result",
+    "durationMs"
+  ],
+  "title": "RuntimeResourceOperationResponseV1",
+  "type": "object"
+}

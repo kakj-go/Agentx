@@ -1,0 +1,203 @@
+{
+  "$defs": {
+    "TraceEventEnvelopeV1": {
+      "additionalProperties": false,
+      "properties": {
+        "attemptId": {
+          "format": "uuid",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "attributes": true,
+        "contentHash": {
+          "type": "string"
+        },
+        "contentRef": {
+          "format": "uuid",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "costMicros": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "durationMs": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "errorCode": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "eventId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "eventType": {
+          "type": "string"
+        },
+        "executionId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "executionSequence": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "inputTokens": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "nodeExecutionId": {
+          "format": "uuid",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "occurredAt": {
+          "type": "string"
+        },
+        "outputTokens": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "parentSpanId": {
+          "format": "uuid",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "resourceId": {
+          "format": "uuid",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "resourceType": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "resourceVersion": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "runtimeCallId": {
+          "format": "uuid",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "schemaVersion": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "spanId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "tenantId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "traceId": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "eventId",
+        "tenantId",
+        "executionId",
+        "executionSequence",
+        "traceId",
+        "spanId",
+        "eventType",
+        "status",
+        "costMicros",
+        "attributes",
+        "occurredAt",
+        "contentHash"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "complete": {
+      "type": "boolean"
+    },
+    "degraded": {
+      "type": "boolean"
+    },
+    "events": {
+      "items": {
+        "$ref": "#/$defs/TraceEventEnvelopeV1"
+      },
+      "type": "array"
+    },
+    "executionId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "expectedWatermark": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "ingestedWatermark": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "apiVersion",
+    "executionId",
+    "ingestedWatermark",
+    "expectedWatermark",
+    "complete",
+    "degraded",
+    "events"
+  ],
+  "title": "ExecutionTraceV1",
+  "type": "object"
+}

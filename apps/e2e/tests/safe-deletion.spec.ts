@@ -1,6 +1,7 @@
 import { expect, type APIResponse, type Locator, type Page, test } from '@playwright/test'
 
 const adminPassword = 'agentx-e2e-admin-password'
+const gatewayBase = process.env.AGENTX_E2E_RUNTIME_URL ?? ''
 
 async function login(page: Page) {
   await page.goto('/login')
@@ -19,7 +20,7 @@ async function request<T>(page: Page, token: string, path: string): Promise<T> {
 }
 
 async function mutate<T>(page: Page, token: string, path: string, method: string, body: unknown, gateway = false): Promise<T> {
-  const response = await page.request.fetch(`${gateway ? '/gateway/v1' : '/api/v1'}${path}`, {
+  const response = await page.request.fetch(`${gateway ? `${gatewayBase}/gateway/v1` : '/api/v1'}${path}`, {
     method,
     data: body,
     headers: { Authorization: `Bearer ${token}`, 'Idempotency-Key': `safe-deletion-${Date.now()}-${Math.random()}` },
@@ -64,6 +65,7 @@ async function expectBlocked(page: Page, path: string, entityName: string) {
 
 type WorkflowSummary = { id: string; name: string }
 type WorkflowVersion = { id: string; versionNumber: number; definition?: { start?: { inputs?: { properties?: Record<string, { type?: string }> } } } }
+type Deployment = { id: string; status: string }
 
 function safeInvocationInput(version: WorkflowVersion) {
   const input: Record<string, unknown> = {}
@@ -87,7 +89,13 @@ async function createImpactFixtures(page: Page, token: string) {
 
   const suffix = `${Date.now()}`
   const application = await mutate<{ id: string; name: string; slug: string }>(page, token, '/applications', 'POST', { workflowId: workflow.id, name: `Safe Deletion Application ${suffix}`, slug: `safe-deletion-${suffix}`, description: 'Safe deletion E2E fixture', visibility: 'company' })
-  await mutate(page, token, `/applications/${application.id}/deployments`, 'POST', { workflowVersionId: version.id, environmentId: environment.id, sessionVersionPolicy: 'pinned' })
+  const deployment = await mutate<Deployment>(page, token, `/applications/${application.id}/deployments`, 'POST', { workflowVersionId: version.id, environmentId: environment.id, sessionVersionPolicy: 'pinned' })
+  await expect.poll(async () => {
+    const deployments = await request<Deployment[]>(page, token, `/applications/${application.id}/deployments`)
+    const status = deployments.find((item) => item.id === deployment.id)?.status
+    if (status === 'rejected') throw new Error(`Safe deletion Application deployment ${deployment.id} was rejected`)
+    return status
+  }, { timeout: 180_000, intervals: [500, 1_000, 2_000] }).toBe('active')
   const session = await mutate<{ id: string }>(page, token, `/applications/${application.slug}/sessions`, 'POST', { title: 'Safe deletion session' }, true)
   await mutate(page, token, `/applications/${application.slug}/invocations`, 'POST', { input: safeInvocationInput(version), sessionId: session.id }, true)
 

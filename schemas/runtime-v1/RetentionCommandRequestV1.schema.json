@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "dryRun": {
+      "type": "boolean"
+    },
+    "idempotencyKey": {
+      "type": "string"
+    },
+    "policyVersion": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "runId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "tenantId": {
+      "format": "uuid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "apiVersion",
+    "tenantId",
+    "runId",
+    "policyVersion",
+    "dryRun",
+    "idempotencyKey"
+  ],
+  "title": "RetentionCommandRequestV1",
+  "type": "object"
+}

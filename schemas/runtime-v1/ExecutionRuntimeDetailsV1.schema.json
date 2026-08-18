@@ -1,0 +1,175 @@
+{
+  "$defs": {
+    "NodeAttemptV1": {
+      "additionalProperties": false,
+      "properties": {
+        "attemptId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "attemptNumber": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "errorCode": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "errorMessage": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "fencingToken": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "nodeExecutionId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "resultHash": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "type": "string"
+        },
+        "workerId": {
+          "format": "uuid",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "attemptId",
+        "nodeExecutionId",
+        "attemptNumber",
+        "status",
+        "fencingToken"
+      ],
+      "type": "object"
+    },
+    "RuntimeCallDetailV1": {
+      "additionalProperties": false,
+      "properties": {
+        "attemptId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "callId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "callKind": {
+          "type": "string"
+        },
+        "costMicros": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "errorCode": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "inputTokens": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "nodeExecutionId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "outputTokens": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "resourceId": {
+          "format": "uuid",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "resourceType": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "resourceVersion": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "callId",
+        "nodeExecutionId",
+        "attemptId",
+        "callKind",
+        "status",
+        "inputTokens",
+        "outputTokens",
+        "costMicros"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "agentRuns": {
+      "items": true,
+      "type": "array"
+    },
+    "apiVersion": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "attempts": {
+      "items": {
+        "$ref": "#/$defs/NodeAttemptV1"
+      },
+      "type": "array"
+    },
+    "calls": {
+      "items": {
+        "$ref": "#/$defs/RuntimeCallDetailV1"
+      },
+      "type": "array"
+    },
+    "sandboxes": {
+      "items": true,
+      "type": "array"
+    }
+  },
+  "required": [
+    "apiVersion",
+    "attempts",
+    "calls",
+    "agentRuns",
+    "sandboxes"
+  ],
+  "title": "ExecutionRuntimeDetailsV1",
+  "type": "object"
+}

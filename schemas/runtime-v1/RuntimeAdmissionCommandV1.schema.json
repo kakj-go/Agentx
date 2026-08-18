@@ -1,0 +1,956 @@
+{
+  "$defs": {
+    "AdmissionStatusV1": {
+      "enum": [
+        "active",
+        "disabled",
+        "revoked"
+      ],
+      "type": "string"
+    },
+    "AdmissionTargetV1": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "kind": {
+              "const": "tenant",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "enabled"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "application_route",
+              "type": "string"
+            },
+            "state": {
+              "$ref": "#/$defs/ApplicationRouteAdmissionV1"
+            }
+          },
+          "required": [
+            "kind",
+            "state"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "api_key",
+              "type": "string"
+            },
+            "state": {
+              "$ref": "#/$defs/ApiKeyAdmissionV1"
+            }
+          },
+          "required": [
+            "kind",
+            "state"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "runtime_user",
+              "type": "string"
+            },
+            "state": {
+              "$ref": "#/$defs/RuntimeUserAdmissionV1"
+            }
+          },
+          "required": [
+            "kind",
+            "state"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "runtime_user_application_grant",
+              "type": "string"
+            },
+            "state": {
+              "$ref": "#/$defs/RuntimeUserApplicationGrantV1"
+            }
+          },
+          "required": [
+            "kind",
+            "state"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "runtime_user_workflow_grant",
+              "type": "string"
+            },
+            "state": {
+              "$ref": "#/$defs/RuntimeUserWorkflowGrantV1"
+            }
+          },
+          "required": [
+            "kind",
+            "state"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "service_identity",
+              "type": "string"
+            },
+            "state": {
+              "$ref": "#/$defs/ServiceIdentityAdmissionV1"
+            }
+          },
+          "required": [
+            "kind",
+            "state"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "resource_grant",
+              "type": "string"
+            },
+            "state": {
+              "$ref": "#/$defs/RuntimeGrantStateV1"
+            }
+          },
+          "required": [
+            "kind",
+            "state"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "resource_state",
+              "type": "string"
+            },
+            "state": {
+              "$ref": "#/$defs/RuntimeResourceStateV1"
+            }
+          },
+          "required": [
+            "kind",
+            "state"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "quota_policy",
+              "type": "string"
+            },
+            "state": {
+              "$ref": "#/$defs/RuntimeQuotaPolicyV1"
+            }
+          },
+          "required": [
+            "kind",
+            "state"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "approval_decision",
+              "type": "string"
+            },
+            "state": {
+              "$ref": "#/$defs/RuntimeApprovalDecisionV1"
+            }
+          },
+          "required": [
+            "kind",
+            "state"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "approval_action",
+              "type": "string"
+            },
+            "state": {
+              "$ref": "#/$defs/RuntimeApprovalActionV1"
+            }
+          },
+          "required": [
+            "kind",
+            "state"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "retention_hold",
+              "type": "string"
+            },
+            "state": {
+              "$ref": "#/$defs/RuntimeRetentionHoldV1"
+            }
+          },
+          "required": [
+            "kind",
+            "state"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "retention_policy",
+              "type": "string"
+            },
+            "state": {
+              "$ref": "#/$defs/RuntimeRetentionPolicyV1"
+            }
+          },
+          "required": [
+            "kind",
+            "state"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ApiKeyAdmissionV1": {
+      "additionalProperties": false,
+      "properties": {
+        "applicationId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "expiresAt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "keyId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "keyPrefix": {
+          "type": "string"
+        },
+        "secretHash": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/AdmissionStatusV1"
+        },
+        "tenantId": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tenantId",
+        "applicationId",
+        "keyId",
+        "keyPrefix",
+        "secretHash",
+        "status"
+      ],
+      "type": "object"
+    },
+    "ApplicationRouteAdmissionV1": {
+      "additionalProperties": false,
+      "properties": {
+        "applicationId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "routeKey": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/AdmissionStatusV1"
+        },
+        "tenantId": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tenantId",
+        "applicationId",
+        "routeKey",
+        "status"
+      ],
+      "type": "object"
+    },
+    "ApprovalActionValueV1": {
+      "enum": [
+        "claim",
+        "release",
+        "reassign",
+        "approve",
+        "reject",
+        "cancel",
+        "timeout"
+      ],
+      "type": "string"
+    },
+    "ApprovalDecisionValueV1": {
+      "enum": [
+        "approved",
+        "rejected"
+      ],
+      "type": "string"
+    },
+    "CommandEnvelopeV1": {
+      "additionalProperties": false,
+      "properties": {
+        "aggregateId": {
+          "type": "string"
+        },
+        "aggregateType": {
+          "type": "string"
+        },
+        "causationId": {
+          "format": "uuid",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "contentHash": {
+          "type": "string"
+        },
+        "correlationId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "eventId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "idempotencyKey": {
+          "type": "string"
+        },
+        "objectVersion": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "occurredAt": {
+          "type": "string"
+        },
+        "payload": true,
+        "schemaVersion": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sourcePlane": {
+          "$ref": "#/$defs/Plane"
+        },
+        "tenantId": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "eventId",
+        "sourcePlane",
+        "tenantId",
+        "aggregateType",
+        "aggregateId",
+        "objectVersion",
+        "occurredAt",
+        "payload",
+        "contentHash",
+        "correlationId",
+        "idempotencyKey"
+      ],
+      "type": "object"
+    },
+    "Plane": {
+      "enum": [
+        "control",
+        "runtime",
+        "observability"
+      ],
+      "type": "string"
+    },
+    "RuntimeApprovalActionV1": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "$ref": "#/$defs/ApprovalActionValueV1"
+        },
+        "actorId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "input": true,
+        "targetUserId": {
+          "format": "uuid",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "taskId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "taskVersion": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "taskId",
+        "taskVersion",
+        "action",
+        "actorId"
+      ],
+      "type": "object"
+    },
+    "RuntimeApprovalDecisionV1": {
+      "additionalProperties": false,
+      "properties": {
+        "decidedBy": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "decision": {
+          "$ref": "#/$defs/ApprovalDecisionValueV1"
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "taskId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "taskVersion": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "taskId",
+        "taskVersion",
+        "decision",
+        "decidedBy"
+      ],
+      "type": "object"
+    },
+    "RuntimeGrantStateV1": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "grantId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "identityId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "operations": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "uniqueItems": true
+        },
+        "policyEpoch": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "resourceId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "resourceKind": {
+          "$ref": "#/$defs/RuntimeResourceKindV1"
+        },
+        "tenantId": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tenantId",
+        "identityId",
+        "grantId",
+        "resourceKind",
+        "resourceId",
+        "operations",
+        "policyEpoch",
+        "enabled"
+      ],
+      "type": "object"
+    },
+    "RuntimeQuotaPolicyV1": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "limits": {
+          "additionalProperties": false,
+          "properties": {
+            "agent_iterations": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "artifact_bytes": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "cost_micros": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "cpu_millis": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "disk_bytes": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "execution_concurrency": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "memory_bytes": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "node_concurrency": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "pids": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "sandbox_concurrency": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "tokens": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "ttl_seconds": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
+        "policyVersion": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "tenantId": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tenantId",
+        "policyVersion",
+        "limits",
+        "enabled"
+      ],
+      "type": "object"
+    },
+    "RuntimeResourceKindV1": {
+      "enum": [
+        "model",
+        "mcp",
+        "rag",
+        "memory",
+        "skill",
+        "credential",
+        "sandbox_profile",
+        "composite"
+      ],
+      "type": "string"
+    },
+    "RuntimeResourceStateStatusV1": {
+      "enum": [
+        "active",
+        "disabled",
+        "revoked"
+      ],
+      "type": "string"
+    },
+    "RuntimeResourceStateV1": {
+      "additionalProperties": false,
+      "properties": {
+        "contentHash": {
+          "type": "string"
+        },
+        "resourceId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "resourceKind": {
+          "$ref": "#/$defs/RuntimeResourceKindV1"
+        },
+        "resourceVersion": {
+          "type": "string"
+        },
+        "stateEpoch": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "status": {
+          "$ref": "#/$defs/RuntimeResourceStateStatusV1"
+        },
+        "tenantId": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tenantId",
+        "resourceKind",
+        "resourceId",
+        "resourceVersion",
+        "stateEpoch",
+        "status",
+        "contentHash"
+      ],
+      "type": "object"
+    },
+    "RuntimeRetentionHoldV1": {
+      "additionalProperties": false,
+      "properties": {
+        "aggregateId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "aggregateType": {
+          "type": "string"
+        },
+        "expiresAt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "held": {
+          "type": "boolean"
+        },
+        "holdId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "holdId",
+        "aggregateType",
+        "aggregateId",
+        "held",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "RuntimeRetentionPolicyV1": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "policyVersion": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "retentionDays": {
+          "additionalProperties": false,
+          "properties": {
+            "application_message": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "artifact": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "evaluation_report": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "execution": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "trace": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
+        "tenantId": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tenantId",
+        "policyVersion",
+        "retentionDays",
+        "enabled"
+      ],
+      "type": "object"
+    },
+    "RuntimeUserAdmissionV1": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "tenantId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "tenantQueryEnabled": {
+          "type": "boolean"
+        },
+        "tokenVersion": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "userId": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tenantId",
+        "userId",
+        "tokenVersion",
+        "enabled",
+        "tenantQueryEnabled"
+      ],
+      "type": "object"
+    },
+    "RuntimeUserApplicationGrantV1": {
+      "additionalProperties": false,
+      "properties": {
+        "applicationId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "canInvoke": {
+          "type": "boolean"
+        },
+        "canQuery": {
+          "type": "boolean"
+        },
+        "grantVersion": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "tenantId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "userId": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tenantId",
+        "userId",
+        "applicationId",
+        "grantVersion",
+        "canInvoke",
+        "canQuery"
+      ],
+      "type": "object"
+    },
+    "RuntimeUserWorkflowGrantV1": {
+      "additionalProperties": false,
+      "properties": {
+        "canQuery": {
+          "type": "boolean"
+        },
+        "grantVersion": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "tenantId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "userId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "workflowId": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tenantId",
+        "userId",
+        "workflowId",
+        "grantVersion",
+        "canQuery"
+      ],
+      "type": "object"
+    },
+    "ServiceIdentityAdmissionV1": {
+      "additionalProperties": false,
+      "properties": {
+        "capabilities": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "grantIds": {
+          "items": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "identityId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "policyEpoch": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "status": {
+          "$ref": "#/$defs/AdmissionStatusV1"
+        },
+        "tenantId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "workflowId": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tenantId",
+        "workflowId",
+        "identityId",
+        "policyEpoch",
+        "status",
+        "capabilities",
+        "grantIds"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "admissionEpoch": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "apiVersion": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "command": {
+      "$ref": "#/$defs/CommandEnvelopeV1"
+    },
+    "target": {
+      "$ref": "#/$defs/AdmissionTargetV1"
+    }
+  },
+  "required": [
+    "apiVersion",
+    "command",
+    "admissionEpoch",
+    "target"
+  ],
+  "title": "RuntimeAdmissionCommandV1",
+  "type": "object"
+}

@@ -2,20 +2,22 @@
 members = [
   "crates/agentx-api-types",
   "crates/agentx-application",
+  "crates/agentx-boundary-check",
+  "crates/agentx-bundle-builder",
+  "crates/agentx-control-infrastructure",
   "crates/agentx-domain",
-  "crates/agentx-infrastructure",
+  "crates/agentx-mysql-lease",
   "crates/agentx-node-protocol",
   "crates/agentx-runtime",
-  "crates/agentx-runtime-rpc",
+  "crates/agentx-runtime-contracts",
+  "crates/agentx-runtime-infrastructure",
+  "crates/agentx-v2-ops",
   "crates/agentx-service-kit",
-  "services/platform-api",
+  "services/platform-control",
+  "services/agentx-v2-runtime",
+  "services/observability",
   "services/echo-mcp",
   "services/echo-node",
-  "services/sandbox-manager",
-  "services/trace-writer",
-  "services/trigger-gateway",
-  "services/workflow-coordinator",
-  "services/workflow-worker",
 ]
 resolver = "3"
 
@@ -38,6 +40,7 @@ bytes = "1.10"
 cel-interpreter = { version = "0.10", features = ["json"] }
 clickhouse = { version = "0.13", features = ["time", "uuid", "rustls-tls-native-roots"] }
 csv = "1.3"
+ed25519-dalek = { version = "2.1", features = ["pkcs8", "rand_core"] }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 chrono-tz = "0.10"
 cron = "0.15"
@@ -62,10 +65,12 @@ rustls-native-certs = "0.8"
 rustls-pemfile = "2.2"
 rmcp = { version = "0.12", default-features = false, features = ["base64", "macros", "server", "transport-streamable-http-server"] }
 redis = { version = "0.29", features = ["tokio-rustls-comp", "connection-manager"] }
+rsa = { version = "0.9", features = ["pem"] }
 secrecy = { version = "0.10", features = ["serde"] }
 schemars = { version = "1.0", features = ["uuid1"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+serde_jcs = "0.1"
 serde_yaml = "0.9"
 sha2 = "0.10"
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "mysql", "uuid", "time", "json", "rust_decimal", "migrate", "macros"] }
@@ -89,10 +94,14 @@ zeroize = "1.8"
 zip = { version = "2.4", default-features = false, features = ["deflate"] }
 
 agentx-api-types = { path = "crates/agentx-api-types" }
+agentx-bundle-builder = { path = "crates/agentx-bundle-builder" }
 agentx-application = { path = "crates/agentx-application" }
+agentx-control-infrastructure = { path = "crates/agentx-control-infrastructure" }
 agentx-domain = { path = "crates/agentx-domain" }
-agentx-infrastructure = { path = "crates/agentx-infrastructure" }
+agentx-mysql-lease = { path = "crates/agentx-mysql-lease" }
 agentx-node-protocol = { path = "crates/agentx-node-protocol" }
 agentx-runtime = { path = "crates/agentx-runtime" }
-agentx-runtime-rpc = { path = "crates/agentx-runtime-rpc" }
+agentx-runtime-contracts = { path = "crates/agentx-runtime-contracts" }
+agentx-runtime-infrastructure = { path = "crates/agentx-runtime-infrastructure" }
+agentx-v2-ops = { path = "crates/agentx-v2-ops" }
 agentx-service-kit = { path = "crates/agentx-service-kit" }

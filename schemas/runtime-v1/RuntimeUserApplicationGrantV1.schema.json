@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "applicationId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "canInvoke": {
+      "type": "boolean"
+    },
+    "canQuery": {
+      "type": "boolean"
+    },
+    "grantVersion": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "tenantId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "userId": {
+      "format": "uuid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "tenantId",
+    "userId",
+    "applicationId",
+    "grantVersion",
+    "canInvoke",
+    "canQuery"
+  ],
+  "title": "RuntimeUserApplicationGrantV1",
+  "type": "object"
+}

@@ -1,128 +1,80 @@
-# Agentx Kubernetes 部署
+# Agentx V2 Kubernetes 部署
 
-统一入口是 `scripts/deploy.ps1`。脚本支持交互式 Custom 向导和版本化 JSON Profile；Profile 只保存模式、地址、镜像、Ingress、CA 文件路径和 Kubernetes Secret 名称，不保存密码、API Key 或 Session Token。
+统一入口是 `scripts/deploy-v2.ps1`，Profile API 固定为破坏性的 `agentx.io/deployment/v2alpha2`。旧 `v2alpha1` 不做转换，校验时会明确拒绝。
 
-## 1. 前置条件
+## 1. 物理 Namespace 与逻辑 Plane
 
-- PowerShell 7、`kubectl`，以及可访问的 Kubernetes 集群。
-- `local-build` 需要 Docker；`registry` 需要集群能拉取 Profile 指定的镜像。
-- 脚本优先使用 PATH 中的 Helm；不存在时自动下载固定 Helm `3.18.4` 并校验 SHA-256。
-- ingress-nginx 固定 Chart `4.15.1`、Controller `1.15.1`，Chart SHA-256 为 `3eff0bd18151d6e6b1c441463410571443dda1ac78292cb189346628de784f0c`。
-
-先执行：
-
-```powershell
-.\scripts\deploy.ps1 -Action Doctor -Profile Full
-.\scripts\deploy.ps1 -Action Install -Profile Full
-```
-
-Full 在同一 Namespace 部署 MySQL、Redis、ClickHouse、MinIO、LightRAG、Mem0 和 Agentx 核心服务。Full 默认不启用 Sandbox；OpenSandbox 必须独立安装后再使用 remote Profile 接入。
-
-## 2. Custom 与外部分散依赖
-
-从 `deploy/profiles/custom.example.json` 创建环境 Profile，然后选择：
-
-| 组件 | 模式 |
+| 物理 Namespace | 逻辑 Plane / 组件 |
 |---|---|
-| MySQL | `bundled` / `external` |
-| Redis | `bundled` / `external` |
-| ClickHouse | `bundled` / `external` |
-| Object Storage | `bundled-minio` / `external-s3` |
-| LightRAG、Mem0 | `bundled` / `external` / `disabled` |
-| Sandbox | `disabled` / `remote` |
-| 镜像 | `local-build` / `registry` |
+| `agentx-v2-control` | Control：`web-console`、`platform-control`、Control MySQL、Migration、Ingress |
+| `agentx-v2-runtime` | Runtime + Observability：四个 Runtime Deployment、Runtime MySQL/Redis、`observability`、ClickHouse、各自 Migration/Doctor/Bootstrap |
+| `agentx-v2-deps` | Dependencies：专用 ingress-nginx、Vault、MinIO、共享 Bootstrap；集群内部署的 OpenSandbox/LightRAG/Mem0 也属于此域 |
 
-四项状态型依赖不能禁用。外部 S3 Bucket 必须预先创建；Install/Upgrade 阶段的 `doctor-infrastructure` 会执行 MySQL `SELECT 1`、Redis `PING`、ClickHouse 查询以及 S3 临时对象的写入、读取和删除，以验证 Bucket、凭据和读写权限。单独的 `-Action Doctor` 只做本机工具、权限、Chart 和 Kustomize 预检，不会创建 Kubernetes 资源。外部依赖不会被安装、升级或卸载命令修改。
+Observability 与 Runtime 共用 Namespace，但仍使用独立的 ServiceAccount、Secret、Redis ACL、ClickHouse账号、NetworkPolicy、Release State 和 `agentx.io/plane=observability` Pod 标签。Observability 不持有 Runtime MySQL 凭据。
 
-非交互 managed Secret 使用以下环境变量：
+生产环境也创建这三个 Namespace。外部 MySQL、Redis、ClickHouse、S3、Vault 和 OpenSandbox 不由部署器安装；Dependencies Namespace 至少承载专用 ingress-nginx。
 
-| 条件 | 环境变量 |
-|---|---|
-| 外部 MySQL | `AGENTX_DEPLOY_MYSQL_PASSWORD` |
-| 外部 Redis | `AGENTX_DEPLOY_REDIS_PASSWORD` |
-| 外部 ClickHouse | `AGENTX_DEPLOY_CLICKHOUSE_PASSWORD` |
-| 外部 S3 | `AGENTX_DEPLOY_S3_ACCESS_KEY`、`AGENTX_DEPLOY_S3_SECRET_KEY`，可选 `AGENTX_DEPLOY_S3_SESSION_TOKEN` |
-| remote Sandbox | `AGENTX_DEPLOY_OPENSANDBOX_API_KEY` |
-| bundled LightRAG | `AGENTX_DEPLOY_LIGHTRAG_OPENAI_API_KEY`；非本地环境必填 |
-| bundled Mem0 | `AGENTX_DEPLOY_MEM0_OPENAI_API_KEY`；非本地环境必填 |
+## 2. 前置条件与 Profile
 
-也可设置 `secrets.mode=existing`，预先创建 Profile 引用的 `agentx-secrets`、`agentx-lightrag-secrets` 和 `agentx-mem0-secrets`。脚本只验证键名，不读取或保存明文。
+- PowerShell 7、`kubectl` 和可访问的 Kubernetes 集群。
+- `local-build` 镜像模式需要 Docker；`registry` 模式需要集群可拉取 Profile 中的固定镜像。
+- 脚本优先使用 PATH 中的 Helm；否则下载并校验固定 Helm `3.18.4`。
+- ingress-nginx 固定 Chart `4.15.1`、Controller `1.15.1` 和 Chart SHA-256。
+
+Profile 的 `namespaces` 只能包含不同且非空的 `control`、`runtime`、`dependencies`。本地示例为 `deploy/profiles/v2-full-local.json`，生产示例为 `deploy/profiles/v2-production.example.json`。
 
 ```powershell
-.\scripts\deploy.ps1 -Action Doctor -Profile Custom -ConfigFile .\agentx.deploy.json
-.\scripts\deploy.ps1 -Action Install -Profile Custom -ConfigFile .\agentx.deploy.json -NonInteractive
+.\scripts\deploy-v2.ps1 -Action Validate -Target All -ConfigFile deploy/profiles/v2-full-local.json
+.\scripts\deploy-v2.ps1 -Action Render -Target All -ConfigFile deploy/profiles/v2-full-local.json
 ```
 
-安装顺序为：预检、Namespace/Secret/CA、专用 Ingress、bundled 依赖、实际依赖 Doctor、Migration、核心服务、可选 Sandbox Manager、Addon、Web Ingress、Rollout/Health。
+Profile 只保存非敏感配置和 Secret 引用。`generated-local` 在三个 Namespace 中生成分域 Secret；生产使用 `existing-kubernetes`，必须预先创建 Profile 引用的工作负载 Secret。
 
-## 3. TLS 与 CA
-
-- MySQL 支持 `disabled/preferred/required/verify_ca/verify_identity`、私有 CA 和 mTLS。
-- Redis 使用 Rustls，支持 `rediss://`、独立密码 Secret、私有 CA 和 mTLS。
-- ClickHouse 支持 HTTPS、系统 CA 和私有 CA Bundle。
-- S3 支持 HTTPS、私有 CA Bundle、Access/Secret Key、Session Token 和 Path/Virtual-host Style。
-
-CA、客户端证书和私钥必须是部署主机的绝对路径。脚本复制到只读 `agentx-trust-bundle` Secret，并挂载到需要的 Pod；不提供关闭证书校验的选项。
-
-TLS 客户端合同可独立复核：
+## 3. 安装与独立逻辑 Target
 
 ```powershell
-.\scripts\tls-integration.ps1
+.\scripts\deploy-v2.ps1 -Action Install -Target All -ConfigFile deploy/profiles/v2-full-local.json
+.\scripts\deploy-v2.ps1 -Action Status -Target All -ConfigFile deploy/profiles/v2-full-local.json
+.\scripts\deploy-v2.ps1 -Action Doctor -Target All -ConfigFile deploy/profiles/v2-full-local.json
 ```
 
-该脚本验证系统 CA Store、ClickHouse/S3 HTTPS 私有 CA、错误 CA、认证失败、S3 Session Token，以及真实 MySQL/Redis TLS 容器的私有 CA、mTLS、错误 CA 和认证失败。仅运行不依赖 Docker 的部分可传 `-NoDocker`。统一脚本新生成的 managed Secret 使用 Base64URL 字符集，避免第三方客户端未转义密码时破坏连接 URI；已有 Secret 在 Upgrade 时保持不变。
+`-Target` 支持 `Control`、`Runtime`、`Observability`、`Dependencies`、`All`。Runtime 与 Observability 虽共享 Namespace，渲染、升级、状态、Doctor、回滚和卸载仍按逻辑 Plane 标签与资源清单隔离。Release State 分别保存为 `agentx-v2-release-state-control`、`agentx-v2-release-state-runtime` 和 `agentx-v2-release-state-observability`。
+
+安装顺序为：Profile/工具预检、三个 Namespace、分域 Secret、Dependencies ingress-nginx、bundled 基础设施、Migration、Bootstrap/Doctor、七类应用 Deployment、Rollout 和独立 Release State。七类应用首次安装默认均为 1 副本；Upgrade/Rollback 保留集群中现有副本数。
 
 ## 4. Ingress
 
-Agentx Web 只通过 `IngressClass=agentx-nginx` 暴露。Controller 安装在 `agentx-ingress`，Helm Release 为 `agentx-ingress-nginx`，不会设为默认 IngressClass。Profile 必须提供 Host，可选已有 TLS Secret，并可选择 `LoadBalancer` 或 `NodePort`。
+Control 与 Runtime 的 Ingress 对象留在各自业务 Namespace。Controller 的 Helm Release 固定为 `agentx-ingress-nginx`，安装在 Profile 的 Dependencies Namespace，IngressClass 使用 Profile 的 `ingress.className`，且不会设为默认类。
 
-卸载前脚本扫描所有 Namespace。若仍有其他 Ingress 使用 `agentx-nginx`，Controller 会保留。
+部署器使用 Helm Annotation 与 `agentx-ingress-ownership` ConfigMap 校验所有权；发现同名但未受管的 Release 或 IngressClass 会拒绝接管。卸载时先删除本 Target 的受管 Ingress，再扫描全集群使用者；只有无人使用且所有权匹配时才卸载 Controller 和 IngressClass。
 
-## 5. Addon 与 OpenSandbox
+RunId E2E 为每次运行生成三个临时 Namespace、独立 IngressClass 和独立 Helm 资源名，并将 Controller Service 设为 `ClusterIP`，避免并发临时环境争用宿主机 80/443。
 
-外部 LightRAG/Mem0 不作为全局租户配置注入：脚本只做集群内连通性检查。完成 Agentx Bootstrap 后，在 UI/API 中依次创建 Credential、Connection、测试连接并给 Workflow Service Identity 创建 Grant。
+## 5. 安全边界
 
-OpenSandbox Server/Runtime 安装见 `deploy/opensandbox/README.md`。一个逻辑 Sandbox Manager 可以多副本共享 MySQL Lease，并连接一个 OpenSandbox Lifecycle Endpoint；OpenSandbox Kubernetes Runtime 再为每次会话创建任意数量的 Sandbox Pod。本阶段不提供多 Docker Host Provider 调度。
+- Control、Runtime Namespace 执行 Restricted Pod Security；Dependencies 按 ingress-nginx/OpenSandbox 所需权限配置。
+- ingress-nginx 只能访问 Control/Runtime 公共入口，不能访问内部 API、MySQL、Redis、ClickHouse或 Vault 管理端口。
+- Observability 只能使用受限 Runtime Redis ACL、ClickHouse和自己的对象存储身份；不能读取 Runtime MySQL、Control数据或 Provider Secret。
+- Control MySQL位于 Control；Runtime MySQL、Redis、ClickHouse位于 Runtime；Vault、MinIO、OpenSandbox位于 Dependencies。
+- 不部署 Prometheus、Prometheus Adapter、Metrics Server、HPA 或 KEDA。
 
-## 6. 升级、状态与卸载
-
-```powershell
-.\scripts\deploy.ps1 -Action Upgrade -ConfigFile .\agentx.deploy.json
-.\scripts\deploy.ps1 -Action Status -Namespace agentx
-.\scripts\deploy.ps1 -Action Uninstall -Namespace agentx
-```
-
-- 普通 Upgrade 禁止切换 MySQL、Redis、ClickHouse、Object Storage 的 bundled/external 模式。
-- Addon 可切换模式，PVC 默认保留。
-- remote Sandbox 切换为 disabled 或卸载前，Manager 的 `doctor-drain` 必须确认没有活跃 Lease。
-- `-RotateSecrets` 只能与 `-Target all` 和 managed Secret 一起使用。它不轮换 Credential 加密 Key、bundled 数据库/存储密码、LightRAG API Token、Mem0 PostgreSQL/JWT 或远端 Node Token，避免存量数据和外部消费者失联；外部基础设施、OpenSandbox 和 Addon Provider 凭据必须先在 Provider 侧完成轮换，再通过部署环境变量写入。remote Sandbox 轮换前必须 drain。
-- Uninstall 只删除带 `app.kubernetes.io/managed-by=agentx-deploy` 的资源，外部依赖永不修改。
-- `-DeleteData` 只删除已标记所有权的已知 PVC；`-DeleteNamespace` 只删除由脚本创建并标记所有权的 Namespace。
-
-交互模式下删除数据或 Namespace 必须再次输入 Namespace；CI 需要同时传 `-NonInteractive` 和显式删除开关。
-
-## 7. 备份与恢复
-
-升级或切换外部依赖前分别备份 MySQL、ClickHouse 和对象存储；Redis 不作为权威数据备份。bundled PVC 默认保留，但 PVC 不是备份。恢复顺序为 MySQL、对象存储、ClickHouse，随后运行 `Upgrade` 重新执行幂等 Migration 和 Rollout。
-
-若状态型依赖需要从 bundled 迁移到 external，先停写并导出数据，验证外部服务，再使用新 Profile 执行卸载但保留 PVC，最后重新 Install；普通 Upgrade 会拒绝直接切换模式。
-
-## 8. 验收
+## 6. 升级、回滚与卸载
 
 ```powershell
-.\scripts\deploy-tests.ps1
-.\scripts\deploy.ps1 -Action Install -Profile Full -Namespace agentx-dryrun -DryRun -NonInteractive
-.\scripts\deploy-distributed-e2e.ps1
-.\scripts\e2e.ps1
+.\scripts\deploy-v2.ps1 -Action Upgrade -Target All -ConfigFile deploy/profiles/v2-full-local.json
+.\scripts\deploy-v2.ps1 -Action Rollback -Target Runtime -ConfigFile deploy/profiles/v2-full-local.json -PreviousReleaseManifest <manifest.json>
+.\scripts\deploy-v2.ps1 -Action Uninstall -Target Observability -ConfigFile deploy/profiles/v2-full-local.json
 ```
 
-`deploy-distributed-e2e.ps1` 将依赖放在 `agentx-e2e-deps`，Agentx 放在 `agentx-e2e`，验证跨 Namespace FQDN、Migration、升级数据保留和外部资源不被卸载。它还会在 Sandbox disabled Profile 下执行真实 Code Workflow，要求结果为 `RUNTIME_UNAVAILABLE`、Sandbox Lease 为 0 且 Sandbox Manager 不存在。默认结束后删除两个 Namespace；仅在确认当前源码镜像已经构建并导入集群时才使用 `-SkipBuild`。
+`Uninstall -Target Observability` 只删除 Observability标签资源，不删除 Runtime工作负载、Runtime MySQL/Redis或共享 Runtime Namespace。普通卸载保留 Namespace；非生产 RunId 环境使用 `-PurgeTestResources` 且 `-Target All` 时，才会删除去重后的三个临时 Namespace和无人使用的受管 Ingress集群资源。
 
-空集群或清理旧环境后的基础安装验收使用：
+本地测试数据允许全部重建时，可在完整 `Target All` 操作中使用 `-RecreateV2Data`。生产环境禁止该开关；PVC本身不是备份，状态型依赖切换必须另行执行停写、导出、恢复和验证。
+
+## 7. 验收
 
 ```powershell
-.\scripts\deploy.ps1 -Action Install -Profile Full -Namespace agentx -NonInteractive
-.\scripts\deploy.ps1 -Action Status -Namespace agentx
+.\scripts\v2-profile-tests.ps1
+.\scripts\v2-07-profile-tests.ps1 -SkipWebSourceBaseline
 ```
 
-成功状态必须包含 `agentx-deployment-state`，四项 bundled 基础设施、核心服务和所选 Addon 均 Ready；Full 默认 Sandbox disabled，因此不应存在 Sandbox Manager。
+临时 Kubernetes E2E 通过 `-RunId` 创建并在结束时删除三个临时 Namespace。验收应确认：只有三个物理 Namespace、七类 Deployment 均为 1 副本、七个 PDB、零 HPA/指标栈资源，Observability/ClickHouse 位于 Runtime，ingress-nginx 位于 Dependencies，并完成 Migration、Bootstrap、Doctor、发布、Invocation、Worker 和 Trace 查询闭环。

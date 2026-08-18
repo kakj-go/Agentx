@@ -2,12 +2,13 @@ param(
     [string]$Tag = "dev",
     [string]$Namespace = "agentx",
     [string[]]$Services = @(
-        "platform-api",
-        "trigger-gateway",
-        "workflow-coordinator",
+        "platform-control",
+        "runtime-gateway",
+        "workflow-runtime",
         "workflow-worker",
         "sandbox-manager",
-        "trace-writer"
+        "observability",
+        "web-console"
     ),
     [switch]$SkipWeb,
     [switch]$BuildMem0
@@ -41,7 +42,10 @@ function Initialize-KubernetesImageLoader {
         return
     }
 
-    kubectl create namespace $Namespace --dry-run=client -o yaml | kubectl apply -f -
+    $existingNamespace = kubectl get namespace $Namespace --ignore-not-found -o name
+    if (-not $existingNamespace) {
+        kubectl create namespace $Namespace | Out-Null
+    }
     kubectl -n $Namespace delete pod $imageLoaderPod --ignore-not-found --wait=true
     $manifest = @"
 apiVersion: v1
@@ -99,14 +103,40 @@ function Import-LocalKubernetesImage([string]$Image) {
 }
 try {
     foreach ($service in $Services) {
+        if ($service -eq "web-console") { continue }
         $image = "agentx/{0}:{1}" -f $service, $Tag
-        Invoke-DockerBuild -DockerArguments @("--file", "$root/deploy/docker/backend.Dockerfile", "--build-arg", "APP=$service", "--tag", $image, $root)
+        if ($service -eq "lightrag") {
+            Invoke-DockerBuild -DockerArguments @(
+                "--file", "$root/deploy/docker/lightrag.Dockerfile",
+                "--tag", $image,
+                $root
+            )
+            Import-LocalKubernetesImage $image
+            continue
+        }
+        $application = if ($service -eq "observability") { "agentx-observability" } else { $service }
+        $dockerArguments = @("--file", "$root/deploy/docker/backend.Dockerfile", "--build-arg", "APP=$application")
+        if ($service -eq "observability") {
+            $dockerArguments += @("--build-arg", "CARGO_PACKAGE=agentx-observability")
+        }
+        if ($service -in @("workflow-worker", "sandbox-manager", "v2-04-fixture")) {
+            $cargoPackage = "agentx-v2-runtime"
+            if ($service -eq "v2-04-fixture") { $cargoPackage = "platform-control" }
+            $dockerArguments += @("--build-arg", "CARGO_PACKAGE=$cargoPackage")
+        }
+        $dockerArguments += @("--tag", $image, $root)
+        Invoke-DockerBuild -DockerArguments $dockerArguments
         Import-LocalKubernetesImage $image
     }
 
-    if (-not $SkipWeb) {
-        $webImage = "agentx/web:$Tag"
-        Invoke-DockerBuild -DockerArguments @("--file", "$root/deploy/docker/web.Dockerfile", "--tag", $webImage, $root)
+    if (-not $SkipWeb -or $Services -contains "web-console") {
+        $webImage = if ($Services -contains "web-console") { "agentx/web-console:$Tag" } else { "agentx/web:$Tag" }
+        $webArguments = @("--file", "$root/deploy/docker/web.Dockerfile")
+        if ($Services -contains "web-console") {
+            $webArguments += @("--build-arg", "NGINX_CONFIG=deploy/docker/nginx-v2.conf")
+        }
+        $webArguments += @("--tag", $webImage, $root)
+        Invoke-DockerBuild -DockerArguments $webArguments
         Import-LocalKubernetesImage $webImage
     }
 

@@ -44,12 +44,18 @@ export function EvaluationDetailPage() {
   </PageContainer>
 }
 
-function getMetricValue(metrics: unknown[], key: string) {
-  const metric = metrics.find((item) => {
-    if (typeof item !== 'object' || item === null) return false
-    return (item as Record<string, unknown>).key === key
-  })
-  if (typeof metric !== 'object' || metric === null) return 0
-  const value = (metric as Record<string, unknown>).value
+function getMetricValue(metrics: unknown, key: string) {
+  if (Array.isArray(metrics)) {
+    const metric = metrics.find((item) => {
+      if (typeof item !== 'object' || item === null) return false
+      return (item as Record<string, unknown>).key === key
+    })
+    if (typeof metric !== 'object' || metric === null) return 0
+    const value = (metric as Record<string, unknown>).value
+    return typeof value === 'number' ? value : 0
+  }
+  if (typeof metrics !== 'object' || metrics === null) return 0
+  const camelKey = key.replace(/_([a-z])/g, (_, letter: string) => letter.toUpperCase())
+  const value = (metrics as Record<string, unknown>)[key] ?? (metrics as Record<string, unknown>)[camelKey]
   return typeof value === 'number' ? value : 0
 }

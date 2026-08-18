@@ -417,7 +417,10 @@ impl ExecutionMachine {
                 .activations
                 .get_mut(&id)
                 .ok_or(MachineError::ActivationNotFound(id))?;
-            if activation.status != ActivationStatus::Running {
+            if !matches!(
+                activation.status,
+                ActivationStatus::Running | ActivationStatus::Waiting
+            ) {
                 return Err(MachineError::InvalidTransition {
                     id,
                     from: activation.status,
@@ -1006,7 +1009,7 @@ fn subgraph(
     );
     workflow.nodes = nodes;
     workflow.connections = connections;
-    workflow.terminal_connections = source
+    let mut terminal_connections = source
         .terminal_connections
         .iter()
         .filter_map(|connection| {
@@ -1018,7 +1021,29 @@ fn subgraph(
                 branch_order: connection.branch_order,
             })
         })
-        .collect();
+        .collect::<Vec<_>>();
+    if matches!(
+        mode,
+        PartialExecutionMode::Node | PartialExecutionMode::ToNode
+    ) {
+        let source_port = workflow.nodes[selected]
+            .output_ports
+            .iter()
+            .find(|port| port.as_str() == "main")
+            .or_else(|| workflow.nodes[selected].output_ports.first())
+            .cloned()
+            .unwrap_or_else(|| "main".into());
+        terminal_connections.clear();
+        terminal_connections.push(CompiledTerminalConnection {
+            id: format!("__partial_end__:{}", source.nodes[selected_source].id),
+            source_node: selected,
+            source_port,
+            target_port: "main".into(),
+            branch_order: 0,
+        });
+        workflow.end.outputs.clear();
+    }
+    workflow.terminal_connections = terminal_connections;
     workflow.start_to_end = source.start_to_end && start_nodes.is_empty();
     workflow.start_nodes = start_nodes;
     workflow.strongly_connected_components = components;
@@ -1336,6 +1361,35 @@ mod tests {
     }
 
     #[test]
+    fn suspended_composite_can_converge_to_a_failed_terminal() {
+        let workflow = compile(json!({
+            "schemaVersion":"4.0",
+            "nodes":[
+                {"id":"child","type":"wait","typeVersion":1,"name":"Child","settings":{"onError":"continue_error_output"}}
+            ],
+            "connections":[
+                {"id":"child-error","sourceNodeId":"child","sourceHandle":"error","targetNodeId":"__end__","targetHandle":"error","order":0}
+            ],
+            "end":{"outputs":{},"error":{"strategy":"fail_fast","collectWindowMs":100,"outputs":{}}}
+        }));
+        let mut machine = ExecutionMachine::new(workflow, vec![item(1)]).unwrap();
+        let child = machine.next_ready().unwrap();
+        machine.start_attempt(child).unwrap();
+        machine.suspend(child).unwrap();
+
+        machine
+            .fail(child, "COMPOSITE_CHILD_FAILED", "child failed", false)
+            .unwrap();
+
+        assert_eq!(machine.status(), RuntimeExecutionStatus::Failed);
+        assert_eq!(
+            machine.activation(child).unwrap().status,
+            ActivationStatus::Failed
+        );
+        assert_eq!(machine.end_deliveries()[0].target_port, "error");
+    }
+
+    #[test]
     fn partial_forks_select_the_expected_subgraph_and_inputs() {
         let workflow = compile(json!({
             "schemaVersion":"4.0",
@@ -1422,6 +1476,9 @@ mod tests {
             .complete(activation, BTreeMap::from([("main".into(), vec![item(7)])]))
             .unwrap();
         assert_eq!(direct.status(), RuntimeExecutionStatus::Succeeded);
+        assert_eq!(direct.end_deliveries().len(), 1);
+        assert_eq!(direct.end_deliveries()[0].target_port, "main");
+        assert_eq!(direct.end_deliveries()[0].items[0].json["value"], 7);
     }
 
     #[test]

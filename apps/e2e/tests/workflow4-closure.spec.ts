@@ -2,11 +2,13 @@ import { expect, type APIResponse, type Page, test } from '@playwright/test'
 
 const password = 'agentx-e2e-admin-password'
 const company = 'Agentx E2E'
+const gatewayBase = process.env.AGENTX_E2E_RUNTIME_URL ?? ''
 
 type Workflow = { id: string; name: string }
 type Draft = { revision: number; definition: Definition; editorDocument: Record<string, unknown> }
 type Version = { id: string; versionNumber: number }
-type Application = { id: string; slug: string }
+type Application = { id: string; slug: string; apiKey: string }
+type Deployment = { id: string; status: string }
 type Environment = { id: string; code: string }
 type TerminalError = { primaryError?: { code?: string; message?: string }; errors?: unknown[]; outputs?: Record<string, unknown> }
 type Invocation = { id: string; executionId?: string; status: string; outputs?: Record<string, unknown>; error?: TerminalError }
@@ -49,7 +51,7 @@ async function expectResponse(response: APIResponse, label: string) {
 }
 
 async function request<T>(page: Page, token: string, path: string, method = 'GET', body?: unknown, gateway = false, headers: Record<string, string> = {}): Promise<T> {
-  const response = await page.request.fetch(`${gateway ? '/gateway/v1' : '/api/v1'}${path}`, {
+  const response = await page.request.fetch(`${gateway ? `${gatewayBase}/gateway/v1` : '/api/v1'}${path}`, {
     method,
     data: body,
     headers: { Authorization: `Bearer ${token}`, ...headers },
@@ -112,19 +114,28 @@ async function reviseWorkflow(page: Page, token: string, workflowId: string, def
 
 async function deployApplication(page: Page, token: string, workflow: Workflow, version: Version, environmentId: string, slug: string) {
   await request(page, token, `/workflows/${workflow.id}/deployments`, 'POST', { workflowVersionId: version.id, environmentId })
-  const application = await request<Application>(page, token, '/applications', 'POST', {
+  const application = await request<Omit<Application, 'apiKey'>>(page, token, '/applications', 'POST', {
     workflowId: workflow.id,
     name: `${workflow.name} Application`,
     slug,
     description: 'Workflow 4.0 E2E application',
     visibility: 'company',
   })
-  await request(page, token, `/applications/${application.id}/deployments`, 'POST', {
+  const apiKey = await request<{ secret: string }>(page, token, `/applications/${application.id}/api-keys`, 'POST', {
+    name: 'Workflow 4.0 E2E',
+  })
+  const deployment = await request<Deployment>(page, token, `/applications/${application.id}/deployments`, 'POST', {
     workflowVersionId: version.id,
     environmentId,
     sessionVersionPolicy: 'pinned',
   })
-  return application
+  await expect.poll(async () => {
+    const deployments = await request<Deployment[]>(page, token, `/applications/${application.id}/deployments`)
+    const status = deployments.find((value) => value.id === deployment.id)?.status
+    if (status === 'rejected') throw new Error(`application deployment ${deployment.id} was rejected`)
+    return status
+  }, { timeout: 180_000, intervals: [500, 1_000, 2_000] }).toBe('active')
+  return { ...application, apiKey: apiKey.secret }
 }
 
 async function waitInvocation(page: Page, token: string, id: string) {
@@ -234,8 +245,8 @@ test('Workflow 4.0 closes Composite, Context, Package, Multipart and cancellatio
   expect(secondChildVersion.versionNumber).toBe(2)
 
   const application = await deployApplication(page, token, parent.workflow, parent.version, environment!.id, `w4-parent-${suffix}`)
-  const invalidInput = await page.request.post(`/gateway/v1/workflows/${application.slug}/invoke`, {
-    headers: { Authorization: `Bearer ${token}`, 'Idempotency-Key': `w4-invalid-${suffix}` },
+  const invalidInput = await page.request.post(`${gatewayBase}/gateway/v1/workflows/${application.slug}/invoke`, {
+    headers: { Authorization: `Bearer ${application.apiKey}`, 'Idempotency-Key': `w4-invalid-${suffix}` },
     data: { input: { question: 'x', attachments: [] }, responseMode: 'async' },
   })
   expect(invalidInput.status()).toBe(400)
@@ -246,8 +257,8 @@ test('Workflow 4.0 closes Composite, Context, Package, Multipart and cancellatio
     form.append('question', 'hello')
     form.append('responseMode', 'async')
     for (const file of files) form.append('attachments', new File([file.contents], file.name, { type: file.type }))
-    const response = await page.request.post(`/gateway/v1/workflows/${application.slug}/invoke`, {
-      headers: { Authorization: `Bearer ${token}`, 'Idempotency-Key': `w4-${id}-${suffix}` },
+    const response = await page.request.post(`${gatewayBase}/gateway/v1/workflows/${application.slug}/invoke`, {
+      headers: { Authorization: `Bearer ${application.apiKey}`, 'Idempotency-Key': `w4-${id}-${suffix}` },
       multipart: form,
     })
     expect(response.status()).toBe(400)
@@ -265,8 +276,8 @@ test('Workflow 4.0 closes Composite, Context, Package, Multipart and cancellatio
     { name: 'third.txt', type: 'text/plain', contents: '3' },
   ], 'INPUT_SCHEMA_VALIDATION_FAILED')
 
-  const multipart = await page.request.post(`/gateway/v1/workflows/${application.slug}/invoke`, {
-    headers: { Authorization: `Bearer ${token}`, 'Idempotency-Key': `w4-multipart-${suffix}` },
+  const multipart = await page.request.post(`${gatewayBase}/gateway/v1/workflows/${application.slug}/invoke`, {
+    headers: { Authorization: `Bearer ${application.apiKey}`, 'Idempotency-Key': `w4-multipart-${suffix}` },
     multipart: {
       question: 'hello',
       responseMode: 'sync',
@@ -275,7 +286,7 @@ test('Workflow 4.0 closes Composite, Context, Package, Multipart and cancellatio
   })
   await expectResponse(multipart, 'multipart invoke')
   const invocation = await multipart.json() as Invocation
-  const completed = invocation.status === 'completed' ? invocation : await waitInvocation(page, token, invocation.id)
+  const completed = invocation.status === 'completed' ? invocation : await waitInvocation(page, application.apiKey, invocation.id)
   expect(completed.status).toBe('completed')
   expect(completed.outputs).toMatchObject({ answer: 'v1:hello', counter: 1, prefix: 'default-applied' })
   expect(completed.outputs?.attachments).toEqual([
@@ -349,10 +360,10 @@ test('Workflow 4.0 closes Composite, Context, Package, Multipart and cancellatio
   }
   const slowParent = await createWorkflow(page, token, `W4 Slow Parent ${suffix}`, slowParentDefinition)
   const slowApplication = await deployApplication(page, token, slowParent.workflow, slowParent.version, environment!.id, `w4-slow-${suffix}`)
-  const slowInvoke = await request<Invocation>(page, token, `/workflows/${slowApplication.slug}/invoke`, 'POST', { input: {}, responseMode: 'async' }, true, {
+  const slowInvoke = await request<Invocation>(page, slowApplication.apiKey, `/workflows/${slowApplication.slug}/invoke`, 'POST', { input: {}, responseMode: 'async' }, true, {
     'Idempotency-Key': `w4-slow-${suffix}`,
   })
-  const slowTerminal = await waitInvocation(page, token, slowInvoke.id)
+  const slowTerminal = await waitInvocation(page, slowApplication.apiKey, slowInvoke.id)
   expect(slowTerminal.status).toBe('failed')
   expect(slowTerminal.error?.primaryError?.code).toBeTruthy()
   const parentExecution = await waitExecution(page, token, slowTerminal.executionId!, ['failed'])
@@ -395,13 +406,15 @@ test('Workflow 4.0 turns concurrent Session Context CAS conflicts into a termina
   }
   const workflow = await createWorkflow(page, token, `W4 Session CAS ${suffix}`, definition)
   const application = await deployApplication(page, token, workflow.workflow, workflow.version, environment.id, `w4-session-${suffix}`)
-  const session = await request<{ id: string }>(page, token, `/applications/${application.slug}/sessions`, 'POST', {}, true)
+  const session = await request<{ id: string }>(page, application.apiKey, `/applications/${application.slug}/sessions`, 'POST', {}, true, {
+    'Idempotency-Key': `w4-session-create-${suffix}`,
+  })
   let invocationIndex = 0
-  const invoke = () => request<Invocation>(page, token, `/workflows/${application.slug}/invoke`, 'POST', { input: {}, sessionId: session.id }, true, {
+  const invoke = () => request<Invocation>(page, application.apiKey, `/workflows/${application.slug}/invoke`, 'POST', { input: {}, sessionId: session.id }, true, {
     'Idempotency-Key': `w4-session-${suffix}-${invocationIndex++}`,
   })
   const [first, second] = await Promise.all([invoke(), invoke()])
-  const terminals = await Promise.all([waitInvocation(page, token, first.id), waitInvocation(page, token, second.id)])
+  const terminals = await Promise.all([waitInvocation(page, application.apiKey, first.id), waitInvocation(page, application.apiKey, second.id)])
   expect(terminals.map((value) => value.status).sort()).toEqual(['completed', 'failed'])
   expect(terminals.find((value) => value.status === 'failed')?.error?.primaryError?.code).toBe('SESSION_CONTEXT_VERSION_CONFLICT')
 })
@@ -441,10 +454,10 @@ test('Workflow 4.0 propagates fail-fast, collected and Composite End errors', as
     const slugLabel = label.toLowerCase().replaceAll(' ', '-')
     const workflow = await createWorkflow(page, token, `W4 ${label} ${suffix}`, definition)
     const application = await deployApplication(page, token, workflow.workflow, workflow.version, environment.id, `w4-${slugLabel}-${suffix}`)
-    const invocation = await request<Invocation>(page, token, `/workflows/${application.slug}/invoke`, 'POST', { input: {}, responseMode: 'async' }, true, {
+    const invocation = await request<Invocation>(page, application.apiKey, `/workflows/${application.slug}/invoke`, 'POST', { input: {}, responseMode: 'async' }, true, {
       'Idempotency-Key': `w4-${slugLabel}-${suffix}`,
     })
-    return { workflow, terminal: await waitInvocation(page, token, invocation.id) }
+    return { workflow, terminal: await waitInvocation(page, application.apiKey, invocation.id) }
   }
 
   const failFast = await invokeFailure('Fail Fast', errorDefinition('fail_fast', ['FAIL_FAST']))

@@ -1,0 +1,22 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: control-web
+  namespace: agentx-v2-control
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+spec:
+  ingressClassName: agentx-nginx
+  tls: []
+  rules:
+    - host: agentx.localhost
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service: { name: platform-control, port: { number: 8080 } }
+          - path: /
+            pathType: Prefix
+            backend:
+              service: { name: web-console, port: { number: 8080 } }

@@ -1,0 +1,372 @@
+{
+  "$defs": {
+    "RuntimeResourceConfigurationV1": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "credential": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/VaultSecretReferenceV1"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "endpoint": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "model",
+              "type": "string"
+            },
+            "model": {
+              "type": "string"
+            },
+            "priceVersion": {
+              "type": "string"
+            },
+            "provider": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "provider",
+            "endpoint",
+            "model",
+            "priceVersion"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "credential": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/VaultSecretReferenceV1"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "endpoint": {
+              "type": "string"
+            },
+            "inputSchemaHash": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "mcp",
+              "type": "string"
+            },
+            "toolName": {
+              "type": "string"
+            },
+            "toolVersion": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "endpoint",
+            "toolName",
+            "toolVersion",
+            "inputSchemaHash"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "credential": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/VaultSecretReferenceV1"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "endpoint": {
+              "type": "string"
+            },
+            "indexVersion": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "rag",
+              "type": "string"
+            },
+            "namespace": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "endpoint",
+            "namespace",
+            "indexVersion"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "credential": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/VaultSecretReferenceV1"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "endpoint": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "memory",
+              "type": "string"
+            },
+            "memoryVersion": {
+              "type": "string"
+            },
+            "namespace": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "endpoint",
+            "namespace",
+            "memoryVersion"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "dependencyObjectIds": {
+              "items": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "entrypointObjectId": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "kind": {
+              "const": "skill",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "entrypointObjectId",
+            "dependencyObjectIds"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "allowedOperations": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array",
+              "uniqueItems": true
+            },
+            "kind": {
+              "const": "credential",
+              "type": "string"
+            },
+            "secret": {
+              "$ref": "#/$defs/VaultSecretReferenceV1"
+            }
+          },
+          "required": [
+            "kind",
+            "secret",
+            "allowedOperations"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "cpuMillis": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "diskBytes": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "image": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "sandbox_profile",
+              "type": "string"
+            },
+            "maximumTtlSeconds": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "memoryBytes": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "networkPolicy": {
+              "type": "string"
+            },
+            "pidLimit": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "provider": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "provider",
+            "image",
+            "cpuMillis",
+            "memoryBytes",
+            "diskBytes",
+            "pidLimit",
+            "networkPolicy",
+            "maximumTtlSeconds"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "definitionObjectId": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "irObjectId": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "kind": {
+              "const": "composite",
+              "type": "string"
+            },
+            "workflowVersionId": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "workflowVersionId",
+            "definitionObjectId",
+            "irObjectId"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "RuntimeResourceKindV1": {
+      "enum": [
+        "model",
+        "mcp",
+        "rag",
+        "memory",
+        "skill",
+        "credential",
+        "sandbox_profile",
+        "composite"
+      ],
+      "type": "string"
+    },
+    "VaultSecretReferenceV1": {
+      "additionalProperties": false,
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "mount": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "version": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "mount",
+        "path",
+        "key",
+        "version"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "configuration": {
+      "$ref": "#/$defs/RuntimeResourceConfigurationV1"
+    },
+    "contentHash": {
+      "type": "string"
+    },
+    "objectIds": {
+      "items": {
+        "format": "uuid",
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "resourceId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "resourceKind": {
+      "$ref": "#/$defs/RuntimeResourceKindV1"
+    },
+    "resourceVersion": {
+      "type": "string"
+    },
+    "stateEpoch": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "resourceKind",
+    "resourceId",
+    "resourceVersion",
+    "stateEpoch",
+    "contentHash",
+    "configuration",
+    "objectIds"
+  ],
+  "title": "RuntimeResourceBindingV1",
+  "type": "object"
+}

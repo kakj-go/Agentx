@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "applicationIds": {
+      "items": {
+        "format": "uuid",
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "createdAfter": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "createdBefore": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "cursor": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "limit": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "search": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "statuses": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "tenantId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "workflowIds": {
+      "items": {
+        "format": "uuid",
+        "type": "string"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "apiVersion",
+    "tenantId",
+    "applicationIds",
+    "workflowIds",
+    "statuses",
+    "limit"
+  ],
+  "title": "ExecutionSearchRequestV1",
+  "type": "object"
+}

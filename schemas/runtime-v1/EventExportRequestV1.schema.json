@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "afterCursor": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "apiVersion": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "limit": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "waitSeconds": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "apiVersion",
+    "afterCursor",
+    "limit",
+    "waitSeconds"
+  ],
+  "title": "EventExportRequestV1",
+  "type": "object"
+}

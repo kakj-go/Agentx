@@ -37,16 +37,15 @@ export function ApprovalDetailPage() {
   const approval = useQuery({ queryKey: ['approval', id], queryFn: () => apiRequest<Approval>(`/approvals/${id}`), refetchInterval: (query) => query.state.data?.resumeStatus === 'pending' ? 1_000 : false })
   const actions = useQuery({ queryKey: ['approval-actions', id], queryFn: () => apiRequest<ApprovalAction[]>(`/approvals/${id}/actions`) })
   const candidates = useQuery({ queryKey: ['approval-candidates', id], queryFn: () => apiRequest<Candidate[]>(`/approvals/${id}/candidates`) })
-  const refresh = async () => Promise.all([
-    queryClient.invalidateQueries({ queryKey: ['approval', id] }),
+  const refreshRelated = async () => Promise.all([
     queryClient.invalidateQueries({ queryKey: ['approval-actions', id] }),
     queryClient.invalidateQueries({ queryKey: ['approvals'] }),
     queryClient.invalidateQueries({ queryKey: ['notifications'] }),
   ])
   const act = useMutation({
     mutationFn: ({ action, targetUserId }: { action: ApprovalActionName; targetUserId?: string }) => apiRequest<Approval>(`/approvals/${id}/${action}`, { method: 'POST', body: jsonBody({ version: approval.data?.version, ...(action === 'approve' || action === 'reject' ? { input: null } : {}), ...(action === 'reassign' ? { targetUserId } : {}) }) }),
-    onSuccess: async () => { setTerminalAction(null); setReassignOpen(false); await refresh(); showToast(t('approvals.approvalUpdated')) },
-    onError: async (error: Error) => { showToast(error.message); await refresh() },
+    onSuccess: async (value) => { queryClient.setQueryData(['approval', id], value); setTerminalAction(null); setReassignOpen(false); await refreshRelated(); showToast(t('approvals.approvalUpdated')) },
+    onError: async (error: Error) => { showToast(error.message); await queryClient.invalidateQueries({ queryKey: ['approval', id] }); await refreshRelated() },
   })
   if (!approval.data) return <PageContainer><EmptyState title={approval.isLoading ? t('common.loading') : t('common.loadFailed')} description={String(approval.error ?? '')} /></PageContainer>
   const value = approval.data
