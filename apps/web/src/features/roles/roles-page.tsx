@@ -79,10 +79,10 @@ function RoleDialog({ role, available, open, onClose, onSaved }: { role?: Role; 
       <h3 className="text-lg font-semibold">{title}</h3>
       <form className="mt-5 space-y-4" onSubmit={(event) => void submit(event)} ref={formRef}>
         <div className="grid grid-cols-2 gap-4">
-          <label className="text-xs"><span className="mb-2 block">{t('common.name')}</span><Input onChange={(event) => setName(event.target.value)} required value={name} /></label>
-          <label className="text-xs"><span className="mb-2 block">{t('roles.code')}</span><Input aria-describedby={codeError ? 'role-code-error' : undefined} aria-invalid={Boolean(codeError)} disabled={Boolean(role)} name="code" onChange={(event) => { setCode(event.target.value); setCodeError('') }} required value={code} />{codeError && <span className="mt-1.5 block text-danger" id="role-code-error">{codeError}</span>}</label>
+          <label className="text-xs"><span className="mb-2 block">{t('common.name')}<RequiredMark /></span><Input aria-label={t('common.name')} onChange={(event) => setName(event.target.value)} required value={name} /></label>
+          <label className="text-xs"><span className="mb-2 block">{t('roles.code')}<RequiredMark /></span><Input aria-describedby={codeError ? 'role-code-error' : undefined} aria-invalid={Boolean(codeError)} aria-label={t('roles.code')} disabled={Boolean(role)} name="code" onChange={(event) => { setCode(event.target.value); setCodeError('') }} required value={code} />{codeError && <span className="mt-1.5 block text-danger" id="role-code-error">{codeError}</span>}</label>
         </div>
-        <label className="block text-xs"><span className="mb-2 block">{t('roles.dataScope')}</span><Select className="w-full" onValueChange={setScope} options={['company', 'department_tree', 'own'].map((value) => ({ value, label: dataScopeLabel(t, value) }))} value={scope} /></label>
+        <label className="block text-xs"><span className="mb-2 block">{t('roles.dataScope')}<RequiredMark /></span><Select aria-label={t('roles.dataScope')} aria-required className="w-full" onValueChange={setScope} options={['company', 'department_tree', 'own'].map((value) => ({ value, label: dataScopeLabel(t, value) }))} value={scope} /></label>
         <fieldset><legend className="mb-2 text-xs font-medium">{t('roles.permissions')}</legend><div className="grid max-h-60 grid-cols-2 gap-2 overflow-auto rounded-lg border border-border p-3">{available.map((permission) => <label className="flex items-start gap-2 rounded-lg p-2 text-xs hover:bg-muted/50" key={permission.key}><input checked={selected.includes(permission.key)} className="mt-0.5 accent-primary" onChange={() => toggle(permission.key)} type="checkbox" /><span><strong className="block font-medium">{permissionLabel(t, permission.key)}</strong><span className="mt-0.5 block text-[10px] text-muted-foreground">{permission.key}</span></span></label>)}</div></fieldset>
         {error && <p className="text-xs text-danger">{error}</p>}
         <div className="flex justify-end gap-2"><Button onClick={onClose} type="button" variant="ghost">{t('common.cancel')}</Button><Button disabled={pending} type="submit">{t('common.save')}</Button></div>
@@ -90,3 +90,5 @@ function RoleDialog({ role, available, open, onClose, onSaved }: { role?: Role; 
     </DialogContent>
   </Dialog>
 }
+
+function RequiredMark() { return <span aria-hidden="true" className="ml-1 text-danger">*</span> }

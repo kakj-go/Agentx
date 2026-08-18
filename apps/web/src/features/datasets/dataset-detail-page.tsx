@@ -69,13 +69,13 @@ export function DatasetDetailPage() {
   const datasetFields: EntityFormField[] = [
     { name: 'name', label: t('common.name'), required: true, defaultValue: dataset.data.name },
     { name: 'description', label: t('common.description'), type: 'textarea', defaultValue: dataset.data.description ?? '' },
-    { name: 'visibility', label: t('datasets.visibility'), type: 'select', defaultValue: dataset.data.visibility, options: ['private', 'department', 'company'].map((item) => ({ value: item, label: t(`datasets.${item}`) })) },
-    { name: 'status', label: t('common.status'), type: 'select', defaultValue: dataset.data.status, options: ['active', 'disabled'].map((item) => ({ value: item, label: t(`datasets.${item}`) })) },
+    { name: 'visibility', label: t('datasets.visibility'), type: 'select', defaultValue: dataset.data.visibility, required: true, options: ['private', 'department', 'company'].map((item) => ({ value: item, label: t(`datasets.${item}`) })) },
+    { name: 'status', label: t('common.status'), type: 'select', defaultValue: dataset.data.status, required: true, options: ['active', 'disabled'].map((item) => ({ value: item, label: t(`datasets.${item}`) })) },
   ]
   const caseFields: EntityFormField[] = [
     { name: 'caseKey', label: t('datasets.caseKey'), required: true, defaultValue: selectedCase?.caseKey ?? '' },
     { name: 'name', label: t('common.name'), required: true, defaultValue: selectedCase?.name ?? '' },
-    { name: 'input', label: t('datasets.inputJson'), type: 'textarea', defaultValue: JSON.stringify(selectedCase?.input ?? {}, null, 2) },
+    { name: 'input', label: t('datasets.inputJson'), type: 'textarea', defaultValue: JSON.stringify(selectedCase?.input ?? {}, null, 2), required: true },
     { name: 'expectedOutput', label: t('datasets.expectedJson'), type: 'textarea', defaultValue: JSON.stringify(selectedCase?.expectedOutput ?? {}, null, 2) },
     { name: 'context', label: t('datasets.contextJson'), type: 'textarea', defaultValue: selectedCase?.context ? JSON.stringify(selectedCase.context, null, 2) : '' },
     { name: 'tags', label: t('datasets.tags'), placeholder: t('datasets.tagsPlaceholder'), defaultValue: selectedCase?.tags.join(', ') ?? '' },

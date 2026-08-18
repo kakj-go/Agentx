@@ -48,6 +48,8 @@ use agentx_v2_runtime::{
     },
     query::{get_execution, search_executions},
     retention::run_once as run_retention_once,
+    trigger::{TriggerProvider, TriggerProviderResponse},
+    worker_runtime::{RuntimeWorker, WorkerProvider, WorkerProviderError, WorkerProviderResponse},
 };
 use axum::{
     Json, Router,
@@ -91,6 +93,96 @@ struct Fixture {
     identity_id: Uuid,
     key_id: Uuid,
     api_key: String,
+}
+
+struct StubTriggerProvider {
+    delay: Duration,
+    response: Result<TriggerProviderResponse, String>,
+}
+
+enum StubWorkerMode {
+    Reject,
+    Agent(Arc<std::sync::atomic::AtomicUsize>),
+    Evaluator,
+}
+
+struct StubWorkerProvider {
+    mode: StubWorkerMode,
+}
+
+#[async_trait::async_trait]
+impl WorkerProvider for StubWorkerProvider {
+    async fn post_json(
+        &self,
+        endpoint: &str,
+        _context: agentx_v2_runtime::egress::EgressRequestContext,
+        _timeout: Duration,
+        _headers: reqwest::header::HeaderMap,
+        body: &Value,
+    ) -> Result<WorkerProviderResponse, WorkerProviderError> {
+        let payload = match &self.mode {
+            StubWorkerMode::Reject => {
+                return Err(WorkerProviderError::Denied(
+                    "unexpected provider request in test".into(),
+                ));
+            }
+            StubWorkerMode::Evaluator => json!({
+                "passed":true,
+                "score":0.95,
+                "reason":"fixture accepted the target output",
+                "usage":{"tokens":7,"costMicros":23}
+            }),
+            StubWorkerMode::Agent(calls) if endpoint.ends_with("/model") => {
+                if calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                    json!({"toolCall":{"query":"agentx"},"usage":{"tokens":10,"costMicros":5}})
+                } else {
+                    json!({"done":true,"answer":"agentx-v2","usage":{"tokens":10,"costMicros":5}})
+                }
+            }
+            StubWorkerMode::Agent(_) if endpoint.ends_with("/mcp") => {
+                if body.get("id").is_none() {
+                    Value::Null
+                } else if body.get("method").and_then(Value::as_str) == Some("initialize") {
+                    json!({"jsonrpc":"2.0","id":body["id"],"result":{}})
+                } else {
+                    json!({"jsonrpc":"2.0","id":body["id"],"result":{"content":{"value":"tool-result"}}})
+                }
+            }
+            StubWorkerMode::Agent(_) => {
+                return Err(WorkerProviderError::Denied(format!(
+                    "unexpected Agent fixture endpoint: {endpoint}"
+                )));
+            }
+        };
+        Ok(WorkerProviderResponse {
+            status: reqwest::StatusCode::OK,
+            headers: reqwest::header::HeaderMap::new(),
+            body: Bytes::from(serde_json::to_vec(&payload).unwrap()),
+        })
+    }
+}
+
+fn test_worker(fixture: &Fixture, mode: StubWorkerMode) -> RuntimeWorker {
+    RuntimeWorker::new_with_provider(
+        fixture.state.pool.clone(),
+        fixture.state.objects.clone(),
+        Arc::new(StubWorkerProvider { mode }),
+    )
+}
+
+#[async_trait::async_trait]
+impl TriggerProvider for StubTriggerProvider {
+    async fn post_json(
+        &self,
+        _endpoint: &str,
+        _context: agentx_v2_runtime::egress::EgressRequestContext,
+        _timeout: Duration,
+        _idempotency_key: Option<&str>,
+        _input: &Value,
+    ) -> Result<TriggerProviderResponse, String> {
+        tokio::time::sleep(self.delay).await;
+        self.response.clone()
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
@@ -1155,11 +1247,7 @@ async fn large_worker_results_are_externalized_and_verified(fixture: &Fixture) {
     .await
     .unwrap()
     .unwrap();
-    let worker = agentx_v2_runtime::worker_runtime::RuntimeWorker::new(
-        fixture.state.pool.clone(),
-        fixture.state.objects.clone(),
-    )
-    .unwrap();
+    let worker = test_worker(fixture, StubWorkerMode::Reject);
     let execution = worker.execute(&claim).await;
     let result = worker.build_result(&claim, execution).await.unwrap();
     let object = result.output_object.clone().unwrap();
@@ -1730,28 +1818,7 @@ async fn composite_child_uses_immutable_runtime_snapshot_and_merges_on_success(f
 
 async fn agent_worker_runs_a_bounded_tool_loop_and_persists_usage(fixture: &Fixture) {
     let model_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let model_counter = model_calls.clone();
-    let provider = Router::new()
-        .route(
-            "/model",
-            post(move || {
-                let calls = model_counter.fetch_add(1, Ordering::SeqCst);
-                async move {
-                    if calls == 0 {
-                        Json(json!({"toolCall":{"query":"agentx"},"usage":{"tokens":10,"costMicros":5}}))
-                    } else {
-                        Json(json!({"done":true,"answer":"agentx-v2","usage":{"tokens":10,"costMicros":5}}))
-                    }
-                }
-            }),
-        )
-        .route(
-            "/mcp",
-            post(|| async { Json(json!({"content":{"value":"tool-result"}})) }),
-        );
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let endpoint = format!("http://{}", listener.local_addr().unwrap());
-    let provider_task = tokio::spawn(async move { axum::serve(listener, provider).await.unwrap() });
+    let endpoint = "https://provider.example.test";
     let model_configuration = agentx_runtime_contracts::RuntimeResourceConfigurationV1::Model {
         provider: "fixture".into(),
         endpoint: format!("{endpoint}/model"),
@@ -1826,11 +1893,7 @@ async fn agent_worker_runs_a_bounded_tool_loop_and_persists_usage(fixture: &Fixt
         ],
         context: json!({}),
     };
-    let worker = agentx_v2_runtime::worker_runtime::RuntimeWorker::new(
-        fixture.state.pool.clone(),
-        fixture.state.objects.clone(),
-    )
-    .unwrap();
+    let worker = test_worker(fixture, StubWorkerMode::Agent(model_calls.clone()));
     let output = worker.execute(&claim).await;
     assert_eq!(
         output.status,
@@ -1860,7 +1923,6 @@ async fn agent_worker_runs_a_bounded_tool_loop_and_persists_usage(fixture: &Fixt
             .await
             .unwrap();
     assert_eq!(call_count, 3);
-    provider_task.abort();
 }
 
 async fn skill_worker_loads_and_verifies_the_runtime_object_closure(fixture: &Fixture) {
@@ -1953,11 +2015,7 @@ async fn skill_worker_loads_and_verifies_the_runtime_object_closure(fixture: &Fi
         }],
         context: json!({}),
     };
-    let worker = agentx_v2_runtime::worker_runtime::RuntimeWorker::new(
-        fixture.state.pool.clone(),
-        fixture.state.objects.clone(),
-    )
-    .unwrap();
+    let worker = test_worker(fixture, StubWorkerMode::Reject);
     let output = worker.execute(&claim).await;
     assert_eq!(
         output.status,
@@ -2058,7 +2116,7 @@ async fn sandbox_manager_is_fenced_and_idempotent(fixture: &Fixture) {
         memory_bytes: 256 * 1024 * 1024,
         disk_bytes: 1024 * 1024 * 1024,
         pid_limit: 64,
-        network_policy: "deny".into(),
+        egress_mode: agentx_runtime_contracts::SandboxEgressModeV1::None,
         maximum_ttl_seconds: 300,
     };
     let request = agentx_v2_runtime::sandbox::SandboxExecuteRequestV1 {
@@ -2659,7 +2717,11 @@ async fn trigger_claim_takeover_and_provider_failure_are_fenced(pool: &MySqlPool
             .is_err()
     );
 
-    agentx_v2_runtime::trigger::execute(pool, &current)
+    let provider = StubTriggerProvider {
+        delay: Duration::ZERO,
+        response: Err("fixture unavailable".into()),
+    };
+    agentx_v2_runtime::trigger::execute_with_provider(pool, &current, &provider)
         .await
         .unwrap();
     let row = sqlx::query("SELECT locked_by,cursor_value,last_error,next_poll_at>UTC_TIMESTAMP(6) retry_delayed FROM trigger_bindings WHERE id=?")
@@ -2684,9 +2746,6 @@ async fn trigger_claim_takeover_and_provider_failure_are_fenced(pool: &MySqlPool
 
 #[tokio::test]
 async fn lifecycle_response_from_an_old_revision_cannot_create_an_invocation() {
-    use axum::{Json, Router, routing::post};
-    use tokio::net::TcpListener;
-
     let container = GenericImage::new("mysql", "8.4")
         .with_exposed_port(3306.tcp())
         .with_wait_for(WaitFor::message_on_stderr("ready for connections"))
@@ -2702,22 +2761,7 @@ async fn lifecycle_response_from_an_old_revision_cannot_create_an_invocation() {
     agentx_runtime_infrastructure::migrate_runtime_mysql(&pool)
         .await
         .unwrap();
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let endpoint = format!("http://{}/lifecycle", listener.local_addr().unwrap());
-    tokio::spawn(async move {
-        axum::serve(
-            listener,
-            Router::new().route(
-                "/lifecycle",
-                post(|| async {
-                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                    Json(json!({"accepted":true,"state":{"active":true}}))
-                }),
-            ),
-        )
-        .await
-        .unwrap();
-    });
+    let endpoint = "https://provider.example.test/lifecycle".to_owned();
     let tenant_id = Uuid::now_v7();
     let application_id = Uuid::now_v7();
     let bundle_id = Uuid::now_v7();
@@ -2744,10 +2788,19 @@ async fn lifecycle_response_from_an_old_revision_cannot_create_an_invocation() {
         .pop()
         .unwrap();
     let execute_pool = pool.clone();
-    let task =
-        tokio::spawn(
-            async move { agentx_v2_runtime::trigger::execute(&execute_pool, &claim).await },
-        );
+    let provider = Arc::new(StubTriggerProvider {
+        delay: Duration::from_millis(100),
+        response: Ok(TriggerProviderResponse {
+            success: true,
+            status: "200 OK".into(),
+            cursor: None,
+            body: json!({"accepted":true,"state":{"active":true}}),
+        }),
+    });
+    let task = tokio::spawn(async move {
+        agentx_v2_runtime::trigger::execute_with_provider(&execute_pool, &claim, provider.as_ref())
+            .await
+    });
     tokio::time::sleep(std::time::Duration::from_millis(25)).await;
     sqlx::query("UPDATE trigger_bindings SET configuration_revision=2 WHERE id=?")
         .bind(binding_id)
@@ -3313,20 +3366,7 @@ async fn evaluation_work_package_creates_cases_converges_and_cancels_atomically(
             .unwrap();
     assert_eq!(package_status, "succeeded");
 
-    let provider = Router::new().route(
-        "/evaluate",
-        post(|| async {
-            Json(json!({
-                "passed":true,
-                "score":0.95,
-                "reason":"fixture accepted the target output",
-                "usage":{"tokens":7,"costMicros":23}
-            }))
-        }),
-    );
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let endpoint = format!("http://{}/evaluate", listener.local_addr().unwrap());
-    let provider_task = tokio::spawn(async move { axum::serve(listener, provider).await.unwrap() });
+    let endpoint = "https://provider.example.test/evaluate".to_owned();
     let model_package_id = Uuid::now_v7();
     let model_id = Uuid::now_v7();
     let evaluator_id = Uuid::now_v7();
@@ -3464,8 +3504,6 @@ async fn evaluation_work_package_creates_cases_converges_and_cancels_atomically(
             .await
             .unwrap();
     assert_eq!(model_package_status, "succeeded");
-    provider_task.abort();
-
     let cancelled_id = Uuid::now_v7();
     let cancelled_package = build_work_package(
         fixture.evaluation_work_package_source(cancelled_id, now, now + time::Duration::hours(24)),
@@ -3628,11 +3666,7 @@ async fn complete_model_evaluators(fixture: &Fixture, package_id: Uuid) {
     let commands = claim_commands(&fixture.state.pool, owner, 100)
         .await
         .unwrap();
-    let worker = agentx_v2_runtime::worker_runtime::RuntimeWorker::new(
-        fixture.state.pool.clone(),
-        fixture.state.objects.clone(),
-    )
-    .unwrap();
+    let worker = test_worker(fixture, StubWorkerMode::Evaluator);
     for execution_id in execution_ids {
         let command = commands
             .iter()

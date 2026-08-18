@@ -3,6 +3,7 @@ pub mod auth;
 mod composite;
 pub mod composite_execution;
 mod debug_overlay;
+pub mod egress;
 pub mod engine;
 mod engine_names;
 mod engine_persistence;

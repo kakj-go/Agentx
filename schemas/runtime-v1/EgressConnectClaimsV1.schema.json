@@ -1,0 +1,88 @@
+{
+  "$defs": {
+    "EgressMode": {
+      "enum": [
+        "public_https"
+      ],
+      "type": "string"
+    },
+    "EgressRole": {
+      "enum": [
+        "runtime-gateway",
+        "workflow-runtime",
+        "workflow-worker",
+        "sandbox"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "aud": {
+      "type": "string"
+    },
+    "egressMode": {
+      "$ref": "#/$defs/EgressMode"
+    },
+    "executionId": {
+      "format": "uuid",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "exp": {
+      "format": "int64",
+      "type": "integer"
+    },
+    "iat": {
+      "format": "int64",
+      "type": "integer"
+    },
+    "iss": {
+      "type": "string"
+    },
+    "jti": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "requestId": {
+      "format": "uuid",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "role": {
+      "$ref": "#/$defs/EgressRole"
+    },
+    "targetHost": {
+      "type": "string"
+    },
+    "targetPort": {
+      "format": "uint16",
+      "maximum": 65535,
+      "minimum": 0,
+      "type": "integer"
+    },
+    "tenantId": {
+      "format": "uuid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "iss",
+    "aud",
+    "role",
+    "tenantId",
+    "egressMode",
+    "targetHost",
+    "targetPort",
+    "iat",
+    "exp",
+    "jti"
+  ],
+  "title": "EgressConnectClaimsV1",
+  "type": "object"
+}

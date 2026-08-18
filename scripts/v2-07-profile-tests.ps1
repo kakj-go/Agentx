@@ -44,7 +44,7 @@ foreach ($required in @(
 )) {
     if (-not $production.Contains($required)) { throw "Production render is missing: $required" }
 }
-foreach ($application in @("platform-control", "web-console", "runtime-gateway", "workflow-runtime", "workflow-worker", "sandbox-manager", "observability")) {
+foreach ($application in @("platform-control", "web-console", "runtime-gateway", "workflow-runtime", "workflow-worker", "sandbox-manager", "agentx-egress-gateway", "observability")) {
     if ($production -notmatch "(?ms)^kind: Deployment\s+metadata:.*?name: $application(?:\s|,)") { throw "The compact production Profile is missing application Deployment $application." }
 }
 foreach ($imageLine in @($production -split "`n" | Where-Object { $_ -match '^\s+image:' })) {
@@ -92,11 +92,34 @@ try {
     Remove-Item -LiteralPath $negativePath -Force -ErrorAction SilentlyContinue
 }
 
-foreach ($script in @("scripts/deploy-v2.ps1", "scripts/v2-migrate.ps1", "scripts/v2-backup-restore.ps1", "scripts/v2-07-e2e.ps1")) {
+$invalidAnnotationPath = [IO.Path]::GetTempFileName()
+try {
+    $profile = Get-Content -Raw -LiteralPath $productionPath | ConvertFrom-Json
+    $profile.network.egressGateway.sandboxAccess.serviceAnnotations = [pscustomobject]@{ "example.com/internal" = "true" }
+    $profile | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $invalidAnnotationPath
+    $rejected = $false
+    try { & $deploy -Action Validate -Target Dependencies -ConfigFile $invalidAnnotationPath 2>$null | Out-Null } catch { $rejected = $true }
+    if (-not $rejected) { throw "Production accepted an arbitrary private LoadBalancer annotation." }
+} finally {
+    Remove-Item -LiteralPath $invalidAnnotationPath -Force -ErrorAction SilentlyContinue
+}
+
+$unknownEgress = Get-Content -Raw -LiteralPath $productionPath | ConvertFrom-Json
+$unknownEgress.network.externalEgress | Add-Member -NotePropertyName "providerLegacy" -NotePropertyValue ([pscustomobject]@{ cidrs = @("203.0.113.0/24"); ports = @(443) })
+if (($unknownEgress | ConvertTo-Json -Depth 30) | Test-Json -SchemaFile $schema -ErrorAction SilentlyContinue) {
+    throw "Profile schema accepted an unknown externalEgress target."
+}
+
+foreach ($script in @("scripts/deploy-v2.ps1", "scripts/rotate-egress-keys.ps1", "scripts/v2-migrate.ps1", "scripts/v2-backup-restore.ps1", "scripts/v2-07-e2e.ps1")) {
     $path = Join-Path $root $script
     $tokens = $null; $errors = $null
     [Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$errors) | Out-Null
     if ($errors.Count -gt 0) { throw "$script has a parse error: $($errors[0].Message)" }
+}
+
+$rotationSource = Get-Content -Raw -LiteralPath (Join-Path $root "scripts/rotate-egress-keys.ps1")
+foreach ($required in @("publish-overlap", "roll-callers", "remove-previous", "_PREVIOUS", "rollback was attempted", "agentx-egress-key-rotation-lock")) {
+    if (-not $rotationSource.Contains($required)) { throw "Egress key rotation is missing phase or recovery contract: $required" }
 }
 
 $deploySource = Get-Content -Raw -LiteralPath $deploy

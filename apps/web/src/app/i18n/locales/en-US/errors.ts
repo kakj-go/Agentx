@@ -1,7 +1,11 @@
 const translations = {
   "requestFailed": "Request failed ({{code}})",
   "requestFailedWithId": "The request could not be completed. Request ID: {{requestId}}",
+  "requiredField": "This field is required",
   "codes": {
+    "INVALID_REQUEST_BODY": "The submitted form contains missing or invalid values.",
+    "REQUIRED_FIELD": "This field is required.",
+    "INVALID_FIELD": "This field has an invalid value.",
     "MODEL_NAME_EXISTS": "A model with this name already exists.",
     "DEPARTMENT_NAME_EXISTS": "A department with this name already exists under the selected parent.",
     "USERNAME_EXISTS": "This username is already in use.",

@@ -46,7 +46,7 @@ pub struct HealthRegistry {
     dependencies: Arc<RwLock<BTreeMap<String, DependencyHealth>>>,
 }
 
-pub const METRIC_NAMES: [&str; 8] = [
+pub const METRIC_NAMES: [&str; 12] = [
     "agentx_queue_ready_items",
     "agentx_queue_oldest_ready_seconds",
     "agentx_active_leases",
@@ -55,6 +55,10 @@ pub const METRIC_NAMES: [&str; 8] = [
     "agentx_sse_connections",
     "agentx_drain_inflight",
     "agentx_mysql_pool_waiters",
+    "agentx_egress_active_tunnels",
+    "agentx_egress_allowed_total",
+    "agentx_egress_denied_total",
+    "agentx_egress_bytes_total",
 ];
 pub const DRAIN_TIMEOUT_SECONDS: u64 = 45;
 pub const ROLE_WATCHDOG_TIMEOUT_SECONDS: u64 = 90;

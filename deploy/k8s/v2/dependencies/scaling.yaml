@@ -1,0 +1,14 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: { name: agentx-egress-gateway, namespace: agentx-v2-deps }
+spec: { minAvailable: 1, selector: { matchLabels: { app.kubernetes.io/name: agentx-egress-gateway } } }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: agentx-egress-gateway-metrics-ingress, namespace: agentx-v2-deps }
+spec:
+  podSelector: { matchLabels: { app.kubernetes.io/name: agentx-egress-gateway } }
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{ namespaceSelector: { matchLabels: { agentx.io/metrics-access: "true" } } }]
+      ports: [{ protocol: TCP, port: 9092 }]

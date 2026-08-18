@@ -2,7 +2,7 @@
 
 ## 1. 可组合部署契约
 
-Agentx V2 通过 `scripts/deploy-v2.ps1` 和版本化 `agentx.io/deployment/v2alpha2` Profile 部署。Profile 固定 `control/runtime/dependencies` 三个物理 Namespace；Observability 是独立逻辑 Plane，但与 Runtime 共用物理 Namespace。状态型依赖只能使用 bundled 或 external：
+Agentx V2 通过 `scripts/deploy-v2.ps1` 和破坏性的 `agentx.io/deployment/v2alpha3` Profile 部署；`v2alpha2` 及更早版本会被明确拒绝。Profile 固定 `control/runtime/dependencies` 三个物理 Namespace；Observability 是独立逻辑 Plane，但与 Runtime 共用物理 Namespace。状态型依赖只能使用 bundled 或 external：
 
 | 组件 | 模式 |
 |---|---|
@@ -43,13 +43,16 @@ Control、Runtime、Observability、Dependencies 继续保持四个逻辑 Kustom
 
 顺序固定为：
 
-1. 校验 Profile、PowerShell、kubectl、Docker/镜像模式、权限和 Kustomize/Helm 渲染。单独执行 `-Action Doctor` 到此结束，不创建资源。
+1. 校验 Profile、PowerShell、kubectl、Docker/镜像模式、权限和 Kustomize/Helm 渲染。单独执行 `-Action Validate` 到此结束，不创建资源；`-Action Doctor` 会复用已安装环境、刷新受管 Secret/Gateway并创建一次性 Doctor Job。
 2. 创建或复用 Namespace，创建/验证 Secret 和 CA Trust Bundle。
-3. 安装专用 ingress-nginx。
-4. 安装 selected bundled 基础设施并等待 StatefulSet/Bucket Job。
+3. 安装专用 ingress-nginx，创建 Gateway 公钥/TLS Secret、Service 和 NetworkPolicy。
+4. 先部署并等待 `agentx-egress-gateway`，再安装 selected bundled 基础设施并等待 StatefulSet/Bucket Job。
 5. 运行 `doctor-infrastructure`，实际执行 MySQL `SELECT 1`、Redis `PING`、ClickHouse `SELECT 1` 和 S3 临时对象写入、读取、内容校验及删除。
 6. 运行 MySQL/ClickHouse Migration。
-7. 部署核心服务，并让 Readiness 反映周期依赖探测。
+7. 部署核心服务，并让 Readiness 反映周期依赖探测；Runtime 外部调用方只有在 Gateway Ready 后才滚动升级。
+
+Gateway 密钥轮换按 `发布新旧双公钥 -> Gateway Ready -> 四个调用方逐个更新私钥/KID并 Ready -> 删除旧公钥` 执行，失败时恢复旧私钥/KID和原公钥集合。生产 `privateLoadBalancer` 只接受 AWS、Azure 或 GCP 已知的内部 LB Annotation，并将 Profile Endpoint 端口单独映射到容器 `3129`；任意非空 Annotation 不构成内部 LB 证明。
+
 8. remote Sandbox 模式部署 Manager 并运行 `doctor-opensandbox`。
 9. 部署 bundled Addon，或对 external Addon 做集群内 Endpoint 连通性检查。
 10. 创建业务 Ingress，等待全部 Rollout，并把每个逻辑 Plane 的发布描述写入独立的 `agentx-v2-release-state-<plane>` ConfigMap。
@@ -70,7 +73,9 @@ Sandbox Manager 只解析 Runtime MySQL 和 OpenSandbox Settings；Runtime Gatew
 
 Profile 必须提供 Host，可选择已有 TLS Secret。默认环境使用 `LoadBalancer`；RunId 临时环境使用独立 IngressClass、独立 Helm资源名和 `ClusterIP`，避免并发环境争用 80/443。卸载前会扫描全集群；仍有 Ingress 使用该 IngressClass 时保留 Controller。
 
-`network.allowedEgressCidrs` 是核心服务访问外部模型供应商、外部依赖和远程 Sandbox 的显式出口白名单。Docker Desktop 会把公网 DNS 映射到 `198.18.0.0/15`，本地 Sandbox Profile 因此允许该保留网段；生产 Profile 必须改为供应商实际出口 CIDR，不能照搬本地范围。
+`network.externalEgress` 只描述 MySQL、Redis、Vault、S3、ClickHouse 和 OpenSandbox 等固定运维依赖 CIDR，不再配置动态 `provider*` 目标。用户 Model/MCP/Memory/RAG/HTTP 等公网流量统一经 Gateway，默认只开放公共 TCP 443；可增加少量显式 HTTPS 端口，但不能开放端口范围。
+
+Sandbox 代理不创建公共 Ingress。本地使用固定 NodePort 和 `host.docker.internal`；生产使用集群内 Service 或带 TLS、来源 CIDR和云平台内部 LB Annotation 的私有 LoadBalancer。Docker Desktop DNS 可能返回 `198.18.0.0/15` 合成地址：本地只对“域名解析结果”例外，用户直接填写该网段仍会被应用层拒绝；生产没有此例外。
 
 ## 6. Addon 边界
 
@@ -107,6 +112,6 @@ ingress-nginx通过 Helm Annotation和 Ownership ConfigMap验证所有权。卸�
 
 ## 10. E2E
 
-`scripts/v2-profile-tests.ps1` 覆盖 `v2alpha2` Schema、旧 Profile拒绝、三 Namespace渲染、逻辑 Target、七类 Deployment/PDB和零 HPA/指标栈资源。`scripts/v2-07-profile-tests.ps1` 继续验证安全与发布 Profile门禁。
+`scripts/v2-profile-tests.ps1` 覆盖 `v2alpha3` Schema、`v2alpha2` 及更早 Profile拒绝、三 Namespace渲染、逻辑 Target、八类 Deployment/PDB和零 HPA/指标栈资源。`scripts/v2-07-profile-tests.ps1` 继续验证安全与发布 Profile门禁。
 
 完整 V2 E2E 使用 RunId创建 Control/Runtime/Dependencies三个临时 Namespace和唯一 IngressClass，执行 Migration、Bootstrap、Doctor、发布、Invocation、Worker、Trace、故障与恢复验证。测试结束删除三个临时 Namespace以及本次受管 Helm Release/IngressClass，不触碰正式开发 Namespace。历史 `2→4→2` Run仅作为横向扩展正确性的既有证据；当前默认常驻副本数为 1。

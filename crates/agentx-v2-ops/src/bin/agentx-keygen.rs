@@ -23,6 +23,16 @@ struct SigningMaterial {
     work_package_public_key_base64: String,
     user_private_key_pem: String,
     user_public_key_pem: String,
+    runtime_gateway_egress_private_key_pem: String,
+    runtime_gateway_egress_public_key_pem: String,
+    workflow_runtime_egress_private_key_pem: String,
+    workflow_runtime_egress_public_key_pem: String,
+    workflow_worker_egress_private_key_pem: String,
+    workflow_worker_egress_public_key_pem: String,
+    sandbox_egress_private_key_pem: String,
+    sandbox_egress_public_key_pem: String,
+    egress_tls_certificate_pem: String,
+    egress_tls_private_key_pem: String,
 }
 
 fn main() -> Result<()> {
@@ -36,6 +46,16 @@ fn main() -> Result<()> {
     let work_package = SigningKey::generate(&mut OsRng);
     let user = RsaPrivateKey::new(&mut OsRng, 2048)?;
     let user_public = RsaPublicKey::from(&user);
+    let runtime_gateway_egress = RsaPrivateKey::new(&mut OsRng, 2048)?;
+    let workflow_runtime_egress = RsaPrivateKey::new(&mut OsRng, 2048)?;
+    let workflow_worker_egress = RsaPrivateKey::new(&mut OsRng, 2048)?;
+    let sandbox_egress = RsaPrivateKey::new(&mut OsRng, 2048)?;
+    let egress_tls = rcgen::generate_simple_self_signed(vec![
+        "agentx-egress-sandbox".into(),
+        "agentx-egress-sandbox.agentx-v2-deps.svc".into(),
+        "agentx-egress-sandbox.agentx-v2-deps.svc.cluster.local".into(),
+        "host.docker.internal".into(),
+    ])?;
     println!(
         "{}",
         serde_json::to_string(&SigningMaterial {
@@ -52,6 +72,28 @@ fn main() -> Result<()> {
                 .encode(work_package.verifying_key().as_bytes()),
             user_private_key_pem: user.to_pkcs8_pem(LineEnding::LF)?.to_string(),
             user_public_key_pem: user_public.to_public_key_pem(LineEnding::LF)?,
+            runtime_gateway_egress_private_key_pem: runtime_gateway_egress
+                .to_pkcs8_pem(LineEnding::LF)?
+                .to_string(),
+            runtime_gateway_egress_public_key_pem: RsaPublicKey::from(&runtime_gateway_egress)
+                .to_public_key_pem(LineEnding::LF)?,
+            workflow_runtime_egress_private_key_pem: workflow_runtime_egress
+                .to_pkcs8_pem(LineEnding::LF)?
+                .to_string(),
+            workflow_runtime_egress_public_key_pem: RsaPublicKey::from(&workflow_runtime_egress)
+                .to_public_key_pem(LineEnding::LF)?,
+            workflow_worker_egress_private_key_pem: workflow_worker_egress
+                .to_pkcs8_pem(LineEnding::LF)?
+                .to_string(),
+            workflow_worker_egress_public_key_pem: RsaPublicKey::from(&workflow_worker_egress)
+                .to_public_key_pem(LineEnding::LF)?,
+            sandbox_egress_private_key_pem: sandbox_egress
+                .to_pkcs8_pem(LineEnding::LF)?
+                .to_string(),
+            sandbox_egress_public_key_pem: RsaPublicKey::from(&sandbox_egress)
+                .to_public_key_pem(LineEnding::LF)?,
+            egress_tls_certificate_pem: egress_tls.cert.pem(),
+            egress_tls_private_key_pem: egress_tls.key_pair.serialize_pem(),
         })?
     );
     Ok(())

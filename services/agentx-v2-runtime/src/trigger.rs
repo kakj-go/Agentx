@@ -17,9 +17,71 @@ use sqlx::Row;
 use uuid::Uuid;
 
 use crate::{
+    egress::{EgressRequestContext, ProviderHttpClient},
     error::{RuntimeError, RuntimeResult},
     execution::{InvocationCaller, create_runtime_invocation_tx},
 };
+
+#[derive(Clone, Debug)]
+pub struct TriggerProviderResponse {
+    pub success: bool,
+    pub status: String,
+    pub cursor: Option<String>,
+    pub body: Value,
+}
+
+#[async_trait::async_trait]
+pub trait TriggerProvider: Send + Sync {
+    async fn post_json(
+        &self,
+        endpoint: &str,
+        context: EgressRequestContext,
+        timeout: Duration,
+        idempotency_key: Option<&str>,
+        input: &Value,
+    ) -> Result<TriggerProviderResponse, String>;
+}
+
+#[async_trait::async_trait]
+impl TriggerProvider for ProviderHttpClient {
+    async fn post_json(
+        &self,
+        endpoint: &str,
+        context: EgressRequestContext,
+        timeout: Duration,
+        idempotency_key: Option<&str>,
+        input: &Value,
+    ) -> Result<TriggerProviderResponse, String> {
+        let mut request = self
+            .post(endpoint, context, timeout)
+            .map_err(|error| error.to_string())?;
+        if let Some(idempotency_key) = idempotency_key {
+            request = request.header("Idempotency-Key", idempotency_key);
+        }
+        let response = request
+            .json(input)
+            .send()
+            .await
+            .map_err(|error| error.to_string())?;
+        let success = response.status().is_success();
+        let status = response.status().to_string();
+        let cursor = response
+            .headers()
+            .get("x-provider-cursor")
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned);
+        let body = response
+            .json::<Value>()
+            .await
+            .map_err(|error| error.to_string())?;
+        Ok(TriggerProviderResponse {
+            success,
+            status,
+            cursor,
+            body,
+        })
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct TriggerClaim {
@@ -109,6 +171,23 @@ pub async fn execute_with_heartbeat(
 }
 
 pub async fn execute(pool: &sqlx::MySqlPool, claim: &TriggerClaim) -> RuntimeResult<()> {
+    execute_inner(pool, claim, None).await
+}
+
+#[doc(hidden)]
+pub async fn execute_with_provider(
+    pool: &sqlx::MySqlPool,
+    claim: &TriggerClaim,
+    provider: &dyn TriggerProvider,
+) -> RuntimeResult<()> {
+    execute_inner(pool, claim, Some(provider)).await
+}
+
+async fn execute_inner(
+    pool: &sqlx::MySqlPool,
+    claim: &TriggerClaim,
+    injected_provider: Option<&dyn TriggerProvider>,
+) -> RuntimeResult<()> {
     let (input, idempotency, cursor, next, lifecycle_response) = match &claim
         .configuration
         .configuration
@@ -147,11 +226,24 @@ pub async fn execute(pool: &sqlx::MySqlPool, claim: &TriggerClaim) -> RuntimeRes
             provider_endpoint,
             input,
         } => {
-            let response = reqwest::Client::new()
-                .post(provider_endpoint)
-                .json(input)
-                .timeout(Duration::from_secs(10))
-                .send()
+            let owned_provider;
+            let provider = if let Some(provider) = injected_provider {
+                provider
+            } else {
+                owned_provider = ProviderHttpClient::from_env(
+                    agentx_runtime_contracts::EgressRole::WorkflowRuntime,
+                )
+                .map_err(RuntimeError::Internal)?;
+                &owned_provider
+            };
+            let response = provider
+                .post_json(
+                    provider_endpoint,
+                    EgressRequestContext::request(claim.tenant_id, claim.binding_id),
+                    Duration::from_secs(10),
+                    None,
+                    input,
+                )
                 .await
                 .map_err(|error| error.to_string());
             let response = match response {
@@ -160,20 +252,11 @@ pub async fn execute(pool: &sqlx::MySqlPool, claim: &TriggerClaim) -> RuntimeRes
                     return fail(pool, claim, &format!("POLL_PROVIDER_ERROR: {error}")).await;
                 }
             };
-            if !response.status().is_success() {
+            if !response.success {
                 return fail(pool, claim, "POLL_PROVIDER_ERROR").await;
             }
-            let provider_cursor = response
-                .headers()
-                .get("x-provider-cursor")
-                .and_then(|v| v.to_str().ok())
-                .map(str::to_owned);
-            let payload: Value = match response.json().await {
-                Ok(payload) => payload,
-                Err(error) => {
-                    return fail(pool, claim, &format!("POLL_PROVIDER_ERROR: {error}")).await;
-                }
-            };
+            let provider_cursor = response.cursor;
+            let payload = response.body;
             if payload.get("accepted").and_then(Value::as_bool) == Some(false) {
                 return fail(pool, claim, "POLL_PROVIDER_REJECTED").await;
             }
@@ -216,12 +299,24 @@ pub async fn execute(pool: &sqlx::MySqlPool, claim: &TriggerClaim) -> RuntimeRes
             if existing.as_deref() == Some("completed") {
                 return complete(pool, claim, Some(format!("{operation:?}")), None).await;
             }
-            let response = reqwest::Client::new()
-                .post(provider_endpoint)
-                .header("Idempotency-Key", &key)
-                .json(input)
-                .timeout(Duration::from_secs(10))
-                .send()
+            let owned_provider;
+            let provider = if let Some(provider) = injected_provider {
+                provider
+            } else {
+                owned_provider = ProviderHttpClient::from_env(
+                    agentx_runtime_contracts::EgressRole::WorkflowRuntime,
+                )
+                .map_err(RuntimeError::Internal)?;
+                &owned_provider
+            };
+            let response = provider
+                .post_json(
+                    provider_endpoint,
+                    EgressRequestContext::request(claim.tenant_id, claim.binding_id),
+                    Duration::from_secs(10),
+                    Some(&key),
+                    input,
+                )
                 .await
                 .map_err(|error| error.to_string());
             let response = match response {
@@ -231,12 +326,12 @@ pub async fn execute(pool: &sqlx::MySqlPool, claim: &TriggerClaim) -> RuntimeRes
                     return fail(pool, claim, &format!("LIFECYCLE_PROVIDER_ERROR: {error}")).await;
                 }
             };
-            if !response.status().is_success() {
-                fail_lifecycle_operation(pool, claim, &key, &format!("HTTP {}", response.status()))
+            if !response.success {
+                fail_lifecycle_operation(pool, claim, &key, &format!("HTTP {}", response.status))
                     .await?;
                 return fail(pool, claim, "LIFECYCLE_PROVIDER_ERROR").await;
             }
-            let response_body = response.json::<Value>().await.unwrap_or(Value::Null);
+            let response_body = response.body;
             (
                 Some(input.clone()),
                 key,

@@ -9,6 +9,7 @@ use axum::{
     Json, Router,
     extract::{FromRequestParts, Path, Query, State},
     http::{StatusCode, header::AUTHORIZATION, request::Parts},
+    middleware,
     routing::{get, post},
 };
 use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
@@ -168,7 +169,9 @@ impl ControlApiState {
 }
 
 pub fn router(state: ControlApiState) -> Router {
-    routes().with_state(state)
+    routes()
+        .layer(middleware::from_fn(crate::api_error::normalize_json_rejection))
+        .with_state(state)
 }
 
 fn routes() -> Router<ControlApiState> {

@@ -233,7 +233,7 @@ function DepartmentDialog({ department, departments, parentId, open, onClose, on
       <h3 className="text-lg font-semibold">{title}</h3>
       <form className="mt-5 space-y-4" onSubmit={(event) => void submit(event)} ref={formRef}>
         <Field error={fieldError} label={t('common.name')} name="name" onChange={(value) => { setName(value); setFieldError('') }} value={name} />
-        <label className="block text-xs"><span className="mb-2 block">{t('organization.parentDepartment')}</span><Select className="w-full" onValueChange={setParent} options={options} value={parent} /></label>
+        <label className="block text-xs"><span className="mb-2 block">{t('organization.parentDepartment')}<RequiredMark /></span><Select aria-label={t('organization.parentDepartment')} aria-required className="w-full" onValueChange={setParent} options={options} value={parent} /></label>
         {error && <p className="text-xs text-danger">{error}</p>}
         <div className="flex justify-end gap-2"><Button onClick={onClose} type="button" variant="ghost">{t('common.cancel')}</Button><Button disabled={pending || !parent} type="submit">{t('common.save')}</Button></div>
       </form>
@@ -276,8 +276,8 @@ function UserDialog({ user, departments, roles, initialDepartmentId, open, onClo
       <form className="mt-5 grid grid-cols-2 gap-4" onSubmit={(event) => void submit(event)} ref={formRef}>
         <Field disabled={Boolean(user)} error={fieldError} label={t('auth.username')} name="username" onChange={(value) => { setUsername(value); setFieldError('') }} value={username} />
         <Field label={t('organization.userName')} onChange={setName} value={name} />
-        <label className="text-xs"><span className="mb-2 block">{t('organization.department')}</span><Select className="w-full" onValueChange={setDepartment} options={departmentOptions(departments)} value={department} /></label>
-        <label className="text-xs"><span className="mb-2 block">{t('organization.roles')}</span><Select className="w-full" onValueChange={setRole} options={selectableRoles.map((item) => ({ value: item.id, label: roleLabel(t, item.code, item.name) }))} value={role} /></label>
+        <label className="text-xs"><span className="mb-2 block">{t('organization.department')}<RequiredMark /></span><Select aria-label={t('organization.department')} aria-required className="w-full" onValueChange={setDepartment} options={departmentOptions(departments)} value={department} /></label>
+        <label className="text-xs"><span className="mb-2 block">{t('organization.roles')}<RequiredMark /></span><Select aria-label={t('organization.roles')} aria-required className="w-full" onValueChange={setRole} options={selectableRoles.map((item) => ({ value: item.id, label: roleLabel(t, item.code, item.name) }))} value={role} /></label>
         {!user && <div className="col-span-2 rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-xs"><strong>{t('organization.initialPassword')}: 123456</strong><p className="mt-1 text-[11px] text-muted-foreground">{t('organization.initialPasswordHint')}</p></div>}
         {error && <p className="col-span-2 text-xs text-danger">{error}</p>}
         <div className="col-span-2 flex justify-end gap-2"><Button onClick={onClose} type="button" variant="ghost">{t('common.cancel')}</Button><Button disabled={pending || !department || !role} type="submit">{t('common.save')}</Button></div>
@@ -287,5 +287,7 @@ function UserDialog({ user, departments, roles, initialDepartmentId, open, onClo
 }
 
 function Field({ label, value, onChange, disabled = false, error, name }: { label: string; value: string; onChange: (value: string) => void; disabled?: boolean; error?: string; name?: string }) {
-  return <label className="text-xs"><span className="mb-2 block">{label}</span><Input aria-describedby={error ? `${name}-error` : undefined} aria-invalid={Boolean(error)} disabled={disabled} name={name} onChange={(event) => onChange(event.target.value)} required value={value} />{error && <span className="mt-1.5 block text-danger" id={`${name}-error`}>{error}</span>}</label>
+  return <label className="text-xs"><span className="mb-2 block">{label}<RequiredMark /></span><Input aria-describedby={error ? `${name}-error` : undefined} aria-invalid={Boolean(error)} aria-label={label} disabled={disabled} name={name} onChange={(event) => onChange(event.target.value)} required value={value} />{error && <span className="mt-1.5 block text-danger" id={`${name}-error`}>{error}</span>}</label>
 }
+
+function RequiredMark() { return <span aria-hidden="true" className="ml-1 text-danger">*</span> }

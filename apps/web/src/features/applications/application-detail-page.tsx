@@ -98,20 +98,20 @@ export function ApplicationDetailPage() {
     edit: [
       { name: 'name', label: t('common.name'), required: true, defaultValue: value.name },
       { name: 'description', label: t('common.description'), type: 'textarea', defaultValue: value.description ?? '' },
-      { name: 'visibility', label: t('applications.visibility'), type: 'select', defaultValue: value.visibility, options: ['private', 'department', 'company'].map((item) => ({ value: item, label: t(`applications.${item}`) })) },
-      { name: 'status', label: t('common.status'), type: 'select', defaultValue: value.status, options: ['draft', 'active', 'disabled'].map((item) => ({ value: item, label: t(`applications.${item}`) })) },
+      { name: 'visibility', label: t('applications.visibility'), type: 'select', defaultValue: value.visibility, required: true, options: ['private', 'department', 'company'].map((item) => ({ value: item, label: t(`applications.${item}`) })) },
+      { name: 'status', label: t('common.status'), type: 'select', defaultValue: value.status, required: true, options: ['draft', 'active', 'disabled'].map((item) => ({ value: item, label: t(`applications.${item}`) })) },
     ],
     deployment: [
       { name: 'workflowVersionId', label: t('evaluations.workflowVersion'), type: 'select', required: true, options: (versions.data ?? []).map((item) => ({ value: item.id, label: `v${item.versionNumber}` })) },
       { name: 'environmentId', label: t('applications.environment'), type: 'select', required: true, options: (environments.data ?? []).filter((item) => item.status === 'active').map((item) => ({ value: item.id, label: item.name })) },
-      { name: 'sessionVersionPolicy', label: t('applications.sessionPolicy'), type: 'select', defaultValue: 'pinned', options: ['pinned', 'follow_deployment', 'manual_upgrade'].map((item) => ({ value: item, label: t(`applications.${item}`) })) },
+      { name: 'sessionVersionPolicy', label: t('applications.sessionPolicy'), type: 'select', defaultValue: 'pinned', required: true, options: ['pinned', 'follow_deployment', 'manual_upgrade'].map((item) => ({ value: item, label: t(`applications.${item}`) })) },
     ],
     key: [{ name: 'name', label: t('common.name'), required: true }],
     webhook: [{ name: 'name', label: t('common.name'), required: true }],
-    webhookEdit: [{ name: 'name', label: t('common.name'), required: true, defaultValue: selectedWebhook?.name ?? '' }, { name: 'status', label: t('common.status'), type: 'select', defaultValue: selectedWebhook?.status ?? 'active', options: ['active', 'disabled'].map((item) => ({ value: item, label: t(`applications.${item}`) })) }],
+    webhookEdit: [{ name: 'name', label: t('common.name'), required: true, defaultValue: selectedWebhook?.name ?? '' }, { name: 'status', label: t('common.status'), type: 'select', defaultValue: selectedWebhook?.status ?? 'active', required: true, options: ['active', 'disabled'].map((item) => ({ value: item, label: t(`applications.${item}`) })) }],
     schedule: scheduleFields(t),
     scheduleEdit: scheduleFields(t, schedule),
-    sessionUpgrade: [{ name: 'workflowVersionId', label: t('evaluations.workflowVersion'), type: 'select', defaultValue: selectedSession?.workflowVersionId ?? '', options: (versions.data ?? []).map((item) => ({ value: item.id, label: `v${item.versionNumber}` })) }],
+    sessionUpgrade: [{ name: 'workflowVersionId', label: t('evaluations.workflowVersion'), type: 'select', defaultValue: selectedSession?.workflowVersionId ?? '', required: true, options: (versions.data ?? []).map((item) => ({ value: item.id, label: `v${item.versionNumber}` })) }],
   }
   return <PageContainer>
     <PageHeader action={auth.hasPermission('application:manage') ? <Button onClick={() => setDialog('edit')} variant="secondary"><Edit3 className="size-4" />{t('common.edit')}</Button> : undefined} description={`${value.workflowName} · ${value.slug}`} title={value.name} />
@@ -139,11 +139,11 @@ export function ApplicationDetailPage() {
 function scheduleFields(t: (key: string) => string, value?: ApplicationSchedule | null): EntityFormField[] {
   return [
     { name: 'name', label: t('common.name'), required: true, defaultValue: value?.name ?? '' },
-    { name: 'cron', label: 'Cron', defaultValue: value?.cronExpression ?? '0 9 * * 1' },
-    { name: 'timezone', label: t('applications.timezone'), defaultValue: value?.timezone ?? 'Asia/Shanghai' },
-    { name: 'misfirePolicy', label: t('applications.misfirePolicy'), type: 'select', defaultValue: value?.misfirePolicy ?? 'fire_once', options: ['fire_once', 'skip'].map((item) => ({ value: item, label: t(`applications.${item}`) })) },
-    { name: 'input', label: t('applications.input'), type: 'textarea', defaultValue: JSON.stringify(value?.input ?? {}, null, 2) },
-    ...(value ? [{ name: 'status', label: t('common.status'), type: 'select' as const, defaultValue: value.status, options: ['active', 'disabled'].map((item) => ({ value: item, label: t(`applications.${item}`) })) }] : []),
+    { name: 'cron', label: 'Cron', defaultValue: value?.cronExpression ?? '0 9 * * 1', required: true },
+    { name: 'timezone', label: t('applications.timezone'), defaultValue: value?.timezone ?? 'Asia/Shanghai', required: true },
+    { name: 'misfirePolicy', label: t('applications.misfirePolicy'), type: 'select', defaultValue: value?.misfirePolicy ?? 'fire_once', required: true, options: ['fire_once', 'skip'].map((item) => ({ value: item, label: t(`applications.${item}`) })) },
+    { name: 'input', label: t('applications.input'), type: 'textarea', defaultValue: JSON.stringify(value?.input ?? {}, null, 2), required: true },
+    ...(value ? [{ name: 'status', label: t('common.status'), type: 'select' as const, defaultValue: value.status, required: true, options: ['active', 'disabled'].map((item) => ({ value: item, label: t(`applications.${item}`) })) }] : []),
   ]
 }
 

@@ -57,8 +57,8 @@ export function WorkflowDetailPage() {
     { name: 'version', label: t('workflows.selectVersion'), type: 'select', required: true, options: (versions.data ?? []).map((item) => ({ value: item.id, label: `v${item.versionNumber}` })) },
   ]
   const memberFields: EntityFormField[] = [
-    { name: 'user', label: t('navigation.header.user'), type: 'select', options: (users.data?.items ?? []).map((item) => ({ value: item.id, label: `${item.displayName} · ${item.username}` })) },
-    { name: 'role', label: t('navigation.header.roles'), type: 'select', defaultValue: 'viewer', options: ['viewer', 'editor', 'manager'].map((item) => ({ value: item, label: localizedValue(t, 'workflows.memberRoles', item) })) },
+    { name: 'user', label: t('navigation.header.user'), type: 'select', required: true, options: (users.data?.items ?? []).map((item) => ({ value: item.id, label: `${item.displayName} · ${item.username}` })) },
+    { name: 'role', label: t('navigation.header.roles'), type: 'select', defaultValue: 'viewer', required: true, options: ['viewer', 'editor', 'manager'].map((item) => ({ value: item, label: localizedValue(t, 'workflows.memberRoles', item) })) },
   ]
   return <PageContainer>
     <PageHeader action={<div className="flex gap-2"><Button asChild variant="secondary"><Link to={`/workflows/${workflowId}/editor`}><GitBranch className="size-4" />{t('workflows.openEditor')}</Link></Button>{auth.hasPermission('workflow:publish') && <PrerequisiteAction description={t('workflows.prerequisites.publishDescription')} loading={versions.isLoading} onReady={() => setPublishOpen(true)} requirements={[{ key: 'version', label: t('workflows.prerequisites.version'), met: Boolean(versions.data?.length), actionLabel: t('workflows.createVersion'), onAction: () => createVersion.mutate() }, { key: 'status', label: t('workflows.prerequisites.active'), met: value.status === 'active' }]}><Play className="size-4" />{t('workflows.publish')}</PrerequisiteAction>}</div>} description={value.description ?? t('workflows.description')} title={value.name} />

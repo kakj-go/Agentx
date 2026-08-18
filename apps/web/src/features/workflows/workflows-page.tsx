@@ -42,7 +42,7 @@ export function WorkflowsPage() {
   const fields: EntityFormField[] = [
     { name: 'name', label: t('workflows.workflowName'), required: true },
     { name: 'description', label: t('workflows.fields.description'), type: 'textarea' },
-    { name: 'visibility', label: t('workflows.visibility'), type: 'select', defaultValue: 'private', options: [{ value: 'private', label: t('workflows.private') }, { value: 'department', label: t('workflows.departmentVisible') }, { value: 'company', label: t('workflows.companyVisible') }] },
+    { name: 'visibility', label: t('workflows.visibility'), type: 'select', defaultValue: 'private', required: true, options: [{ value: 'private', label: t('workflows.private') }, { value: 'department', label: t('workflows.departmentVisible') }, { value: 'company', label: t('workflows.companyVisible') }] },
   ]
   return <>
     <ListPage action={<div className="flex gap-2"><Button asChild variant="secondary"><Link to="/environments"><CloudCog className="size-4" />{t('workflows.manageEnvironments')}</Link></Button>{auth.hasPermission('workflow:create') && <Button onClick={() => setOpen(true)}><Plus className="size-4" />{t('workflows.createWorkflow')}</Button>}</div>} columns={columns} data={query.data?.items ?? []} description={t('workflows.description')} getSearchText={(row) => `${row.name} ${row.ownerName}`} getStatus={(row) => row.status === 'active' ? 'active' : 'inactive'} searchPlaceholder={t('workflows.search')} statusOptions={[{ value: 'active', label: t('common.active') }, { value: 'inactive', label: t('common.inactive') }]} title={t('workflows.title')} />

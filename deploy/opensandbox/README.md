@@ -24,6 +24,10 @@ AGENTX_OPENSANDBOX_API_KEY=<与 OpenSandbox Server 一致的密钥>
 
 Server 只应监听 Agentx 可达的受控接口并由 Windows 防火墙限制来源。本机直接验证可绑定 `127.0.0.1`，但该地址通常不能供 Kubernetes Pod 访问。
 
+Sandbox Profile 和 Code 节点的网络能力均为 `none|public_https`，默认 `none`。只有两者同时开启时，Manager 才通过 execd 注入短期 `HTTPS_PROXY/https_proxy` 指向 `agentx-egress-gateway` 的 3129 TLS 入口；OpenSandbox NetworkPolicy 仍只允许 DNS 和该代理地址，不允许 Sandbox 直连公网或集群内部服务。私有 CA 写入 Sandbox 临时目录并设置 `SSL_CERT_FILE`，不会进入命令、日志或 Artifact。
+
+固定的 OpenSandbox Lifecycle Spec `0.1.0` 中 `NetworkRule` 只有 `action` 和 FQDN `target`，明确不支持端口字段。Agentx 因此不伪造 `port/ports`：Sandbox 规则只允许 Gateway 的专用域名，Kubernetes Service/NodePort/私有 LB 只把 Profile Endpoint 的单一监听端口映射到容器 `3129`，生产私有 LB 还必须使用来源 CIDR 和受支持的内部 LB Annotation。该专用域名/IP 不得复用来暴露其他服务；本地 NodePort 只作为开发验收边界，不能视为生产端口级隔离。
+
 本地约定使用 `18080`，避免与 Agentx Web 的 `8080` 冲突。Docker Runtime 不支持 Lifecycle `secureAccess=true`，因此本地 Overlay 必须显式关闭；该开关不允许沿用到生产 Kubernetes ingress，生产默认值保持 `true`。Docker Runtime 还可能返回 Pod 不可达且不带 scheme 的直接 execd Endpoint，因此 Agentx 默认请求 Server Proxy，并要求返回 URL 与 Lifecycle Server 同 Origin、路径精确匹配 `/v1/sandboxes/{sandboxId}/proxy/44772/`。
 
 Endpoint 文档仍由 `sandbox-manager` 加密存储并经过 Host、CIDR 和 Header 白名单校验。无 scheme URL 只继承 Lifecycle Endpoint 的 scheme；query、fragment、userinfo、反斜杠、控制字符、跨 Origin Redirect 和未知 Header 都会被拒绝。API Key 只在同 Origin Lifecycle/Proxy 请求上临时附加，不写入 Endpoint 文档或发送到直连 execd Origin。只有 Manager 可以直接路由到 execd 且经过等价安全评审时才关闭 `AGENTX_OPENSANDBOX_USE_SERVER_PROXY`。探测必须同时校验 `/health` 返回 `{"status":"healthy"}`，并使用 API Key 请求 `/v1/sandboxes`；只检查 HTTP 200 会把 SPA fallback 误判为 OpenSandbox。
@@ -41,7 +45,7 @@ M5 E2E 由脚本执行以下顺序：
 1. 探测或启动 OpenSandbox Server，验证 `/health` 和 API Key。
 2. 记录测试前 Sandbox 清单，并拒绝复用未知 Sandbox。
 3. 创建临时 `agentx-e2e` Namespace 并运行 Code/Agent 场景。
-4. 验证命令、文件、Artifact、资源超限、网络拒绝/白名单、超时和取消。
+4. 验证命令、文件、Artifact、资源超限、默认断网、双开关公共 HTTPS、内部地址/代理绕过拒绝、超时和取消。
 5. 幂等销毁本次 Sandbox，断言无残留，再删除 Namespace。
 
 完整环境结论和实测版本见 [OpenSandbox 可行性评估](../../../docs/plan/opensandbox-feasibility.md)。

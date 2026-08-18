@@ -12,6 +12,10 @@ use crate::ContentHash;
 pub const SERVICE_TOKEN_TTL_SECONDS: i64 = 300;
 pub const DELEGATION_TOKEN_TTL_SECONDS: i64 = 60;
 pub const USER_ACCESS_TOKEN_TTL_SECONDS: i64 = 900;
+pub const EGRESS_RUNTIME_TOKEN_TTL_SECONDS: i64 = 60;
+pub const EGRESS_SANDBOX_TOKEN_MAX_TTL_SECONDS: i64 = 3_600;
+pub const EGRESS_TOKEN_ISSUER: &str = "agentx-runtime";
+pub const EGRESS_TOKEN_AUDIENCE: &str = "agentx-egress-gateway";
 
 #[derive(
     Clone, Copy, Debug, Deserialize, Eq, Hash, JsonSchema, Ord, PartialEq, PartialOrd, Serialize,
@@ -24,6 +28,42 @@ pub enum ControlRole {
     Retention,
     DebugOrchestrator,
     EvaluationOrchestrator,
+}
+
+#[derive(
+    Clone, Copy, Debug, Deserialize, Eq, Hash, JsonSchema, Ord, PartialEq, PartialOrd, Serialize,
+)]
+#[serde(rename_all = "kebab-case")]
+pub enum EgressRole {
+    RuntimeGateway,
+    WorkflowRuntime,
+    WorkflowWorker,
+    Sandbox,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EgressMode {
+    PublicHttps,
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct EgressConnectClaimsV1 {
+    pub iss: String,
+    pub aud: String,
+    pub role: EgressRole,
+    pub tenant_id: Uuid,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub execution_id: Option<Uuid>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<Uuid>,
+    pub egress_mode: EgressMode,
+    pub target_host: String,
+    pub target_port: u16,
+    pub iat: i64,
+    pub exp: i64,
+    pub jti: Uuid,
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
@@ -119,6 +159,87 @@ pub fn issue_user_access_token(
         return Err(ServiceJwtError::RoleNotAllowed);
     }
     issue(key_id, private_key_pem, claims)
+}
+
+pub fn issue_egress_connect_token(
+    key_id: &str,
+    private_key_pem: &[u8],
+    claims: &EgressConnectClaimsV1,
+) -> Result<String, ServiceJwtError> {
+    validate_egress_claims(claims, &BTreeSet::from([claims.role]), None)?;
+    issue(key_id, private_key_pem, claims)
+}
+
+pub fn verify_egress_connect_token(
+    token: &str,
+    trusted_keys: &HashMap<String, Vec<u8>>,
+    allowed_roles: &BTreeSet<EgressRole>,
+    expected_target: Option<(&str, u16)>,
+) -> Result<EgressConnectClaimsV1, ServiceJwtError> {
+    let key_id = jsonwebtoken::decode_header(token)
+        .map_err(|_| ServiceJwtError::Invalid)?
+        .kid
+        .ok_or(ServiceJwtError::MissingKeyId)?;
+    let claims = verify::<EgressConnectClaimsV1>(
+        token,
+        trusted_keys,
+        EGRESS_TOKEN_ISSUER,
+        EGRESS_TOKEN_AUDIENCE,
+    )?;
+    if !egress_key_id_matches_role(&key_id, claims.role) {
+        return Err(ServiceJwtError::RoleNotAllowed);
+    }
+    validate_egress_claims(&claims, allowed_roles, expected_target)?;
+    Ok(claims)
+}
+
+fn egress_key_id_matches_role(key_id: &str, role: EgressRole) -> bool {
+    let prefix = match role {
+        EgressRole::RuntimeGateway => "runtime-gateway-",
+        EgressRole::WorkflowRuntime => "workflow-runtime-",
+        EgressRole::WorkflowWorker => "workflow-worker-",
+        EgressRole::Sandbox => "sandbox-",
+    };
+    key_id.starts_with(prefix) && key_id.len() > prefix.len()
+}
+
+fn validate_egress_claims(
+    claims: &EgressConnectClaimsV1,
+    allowed_roles: &BTreeSet<EgressRole>,
+    expected_target: Option<(&str, u16)>,
+) -> Result<(), ServiceJwtError> {
+    let now = now_unix();
+    if claims.iss != EGRESS_TOKEN_ISSUER
+        || claims.aud != EGRESS_TOKEN_AUDIENCE
+        || claims.egress_mode != EgressMode::PublicHttps
+        || !allowed_roles.contains(&claims.role)
+    {
+        return Err(ServiceJwtError::RoleNotAllowed);
+    }
+    let maximum = if claims.role == EgressRole::Sandbox {
+        EGRESS_SANDBOX_TOKEN_MAX_TTL_SECONDS
+    } else {
+        EGRESS_RUNTIME_TOKEN_TTL_SECONDS
+    };
+    ensure_lifetime(claims.iat, claims.exp, maximum)?;
+    if claims.iat > now + 5 || claims.exp <= now {
+        return Err(ServiceJwtError::Invalid);
+    }
+    if let Some((host, port)) = expected_target {
+        let sandbox_wildcard = claims.role == EgressRole::Sandbox && claims.target_host == "*";
+        if claims.target_port != port
+            || (!sandbox_wildcard && !claims.target_host.eq_ignore_ascii_case(host))
+        {
+            return Err(ServiceJwtError::ScopeNotAllowed);
+        }
+    }
+    if claims.target_host.trim().is_empty()
+        || (claims.target_host == "*" && claims.role != EgressRole::Sandbox)
+        || claims.target_port == 0
+    {
+        return Err(ServiceJwtError::ScopeNotAllowed);
+    }
+    Ok(())
 }
 
 pub fn verify_user_access_token(
@@ -224,9 +345,11 @@ mod tests {
     use uuid::Uuid;
 
     use super::{
-        ControlRole, DELEGATION_TOKEN_TTL_SECONDS, DelegationClaimsV1, SERVICE_TOKEN_TTL_SECONDS,
-        ServiceClaimsV1, issue_delegation_token, issue_service_token, verify_delegation_token,
-        verify_service_token,
+        ControlRole, DELEGATION_TOKEN_TTL_SECONDS, DelegationClaimsV1, EGRESS_TOKEN_AUDIENCE,
+        EGRESS_TOKEN_ISSUER, EgressConnectClaimsV1, EgressMode, EgressRole,
+        SERVICE_TOKEN_TTL_SECONDS, ServiceClaimsV1, issue_delegation_token,
+        issue_egress_connect_token, issue_service_token, verify_delegation_token,
+        verify_egress_connect_token, verify_service_token,
     };
 
     const PRIVATE_KEY: &[u8] = include_bytes!("../tests/fixtures/service-private.pem");
@@ -388,6 +511,199 @@ mod tests {
                 "agentx-runtime-query",
                 Uuid::now_v7(),
                 &BTreeSet::new(),
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn egress_token_is_short_lived_role_and_target_scoped() {
+        let now = super::now_unix();
+        let claims = EgressConnectClaimsV1 {
+            iss: EGRESS_TOKEN_ISSUER.into(),
+            aud: EGRESS_TOKEN_AUDIENCE.into(),
+            role: EgressRole::WorkflowWorker,
+            tenant_id: Uuid::now_v7(),
+            execution_id: Some(Uuid::now_v7()),
+            request_id: None,
+            egress_mode: EgressMode::PublicHttps,
+            target_host: "api.example.com".into(),
+            target_port: 443,
+            iat: now,
+            exp: now + 60,
+            jti: Uuid::now_v7(),
+        };
+        let token =
+            issue_egress_connect_token("workflow-worker-current", PRIVATE_KEY, &claims).unwrap();
+        let keys = HashMap::from([("workflow-worker-current".into(), PUBLIC_KEY.to_vec())]);
+        let verified = verify_egress_connect_token(
+            &token,
+            &keys,
+            &BTreeSet::from([EgressRole::WorkflowWorker]),
+            Some(("API.EXAMPLE.COM", 443)),
+        )
+        .unwrap();
+        assert_eq!(verified.tenant_id, claims.tenant_id);
+        assert!(
+            verify_egress_connect_token(
+                &token,
+                &keys,
+                &BTreeSet::from([EgressRole::RuntimeGateway]),
+                Some(("api.example.com", 443)),
+            )
+            .is_err()
+        );
+        assert!(
+            verify_egress_connect_token(
+                &token,
+                &keys,
+                &BTreeSet::from([EgressRole::WorkflowWorker]),
+                Some(("api.example.com", 8443)),
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn runtime_egress_token_cannot_exceed_sixty_seconds() {
+        let now = super::now_unix();
+        let claims = EgressConnectClaimsV1 {
+            iss: EGRESS_TOKEN_ISSUER.into(),
+            aud: EGRESS_TOKEN_AUDIENCE.into(),
+            role: EgressRole::RuntimeGateway,
+            tenant_id: Uuid::now_v7(),
+            execution_id: None,
+            request_id: Some(Uuid::now_v7()),
+            egress_mode: EgressMode::PublicHttps,
+            target_host: "api.example.com".into(),
+            target_port: 443,
+            iat: now,
+            exp: now + 61,
+            jti: Uuid::now_v7(),
+        };
+        assert!(issue_egress_connect_token("current", PRIVATE_KEY, &claims).is_err());
+    }
+
+    #[test]
+    fn egress_key_rotation_accepts_overlap_then_rejects_the_removed_key() {
+        let now = super::now_unix();
+        let mut claims = EgressConnectClaimsV1 {
+            iss: EGRESS_TOKEN_ISSUER.into(),
+            aud: EGRESS_TOKEN_AUDIENCE.into(),
+            role: EgressRole::WorkflowRuntime,
+            tenant_id: Uuid::now_v7(),
+            execution_id: Some(Uuid::now_v7()),
+            request_id: None,
+            egress_mode: EgressMode::PublicHttps,
+            target_host: "api.example.com".into(),
+            target_port: 443,
+            iat: now,
+            exp: now + 60,
+            jti: Uuid::now_v7(),
+        };
+        let previous =
+            issue_egress_connect_token("workflow-runtime-previous", PRIVATE_KEY, &claims).unwrap();
+        claims.jti = Uuid::now_v7();
+        let current =
+            issue_egress_connect_token("workflow-runtime-current", PRIVATE_KEY, &claims).unwrap();
+        let roles = BTreeSet::from([EgressRole::WorkflowRuntime]);
+        let overlap = HashMap::from([
+            ("workflow-runtime-previous".into(), PUBLIC_KEY.to_vec()),
+            ("workflow-runtime-current".into(), PUBLIC_KEY.to_vec()),
+        ]);
+        assert!(
+            verify_egress_connect_token(
+                &previous,
+                &overlap,
+                &roles,
+                Some(("api.example.com", 443))
+            )
+            .is_ok()
+        );
+        assert!(
+            verify_egress_connect_token(&current, &overlap, &roles, Some(("api.example.com", 443)))
+                .is_ok()
+        );
+        let finalized = HashMap::from([("workflow-runtime-current".into(), PUBLIC_KEY.to_vec())]);
+        assert!(
+            verify_egress_connect_token(
+                &previous,
+                &finalized,
+                &roles,
+                Some(("api.example.com", 443))
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn expired_and_unknown_kid_egress_tokens_are_rejected() {
+        let now = super::now_unix();
+        let claims = EgressConnectClaimsV1 {
+            iss: EGRESS_TOKEN_ISSUER.into(),
+            aud: EGRESS_TOKEN_AUDIENCE.into(),
+            role: EgressRole::RuntimeGateway,
+            tenant_id: Uuid::now_v7(),
+            execution_id: None,
+            request_id: Some(Uuid::now_v7()),
+            egress_mode: EgressMode::PublicHttps,
+            target_host: "api.example.com".into(),
+            target_port: 443,
+            iat: now - 61,
+            exp: now - 1,
+            jti: Uuid::now_v7(),
+        };
+        let expired = super::issue("runtime-gateway-expired", PRIVATE_KEY, &claims).unwrap();
+        let roles = BTreeSet::from([EgressRole::RuntimeGateway]);
+        let keys = HashMap::from([("runtime-gateway-expired".into(), PUBLIC_KEY.to_vec())]);
+        assert!(
+            verify_egress_connect_token(&expired, &keys, &roles, Some(("api.example.com", 443)))
+                .is_err()
+        );
+
+        let mut current = claims;
+        current.iat = now;
+        current.exp = now + 60;
+        current.jti = Uuid::now_v7();
+        let unknown =
+            issue_egress_connect_token("runtime-gateway-unknown", PRIVATE_KEY, &current).unwrap();
+        assert!(
+            verify_egress_connect_token(
+                &unknown,
+                &HashMap::new(),
+                &roles,
+                Some(("api.example.com", 443))
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn egress_key_id_cannot_impersonate_another_role() {
+        let now = super::now_unix();
+        let claims = EgressConnectClaimsV1 {
+            iss: EGRESS_TOKEN_ISSUER.into(),
+            aud: EGRESS_TOKEN_AUDIENCE.into(),
+            role: EgressRole::RuntimeGateway,
+            tenant_id: Uuid::now_v7(),
+            execution_id: None,
+            request_id: Some(Uuid::now_v7()),
+            egress_mode: EgressMode::PublicHttps,
+            target_host: "api.example.com".into(),
+            target_port: 443,
+            iat: now,
+            exp: now + 60,
+            jti: Uuid::now_v7(),
+        };
+        let token =
+            issue_egress_connect_token("workflow-worker-current", PRIVATE_KEY, &claims).unwrap();
+        let keys = HashMap::from([("workflow-worker-current".into(), PUBLIC_KEY.to_vec())]);
+        assert!(
+            verify_egress_connect_token(
+                &token,
+                &keys,
+                &BTreeSet::from([EgressRole::RuntimeGateway]),
+                Some(("api.example.com", 443))
             )
             .is_err()
         );

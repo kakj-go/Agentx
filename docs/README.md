@@ -29,6 +29,7 @@ Agentx 是一个采用 n8n 式画布交互、但使用 Agentx 原生 Workflow/No
 | [planv2/contracts/table-disposition.json](planv2/contracts/table-disposition.json) | 历史 133 表迁往 Control/Runtime/Split/Delete 的机器可读处置输入 |
 | [plan/README.md](plan/README.md) | 全量实施顺序、阶段任务、依赖、验收门禁和功能追踪 |
 | [planv2/README.md](planv2/README.md) | 控制面、执行面与可观测面分离的破坏性重构计划；V2-08A 本地功能闭环与 V1 删除已完成，生产容量、安全、恢复和发布认证仍在 08B |
+| [planv2/evidence/egress-gateway.md](planv2/evidence/egress-gateway.md) | SaaS 受控公网出口、真实模型、密钥轮换、稳定性、滚动升级和生产 CNI 未关闭门禁证据 |
 | [plan/m2-task-list.md](plan/m2-task-list.md) | M2 Workflow 控制面与资源中心的详细实施批次和任务清单 |
 | [plan/m2.1-resource-redesign.md](plan/m2.1-resource-redesign.md) | M2.1 MCP、Skill Workspace、Kubernetes Addon 与全局 E2E 重构任务 |
 | [plan/m2.1-acceptance-evidence.md](plan/m2.1-acceptance-evidence.md) | M2.1 当前验收状态和最终证据入口 |

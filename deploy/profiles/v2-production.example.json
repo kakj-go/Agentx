@@ -1,5 +1,5 @@
 {
-  "apiVersion": "agentx.io/deployment/v2alpha2",
+  "apiVersion": "agentx.io/deployment/v2alpha3",
   "environment": "production",
   "namespaces": {
     "control": "agentx-v2-control",
@@ -20,7 +20,8 @@
       "workflow-runtime": "sha256:0000000000000000000000000000000000000000000000000000000000000007",
       "workflow-worker": "sha256:0000000000000000000000000000000000000000000000000000000000000008",
       "sandbox-manager": "sha256:0000000000000000000000000000000000000000000000000000000000000009",
-      "observability": "sha256:000000000000000000000000000000000000000000000000000000000000000a"
+      "observability": "sha256:000000000000000000000000000000000000000000000000000000000000000a",
+      "agentx-egress-gateway": "sha256:000000000000000000000000000000000000000000000000000000000000000b"
     }
   },
   "ingress": {
@@ -37,6 +38,7 @@
     "workflowRuntime": { "replicas": 1, "maxReplicas": 4, "roles": ["coordinator", "trigger", "command", "outbox", "recovery", "artifact", "quota", "trace-relay"], "mysqlPool": 10 },
     "workflowWorker": { "replicas": 1, "maxReplicas": 4, "capability": "all", "mysqlPool": 6 },
     "sandboxManager": { "replicas": 1, "maxReplicas": 4, "mysqlPool": 2 },
+    "egressGateway": { "replicas": 1, "maxReplicas": 4 },
     "observability": { "replicas": 1, "maxReplicas": 4, "roles": ["trace-consumer", "query"] }
   },
   "components": {
@@ -56,6 +58,17 @@
     }
   },
   "network": {
+    "egressGateway": {
+      "allowedPublicPorts": [443],
+      "sandboxAccess": {
+        "mode": "privateLoadBalancer",
+        "endpoint": "https://egress.internal.example",
+        "tlsSecretName": "agentx-egress-tls",
+        "caSecretName": "agentx-egress-ca",
+        "sourceCidrs": ["10.30.0.0/16"],
+        "serviceAnnotations": { "service.beta.kubernetes.io/aws-load-balancer-internal": "true" }
+      }
+    },
     "externalEgress": {
       "controlMysql": { "cidrs": ["10.20.1.10/32"], "ports": [3306] },
       "runtimeMysql": { "cidrs": ["10.20.1.11/32"], "ports": [3306] },
@@ -88,6 +101,7 @@
       "workflowRuntime": "agentx-workflow-runtime-secrets",
       "workflowWorker": "agentx-workflow-worker-secrets",
       "sandboxManager": "agentx-sandbox-manager-secrets",
+      "egressGateway": "agentx-egress-gateway-secrets",
       "runtimeMigration": "agentx-runtime-migration-secrets",
       "observability": "agentx-observability-app-secrets",
       "observabilityMigration": "agentx-observability-migration-secrets",

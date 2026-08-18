@@ -65,7 +65,7 @@ export function ModelsPage() {
   ], [auth, formatDateTime, queryClient, showToast, t])
   const fields: EntityFormField[] = [
     { name: 'connectionName', label: t('models.connectionName'), required: true },
-    { name: 'providerType', label: t('models.providerType'), type: 'select', defaultValue: 'openai_compatible', options: [{ value: 'openai_compatible', label: t('models.openaiCompatible') }] },
+    { name: 'providerType', label: t('models.providerType'), type: 'select', defaultValue: 'openai_compatible', required: true, options: [{ value: 'openai_compatible', label: t('models.openaiCompatible') }] },
     { name: 'endpoint', label: t('models.endpoint'), required: true, placeholder: 'https://api.example.com/v1' },
     { name: 'credential', label: t('models.credential'), type: 'select', options: [{ value: '', label: t('models.noCredential') }, ...(credentials.data?.items ?? []).map((item) => ({ value: item.id, label: item.name }))] },
     { name: 'alias', label: t('models.fields.modelName'), defaultValue: 'gpt-5.6-sol', required: true },
@@ -75,7 +75,7 @@ export function ModelsPage() {
     { name: 'currency', label: t('models.currency'), defaultValue: 'USD' },
     { name: 'input', label: t('models.inputPrice'), type: 'number', step: 'any' },
     { name: 'output', label: t('models.outputPrice'), type: 'number', step: 'any' },
-    { name: 'department', label: t('models.department'), type: 'select', required: true, options: (departments.data ?? []).map((item) => ({ value: item.id, label: item.name })) },
+    { name: 'department', apiName: 'ownerDepartmentId', label: t('models.department'), type: 'select', required: true, options: (departments.data ?? []).map((item) => ({ value: item.id, label: item.name })) },
     { name: 'parameters', label: t('models.defaultParameters'), type: 'textarea', defaultValue: '{}' },
   ]
   return <>

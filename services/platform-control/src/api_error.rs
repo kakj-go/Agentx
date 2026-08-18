@@ -1,7 +1,13 @@
 use agentx_api_types::{ApiErrorResponse, FieldError};
 use axum::{
     Json,
-    http::{HeaderValue, StatusCode, header::HeaderName},
+    body::to_bytes,
+    extract::Request,
+    http::{
+        HeaderValue, StatusCode,
+        header::{CONTENT_TYPE, HeaderName},
+    },
+    middleware::Next,
     response::{IntoResponse, Response},
 };
 use uuid::Uuid;
@@ -129,3 +135,136 @@ impl From<sqlx::Error> for ApiError {
 }
 
 pub type ApiResult<T> = Result<T, ApiError>;
+
+/// Axum's built-in JSON extractor returns a plain-text 422 before a handler is
+/// entered. Normalize that rejection to the public API error envelope so web
+/// forms never have to fall back to the HTTP reason phrase.
+pub async fn normalize_json_rejection(request: Request, next: Next) -> Response {
+    let response = next.run(request).await;
+    let plain_unprocessable = response.status() == StatusCode::UNPROCESSABLE_ENTITY
+        && !response
+            .headers()
+            .get(CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|value| value.starts_with("application/json"));
+    if !plain_unprocessable {
+        return response;
+    }
+
+    let (parts, body) = response.into_parts();
+    let body = to_bytes(body, 64 * 1024).await.unwrap_or_default();
+    let detail = String::from_utf8_lossy(&body);
+    let mut error = ApiError::unprocessable(
+        "INVALID_REQUEST_BODY",
+        "The submitted form contains invalid or missing values",
+    );
+    if let Some((field, missing)) = rejection_field(&detail) {
+        error = error.with_field_error(
+            field,
+            if missing {
+                "REQUIRED_FIELD"
+            } else {
+                "INVALID_FIELD"
+            },
+            if missing {
+                "This field is required"
+            } else {
+                "This field has an invalid value"
+            },
+        );
+    }
+    drop(parts);
+    error.into_response()
+}
+
+fn rejection_field(detail: &str) -> Option<(String, bool)> {
+    if let Some(value) = detail
+        .split("missing field `")
+        .nth(1)
+        .and_then(|value| value.split('`').next())
+    {
+        return Some((value.to_owned(), true));
+    }
+    let value = detail
+        .split("target type: ")
+        .nth(1)?
+        .split(':')
+        .next()?
+        .trim();
+    (!value.is_empty()
+        && value
+            .chars()
+            .all(|value| value.is_ascii_alphanumeric() || matches!(value, '_' | '.' | '[' | ']')))
+    .then(|| (value.to_owned(), false))
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::{
+        Json, Router,
+        body::{Body, to_bytes},
+        http::{Request, StatusCode, header::CONTENT_TYPE},
+        middleware,
+        routing::post,
+    };
+    use serde::Deserialize;
+    use tower::ServiceExt;
+
+    use super::{normalize_json_rejection, rejection_field};
+
+    #[derive(Deserialize)]
+    struct RequiredPayload {
+        name: String,
+    }
+
+    async fn required_payload(Json(payload): Json<RequiredPayload>) {
+        drop(payload.name);
+    }
+
+    #[test]
+    fn extracts_missing_and_invalid_json_fields() {
+        assert_eq!(
+            rejection_field(
+                "Failed to deserialize the JSON body into the target type: missing field `ownerDepartmentId` at line 1 column 2"
+            ),
+            Some(("ownerDepartmentId".into(), true)),
+        );
+        assert_eq!(
+            rejection_field(
+                "Failed to deserialize the JSON body into the target type: price.inputPerMillion: invalid type: null, expected a string"
+            ),
+            Some(("price.inputPerMillion".into(), false)),
+        );
+        assert_eq!(
+            rejection_field("Failed to parse the request body as JSON"),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn normalizes_plain_json_extractor_rejections() {
+        let app = Router::new()
+            .route("/", post(required_payload))
+            .layer(middleware::from_fn(normalize_json_rejection));
+        let response = app
+            .oneshot(
+                Request::post("/")
+                    .header(CONTENT_TYPE, "application/json")
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(
+            response.headers().get(CONTENT_TYPE).unwrap(),
+            "application/json"
+        );
+        let body: serde_json::Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), 64 * 1024).await.unwrap())
+                .unwrap();
+        assert_eq!(body["code"], "INVALID_REQUEST_BODY");
+        assert_eq!(body["fieldErrors"][0]["field"], "name");
+        assert_eq!(body["fieldErrors"][0]["code"], "REQUIRED_FIELD");
+    }
+}

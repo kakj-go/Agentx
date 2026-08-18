@@ -6,15 +6,13 @@ use agentx_runtime_contracts::{
     RuntimeResourceOperationV1, RuntimeResourceProbeV1, VaultSecretReferenceV1,
 };
 use axum::{Json, extract::State, http::HeaderMap};
-use reqwest::{
-    Client, Url,
-    header::{ACCEPT, CONTENT_TYPE},
-};
+use reqwest::header::{ACCEPT, CONTENT_TYPE};
 use serde_json::json;
 use time::OffsetDateTime;
 
 use crate::{
     RuntimeState,
+    egress::{EgressRequestContext, ProviderHttpClient, validate_provider_url},
     error::{RuntimeError, RuntimeResult},
 };
 
@@ -58,25 +56,29 @@ pub async fn execute_resource_check(
         },
         None => None,
     };
-    let client =
-        agentx_service_kit::reqwest_client_builder_with_ca("AGENTX_RUNTIME_PROVIDER_TLS_CA_PATH")
-            .map_err(RuntimeError::Internal)?
-            .timeout(Duration::from_secs(5))
-            .build()
-            .map_err(|error| RuntimeError::Internal(error.into()))?;
+    let client = ProviderHttpClient::from_env(agentx_runtime_contracts::EgressRole::RuntimeGateway)
+        .map_err(RuntimeError::Internal)?;
+    let context = EgressRequestContext::request(request.tenant_id, uuid::Uuid::now_v7());
+    let timeout = Duration::from_secs(15);
     let mut outgoing = match &request.probe {
         RuntimeResourceProbeV1::ModelChat { model } => client
-            .post(format!(
-                "{}/chat/completions",
-                request.endpoint.trim_end_matches('/')
-            ))
+            .post(
+                &format!(
+                    "{}/chat/completions",
+                    request.endpoint.trim_end_matches('/')
+                ),
+                context,
+                timeout,
+            )
+            .map_err(|error| RuntimeError::InvalidRequest("INVALID_ENDPOINT", error.to_string()))?
             .json(&json!({
                 "model": model,
                 "messages": [{"role": "user", "content": "health"}],
                 "max_tokens": 1
             })),
         RuntimeResourceProbeV1::McpInitialize => client
-            .post(&request.endpoint)
+            .post(&request.endpoint, context, timeout)
+            .map_err(|error| RuntimeError::InvalidRequest("INVALID_ENDPOINT", error.to_string()))?
             .header(ACCEPT, "application/json, text/event-stream")
             .json(&json!({
                 "jsonrpc": "2.0",
@@ -88,11 +90,13 @@ pub async fn execute_resource_check(
                     "clientInfo": {"name": "agentx-runtime", "version": "1"}
                 }
             })),
-        RuntimeResourceProbeV1::HttpGet { path } => client.get(format!(
-            "{}{}",
-            request.endpoint.trim_end_matches('/'),
-            path
-        )),
+        RuntimeResourceProbeV1::HttpGet { path } => client
+            .get(
+                &format!("{}{}", request.endpoint.trim_end_matches('/'), path),
+                context,
+                timeout,
+            )
+            .map_err(|error| RuntimeError::InvalidRequest("INVALID_ENDPOINT", error.to_string()))?,
     };
     if let Some(token) = token {
         outgoing = outgoing.bearer_auth(token);
@@ -141,18 +145,25 @@ pub async fn execute_resource_operation(
         ));
     }
     let credential = resolve_credential(&state, request.credential.as_ref()).await?;
-    let client =
-        agentx_service_kit::reqwest_client_builder_with_ca("AGENTX_RUNTIME_PROVIDER_TLS_CA_PATH")
-            .map_err(RuntimeError::Internal)?
-            .timeout(Duration::from_secs(u64::from(request.timeout_seconds)))
-            .build()
-            .map_err(|error| RuntimeError::Internal(error.into()))?;
+    let client = ProviderHttpClient::from_env(agentx_runtime_contracts::EgressRole::RuntimeGateway)
+        .map_err(RuntimeError::Internal)?;
+    let context = EgressRequestContext::request(request.tenant_id, request.operation_id);
+    let timeout = Duration::from_secs(u64::from(request.timeout_seconds));
     let started = Instant::now();
-    let session = mcp_initialize(&client, &request.endpoint, credential.as_deref()).await?;
+    let session = mcp_initialize(
+        &client,
+        context,
+        timeout,
+        &request.endpoint,
+        credential.as_deref(),
+    )
+    .await?;
     let result = match request.operation {
         RuntimeResourceOperationV1::McpDiscover => {
             mcp_rpc(
                 &client,
+                context,
+                timeout,
                 &request.endpoint,
                 credential.as_deref(),
                 "tools/list",
@@ -175,6 +186,8 @@ pub async fn execute_resource_operation(
             }
             mcp_rpc(
                 &client,
+                context,
+                timeout,
                 &request.endpoint,
                 credential.as_deref(),
                 "tools/call",
@@ -216,29 +229,9 @@ fn validate_endpoint_and_credential(
     tenant_id: uuid::Uuid,
     credential: Option<&VaultSecretReferenceV1>,
 ) -> RuntimeResult<()> {
-    let endpoint = Url::parse(endpoint).map_err(|_| {
+    validate_provider_url(endpoint).map_err(|_| {
         RuntimeError::InvalidRequest("INVALID_ENDPOINT", "provider endpoint is invalid".into())
     })?;
-    if !matches!(endpoint.scheme(), "http" | "https") {
-        return Err(RuntimeError::InvalidRequest(
-            "INVALID_ENDPOINT",
-            "provider endpoint must use HTTP or HTTPS".into(),
-        ));
-    }
-    if endpoint
-        .host_str()
-        .and_then(|host| {
-            host.trim_matches(&['[', ']'][..])
-                .parse::<std::net::IpAddr>()
-                .ok()
-        })
-        .is_some_and(blocked_literal_address)
-    {
-        return Err(RuntimeError::InvalidRequest(
-            "BLOCKED_PROVIDER_ENDPOINT",
-            "provider endpoint targets a blocked network address".into(),
-        ));
-    }
     if let Some(reference) = credential {
         let prefix = format!("tenants/{tenant_id}/credentials/");
         if reference.version == 0
@@ -253,26 +246,6 @@ fn validate_endpoint_and_credential(
         }
     }
     Ok(())
-}
-
-fn blocked_literal_address(address: std::net::IpAddr) -> bool {
-    match address {
-        std::net::IpAddr::V4(address) => {
-            address.is_loopback()
-                || address.is_private()
-                || address.is_link_local()
-                || address.is_broadcast()
-                || address.is_unspecified()
-                || address.is_multicast()
-        }
-        std::net::IpAddr::V6(address) => {
-            address.is_loopback()
-                || address.is_unspecified()
-                || address.is_unique_local()
-                || address.is_unicast_link_local()
-                || address.is_multicast()
-        }
-    }
 }
 
 async fn resolve_credential(
@@ -296,12 +269,16 @@ async fn resolve_credential(
 }
 
 async fn mcp_initialize(
-    client: &Client,
+    client: &ProviderHttpClient,
+    context: EgressRequestContext,
+    timeout: Duration,
     endpoint: &str,
     credential: Option<&str>,
 ) -> RuntimeResult<Option<String>> {
     let (_, session) = mcp_rpc(
         client,
+        context,
+        timeout,
         endpoint,
         credential,
         "initialize",
@@ -315,7 +292,8 @@ async fn mcp_initialize(
     )
     .await?;
     let mut notification = client
-        .post(endpoint)
+        .post(endpoint, context, timeout)
+        .map_err(|_| RuntimeError::Unavailable)?
         .header(CONTENT_TYPE, "application/json")
         .header(ACCEPT, "application/json, text/event-stream")
         .json(&json!({
@@ -341,7 +319,9 @@ async fn mcp_initialize(
 
 #[allow(clippy::too_many_arguments)]
 async fn mcp_rpc(
-    client: &Client,
+    client: &ProviderHttpClient,
+    context: EgressRequestContext,
+    timeout: Duration,
     endpoint: &str,
     credential: Option<&str>,
     method: &str,
@@ -350,7 +330,8 @@ async fn mcp_rpc(
     id: u64,
 ) -> RuntimeResult<(serde_json::Value, Option<String>)> {
     let mut outgoing = client
-        .post(endpoint)
+        .post(endpoint, context, timeout)
+        .map_err(|_| RuntimeError::Unavailable)?
         .header(CONTENT_TYPE, "application/json")
         .header(ACCEPT, "application/json, text/event-stream")
         .json(&json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params}));

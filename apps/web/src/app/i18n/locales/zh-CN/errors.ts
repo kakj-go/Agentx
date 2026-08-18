@@ -1,7 +1,11 @@
 const translations = {
   "requestFailed": "请求失败（{{code}}）",
   "requestFailedWithId": "请求暂时无法完成。请求 ID：{{requestId}}",
+  "requiredField": "此项为必填项",
   "codes": {
+    "INVALID_REQUEST_BODY": "提交内容存在缺失项或格式错误，请检查后重试。",
+    "REQUIRED_FIELD": "此项为必填项。",
+    "INVALID_FIELD": "此项的格式不正确。",
     "MODEL_NAME_EXISTS": "该模型名称已存在。",
     "DEPARTMENT_NAME_EXISTS": "所选上级部门下已存在同名部门。",
     "USERNAME_EXISTS": "该用户名已被使用。",

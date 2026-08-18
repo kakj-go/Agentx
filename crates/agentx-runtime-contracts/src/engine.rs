@@ -197,7 +197,7 @@ pub enum RuntimeResourceConfigurationV1 {
         memory_bytes: u64,
         disk_bytes: u64,
         pid_limit: u32,
-        network_policy: String,
+        egress_mode: SandboxEgressModeV1,
         maximum_ttl_seconds: u32,
     },
     Composite {
@@ -205,6 +205,14 @@ pub enum RuntimeResourceConfigurationV1 {
         definition_object_id: Uuid,
         ir_object_id: Uuid,
     },
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SandboxEgressModeV1 {
+    #[default]
+    None,
+    PublicHttps,
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]

@@ -85,18 +85,18 @@ export function ModelDetailPage() {
   ]
   const editFields: EntityFormField[] = value ? [
     { name: 'connectionName', label: t('models.connectionName'), defaultValue: value.connectionName, required: true },
-    { name: 'providerType', label: t('models.providerType'), type: 'select', defaultValue: value.providerType, options: [{ value: 'openai_compatible', label: t('models.openaiCompatible') }] },
+    { name: 'providerType', label: t('models.providerType'), type: 'select', defaultValue: value.providerType, required: true, options: [{ value: 'openai_compatible', label: t('models.openaiCompatible') }] },
     { name: 'endpoint', label: t('models.endpoint'), defaultValue: value.endpoint, required: true },
     { name: 'credential', label: t('models.credential'), type: 'select', defaultValue: value.credentialId ?? '', options: [{ value: '', label: t('models.noCredential') }, ...(credentials.data?.items ?? []).map((item) => ({ value: item.id, label: item.name }))] },
     { name: 'alias', label: t('models.fields.modelName'), defaultValue: value.alias, required: true },
     { name: 'modelName', label: t('models.fields.upstreamModelId'), defaultValue: value.modelName, required: true },
     { name: 'maxInputTokens', label: t('models.maxInputTokens'), type: 'number', defaultValue: String(value.maxInputTokens), min: 1, required: true, step: 1 },
     { name: 'maxOutputTokens', label: t('models.maxOutputTokens'), type: 'number', defaultValue: String(value.maxOutputTokens), min: 1, required: true, step: 1 },
-    { name: 'status', label: t('models.fields.status'), type: 'select', defaultValue: value.status, options: statusOptions(t) },
+    { name: 'status', label: t('models.fields.status'), type: 'select', defaultValue: value.status, required: true, options: statusOptions(t) },
     { name: 'currency', label: t('models.currency'), defaultValue: currentPrice?.currency ?? 'USD' },
     { name: 'input', label: t('models.inputPrice'), type: 'number', defaultValue: currentPrice?.inputPerMillion ?? '', step: 'any' },
     { name: 'output', label: t('models.outputPrice'), type: 'number', defaultValue: currentPrice?.outputPerMillion ?? '', step: 'any' },
-    { name: 'department', label: t('models.department'), type: 'select', defaultValue: value.ownerDepartmentId, required: true, options: (departments.data ?? []).map((item) => ({ value: item.id, label: item.name })) },
+    { name: 'department', apiName: 'ownerDepartmentId', label: t('models.department'), type: 'select', defaultValue: value.ownerDepartmentId, required: true, options: (departments.data ?? []).map((item) => ({ value: item.id, label: item.name })) },
     { name: 'parameters', label: t('models.defaultParameters'), type: 'textarea', defaultValue: JSON.stringify(value.defaultParameters, null, 2) },
   ] : []
   const actions = auth.hasPermission('model:manage') ? <div className="flex gap-2">

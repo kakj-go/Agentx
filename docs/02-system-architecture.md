@@ -117,6 +117,10 @@ Sandbox disabled 时不部署该服务。remote 模式下一个逻辑 Manager �
 
 Trace Consumer 从受限 Runtime Redis Stream 批量写入 ClickHouse，Query Role 提供 Trace、成本和聚合查询。Observability 不持有任何 MySQL Credential；ClickHouse 暂时不可用时，Workflow 执行不能因此失败。
 
+### agentx-egress-gateway
+
+部署在 Dependencies Namespace 的安全基础设施，为 `runtime-gateway`、`workflow-runtime`、`workflow-worker` 和显式开启联网的 Sandbox 提供统一 HTTPS CONNECT 出口。Gateway 使用目标绑定的短期 RS256 JWT，KID 前缀与调用角色强绑定，并支持新旧公钥重叠轮换；逐次解析并固定公共 IP，只允许 Profile 明确登记的 HTTPS 端口，任一 DNS 结果落入阻断范围即拒绝整次连接。Sandbox Token 另受单 Token 并发、连接次数、累计 Tunnel 时长和 Sandbox TTL 限制。私网、Pod/Service CIDR、Kubernetes API、Metadata、回环、链路本地和保留地址始终拒绝。Gateway 不持有 MySQL、Redis、Vault、OSS 或 Provider Credential，也不解析或记录 TLS 请求正文。
+
 ### 指标与扩缩容责任
 
 Agentx 后端常驻服务在独立的 `9092` 端口暴露低基数 Prometheus 文本格式指标，Kubernetes `*-metrics` Service 只提供集群内抓取入口。监控组件所在 Namespace 必须显式添加 `agentx.io/metrics-access=true` 标签才能通过 NetworkPolicy 抓取。Agentx 不安装或管理 Prometheus、Prometheus Adapter、Metrics Server，也不创建 HPA、KEDA `ScaledObject` 或其他自动扩缩容器。
@@ -133,6 +137,7 @@ Agentx 继续维护 Readiness/Liveness、Drain、PDB、Claim/Lease/Fencing 和�
 ## 3. 模块依赖规则
 
 - Studio 只能通过 Platform Control BFF 和 Runtime Gateway 调用后端。
+- Model、MCP、Memory、RAG、HTTP Request、Remote Action、Poll 和 Lifecycle 的公网 HTTPS 必须使用 `ProviderHttpClient -> agentx-egress-gateway`；基础设施 Client 继续只访问固定内部依赖。
 - Platform Control 不直接执行节点，也不直连 Runtime MySQL/Redis/OSS 或 ClickHouse。
 - Worker 不修改 Workflow Draft。
 - Execution 只能运行不可变 Snapshot：生产入口使用 Version Source，Studio 调试使用精确 Draft Revision Source；任何入口都不能运行实时变化的 Draft Head。

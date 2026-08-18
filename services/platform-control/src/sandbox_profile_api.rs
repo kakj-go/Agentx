@@ -148,11 +148,11 @@ async fn list_profiles(
 async fn create_profile(
     State(state): State<ControlApiState>,
     actor: Actor,
-    Json(input): Json<CreateRequest>,
+    Json(mut input): Json<CreateRequest>,
 ) -> ApiResult<(StatusCode, Json<ProfileResponse>)> {
     actor.require("sandbox:manage")?;
     require_department_scope(&state, &actor, input.owner_department_id).await?;
-    validate_configuration(&input.configuration)?;
+    normalize_configuration(&mut input.configuration)?;
     let name = required_name(&input.name)?;
     let description = validate_description(input.description)?;
     let id = Uuid::now_v7();
@@ -205,11 +205,11 @@ async fn create_version(
     State(state): State<ControlApiState>,
     actor: Actor,
     Path(id): Path<Uuid>,
-    Json(input): Json<VersionInput>,
+    Json(mut input): Json<VersionInput>,
 ) -> ApiResult<(StatusCode, Json<VersionResponse>)> {
     actor.require("sandbox:manage")?;
     require_visible(&state, &actor, id).await?;
-    validate_configuration(&input)?;
+    normalize_configuration(&mut input)?;
     let hash = configuration_hash(&input)?;
     let mut tx = state.pool.begin().await?;
     let current:Option<u64>=sqlx::query_scalar("SELECT current_version_number FROM sandbox_profiles WHERE tenant_id=? AND id=? AND status='active' FOR UPDATE").bind(actor.tenant_id).bind(id).fetch_optional(&mut *tx).await?;
@@ -321,7 +321,7 @@ fn version_from_row(row: MySqlRow) -> Result<VersionResponse, sqlx::Error> {
         disk_bytes: row.try_get("disk_bytes")?,
         timeout_seconds: row.try_get("timeout_seconds")?,
         output_limit_bytes: row.try_get("output_limit_bytes")?,
-        network_policy: row.try_get("network_policy_json")?,
+        network_policy: normalize_network_policy_value(row.try_get("network_policy_json")?),
         configuration_hash: row.try_get("configuration_hash")?,
         created_at: row.try_get("created_at")?,
     })
@@ -387,19 +387,46 @@ fn validate_configuration(input: &VersionInput) -> ApiResult<()> {
             "Sandbox resource limits and TTL must be positive and bounded",
         ));
     }
-    if input
-        .network_policy
-        .get("defaultAction")
-        .and_then(Value::as_str)
-        .unwrap_or("deny")
-        != "deny"
+    let policy = input.network_policy.as_object().ok_or_else(|| {
+        ApiError::bad_request(
+            "SANDBOX_NETWORK_POLICY_INVALID",
+            "Sandbox network policy must be an object",
+        )
+    })?;
+    if policy.get("defaultAction").and_then(Value::as_str) != Some("deny")
+        || !matches!(
+            policy.get("egressMode").and_then(Value::as_str),
+            Some("none" | "public_https")
+        )
+        || policy
+            .keys()
+            .any(|key| !matches!(key.as_str(), "defaultAction" | "egressMode"))
     {
         return Err(ApiError::bad_request(
             "SANDBOX_NETWORK_POLICY_INVALID",
-            "Sandbox network policy must default deny",
+            "Sandbox network policy only accepts defaultAction=deny and egressMode=none|public_https",
         ));
     }
     Ok(())
+}
+
+fn normalize_configuration(input: &mut VersionInput) -> ApiResult<()> {
+    input.network_policy =
+        normalize_network_policy_value(std::mem::take(&mut input.network_policy));
+    validate_configuration(input)
+}
+
+fn normalize_network_policy_value(value: Value) -> Value {
+    let Value::Object(mut policy) = value else {
+        return value;
+    };
+    policy
+        .entry("defaultAction".to_owned())
+        .or_insert_with(|| Value::String("deny".into()));
+    policy
+        .entry("egressMode".to_owned())
+        .or_insert_with(|| Value::String("none".into()));
+    Value::Object(policy)
 }
 fn valid_digest(value: &str) -> bool {
     value
@@ -444,7 +471,8 @@ mod tests {
             "agentx/python@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         ));
         assert!(!valid_digest("agentx/python:latest"));
-        let input=VersionInput{runner:"python".into(),image_digest:"agentx/python@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),cpu_millis:100,memory_bytes:1024,pids_limit:10,disk_bytes:1024,timeout_seconds:60,output_limit_bytes:1024,network_policy:serde_json::json!({"defaultAction":"deny"})};
-        assert!(validate_configuration(&input).is_ok());
+        let mut input=VersionInput{runner:"python".into(),image_digest:"agentx/python@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),cpu_millis:100,memory_bytes:1024,pids_limit:10,disk_bytes:1024,timeout_seconds:60,output_limit_bytes:1024,network_policy:serde_json::json!({"defaultAction":"deny"})};
+        assert!(normalize_configuration(&mut input).is_ok());
+        assert_eq!(input.network_policy["egressMode"], "none");
     }
 }

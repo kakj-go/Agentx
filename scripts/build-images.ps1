@@ -7,6 +7,7 @@ param(
         "workflow-runtime",
         "workflow-worker",
         "sandbox-manager",
+        "agentx-egress-gateway",
         "observability",
         "web-console"
     ),
@@ -114,27 +115,34 @@ try {
             Import-LocalKubernetesImage $image
             continue
         }
-        $application = if ($service -eq "observability") { "agentx-observability" } else { $service }
+        $application = if ($service -eq "observability") {
+            "agentx-observability"
+        } elseif ($service -eq "agentx-egress-smoke") {
+            "egress-smoke"
+        } else {
+            $service
+        }
         $dockerArguments = @("--file", "$root/deploy/docker/backend.Dockerfile", "--build-arg", "APP=$application")
         if ($service -eq "observability") {
             $dockerArguments += @("--build-arg", "CARGO_PACKAGE=agentx-observability")
         }
-        if ($service -in @("workflow-worker", "sandbox-manager", "v2-04-fixture")) {
+        if ($service -in @("workflow-worker", "sandbox-manager", "agentx-egress-smoke", "v2-04-fixture")) {
             $cargoPackage = "agentx-v2-runtime"
             if ($service -eq "v2-04-fixture") { $cargoPackage = "platform-control" }
             $dockerArguments += @("--build-arg", "CARGO_PACKAGE=$cargoPackage")
+        }
+        if ($service -eq "agentx-egress-gateway") {
+            $dockerArguments += @("--build-arg", "CARGO_PACKAGE=agentx-egress-gateway")
         }
         $dockerArguments += @("--tag", $image, $root)
         Invoke-DockerBuild -DockerArguments $dockerArguments
         Import-LocalKubernetesImage $image
     }
 
-    if (-not $SkipWeb -or $Services -contains "web-console") {
-        $webImage = if ($Services -contains "web-console") { "agentx/web-console:$Tag" } else { "agentx/web:$Tag" }
+    if (-not $SkipWeb -and $Services -contains "web-console") {
+        $webImage = "agentx/web-console:$Tag"
         $webArguments = @("--file", "$root/deploy/docker/web.Dockerfile")
-        if ($Services -contains "web-console") {
-            $webArguments += @("--build-arg", "NGINX_CONFIG=deploy/docker/nginx-v2.conf")
-        }
+        $webArguments += @("--build-arg", "NGINX_CONFIG=deploy/docker/nginx-v2.conf")
         $webArguments += @("--tag", $webImage, $root)
         Invoke-DockerBuild -DockerArguments $webArguments
         Import-LocalKubernetesImage $webImage

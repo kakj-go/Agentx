@@ -566,7 +566,7 @@ pub(crate) async fn execute_runtime_resource_check(
             state.runtime_query_url
         ))
         .bearer_auth(token)
-        .timeout(std::time::Duration::from_secs(10))
+        .timeout(RUNTIME_RESOURCE_CHECK_TIMEOUT)
         .json(&RuntimeResourceCheckRequestV1 {
             schema_version: 1,
             tenant_id,
@@ -594,6 +594,8 @@ pub(crate) async fn execute_runtime_resource_check(
     }
     response.json().await.map_err(ApiError::internal)
 }
+
+const RUNTIME_RESOURCE_CHECK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
 
 pub(crate) async fn execute_runtime_resource_operation(
     state: &ControlApiState,
@@ -889,5 +891,10 @@ mod tests {
         );
         assert!(validate_model_input("unknown", "http://provider.test", 100, 10, None).is_err());
         assert!(validate_alias(" GPT-5 ").is_ok());
+    }
+
+    #[test]
+    fn runtime_resource_check_timeout_covers_the_provider_probe_budget() {
+        assert_eq!(RUNTIME_RESOURCE_CHECK_TIMEOUT.as_secs(), 20);
     }
 }

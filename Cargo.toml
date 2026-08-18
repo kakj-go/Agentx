@@ -15,6 +15,7 @@ members = [
   "crates/agentx-service-kit",
   "services/platform-control",
   "services/agentx-v2-runtime",
+  "services/agentx-egress-gateway",
   "services/observability",
   "services/echo-mcp",
   "services/echo-node",
@@ -49,9 +50,10 @@ comrak = { version = "0.35", default-features = false }
 config = "0.15"
 futures = "0.3"
 http-body-util = "0.1"
+hyper = { version = "1.6", features = ["http1", "server"] }
 hmac = "0.12"
 hyper-rustls = { version = "0.27", default-features = false, features = ["aws-lc-rs", "http1", "native-tokio", "tls12"] }
-hyper-util = { version = "0.1", features = ["client-legacy", "http1", "tokio"] }
+hyper-util = { version = "0.1", features = ["client-legacy", "http1", "server", "tokio"] }
 jsonwebtoken = "9.3"
 jsonschema = { version = "0.33", default-features = false }
 ipnet = "2.11"

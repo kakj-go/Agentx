@@ -46,7 +46,7 @@ export function McpServersPage() {
   const fields: EntityFormField[] = [
     { name: 'name', label: t('common.name'), required: true },
     { name: 'description', label: t('common.description') },
-    { name: 'transport', label: t('mcp.transport'), type: 'select', defaultValue: 'streamable_http', options: [{ value: 'streamable_http', label: t('mcp.streamableHttp') }, { value: 'sse', label: t('mcp.legacySse') }] },
+    { name: 'transport', label: t('mcp.transport'), type: 'select', defaultValue: 'streamable_http', required: true, options: [{ value: 'streamable_http', label: t('mcp.streamableHttp') }, { value: 'sse', label: t('mcp.legacySse') }] },
     { name: 'endpoint', label: t('mcp.endpoint'), defaultValue: 'http://echo-mcp:8090/mcp', required: true },
     { name: 'credential', label: t('mcp.credential'), type: 'select', options: [{ value: '', label: t('mcp.noCredential') }, ...(credentials.data?.items ?? []).map((item) => ({ value: item.id, label: item.name }))] },
     { name: 'department', label: t('mcp.department'), type: 'select', required: true, options: (departments.data ?? []).map((item) => ({ value: item.id, label: item.name })) },

@@ -6,6 +6,28 @@ import { ApiClientError } from '../api/client'
 import { EntityFormDialog } from './entity-form-dialog'
 
 describe('EntityFormDialog field errors', () => {
+  it('marks and validates required input and select fields before submission', async () => {
+    const submit = vi.fn()
+    render(<EntityFormDialog cancelLabel="Cancel" fields={[{ name: 'name', label: 'Name', required: true }, { name: 'department', label: 'Department', type: 'select', required: true, options: [{ value: 'one', label: 'One' }] }]} onClose={vi.fn()} onSubmit={submit} open submitLabel="Save" title="Create" />)
+
+    expect(screen.getAllByText('*', { exact: true })).toHaveLength(2)
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    const name = screen.getByRole('textbox', { name: 'Name' })
+    const department = screen.getByRole('combobox', { name: 'Department' })
+    await waitFor(() => expect(name).toHaveFocus())
+    expect(name).toHaveAttribute('aria-invalid', 'true')
+    expect(department).toHaveAttribute('aria-invalid', 'true')
+    expect(department).toHaveAttribute('aria-required', 'true')
+    expect(screen.getAllByText(/This field is required|此项为必填项/)).toHaveLength(2)
+    expect(submit).not.toHaveBeenCalled()
+
+    fireEvent.change(name, { target: { value: 'Example' } })
+    fireEvent.click(department)
+    fireEvent.click(await screen.findByRole('option', { name: 'One' }))
+    expect(screen.queryByText(/This field is required|此项为必填项/)).not.toBeInTheDocument()
+  })
+
   it('renders, focuses and clears only the edited field error', async () => {
     const submit = vi.fn().mockRejectedValue(new ApiClientError(409, {
       code: 'MODEL_NAME_EXISTS', message: 'duplicate', requestId: 'request-1',
@@ -74,5 +96,20 @@ describe('EntityFormDialog field errors', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
     expect(await screen.findByText('Service is unavailable')).toBeInTheDocument()
     expect(screen.getByRole('textbox', { name: 'Name' })).toHaveAttribute('aria-invalid', 'false')
+  })
+
+  it('maps API field names and keeps unmatched field failures in the summary', async () => {
+    const submit = vi.fn().mockRejectedValue(new ApiClientError(422, {
+      code: 'INVALID_REQUEST_BODY', message: 'Invalid request body', requestId: 'request-3',
+      fieldErrors: [
+        { field: 'ownerDepartmentId', code: 'INVALID_FIELD', message: 'invalid department' },
+        { field: 'unknownField', code: 'INVALID_FIELD', message: 'invalid unknown field' },
+      ],
+    }))
+    render(<EntityFormDialog cancelLabel="Cancel" fields={[{ name: 'department', apiName: 'ownerDepartmentId', label: 'Department', type: 'select', defaultValue: 'one', options: [{ value: 'one', label: 'One' }] }]} onClose={vi.fn()} onSubmit={submit} open submitLabel="Save" title="Create" />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    expect(await screen.findByText(/This field has an invalid value|此项的格式不正确/)).toBeInTheDocument()
+    expect(screen.getByText(/The submitted form contains missing or invalid values|提交内容存在缺失项或格式错误/)).toBeInTheDocument()
   })
 })

@@ -214,6 +214,9 @@
               "minimum": 0,
               "type": "integer"
             },
+            "egressMode": {
+              "$ref": "#/$defs/SandboxEgressModeV1"
+            },
             "image": {
               "type": "string"
             },
@@ -230,9 +233,6 @@
               "format": "uint64",
               "minimum": 0,
               "type": "integer"
-            },
-            "networkPolicy": {
-              "type": "string"
             },
             "pidLimit": {
               "format": "uint32",
@@ -251,7 +251,7 @@
             "memoryBytes",
             "diskBytes",
             "pidLimit",
-            "networkPolicy",
+            "egressMode",
             "maximumTtlSeconds"
           ],
           "type": "object"
@@ -296,6 +296,13 @@
         "credential",
         "sandbox_profile",
         "composite"
+      ],
+      "type": "string"
+    },
+    "SandboxEgressModeV1": {
+      "enum": [
+        "none",
+        "public_https"
       ],
       "type": "string"
     },

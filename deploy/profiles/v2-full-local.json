@@ -1,5 +1,5 @@
 {
-  "apiVersion": "agentx.io/deployment/v2alpha2",
+  "apiVersion": "agentx.io/deployment/v2alpha3",
   "environment": "local",
   "namespaces": {
     "control": "agentx-v2-control",
@@ -15,6 +15,7 @@
     "workflowRuntime": { "replicas": 1, "maxReplicas": 4, "roles": ["coordinator", "trigger", "command", "outbox", "recovery", "artifact", "quota", "trace-relay"], "mysqlPool": 10 },
     "workflowWorker": { "replicas": 1, "maxReplicas": 4, "capability": "all", "mysqlPool": 6 },
     "sandboxManager": { "replicas": 1, "maxReplicas": 4, "mysqlPool": 2 },
+    "egressGateway": { "replicas": 1, "maxReplicas": 4 },
     "observability": { "replicas": 1, "maxReplicas": 4, "roles": ["trace-consumer", "query"] }
   },
   "components": {
@@ -32,6 +33,20 @@
         "observability": { "bucket": "agentx-observability", "user": "observability_object" }
       }
     }
+  },
+  "network": {
+    "egressGateway": {
+      "allowedPublicPorts": [443],
+      "sandboxAccess": {
+        "mode": "nodePort",
+        "endpoint": "https://host.docker.internal:31429",
+        "tlsSecretName": "agentx-egress-tls",
+        "caSecretName": "agentx-egress-tls",
+        "sourceCidrs": ["192.168.0.0/16"],
+        "serviceAnnotations": {}
+      }
+    },
+    "externalEgress": {}
   },
   "secrets": {
     "mode": "generated-local",

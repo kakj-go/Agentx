@@ -1,6 +1,10 @@
 use std::{collections::BTreeMap, future::Future};
 
-use agentx_runtime_contracts::{RuntimeResourceBindingV1, RuntimeResourceConfigurationV1};
+use agentx_runtime_contracts::{
+    EGRESS_SANDBOX_TOKEN_MAX_TTL_SECONDS, EGRESS_TOKEN_AUDIENCE, EGRESS_TOKEN_ISSUER,
+    EgressConnectClaimsV1, EgressMode, EgressRole, RuntimeResourceBindingV1,
+    RuntimeResourceConfigurationV1, SandboxEgressModeV1, issue_egress_connect_token, now_unix,
+};
 use axum::{Json, Router, extract::State, routing::post};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use reqwest::{StatusCode, header::HeaderMap};
@@ -264,7 +268,7 @@ async fn run_sandbox_operation(
         });
     }
 
-    let (image, cpu_millis, memory_bytes, disk_bytes, pid_limit, network_policy) =
+    let (image, cpu_millis, memory_bytes, disk_bytes, pid_limit, profile_egress_mode) =
         match &request.profile.configuration {
             RuntimeResourceConfigurationV1::SandboxProfile {
                 image,
@@ -272,7 +276,7 @@ async fn run_sandbox_operation(
                 memory_bytes,
                 disk_bytes,
                 pid_limit,
-                network_policy,
+                egress_mode,
                 ..
             } => (
                 image,
@@ -280,10 +284,18 @@ async fn run_sandbox_operation(
                 memory_bytes,
                 disk_bytes,
                 pid_limit,
-                network_policy,
+                egress_mode,
             ),
             _ => unreachable!(),
         };
+    let requested_egress_mode = requested_egress_mode(&request.parameters)?;
+    if requested_egress_mode == SandboxEgressModeV1::PublicHttps
+        && *profile_egress_mode != SandboxEgressModeV1::PublicHttps
+    {
+        return Err(bad_request(
+            "Code node public HTTPS exceeds the Sandbox Profile network capability",
+        ));
+    }
     let labels = json!({
         "agentxLeaseId": operation.lease_id,
         "agentxTenantId": request.tenant_id,
@@ -323,7 +335,7 @@ async fn run_sandbox_operation(
                 *memory_bytes,
                 *disk_bytes,
                 *pid_limit,
-                network_policy,
+                requested_egress_mode,
                 metadata,
                 &request.idempotency_key,
             ),
@@ -392,6 +404,9 @@ async fn run_sandbox_operation(
             &sandbox_id,
             &request.parameters,
             &request.idempotency_key,
+            request,
+            requested_egress_mode,
+            ttl,
         ),
     )
     .await?;
@@ -698,16 +713,21 @@ async fn create_provider_sandbox(
     memory_bytes: u64,
     disk_bytes: u64,
     pid_limit: u32,
-    network_policy: &str,
+    egress_mode: SandboxEgressModeV1,
     metadata: BTreeMap<String, String>,
     idempotency_key: &str,
 ) -> Result<(Value, Option<String>), ProviderError> {
-    if network_policy != "deny" {
-        return Err(ProviderError {
-            message: "Sandbox network policy must default to deny".into(),
+    let proxy_target = if egress_mode == SandboxEgressModeV1::PublicHttps {
+        let proxy = sandbox_proxy_url()?;
+        let target = proxy.host_str().ok_or_else(|| ProviderError {
+            message: "Sandbox egress proxy URL has no host".into(),
             outcome_unknown: false,
-        });
-    }
+        })?;
+        Some(target.to_owned())
+    } else {
+        None
+    };
+    let network_policy = opensandbox_network_policy(egress_mode, proxy_target.as_deref());
     let create_url = format!(
         "{}/v1/sandboxes",
         state.provider_endpoint.trim_end_matches('/')
@@ -723,7 +743,7 @@ async fn create_provider_sandbox(
         },
         "entrypoint":["tail","-f","/dev/null"],
         "metadata":metadata,
-        "networkPolicy":{"defaultAction":"deny","egress":[]},
+        "networkPolicy":network_policy,
         "secureAccess":state.provider_secure_access
     });
     let mut response = provider_json(
@@ -772,11 +792,185 @@ async fn create_provider_sandbox(
     })
 }
 
+fn opensandbox_network_policy(
+    egress_mode: SandboxEgressModeV1,
+    proxy_target: Option<&str>,
+) -> Value {
+    let egress = match (egress_mode, proxy_target) {
+        (SandboxEgressModeV1::PublicHttps, Some(target)) => {
+            vec![json!({"action":"allow","target":target})]
+        }
+        _ => Vec::new(),
+    };
+    json!({"defaultAction":"deny","egress":egress})
+}
+
+fn requested_egress_mode(parameters: &Value) -> RuntimeResult<SandboxEgressModeV1> {
+    match parameters
+        .get("egressMode")
+        .or_else(|| parameters.pointer("/networkPolicy/egressMode"))
+        .and_then(Value::as_str)
+        .unwrap_or("none")
+    {
+        "none" => Ok(SandboxEgressModeV1::None),
+        "public_https" => Ok(SandboxEgressModeV1::PublicHttps),
+        _ => Err(bad_request(
+            "Code node egressMode must be none or public_https",
+        )),
+    }
+}
+
+fn sandbox_proxy_url() -> Result<reqwest::Url, ProviderError> {
+    let value = std::env::var("AGENTX_EGRESS_SANDBOX_PROXY_URL").map_err(|_| ProviderError {
+        message: "AGENTX_EGRESS_SANDBOX_PROXY_URL is required for public HTTPS".into(),
+        outcome_unknown: false,
+    })?;
+    let url = reqwest::Url::parse(&value).map_err(|error| ProviderError {
+        message: format!("invalid Sandbox egress proxy URL: {error}"),
+        outcome_unknown: false,
+    })?;
+    if url.scheme() != "https"
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err(ProviderError {
+            message: "Sandbox egress proxy URL must be an HTTPS origin without userinfo".into(),
+            outcome_unknown: false,
+        });
+    }
+    Ok(url)
+}
+
+fn sandbox_proxy_environment(
+    request: &SandboxExecuteRequestV1,
+    ttl_seconds: u32,
+) -> Result<(String, Option<Vec<u8>>), ProviderError> {
+    let mut proxy = sandbox_proxy_url()?;
+    let key_id = std::env::var("AGENTX_EGRESS_JWT_KEY_ID").map_err(|_| ProviderError {
+        message: "AGENTX_EGRESS_JWT_KEY_ID is required".into(),
+        outcome_unknown: false,
+    })?;
+    let private_key =
+        std::env::var("AGENTX_EGRESS_JWT_PRIVATE_KEY_PEM").map_err(|_| ProviderError {
+            message: "AGENTX_EGRESS_JWT_PRIVATE_KEY_PEM is required".into(),
+            outcome_unknown: false,
+        })?;
+    let now = now_unix();
+    let token_ttl = i64::from(ttl_seconds).clamp(1, EGRESS_SANDBOX_TOKEN_MAX_TTL_SECONDS);
+    let claims = EgressConnectClaimsV1 {
+        iss: EGRESS_TOKEN_ISSUER.into(),
+        aud: EGRESS_TOKEN_AUDIENCE.into(),
+        role: EgressRole::Sandbox,
+        tenant_id: request.tenant_id,
+        execution_id: Some(request.execution_id),
+        request_id: Some(request.attempt_id),
+        egress_mode: EgressMode::PublicHttps,
+        target_host: "*".into(),
+        target_port: 443,
+        iat: now,
+        exp: now + token_ttl,
+        jti: Uuid::now_v7(),
+    };
+    let token =
+        issue_egress_connect_token(&key_id, private_key.as_bytes(), &claims).map_err(|_| {
+            ProviderError {
+                message: "failed signing Sandbox egress token".into(),
+                outcome_unknown: false,
+            }
+        })?;
+    proxy.set_username("agentx").map_err(|_| ProviderError {
+        message: "failed setting Sandbox proxy identity".into(),
+        outcome_unknown: false,
+    })?;
+    proxy
+        .set_password(Some(&token))
+        .map_err(|_| ProviderError {
+            message: "failed setting Sandbox proxy token".into(),
+            outcome_unknown: false,
+        })?;
+    let ca = std::env::var_os("AGENTX_EGRESS_SANDBOX_CA_PATH")
+        .filter(|path| !path.is_empty())
+        .map(|path| {
+            std::fs::read(&path).map_err(|error| ProviderError {
+                message: format!("failed reading Sandbox proxy CA: {error}"),
+                outcome_unknown: false,
+            })
+        })
+        .transpose()?;
+    Ok((proxy.to_string(), ca))
+}
+
+async fn upload_sandbox_ca(
+    state: &SandboxManagerState,
+    endpoint: &reqwest::Url,
+    headers: HeaderMap,
+    ca: Vec<u8>,
+) -> Result<(), ProviderError> {
+    let upload_url = endpoint
+        .join("files/upload")
+        .map_err(|error| ProviderError {
+            message: format!("invalid OpenSandbox file upload endpoint: {error}"),
+            outcome_unknown: false,
+        })?;
+    let metadata = serde_json::to_string(&json!({
+        "path":"/tmp/agentx-egress-ca.pem",
+        "mode":384
+    }))
+    .map_err(|error| ProviderError {
+        message: error.to_string(),
+        outcome_unknown: false,
+    })?;
+    let form = reqwest::multipart::Form::new()
+        .part(
+            "metadata",
+            reqwest::multipart::Part::text(metadata)
+                .mime_str("application/json")
+                .map_err(|error| ProviderError {
+                    message: error.to_string(),
+                    outcome_unknown: false,
+                })?,
+        )
+        .part(
+            "file",
+            reqwest::multipart::Part::bytes(ca)
+                .file_name("agentx-egress-ca.pem")
+                .mime_str("application/x-pem-file")
+                .map_err(|error| ProviderError {
+                    message: error.to_string(),
+                    outcome_unknown: false,
+                })?,
+        );
+    let response = state
+        .client
+        .post(upload_url)
+        .headers(headers)
+        .multipart(form)
+        .send()
+        .await
+        .map_err(|error| ProviderError {
+            message: error.to_string(),
+            outcome_unknown: !error.is_connect(),
+        })?;
+    if !response.status().is_success() {
+        return Err(ProviderError {
+            message: format!("OpenSandbox CA upload returned HTTP {}", response.status()),
+            outcome_unknown: false,
+        });
+    }
+    Ok(())
+}
+
 async fn execute_provider_command(
     state: &SandboxManagerState,
     sandbox_id: &str,
     parameters: &Value,
     idempotency_key: &str,
+    sandbox_request: &SandboxExecuteRequestV1,
+    egress_mode: SandboxEgressModeV1,
+    ttl_seconds: u32,
 ) -> Result<(Value, Option<String>), ProviderError> {
     let endpoint_url = format!(
         "{}/v1/sandboxes/{sandbox_id}/endpoints/{EXECD_PORT}?use_server_proxy=true",
@@ -831,6 +1025,23 @@ async fn execute_provider_command(
             })?,
         );
     }
+    let mut envs = serde_json::Map::new();
+    if egress_mode == SandboxEgressModeV1::PublicHttps {
+        let (proxy, ca) = sandbox_proxy_environment(sandbox_request, ttl_seconds)?;
+        envs.insert("HTTPS_PROXY".into(), Value::String(proxy.clone()));
+        envs.insert("https_proxy".into(), Value::String(proxy));
+        envs.insert("NO_PROXY".into(), Value::String(String::new()));
+        envs.insert("no_proxy".into(), Value::String(String::new()));
+        if let Some(ca) = ca {
+            upload_sandbox_ca(state, &endpoint, headers.clone(), ca).await?;
+            for name in ["SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "NODE_EXTRA_CA_CERTS"] {
+                envs.insert(
+                    name.into(),
+                    Value::String("/tmp/agentx-egress-ca.pem".into()),
+                );
+            }
+        }
+    }
     let command = sandbox_command(parameters, idempotency_key)?;
     let command_url = endpoint.join("command").map_err(|error| ProviderError {
         message: format!("invalid OpenSandbox command endpoint: {error}"),
@@ -845,7 +1056,7 @@ async fn execute_provider_command(
             "cwd":"/workspace",
             "background":false,
             "timeout":120_000,
-            "envs":{}
+            "envs":envs
         }))
         .send()
         .await
@@ -1264,7 +1475,11 @@ fn conflict(message: &str) -> RuntimeError {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_command_stream, sandbox_command, server_proxy_endpoint};
+    use agentx_runtime_contracts::SandboxEgressModeV1;
+
+    use super::{
+        opensandbox_network_policy, parse_command_stream, sandbox_command, server_proxy_endpoint,
+    };
     use serde_json::json;
 
     #[test]
@@ -1276,6 +1491,24 @@ mod tests {
         .unwrap();
         assert!(command.contains("python3 '/tmp/agentx-v2.py'"));
         assert!(!command.contains(" python '/tmp/agentx-v2.py'"));
+    }
+
+    #[test]
+    fn opensandbox_policy_only_allows_the_dedicated_gateway_host() {
+        assert_eq!(
+            opensandbox_network_policy(
+                SandboxEgressModeV1::PublicHttps,
+                Some("egress.internal.example")
+            ),
+            json!({
+                "defaultAction":"deny",
+                "egress":[{"action":"allow","target":"egress.internal.example"}]
+            })
+        );
+        assert_eq!(
+            opensandbox_network_policy(SandboxEgressModeV1::None, None),
+            json!({"defaultAction":"deny","egress":[]})
+        );
     }
 
     #[test]

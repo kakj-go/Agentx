@@ -13,13 +13,19 @@ use agentx_runtime_contracts::{
     RuntimeResourceConfigurationV1, RuntimeResourceKindV1, RuntimeSkillProgramV1, StorageDomain,
     WorkerResultStatusV1, WorkerResultV1,
 };
+use bytes::Bytes;
 use object_store::{ObjectStore, path::Path as ObjectPath};
+use reqwest::{StatusCode, header::HeaderMap};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use sqlx::{MySqlPool, Row};
 use uuid::Uuid;
 
-use crate::{engine::ClaimedWorkerAttempt, vault::RuntimeVault};
+use crate::{
+    egress::{EgressRequestContext, ProviderHttpClient},
+    engine::ClaimedWorkerAttempt,
+    vault::RuntimeVault,
+};
 
 mod mcp;
 
@@ -28,6 +34,72 @@ pub struct WorkerExecution {
     pub outputs: BTreeMap<String, Vec<Item>>,
     pub error_code: Option<String>,
     pub error_message: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct WorkerProviderResponse {
+    pub status: StatusCode,
+    pub headers: HeaderMap,
+    pub body: Bytes,
+}
+
+#[derive(Clone, Debug)]
+pub enum WorkerProviderError {
+    Denied(String),
+    Request { message: String, is_connect: bool },
+}
+
+#[async_trait::async_trait]
+pub trait WorkerProvider: Send + Sync {
+    async fn post_json(
+        &self,
+        endpoint: &str,
+        context: EgressRequestContext,
+        timeout: std::time::Duration,
+        headers: HeaderMap,
+        body: &Value,
+    ) -> Result<WorkerProviderResponse, WorkerProviderError>;
+}
+
+#[async_trait::async_trait]
+impl WorkerProvider for ProviderHttpClient {
+    async fn post_json(
+        &self,
+        endpoint: &str,
+        context: EgressRequestContext,
+        timeout: std::time::Duration,
+        headers: HeaderMap,
+        body: &Value,
+    ) -> Result<WorkerProviderResponse, WorkerProviderError> {
+        let mut request = self
+            .post(endpoint, context, timeout)
+            .map_err(|error| WorkerProviderError::Denied(error.to_string()))?;
+        for (name, value) in headers {
+            if let Some(name) = name {
+                request = request.header(name, value);
+            }
+        }
+        let response =
+            request
+                .json(body)
+                .send()
+                .await
+                .map_err(|error| WorkerProviderError::Request {
+                    message: error.to_string(),
+                    is_connect: error.is_connect(),
+                })?;
+        Ok(WorkerProviderResponse {
+            status: response.status(),
+            headers: response.headers().clone(),
+            body: response
+                .bytes()
+                .await
+                .map_err(|error| WorkerProviderError::Request {
+                    message: error.to_string(),
+                    is_connect: error.is_connect(),
+                })?,
+        })
+    }
 }
 
 impl WorkerExecution {
@@ -77,7 +149,7 @@ impl WorkerExecution {
 
 pub struct RuntimeWorker {
     pool: MySqlPool,
-    client: reqwest::Client,
+    provider: Arc<dyn WorkerProvider>,
     vault: Option<RuntimeVault>,
     objects: Arc<dyn ObjectStore>,
 }
@@ -86,16 +158,27 @@ impl RuntimeWorker {
     pub fn new(pool: MySqlPool, objects: Arc<dyn ObjectStore>) -> anyhow::Result<Self> {
         Ok(Self {
             pool,
-            client: agentx_service_kit::reqwest_client_builder_with_ca(
-                "AGENTX_RUNTIME_PROVIDER_TLS_CA_PATH",
-            )?
-            .connect_timeout(std::time::Duration::from_secs(5))
-            .timeout(std::time::Duration::from_secs(300))
-            .redirect(reqwest::redirect::Policy::none())
-            .build()?,
+            provider: Arc::new(ProviderHttpClient::from_env(
+                agentx_runtime_contracts::EgressRole::WorkflowWorker,
+            )?),
             vault: RuntimeVault::from_env().ok(),
             objects,
         })
+    }
+
+    #[doc(hidden)]
+    #[must_use]
+    pub fn new_with_provider(
+        pool: MySqlPool,
+        objects: Arc<dyn ObjectStore>,
+        provider: Arc<dyn WorkerProvider>,
+    ) -> Self {
+        Self {
+            pool,
+            provider,
+            vault: RuntimeVault::from_env().ok(),
+            objects,
+        }
     }
 
     pub async fn execute(&self, claim: &ClaimedWorkerAttempt) -> WorkerExecution {
@@ -1066,11 +1149,12 @@ impl RuntimeWorker {
             Ok(None) => {}
             Err(result) => return result,
         }
-        let mut http = self
-            .client
-            .post(endpoint)
-            .header("Idempotency-Key", &idempotency_key)
-            .json(&request);
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "Idempotency-Key",
+            reqwest::header::HeaderValue::from_str(&idempotency_key)
+                .expect("UUID-based idempotency key is a valid header"),
+        );
         if let Some(reference) = secret {
             let Some(vault) = &self.vault else {
                 return self
@@ -1086,7 +1170,12 @@ impl RuntimeWorker {
                 Ok(value) => match reqwest::header::HeaderValue::from_bytes(
                     &provider_secret_header(&value, secret_header),
                 ) {
-                    Ok(value) => http = http.header(secret_header, value),
+                    Ok(value) => {
+                        headers.insert(
+                            reqwest::header::HeaderName::from_static(secret_header),
+                            value,
+                        );
+                    }
                     Err(_) => {
                         return self
                             .fail_call(
@@ -1117,10 +1206,28 @@ impl RuntimeWorker {
                 false,
             );
         }
-        let response = match http.send().await {
+        let response = match self
+            .provider
+            .post_json(
+                endpoint,
+                EgressRequestContext::execution(claim.task.tenant_id, claim.task.execution_id),
+                std::time::Duration::from_secs(300),
+                headers,
+                &request,
+            )
+            .await
+        {
             Ok(response) => response,
-            Err(error) => {
-                let unknown = !error.is_connect();
+            Err(WorkerProviderError::Denied(message)) => {
+                return self
+                    .fail_call(call_id, "PROVIDER_ENDPOINT_DENIED", message, false)
+                    .await;
+            }
+            Err(WorkerProviderError::Request {
+                message,
+                is_connect,
+            }) => {
+                let unknown = !is_connect;
                 return self
                     .fail_call(
                         call_id,
@@ -1129,19 +1236,19 @@ impl RuntimeWorker {
                         } else {
                             "PROVIDER_UNAVAILABLE"
                         },
-                        error.to_string(),
+                        message,
                         unknown,
                     )
                     .await;
             }
         };
-        let status = response.status();
+        let status = response.status;
         let provider_request_id = response
-            .headers()
+            .headers
             .get("x-request-id")
             .and_then(|value| value.to_str().ok())
             .map(str::to_owned);
-        let payload = match response.json::<Value>().await {
+        let payload = match serde_json::from_slice::<Value>(&response.body) {
             Ok(value) => value,
             Err(error) => {
                 return self

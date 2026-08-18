@@ -139,7 +139,54 @@ pub(crate) async fn build_version_snapshots(
             snapshot,
         });
     }
+    validate_sandbox_egress(definition, &snapshots)?;
     Ok(snapshots)
+}
+
+fn validate_sandbox_egress(
+    definition: &WorkflowDefinition,
+    snapshots: &[ResourceVersionSnapshot],
+) -> ApiResult<()> {
+    for node in definition
+        .nodes
+        .iter()
+        .filter(|node| node.node_type == "code")
+    {
+        let requested = node
+            .parameters
+            .get("egressMode")
+            .or_else(|| node.parameters.pointer("/networkPolicy/egressMode"))
+            .and_then(Value::as_str)
+            .unwrap_or("none");
+        if !matches!(requested, "none" | "public_https") {
+            return Err(ApiError::unprocessable(
+                "INVALID_SANDBOX_EGRESS_MODE",
+                format!(
+                    "Code node {} egressMode must be none or public_https",
+                    node.id
+                ),
+            ));
+        }
+        if requested != "public_https" {
+            continue;
+        }
+        let allowed = snapshots.iter().any(|snapshot| {
+            snapshot.node_id == node.id
+                && snapshot.reference.resource_type == ResourceType::SandboxProfile
+                && snapshot.snapshot.pointer("/networkPolicy/egressMode")
+                    == Some(&Value::String("public_https".to_owned()))
+        });
+        if !allowed {
+            return Err(ApiError::unprocessable(
+                "SANDBOX_EGRESS_EXCEEDS_PROFILE",
+                format!(
+                    "Code node {} requests public HTTPS but its Sandbox Profile does not allow it",
+                    node.id
+                ),
+            ));
+        }
+    }
+    Ok(())
 }
 
 pub(crate) async fn insert_version_snapshots(

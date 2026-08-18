@@ -69,17 +69,17 @@ export function McpServerDetailPage() {
   const value = server.data
   const editFields: EntityFormField[] = value ? [
     { name: 'name', label: t('common.name'), defaultValue: value.name, required: true }, { name: 'description', label: t('common.description'), defaultValue: value.description ?? '' },
-    { name: 'transport', label: t('mcp.transport'), type: 'select', defaultValue: value.transport, options: [{ value: 'streamable_http', label: t('mcp.streamableHttp') }, { value: 'sse', label: t('mcp.legacySse') }] },
+    { name: 'transport', label: t('mcp.transport'), type: 'select', defaultValue: value.transport, required: true, options: [{ value: 'streamable_http', label: t('mcp.streamableHttp') }, { value: 'sse', label: t('mcp.legacySse') }] },
     { name: 'endpoint', label: t('mcp.endpoint'), defaultValue: value.endpoint, required: true },
     { name: 'credential', label: t('mcp.credential'), type: 'select', defaultValue: value.credentialId ?? '', options: [{ value: '', label: t('mcp.noCredential') }, ...(credentials.data?.items ?? []).map((item) => ({ value: item.id, label: item.name }))] },
-    { name: 'status', label: t('common.status'), type: 'select', defaultValue: value.status, options: [{ value: 'active', label: t('common.active') }, { value: 'disabled', label: t('common.inactive') }] },
+    { name: 'status', label: t('common.status'), type: 'select', defaultValue: value.status, required: true, options: [{ value: 'active', label: t('common.active') }, { value: 'disabled', label: t('common.inactive') }] },
     { name: 'configuration', label: t('mcp.configuration'), type: 'textarea', defaultValue: '{}' },
   ] : []
   const policyFields: EntityFormField[] = selected ? [
-    { name: 'enabled', label: t('mcp.toolEnabled'), type: 'select', defaultValue: String(selected.enabled), options: booleanOptions(t) },
-    { name: 'debugEnabled', label: t('mcp.debugEnabled'), type: 'select', defaultValue: String(selected.debugEnabled), options: booleanOptions(t) },
+    { name: 'enabled', label: t('mcp.toolEnabled'), type: 'select', defaultValue: String(selected.enabled), required: true, options: booleanOptions(t) },
+    { name: 'debugEnabled', label: t('mcp.debugEnabled'), type: 'select', defaultValue: String(selected.debugEnabled), required: true, options: booleanOptions(t) },
     { name: 'timeout', label: t('mcp.timeoutSeconds'), type: 'number', defaultValue: String(selected.timeoutSeconds), required: true },
-    { name: 'sideEffect', label: t('mcp.sideEffect'), type: 'select', defaultValue: selected.sideEffect, options: sideEffectOptions.map(({ value, labelKey }) => ({ value, label: t(labelKey) })) },
+    { name: 'sideEffect', label: t('mcp.sideEffect'), type: 'select', defaultValue: selected.sideEffect, required: true, options: sideEffectOptions.map(({ value, labelKey }) => ({ value, label: t(labelKey) })) },
   ] : []
   const debugFields: EntityFormField[] = selected ? [
     { name: 'arguments', label: t('mcp.debugArguments'), type: 'textarea', defaultValue: sampleArguments(selected.inputSchema), required: true },

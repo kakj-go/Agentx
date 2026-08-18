@@ -9,7 +9,7 @@ if (Get-Command Test-Json -ErrorAction SilentlyContinue) {
 
 function Assert-V2Isolation {
     param($Profile)
-    if ($Profile.apiVersion -ne "agentx.io/deployment/v2alpha2") { throw "V2 apiVersion is required." }
+    if ($Profile.apiVersion -ne "agentx.io/deployment/v2alpha3") { throw "V2 apiVersion is required." }
     $namespaces = @($Profile.namespaces.control, $Profile.namespaces.runtime, $Profile.namespaces.dependencies)
     if (($namespaces | Select-Object -Unique).Count -ne 3) { throw "V2 physical namespaces must be distinct." }
     $control = $Profile.components.controlMysql
@@ -22,7 +22,7 @@ function Assert-V2Isolation {
             throw "MySQL pool budget must not exceed 70% of serverMaxConnections."
         }
     }
-    foreach ($service in @($Profile.services.webConsole, $Profile.services.platformControl, $Profile.services.runtimeGateway, $Profile.services.workflowRuntime, $Profile.services.workflowWorker, $Profile.services.sandboxManager, $Profile.services.observability)) {
+    foreach ($service in @($Profile.services.webConsole, $Profile.services.platformControl, $Profile.services.runtimeGateway, $Profile.services.workflowRuntime, $Profile.services.workflowWorker, $Profile.services.sandboxManager, $Profile.services.egressGateway, $Profile.services.observability)) {
         if ([int64]$service.replicas -gt [int64]$service.maxReplicas) { throw "Service replicas must not exceed maxReplicas." }
     }
     $controlPool = [int64]$Profile.services.platformControl.maxReplicas * [int64]$Profile.services.platformControl.mysqlPool
@@ -90,13 +90,13 @@ function Assert-Rejected {
 $profile = $json | ConvertFrom-Json
 Assert-V2Isolation $profile
 $legacyProfile = Copy-Profile
-$legacyProfile.apiVersion = "agentx.io/deployment/v2alpha1"
+$legacyProfile.apiVersion = "agentx.io/deployment/v2alpha2"
 $legacyProfilePath = [IO.Path]::GetTempFileName()
 try {
     $legacyProfile | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $legacyProfilePath
     $legacyRejected = $false
-    try { & (Join-Path $root "scripts/deploy-v2.ps1") -Action Validate -ConfigFile $legacyProfilePath 2>$null | Out-Null } catch { $legacyRejected = $_.Exception.Message -match "v2alpha1 is no longer supported" }
-    if (-not $legacyRejected) { throw "The V2 deployer did not explicitly reject the four-Namespace v2alpha1 Profile." }
+    try { & (Join-Path $root "scripts/deploy-v2.ps1") -Action Validate -ConfigFile $legacyProfilePath 2>$null | Out-Null } catch { $legacyRejected = $_.Exception.Message -match "v2alpha2 and earlier must be upgraded" }
+    if (-not $legacyRejected) { throw "The V2 deployer did not explicitly reject the v2alpha2 Profile." }
 } finally {
     Remove-Item -LiteralPath $legacyProfilePath -Force -ErrorAction SilentlyContinue
 }
@@ -208,6 +208,7 @@ foreach ($profileField in @('ingress.className','ingress.controlHost','ingress.r
 }
 if ($deploySource -notmatch "\^06-" -or $deploySource -notmatch "02\|03\|04\|05\|06") { throw "V2 deploy does not recognize the V2-06 RunId namespace prefix." }
 if ($deploySource -notmatch 'Remove-LegacyAutoscalingResources' -or $deploySource -notmatch 'PreserveReplicaWorkloadNames') { throw "V2 deploy must remove legacy Agentx autoscaling resources and preserve live replicas on Upgrade/Rollback." }
+if ($deploySource -notmatch "spec\.template\.metadata\.labels\.'agentx.io/egress-client'") { throw "Dependencies uninstall must inspect Runtime Pod template Egress references." }
 if ($deploySource -notmatch '&agentx:v2:invocation:wakeup:\*') { throw "Runtime Redis ACL must permit only the V2 SSE wakeup Pub/Sub channel family." }
 $buildImagesSource = Get-Content -Raw -LiteralPath (Join-Path $root "scripts/build-images.ps1")
 if ($buildImagesSource -match 'create namespace \$Namespace --dry-run=client.*kubectl apply') {
@@ -217,6 +218,12 @@ if ($buildImagesSource -notmatch 'get namespace \$Namespace --ignore-not-found')
     throw "Image loading must preserve an existing V2 Namespace and its plane labels."
 }
 if ($buildImagesSource -notmatch 'agentx-observability') { throw "V2 image build does not map the Observability image to its Cargo binary." }
+if ($buildImagesSource -notmatch 'agentx-egress-smoke' -or $buildImagesSource -notmatch 'egress-smoke') { throw "V2 image build does not map the Egress smoke image to its test binary." }
+$egressE2eSource = Get-Content -Raw -LiteralPath (Join-Path $root "scripts/v2-egress-e2e.ps1")
+foreach ($required in @('cloudflare/cloudflared@sha256:', 'StabilityOnlyEndpoint', 'agentx-egress-smoke', 'AGENTX_EGRESS_SMOKE_STABILITY_SECONDS', 'agentx-egress-bypass', 'docker rm --force', 'finally')) {
+    if (-not $egressE2eSource.Contains($required)) { throw "V2 Egress E2E is missing: $required" }
+}
+if ($egressE2eSource.Contains('ngrok')) { throw "V2 Egress E2E must not depend on the removed ngrok fixture path." }
 $webDockerfile = Get-Content -Raw -LiteralPath (Join-Path $root "deploy/docker/web.Dockerfile")
 if ($webDockerfile -notmatch 'COPY --chown=101:101 --from=builder .*/dist /opt/agentx-web') { throw "Web Console immutable assets must be staged for the read-only runtime container." }
 if ($webDockerfile -notmatch 'touch /workspace/apps/web/dist/runtime-config.js') { throw "Web Console must pre-create runtime-config.js before copying assets to the unprivileged image." }
@@ -307,6 +314,15 @@ try {
     if ($runScopedRender -match 'agentx-v2-(?:custom-)?(?:control|runtime|deps)\.svc') {
         throw "V2-08 run-scoped render leaked a base or Profile service endpoint."
     }
+    $runScopedNodePortMatch = [regex]::Match($runScopedRender, '"nodePort"\s*:\s*(\d+)')
+    if (-not $runScopedNodePortMatch.Success) { throw "V2-08 run-scoped render omitted its Sandbox Egress NodePort." }
+    $runScopedNodePort = [int]$runScopedNodePortMatch.Groups[1].Value
+    if ($runScopedNodePort -lt 32000 -or $runScopedNodePort -gt 32767 -or $runScopedNodePort -eq 31429) {
+        throw "V2-08 run-scoped Sandbox Egress NodePort is not isolated: $runScopedNodePort"
+    }
+    if (-not $runScopedRender.Contains("https://host.docker.internal:$runScopedNodePort")) {
+        throw "V2-08 run-scoped Sandbox Manager does not use its isolated NodePort."
+    }
 }
 finally {
     Remove-Item -LiteralPath $runScopedProfilePath -Force -ErrorAction SilentlyContinue
@@ -317,11 +333,11 @@ if ($LASTEXITCODE -ne 0 -or $localProfileRender -notmatch '(?ms)name: AGENTX_OPE
 }
 $hpaCount = ([regex]::Matches($localProfileRender, '(?m)^kind: HorizontalPodAutoscaler\s*$')).Count
 $pdbCount = ([regex]::Matches($localProfileRender, '(?m)^kind: PodDisruptionBudget\s*$')).Count
-if ($hpaCount -ne 0 -or $pdbCount -ne 7) { throw "Agentx must render zero HPA and seven PDB resources." }
+if ($hpaCount -ne 0 -or $pdbCount -ne 8) { throw "Agentx must render zero HPA and eight PDB resources." }
 $physicalNamespaces = @([regex]::Matches($localProfileRender, '(?m)^\s*namespace:\s*(agentx-v2-[a-z0-9-]+)\s*$') | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique)
 if (($physicalNamespaces -join ',') -ne 'agentx-v2-control,agentx-v2-deps,agentx-v2-runtime') { throw "V2 must render exactly the control/runtime/dependencies physical Namespaces." }
 if ($localProfileRender -match '(?m)^\s*namespace:\s*(?:agentx-ingress|agentx-v2-observability)\s*$') { throw "V2 render leaked a retired physical Namespace." }
-foreach ($workload in @('platform-control','web-console','runtime-gateway','workflow-runtime','workflow-worker','sandbox-manager','observability')) {
+foreach ($workload in @('platform-control','web-console','runtime-gateway','workflow-runtime','workflow-worker','sandbox-manager','agentx-egress-gateway','observability')) {
     $expectedReplicas = switch ($workload) {
         'platform-control' { [int]$profile.services.platformControl.replicas }
         'web-console' { [int]$profile.services.webConsole.replicas }
@@ -329,10 +345,25 @@ foreach ($workload in @('platform-control','web-console','runtime-gateway','work
         'workflow-runtime' { [int]$profile.services.workflowRuntime.replicas }
         'workflow-worker' { [int]$profile.services.workflowWorker.replicas }
         'sandbox-manager' { [int]$profile.services.sandboxManager.replicas }
+        'agentx-egress-gateway' { [int]$profile.services.egressGateway.replicas }
         'observability' { [int]$profile.services.observability.replicas }
     }
     $deployment = ($localProfileRender -split '(?m)^---\s*$' | Where-Object { $_ -match '(?m)^kind: Deployment\s*$' -and $_ -match "(?m)^  name: $workload\s*$" } | Select-Object -First 1)
     if (-not $deployment -or $deployment -notmatch "(?m)^  replicas: $expectedReplicas\s*$" -or $deployment -notmatch 'maxUnavailable: 1' -or $deployment -notmatch 'terminationGracePeriodSeconds: 60') { throw "Invalid V2-06A lifecycle Deployment for $workload." }
+}
+$egressDeployment = ($localProfileRender -split '(?m)^---\s*$' | Where-Object { $_ -match '(?m)^kind: Deployment\s*$' -and $_ -match '(?m)^  name: agentx-egress-gateway\s*$' } | Select-Object -First 1)
+foreach ($required in @('AGENTX_EGRESS_ALLOWED_PUBLIC_PORTS','AGENTX_EGRESS_JWT_PUBLIC_KEYS_JSON','containerPort: 3128','containerPort: 3129','containerPort: 9092','/health/drain')) {
+    if (-not $egressDeployment.Contains($required)) { throw "Egress Gateway is missing $required." }
+}
+foreach ($forbidden in @('MYSQL','REDIS','VAULT','S3_ACCESS','S3_SECRET','PROVIDER_CREDENTIAL')) {
+    if ($egressDeployment.Contains($forbidden)) { throw "Egress Gateway contains forbidden data credential token $forbidden." }
+}
+foreach ($runtimeClient in @('runtime-gateway','workflow-runtime','workflow-worker')) {
+    $deployment = ($localProfileRender -split '(?m)^---\s*$' | Where-Object { $_ -match '(?m)^kind: Deployment\s*$' -and $_ -match "(?m)^  name: $runtimeClient\s*$" } | Select-Object -First 1)
+    if ($deployment -notmatch 'agentx.io/egress-client: managed' -or $deployment -notmatch 'AGENTX_EGRESS_PROXY_URL') { throw "$runtimeClient is not bound to the managed Egress Gateway." }
+}
+if ($localProfileRender -notmatch '"name"\s*:\s*"agentx-egress-sandbox"' -or $localProfileRender -notmatch '"nodePort"\s*:\s*31429' -or $localProfileRender -notmatch '"type"\s*:\s*"NodePort"') {
+    throw 'Local Sandbox egress Service must use the fixed private NodePort.'
 }
 foreach ($backend in @('platform-control','runtime-gateway','workflow-runtime','workflow-worker','sandbox-manager','observability')) {
     $deployment = ($localProfileRender -split '(?m)^---\s*$' | Where-Object { $_ -match '(?m)^kind: Deployment\s*$' -and $_ -match "(?m)^  name: $backend\s*$" } | Select-Object -First 1)

@@ -54,6 +54,10 @@ V1 `platform-api`、`trigger-gateway`、`workflow-coordinator`、`trace-writer`�
 
 四个二进制只使用 Runtime MySQL/Redis/OSS、只读 Vault 和获准 Provider/OpenSandbox，不访问 Control Repository 或数据。
 
+### agentx-egress-gateway
+
+独立 Rust 二进制，提供 Runtime `3128` 明文集群内 CONNECT、Sandbox `3129` TLS CONNECT、`8080` 健康检查和 `9092` 低基数指标。它强制 KID/角色绑定、Runtime Token 单次消费、Sandbox Token 并发/次数/累计时长预算，以及解析后全地址校验和固定 IP 连接。它只依赖跨服务 JWT 契约、DNS/TCP/TLS 与 Service Kit，不依赖任何业务 Repository 或数据凭据。
+
 ### observability
 
 以 `trace-consumer,query` Role 消费 Runtime Trace Stream、写入 ClickHouse并提供内部 Trace/成本/聚合查询。它不持有 Control 或 Runtime MySQL Credential。
@@ -77,7 +81,7 @@ V1 `platform-api`、`trigger-gateway`、`workflow-coordinator`、`trace-writer`�
 - `agentx-mysql-lease`：数据库 UTC 时间、Pod UID Owner、Lease、Heartbeat、Fencing 和 `SKIP LOCKED` 公共语义。
 - `agentx-service-kit`：配置、结构化日志、Live/Ready/Drain、指标和优雅退出。
 - `agentx-v2-ops`：Migration、Bootstrap、Doctor 和 Key 工具。
-- `agentx-boundary-check`：Cargo、SQL、Env、Secret、NetworkPolicy、V1 残留和 2000 行静态门禁。
+- `agentx-boundary-check`：Cargo、SQL、Env、Secret、NetworkPolicy、Provider HTTP Client、V1 残留和 2000 行静态门禁；面向公网的 Runtime 模块禁止重新使用裸 `reqwest::Client::new()`。
 
 ## 4. 依赖方向
 

@@ -17,15 +17,15 @@
     },
     "images": {
       "type": "array",
-      "minItems": 10,
-      "maxItems": 10,
+      "minItems": 11,
+      "maxItems": 11,
       "items": {
         "type": "object",
         "additionalProperties": false,
         "required": ["name", "digest"],
         "properties": {
           "name": {
-            "enum": ["agentx-migrate", "agentx-bootstrap", "agentx-doctor", "platform-control", "web-console", "runtime-gateway", "workflow-runtime", "workflow-worker", "sandbox-manager", "observability"]
+            "enum": ["agentx-migrate", "agentx-bootstrap", "agentx-doctor", "platform-control", "web-console", "runtime-gateway", "workflow-runtime", "workflow-worker", "sandbox-manager", "agentx-egress-gateway", "observability"]
           },
           "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
         }

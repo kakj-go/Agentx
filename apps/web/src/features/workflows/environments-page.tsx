@@ -41,7 +41,7 @@ export function EnvironmentsPage() {
   ], [auth, queryClient, showToast, t])
   const fields: EntityFormField[] = editing === 'create'
     ? [{ name: 'code', label: t('workflows.environmentCode'), required: true, placeholder: 'staging' }, { name: 'name', label: t('workflows.environmentName'), required: true }]
-    : [{ name: 'name', label: t('workflows.environmentName'), defaultValue: editing?.name, required: true }, { name: 'status', label: t('common.status'), type: 'select', defaultValue: editing?.status ?? 'active', options: [{ value: 'active', label: t('common.active') }, { value: 'disabled', label: t('common.inactive') }] }]
+    : [{ name: 'name', label: t('workflows.environmentName'), defaultValue: editing?.name, required: true }, { name: 'status', label: t('common.status'), type: 'select', defaultValue: editing?.status ?? 'active', required: true, options: [{ value: 'active', label: t('common.active') }, { value: 'disabled', label: t('common.inactive') }] }]
 
   return <>
     <ListPage action={auth.hasPermission('workflow:publish') ? <Button onClick={() => setEditing('create')}><Plus className="size-4" />{t('workflows.createEnvironment')}</Button> : undefined} columns={columns} data={query.data ?? []} description={t('workflows.environmentDescription')} getSearchText={(row) => `${row.name} ${row.code}`} getStatus={(row) => row.status === 'active' ? 'active' : 'inactive'} searchPlaceholder={t('workflows.searchEnvironments')} statusOptions={[{ value: 'active', label: t('common.active') }, { value: 'inactive', label: t('common.inactive') }]} title={t('workflows.environmentManagement')} />

@@ -489,7 +489,7 @@ impl<'a> WorkflowCompiler<'a> {
                     name: node.name.clone(),
                     node_type: node.node_type.clone(),
                     type_version: node.type_version,
-                    parameters: node.parameters.clone(),
+                    parameters: normalized_node_parameters(node),
                     output_projection: serde_json::to_value(&node.output_projection)
                         .expect("output projection serializes"),
                     context_writes: node.context_writes.clone(),
@@ -570,6 +570,26 @@ impl<'a> WorkflowCompiler<'a> {
             subworkflow_version_ids: subworkflows.into_iter().collect(),
         })
     }
+}
+
+fn normalized_node_parameters(node: &WorkflowNode) -> Value {
+    let mut parameters = node.parameters.clone();
+    if node.node_type != "code" {
+        return parameters;
+    }
+    let egress_mode = parameters
+        .get("egressMode")
+        .or_else(|| parameters.pointer("/networkPolicy/egressMode"))
+        .and_then(Value::as_str)
+        .unwrap_or("none")
+        .to_owned();
+    if let Some(object) = parameters.as_object_mut() {
+        object.insert(
+            "networkPolicy".to_owned(),
+            serde_json::json!({"defaultAction":"deny","egressMode":egress_mode}),
+        );
+    }
+    parameters
 }
 
 fn validate_binding_slots(

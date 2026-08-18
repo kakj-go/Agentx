@@ -70,9 +70,9 @@ export function ResourceGrantDialog({ onClose, open, resource }: { onClose: () =
     <DialogContent className="w-[min(880px,calc(100vw-48px))] p-6" title={t('resourceGrants.manageTitle', { name: resource?.name ?? '' })}>
       <div className="flex items-start gap-3"><div className="grid size-9 place-items-center rounded-lg bg-primary/10 text-primary"><ShieldCheck className="size-4" /></div><div><h2 className="text-lg font-semibold">{t('resourceGrants.manageTitle', { name: resource?.name ?? '' })}</h2><p className="mt-1 text-xs text-muted-foreground">{t('resourceGrants.manageDescription')}</p></div></div>
       {auth.hasPermission('resource:grant') && <form className="mt-6 grid grid-cols-[180px_minmax(220px,1fr)_160px_auto] items-end gap-3 rounded-lg border border-border bg-canvas/40 p-4" onSubmit={(event) => void submit(event)}>
-        <Field label={t('resourceGrants.subjectType')}><Select onValueChange={changeSubjectType} options={[{ value: 'workflow_service_identity', label: t('resourceGrants.workflow') }, { value: 'department', label: t('resourceGrants.department') }]} value={subjectType} /></Field>
-        <Field label={t('resourceGrants.subject')}><Select onValueChange={setSubjectId} options={subjectOptions} placeholder={t('resourceGrants.select')} value={subjectId} /></Field>
-        <Field label={t('resourceGrants.operation')}><Select onValueChange={setOperation} options={operationOptions} value={effectiveOperation} /></Field>
+        <Field label={t('resourceGrants.subjectType')}><Select aria-label={t('resourceGrants.subjectType')} aria-required onValueChange={changeSubjectType} options={[{ value: 'workflow_service_identity', label: t('resourceGrants.workflow') }, { value: 'department', label: t('resourceGrants.department') }]} value={subjectType} /></Field>
+        <Field label={t('resourceGrants.subject')}><Select aria-label={t('resourceGrants.subject')} aria-required onValueChange={setSubjectId} options={subjectOptions} placeholder={t('resourceGrants.select')} value={subjectId} /></Field>
+        <Field label={t('resourceGrants.operation')}><Select aria-label={t('resourceGrants.operation')} aria-required onValueChange={setOperation} options={operationOptions} value={effectiveOperation} /></Field>
         <Button disabled={pending || !subjectId} type="submit"><Plus className="size-4" />{t('resourceGrants.add')}</Button>
         {error && <p className="col-span-full text-xs text-danger">{error}</p>}
       </form>}
@@ -94,5 +94,5 @@ export function ResourceGrantDialog({ onClose, open, resource }: { onClose: () =
   </>
 }
 
-function Field({ children, label }: { children: ReactNode; label: string }) { return <label className="block text-xs"><span className="mb-2 block font-medium">{label}</span>{children}</label> }
+function Field({ children, label }: { children: ReactNode; label: string }) { return <label className="block text-xs"><span className="mb-2 block font-medium">{label}<span aria-hidden="true" className="ml-1 text-danger">*</span></span>{children}</label> }
 function operationsFor(type: string): GrantOperation[] { return type === 'rag' || type === 'memory' ? ['read', 'write', 'view', 'manage'] : ['use', 'view', 'manage'] }

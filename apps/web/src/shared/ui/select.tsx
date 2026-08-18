@@ -15,16 +15,18 @@ type SelectProps = {
   'aria-label'?: string
   'aria-invalid'?: boolean
   'aria-describedby'?: string
+  'aria-required'?: boolean
   name?: string
 }
 
-export function Select({ value, onValueChange, options, placeholder, className, disabled, name, 'aria-label': ariaLabel, 'aria-invalid': ariaInvalid, 'aria-describedby': ariaDescribedBy }: SelectProps) {
+export function Select({ value, onValueChange, options, placeholder, className, disabled, name, 'aria-label': ariaLabel, 'aria-invalid': ariaInvalid, 'aria-describedby': ariaDescribedBy, 'aria-required': ariaRequired }: SelectProps) {
   return (
     <SelectPrimitive.Root disabled={disabled} onValueChange={onValueChange} value={value}>
       <SelectPrimitive.Trigger
         aria-label={ariaLabel}
         aria-invalid={ariaInvalid}
         aria-describedby={ariaDescribedBy}
+        aria-required={ariaRequired}
         name={name}
         className={cn(
           'inline-flex h-9 min-w-36 items-center justify-between gap-3 rounded-lg border border-border bg-surface px-3 text-sm text-foreground outline-none transition-colors',

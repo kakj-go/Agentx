@@ -267,6 +267,24 @@ spec:
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
+metadata: { name: runtime-managed-egress-gateway, namespace: agentx-v2-runtime }
+spec:
+  podSelector: { matchLabels: { agentx.io/egress-client: managed } }
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector: { matchLabels: { agentx.io/plane: dependencies } }
+          podSelector: { matchLabels: { app.kubernetes.io/name: agentx-egress-gateway } }
+      ports: [{ protocol: TCP, port: 3128 }]
+    - to:
+        - namespaceSelector: {}
+          podSelector: { matchLabels: { k8s-app: kube-dns } }
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
 metadata: { name: sandbox-manager-ingress, namespace: agentx-v2-runtime }
 spec:
   podSelector: { matchLabels: { app.kubernetes.io/name: sandbox-manager } }

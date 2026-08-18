@@ -387,6 +387,94 @@
         "title": "DisableDeploymentRequestV1",
         "type": "object"
       },
+      "EgressConnectClaimsV1": {
+        "$defs": {
+          "EgressMode": {
+            "enum": [
+              "public_https"
+            ],
+            "type": "string"
+          },
+          "EgressRole": {
+            "enum": [
+              "runtime-gateway",
+              "workflow-runtime",
+              "workflow-worker",
+              "sandbox"
+            ],
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "aud": {
+            "type": "string"
+          },
+          "egressMode": {
+            "$ref": "#/$defs/EgressMode"
+          },
+          "executionId": {
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "exp": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "iat": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "iss": {
+            "type": "string"
+          },
+          "jti": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "requestId": {
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "role": {
+            "$ref": "#/$defs/EgressRole"
+          },
+          "targetHost": {
+            "type": "string"
+          },
+          "targetPort": {
+            "format": "uint16",
+            "maximum": 65535,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "tenantId": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "iss",
+          "aud",
+          "role",
+          "tenantId",
+          "egressMode",
+          "targetHost",
+          "targetPort",
+          "iat",
+          "exp",
+          "jti"
+        ],
+        "title": "EgressConnectClaimsV1",
+        "type": "object"
+      },
       "EventEnvelopeV1": {
         "$defs": {
           "Plane": {
@@ -4211,6 +4299,9 @@
                     "minimum": 0,
                     "type": "integer"
                   },
+                  "egressMode": {
+                    "$ref": "#/$defs/SandboxEgressModeV1"
+                  },
                   "image": {
                     "type": "string"
                   },
@@ -4227,9 +4318,6 @@
                     "format": "uint64",
                     "minimum": 0,
                     "type": "integer"
-                  },
-                  "networkPolicy": {
-                    "type": "string"
                   },
                   "pidLimit": {
                     "format": "uint32",
@@ -4248,7 +4336,7 @@
                   "memoryBytes",
                   "diskBytes",
                   "pidLimit",
-                  "networkPolicy",
+                  "egressMode",
                   "maximumTtlSeconds"
                 ],
                 "type": "object"
@@ -4480,6 +4568,13 @@
               "configuration"
             ],
             "type": "object"
+          },
+          "SandboxEgressModeV1": {
+            "enum": [
+              "none",
+              "public_https"
+            ],
+            "type": "string"
           },
           "ScheduleMisfirePolicyV1": {
             "enum": [
@@ -7226,6 +7321,9 @@
                     "minimum": 0,
                     "type": "integer"
                   },
+                  "egressMode": {
+                    "$ref": "#/$defs/SandboxEgressModeV1"
+                  },
                   "image": {
                     "type": "string"
                   },
@@ -7242,9 +7340,6 @@
                     "format": "uint64",
                     "minimum": 0,
                     "type": "integer"
-                  },
-                  "networkPolicy": {
-                    "type": "string"
                   },
                   "pidLimit": {
                     "format": "uint32",
@@ -7263,7 +7358,7 @@
                   "memoryBytes",
                   "diskBytes",
                   "pidLimit",
-                  "networkPolicy",
+                  "egressMode",
                   "maximumTtlSeconds"
                 ],
                 "type": "object"
@@ -7495,6 +7590,13 @@
               "configuration"
             ],
             "type": "object"
+          },
+          "SandboxEgressModeV1": {
+            "enum": [
+              "none",
+              "public_https"
+            ],
+            "type": "string"
           },
           "ScheduleMisfirePolicyV1": {
             "enum": [
@@ -9029,6 +9131,9 @@
                     "minimum": 0,
                     "type": "integer"
                   },
+                  "egressMode": {
+                    "$ref": "#/$defs/SandboxEgressModeV1"
+                  },
                   "image": {
                     "type": "string"
                   },
@@ -9045,9 +9150,6 @@
                     "format": "uint64",
                     "minimum": 0,
                     "type": "integer"
-                  },
-                  "networkPolicy": {
-                    "type": "string"
                   },
                   "pidLimit": {
                     "format": "uint32",
@@ -9066,7 +9168,7 @@
                   "memoryBytes",
                   "diskBytes",
                   "pidLimit",
-                  "networkPolicy",
+                  "egressMode",
                   "maximumTtlSeconds"
                 ],
                 "type": "object"
@@ -9350,6 +9452,13 @@
               "signature"
             ],
             "type": "object"
+          },
+          "SandboxEgressModeV1": {
+            "enum": [
+              "none",
+              "public_https"
+            ],
+            "type": "string"
           },
           "SideEffectLevel": {
             "enum": [
@@ -12726,6 +12835,9 @@
                     "minimum": 0,
                     "type": "integer"
                   },
+                  "egressMode": {
+                    "$ref": "#/$defs/SandboxEgressModeV1"
+                  },
                   "image": {
                     "type": "string"
                   },
@@ -12742,9 +12854,6 @@
                     "format": "uint64",
                     "minimum": 0,
                     "type": "integer"
-                  },
-                  "networkPolicy": {
-                    "type": "string"
                   },
                   "pidLimit": {
                     "format": "uint32",
@@ -12763,7 +12872,7 @@
                   "memoryBytes",
                   "diskBytes",
                   "pidLimit",
-                  "networkPolicy",
+                  "egressMode",
                   "maximumTtlSeconds"
                 ],
                 "type": "object"
@@ -12808,6 +12917,13 @@
               "credential",
               "sandbox_profile",
               "composite"
+            ],
+            "type": "string"
+          },
+          "SandboxEgressModeV1": {
+            "enum": [
+              "none",
+              "public_https"
             ],
             "type": "string"
           },
@@ -14839,6 +14955,9 @@
                     "minimum": 0,
                     "type": "integer"
                   },
+                  "egressMode": {
+                    "$ref": "#/$defs/SandboxEgressModeV1"
+                  },
                   "image": {
                     "type": "string"
                   },
@@ -14855,9 +14974,6 @@
                     "format": "uint64",
                     "minimum": 0,
                     "type": "integer"
-                  },
-                  "networkPolicy": {
-                    "type": "string"
                   },
                   "pidLimit": {
                     "format": "uint32",
@@ -14876,7 +14992,7 @@
                   "memoryBytes",
                   "diskBytes",
                   "pidLimit",
-                  "networkPolicy",
+                  "egressMode",
                   "maximumTtlSeconds"
                 ],
                 "type": "object"
@@ -15140,6 +15256,13 @@
                 "type": "object"
               }
             ]
+          },
+          "SandboxEgressModeV1": {
+            "enum": [
+              "none",
+              "public_https"
+            ],
+            "type": "string"
           },
           "SideEffectLevel": {
             "enum": [

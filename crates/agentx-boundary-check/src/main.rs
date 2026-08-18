@@ -122,9 +122,63 @@ fn check_repository(root: &Path) -> Result<()> {
     check_sql(root, &tables, &v2_tables, &policy, &mut failures)?;
     check_boundary_tokens(root, &policy, &mut failures)?;
     check_runtime_gateway_redis(root, &policy, &mut failures)?;
+    check_provider_http_clients(root, &mut failures)?;
     check_network_policies(root, &policy, &mut failures)?;
     check_line_limits(root, &mut failures)?;
     finish(failures)
+}
+
+fn check_provider_http_clients(root: &Path, failures: &mut Vec<String>) -> Result<()> {
+    let runtime_source = root.join("services/agentx-v2-runtime/src");
+    if !runtime_source.is_dir() {
+        return Ok(());
+    }
+    let direct_client_allowlist = BTreeSet::from([
+        "services/agentx-v2-runtime/src/egress.rs",
+        "services/agentx-v2-runtime/src/sandbox.rs",
+        "services/agentx-v2-runtime/src/vault.rs",
+        "services/agentx-v2-runtime/src/bin/runtime-fault-proxy.rs",
+        "services/agentx-v2-runtime/src/bin/sandbox-manager.rs",
+    ]);
+    let forbidden_patterns = [
+        (
+            Regex::new(r"\breqwest\s*::\s*(?:Client|ClientBuilder)\b")?,
+            "direct reqwest Client/ClientBuilder reference",
+        ),
+        (
+            Regex::new(r"(?s)\buse\s+reqwest\s*::\s*\{[^}]*\b(?:Client|ClientBuilder)\b")?,
+            "reqwest Client/ClientBuilder import",
+        ),
+        (
+            Regex::new(r"(?m)\b(?:use|extern\s+crate)\s+reqwest\s+as\s+\w+\s*;")?,
+            "aliased reqwest crate import",
+        ),
+        (
+            Regex::new(r"\breqwest_client_builder_with_ca\s*\(")?,
+            "unmanaged CA-aware reqwest builder",
+        ),
+    ];
+    for path in WalkDir::new(runtime_source)
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_type().is_file())
+        .map(|entry| entry.into_path())
+        .filter(|path| path.extension().and_then(|value| value.to_str()) == Some("rs"))
+    {
+        let relative_path = relative(root, &path);
+        if direct_client_allowlist.contains(relative_path.as_str()) {
+            continue;
+        }
+        let source = fs::read_to_string(path)?;
+        for (pattern, description) in &forbidden_patterns {
+            if pattern.is_match(&source) {
+                failures.push(format!(
+                    "Provider HTTP boundary violation: {relative_path} contains {description}; external requests must use ProviderHttpClient"
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn check_v2_incremental_schemas(

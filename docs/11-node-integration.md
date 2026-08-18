@@ -85,6 +85,8 @@ Provider 请求只接收当前参数和短时 Credential Handle，返回稳定�
 
 Lifecycle Path 必须与请求中的 `operation` 相同。activate/deactivate 应幂等；poll/webhook 的游标或服务侧状态放在 `state` 中；suspend/resume 只处理节点服务自身状态，Execution 恢复仍由 Coordinator 决定。
 
+所有公共 Provider Endpoint 必须是 HTTPS，并统一走 `agentx-egress-gateway`；只有集群内受管 Fixture 可以继续使用 HTTP。Model 连接测试、MCP 发现/调试、Memory/RAG 健康检查和真实 Workflow 执行共享同一 Endpoint 拼接、TLS 与 Gateway 路径。HTTP 30x 每一跳都会重新校验并签发目标绑定 CONNECT Token，跨 Host 不转发 Authorization/Cookie。Provider 服务不能要求访问私网、Kubernetes Service、Metadata 或非 Profile 允许端口；企业私网接入应使用后续专属 Connector/VPN/PrivateLink。
+
 ## 7. 本地验证
 
 生成协议产物：

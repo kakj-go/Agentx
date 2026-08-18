@@ -26,7 +26,7 @@ describe('sandbox profile units and image tags', () => {
       diskGb: '1',
       timeoutSeconds: '300',
       outputKb: '1024',
-      networkPolicy: '{"defaultAction":"deny"}',
-    }, 'invalid json', 'invalid image')).toMatchObject({ memoryBytes: 536870912, diskBytes: 1073741824, outputLimitBytes: 1048576 })
+      allowPublicHttps: 'true',
+    }, 'invalid json', 'invalid image')).toMatchObject({ memoryBytes: 536870912, diskBytes: 1073741824, outputLimitBytes: 1048576, networkPolicy: { defaultAction: 'deny', egressMode: 'public_https' } })
   })
 })

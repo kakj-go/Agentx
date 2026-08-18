@@ -4,7 +4,7 @@ use agentx_bundle_builder::composite_ir_object_id;
 use agentx_domain::ResourceVersionSnapshot;
 use agentx_runtime_contracts::{
     ContentHash, RuntimeResourceBindingV1, RuntimeResourceConfigurationV1, RuntimeResourceKindV1,
-    VaultSecretReferenceV1,
+    SandboxEgressModeV1, VaultSecretReferenceV1,
 };
 use anyhow::{Context, Result};
 use serde_json::Value;
@@ -139,11 +139,15 @@ fn from_parts(
                 memory_bytes: required_json_u64(&snapshot, "memoryBytes")?,
                 disk_bytes: required_json_u64(&snapshot, "diskBytes")?,
                 pid_limit: required_json_u32(&snapshot, "pidsLimit")?,
-                network_policy: snapshot
-                    .pointer("/networkPolicy/defaultAction")
+                egress_mode: match snapshot
+                    .pointer("/networkPolicy/egressMode")
                     .and_then(Value::as_str)
-                    .context("Sandbox binding requires networkPolicy.defaultAction")?
-                    .to_owned(),
+                    .unwrap_or("none")
+                {
+                    "none" => SandboxEgressModeV1::None,
+                    "public_https" => SandboxEgressModeV1::PublicHttps,
+                    other => anyhow::bail!("unsupported Sandbox egress mode {other}"),
+                },
                 maximum_ttl_seconds: required_json_u32(&snapshot, "timeoutSeconds")?,
             },
             vec![],

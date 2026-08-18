@@ -40,7 +40,7 @@ export function CredentialsPage() {
   ], [auth, formatDateTime, queryClient, showToast, t])
   const fields: EntityFormField[] = [
     { name: 'name', label: t('common.name'), required: true },
-    { name: 'type', label: t('credentials.credentialType'), type: 'select', defaultValue: 'api_key', options: [{ value: 'api_key', label: t('credentials.apiKey') }, { value: 'bearer', label: t('credentials.bearer') }, { value: 'basic', label: t('credentials.basic') }, { value: 'custom_json', label: t('credentials.customJson') }] },
+    { name: 'type', label: t('credentials.credentialType'), type: 'select', defaultValue: 'api_key', required: true, options: [{ value: 'api_key', label: t('credentials.apiKey') }, { value: 'bearer', label: t('credentials.bearer') }, { value: 'basic', label: t('credentials.basic') }, { value: 'custom_json', label: t('credentials.customJson') }] },
     { name: 'secret', label: t('credentials.secret'), type: 'password', required: true, placeholder: t('credentials.passwordMask') },
     { name: 'department', label: t('credentials.department'), type: 'select', required: true, options: (departments.data ?? []).map((item) => ({ value: item.id, label: item.name })) },
   ]

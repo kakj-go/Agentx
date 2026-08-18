@@ -41,7 +41,7 @@ export function SandboxProfileDetailPage() {
   const editFields: EntityFormField[] = value ? [
     { name: 'name', label: t('common.name'), required: true, defaultValue: value.name },
     { name: 'description', label: t('common.description'), type: 'textarea', defaultValue: value.description ?? '' },
-    { name: 'status', label: t('common.status'), type: 'select', defaultValue: value.status, options: [{ value: 'active', label: t('common.active') }, { value: 'disabled', label: t('common.inactive') }] },
+    { name: 'status', label: t('common.status'), type: 'select', defaultValue: value.status, required: true, options: [{ value: 'active', label: t('common.active') }, { value: 'disabled', label: t('common.inactive') }] },
   ] : []
   const actions = auth.hasPermission('sandbox:manage') ? <div className="flex gap-2"><Button onClick={() => setEditOpen(true)} variant="secondary"><Pencil className="size-4" />{t('common.edit')}</Button><Button onClick={() => setVersionOpen(true)}><Plus className="size-4" />{t('sandbox.newVersion')}</Button></div> : undefined
   return <>

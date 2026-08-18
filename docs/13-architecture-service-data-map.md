@@ -12,6 +12,7 @@
 | `workflow-runtime` | Runtime / coordinator,trigger,command,outbox,recovery,artifact,quota,trace-relay | Runtime MySQL、Runtime Redis、Runtime OSS | Control DB/DNS/OSS；把 Event/Redis 当当前状态来源 |
 | `workflow-worker` | Runtime / capability pools | Runtime MySQL/Redis/OSS、只读 Vault、获准 Provider | Control Repository/DB/OSS 和未获准 Provider |
 | `sandbox-manager` | Runtime / manager,reaper | Runtime MySQL、只读 Vault、OpenSandbox | Control 数据和普通 Worker 的 Provider 权限并集 |
+| `agentx-egress-gateway` | Dependencies / security infrastructure | DNS、Profile 允许端口上的公共 HTTPS；角色绑定的 Runtime/Sandbox 当前与轮换公钥 | MySQL、Redis、Vault、OSS、Provider Credential 与任意私网目标 |
 | `observability` | Observability / trace-consumer,query | 受限 Runtime Redis Trace/JTI ACL、ClickHouse、Observability OSS | 任意 MySQL Credential、Runtime OSS 和 Control 数据 |
 
 Migration 使用三个独立一次性目标：`control-migrate`、`runtime-migrate` 和 `clickhouse-migrate`。它们只持有所属 Schema 凭据，不持有应用、Redis、OSS、Vault 或 Provider Credential。
@@ -22,11 +23,11 @@ Migration 使用三个独立一次性目标：`control-migrate`、`runtime-migra
 |---|---|
 | `agentx-v2-control` | Control：`web-console`、`platform-control`、Control MySQL 与 Migration |
 | `agentx-v2-runtime` | Runtime + Observability：四类 Runtime 服务、`observability`、Runtime MySQL、Runtime Redis、ClickHouse 与两域 Migration |
-| `agentx-v2-deps` | Dependencies + Ingress：Vault、MinIO、专用 ingress-nginx，以及可选 OpenSandbox/Addon |
+| `agentx-v2-deps` | Dependencies + Ingress：`agentx-egress-gateway`、Vault、MinIO、专用 ingress-nginx，以及可选 OpenSandbox/Addon |
 
-Observability 与 Runtime 只共享 Namespace，不共享数据权限：Observability 仍使用独立 ServiceAccount、Secret、Redis ACL 和 ClickHouse 账号，NetworkPolicy 只允许它访问 Runtime Redis Trace/JTI 通道和 ClickHouse，禁止 Runtime MySQL。Profile 契约为 `agentx.io/deployment/v2alpha2`，不再接受四 Namespace 的 `v2alpha1`。
+Observability 与 Runtime 只共享 Namespace，不共享数据权限：Observability 仍使用独立 ServiceAccount、Secret、Redis ACL 和 ClickHouse 账号，NetworkPolicy 只允许它访问 Runtime Redis Trace/JTI 通道和 ClickHouse，禁止 Runtime MySQL。Profile 契约为 `agentx.io/deployment/v2alpha3`，`v2alpha2` 及更早版本不做兼容转换。
 
-当前 Kubernetes 应用层最多有 7 类常驻 Deployment，其中 `sandbox-manager` 可选；默认紧凑 Profile 首次安装时每类 Deployment 均为 1 个副本。Agentx 另可在本地 Profile 部署 MySQL、Redis、MinIO、Vault 和 ClickHouse 等开发依赖，但不再部署 Prometheus、Prometheus Adapter 或 Metrics Server，也不创建任何 HPA/KEDA 资源。六类后端应用继续通过独立的 `*-metrics` Service 暴露 `9092 /metrics`；采集、告警和扩缩容均由用户平台负责。
+当前 Kubernetes 应用层有 8 类常驻 Deployment；默认紧凑 Profile 首次安装时每类 Deployment 均为 1 个副本，并各有一个 PDB。Agentx 另可在本地 Profile 部署 MySQL、Redis、MinIO、Vault 和 ClickHouse 等开发依赖，但不再部署 Prometheus、Prometheus Adapter 或 Metrics Server，也不创建任何 HPA/KEDA 资源。七类后端应用与 Egress Gateway 继续通过独立的 `*-metrics` Service 暴露 `9092 /metrics`；采集、告警和扩缩容均由用户平台负责。
 
 Profile 的 `replicas` 是首次安装值，当前统一为 `1`；`maxReplicas` 只用于连接池容量预算。单副本默认值用于降低开发和初始部署资源占用，不提供 Pod 级冗余，但运行时正确性仍不能依赖单副本。Upgrade/Rollback 保留当前 Deployment 副本数；用户手工扩缩容或外部 scaler 必须遵守 `maxReplicas` 预算。PDB、健康探针、Drain 和 Claim/Lease/Fencing 仍由 Agentx 清单与运行时契约保证。
 
@@ -44,6 +45,10 @@ platform-control api
 runtime-gateway ──Runtime Command──> workflow-runtime
 workflow-runtime ──Capability Task──> workflow-worker / sandbox-manager
 workflow-runtime trace-relay ──Redis Stream──> observability ──> ClickHouse
+
+runtime-gateway / workflow-runtime / workflow-worker
+  ──HTTPS CONNECT + 60 秒目标绑定 JWT──> agentx-egress-gateway ──> 公共 HTTPS
+sandbox ──TLS CONNECT + TTL/并发/次数/累计时长受限 Token──> agentx-egress-gateway
 ```
 
 Runtime 不主动调用 Control。Runtime 当前状态只来自 Runtime MySQL；Control 治理页面使用按 Cursor 拉取的治理投影；Trace、成本和聚合只来自 ClickHouse。

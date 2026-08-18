@@ -50,9 +50,9 @@ describe('model connection form', () => {
     expect(within(dialog).getByLabelText('所属部门')).toBeInTheDocument()
     expect(within(dialog).getByLabelText('默认参数 JSON')).toHaveValue('{}')
     const fieldLabels = Array.from(dialog.querySelectorAll('form > label > span')).map((element) => element.textContent)
-    expect(fieldLabels.slice(6, 10)).toEqual(['最大输入 Token', '最大输出 Token', '币种', '输入单价/百万 Token'])
+    expect(fieldLabels.slice(6, 10)).toEqual(['最大输入 Token*', '最大输出 Token*', '币种', '输入单价/百万 Token'])
     expect(fieldLabels[10]).toBe('输出单价/百万 Token')
-    expect(fieldLabels[11]).toBe('所属部门')
+    expect(fieldLabels[11]).toBe('所属部门*')
   })
 
   it('sends entered prices when creating a model', async () => {
@@ -65,6 +65,8 @@ describe('model connection form', () => {
     fireEvent.change(within(dialog).getByLabelText('Endpoint'), { target: { value: 'https://example.com/v1' } })
     fireEvent.change(within(dialog).getByLabelText('输入单价/百万 Token'), { target: { value: '1.25' } })
     fireEvent.change(within(dialog).getByLabelText('输出单价/百万 Token'), { target: { value: '2.5' } })
+    fireEvent.click(within(dialog).getByRole('combobox', { name: '所属部门' }))
+    fireEvent.click(await screen.findByRole('option', { name: '研发部' }))
     fireEvent.click(within(dialog).getByRole('button', { name: '保存' }))
 
     await waitFor(() => expect(requests.some((request) => request.path === '/api/v1/models/aliases' && request.init?.method === 'POST')).toBe(true))

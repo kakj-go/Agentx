@@ -1,9 +1,11 @@
 use agentx_runtime_contracts::{RuntimeResourceBindingV1, VaultSecretReferenceV1};
+use reqwest::header::{HeaderMap, HeaderValue};
 use serde_json::{Value, json};
 
 use super::{
     RuntimeWorker, WorkerExecution, provider_secret_header, runtime_call_fingerprint, stable_id,
 };
+use crate::egress::EgressRequestContext;
 use crate::engine::ClaimedWorkerAttempt;
 
 impl RuntimeWorker {
@@ -83,6 +85,7 @@ impl RuntimeWorker {
         }
         let (_, session) = match self
             .mcp_rpc(
+                claim,
                 endpoint,
                 credential.as_deref(),
                 None,
@@ -105,6 +108,7 @@ impl RuntimeWorker {
         };
         if let Err(error) = self
             .mcp_rpc(
+                claim,
                 endpoint,
                 credential.as_deref(),
                 session.as_deref(),
@@ -120,6 +124,7 @@ impl RuntimeWorker {
         }
         let (payload, _) = match self
             .mcp_rpc(
+                claim,
                 endpoint,
                 credential.as_deref(),
                 session.as_deref(),
@@ -149,8 +154,10 @@ impl RuntimeWorker {
         WorkerExecution::succeeded(payload)
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn mcp_rpc(
         &self,
+        claim: &ClaimedWorkerAttempt,
         endpoint: &str,
         credential: Option<&[u8]>,
         session: Option<&str>,
@@ -162,29 +169,42 @@ impl RuntimeWorker {
         if let Some(id) = id {
             envelope["id"] = id;
         }
-        let mut request = self
-            .client
-            .post(endpoint)
-            .header("content-type", "application/json")
-            .header("accept", "application/json, text/event-stream")
-            .json(&envelope);
+        let mut headers = HeaderMap::new();
+        headers.insert("content-type", HeaderValue::from_static("application/json"));
+        headers.insert(
+            "accept",
+            HeaderValue::from_static("application/json, text/event-stream"),
+        );
         if let Some(session) = session {
-            request = request.header("mcp-session-id", session);
+            headers.insert(
+                "mcp-session-id",
+                HeaderValue::from_str(session).map_err(|error| error.to_string())?,
+            );
         }
         if let Some(credential) = credential {
-            let value = reqwest::header::HeaderValue::from_bytes(credential)
+            let value = HeaderValue::from_bytes(credential)
                 .map_err(|_| "MCP credential is not a valid authorization header".to_owned())?;
-            request = request.header("authorization", value);
+            headers.insert("authorization", value);
         }
-        let response = request.send().await.map_err(|error| error.to_string())?;
-        let status = response.status();
+        let response = self
+            .provider
+            .post_json(
+                endpoint,
+                EgressRequestContext::execution(claim.task.tenant_id, claim.task.execution_id),
+                std::time::Duration::from_secs(300),
+                headers,
+                &envelope,
+            )
+            .await
+            .map_err(|error| format!("{error:?}"))?;
+        let status = response.status;
         let next_session = response
-            .headers()
+            .headers
             .get("mcp-session-id")
             .and_then(|value| value.to_str().ok())
             .map(str::to_owned)
             .or_else(|| session.map(str::to_owned));
-        let bytes = response.bytes().await.map_err(|error| error.to_string())?;
+        let bytes = response.body;
         if !status.is_success() {
             return Err(format!(
                 "MCP HTTP {status}: {}",

@@ -226,19 +226,23 @@ function Get-OrCreateValue {
 }
 
 function Get-SigningMaterial {
-    param([hashtable]$ControlExisting, [hashtable]$RuntimeExisting, [hashtable]$ObservabilityExisting)
+    param([hashtable]$ControlExisting, [hashtable]$RuntimeExisting, [hashtable]$ObservabilityExisting, [hashtable]$EgressExisting)
     $requiredControl = @("AGENTX_CONTROL_PUBLISHER_JWT_PRIVATE_KEY_PEM", "AGENTX_CONTROL_PROJECTOR_JWT_PRIVATE_KEY_PEM", "AGENTX_CONTROL_BFF_JWT_PRIVATE_KEY_PEM", "AGENTX_CONTROL_BUNDLE_ED25519_PRIVATE_KEY_PEM", "AGENTX_CONTROL_WORK_PACKAGE_ED25519_PRIVATE_KEY_PEM", "AGENTX_CONTROL_USER_JWT_PRIVATE_KEY_PEM", "AGENTX_CONTROL_USER_JWT_PUBLIC_KEYS_JSON")
     $requiredRuntime = @("AGENTX_RUNTIME_SERVICE_JWT_PUBLIC_KEYS_JSON", "AGENTX_RUNTIME_BUNDLE_PUBLIC_KEYS_JSON", "AGENTX_RUNTIME_WORK_PACKAGE_PUBLIC_KEYS_JSON", "AGENTX_RUNTIME_USER_JWT_PUBLIC_KEYS_JSON")
     $requiredObservability = @("AGENTX_OBSERVABILITY_BFF_JWT_PUBLIC_KEYS_JSON")
-    if (($requiredControl | Where-Object { -not $ControlExisting.ContainsKey($_) -or -not $ControlExisting[$_] }).Count -eq 0 -and
+    $requiredRuntime += @("AGENTX_RUNTIME_GATEWAY_EGRESS_JWT_PRIVATE_KEY_PEM", "AGENTX_WORKFLOW_RUNTIME_EGRESS_JWT_PRIVATE_KEY_PEM", "AGENTX_WORKFLOW_WORKER_EGRESS_JWT_PRIVATE_KEY_PEM", "AGENTX_SANDBOX_EGRESS_JWT_PRIVATE_KEY_PEM")
+    $requiredEgress = @("AGENTX_EGRESS_JWT_PUBLIC_KEYS_JSON", "tls.crt", "tls.key")
+    $allExisting = (($requiredControl | Where-Object { -not $ControlExisting.ContainsKey($_) -or -not $ControlExisting[$_] }).Count -eq 0 -and
         ($requiredRuntime | Where-Object { -not $RuntimeExisting.ContainsKey($_) -or -not $RuntimeExisting[$_] }).Count -eq 0 -and
-        ($requiredObservability | Where-Object { -not $ObservabilityExisting.ContainsKey($_) -or -not $ObservabilityExisting[$_] }).Count -eq 0) {
-        return @{ servicePrivate = $ControlExisting.AGENTX_CONTROL_PUBLISHER_JWT_PRIVATE_KEY_PEM; projectorPrivate = $ControlExisting.AGENTX_CONTROL_PROJECTOR_JWT_PRIVATE_KEY_PEM; bffPrivate = $ControlExisting.AGENTX_CONTROL_BFF_JWT_PRIVATE_KEY_PEM; bundlePrivate = $ControlExisting.AGENTX_CONTROL_BUNDLE_ED25519_PRIVATE_KEY_PEM; workPackagePrivate = $ControlExisting.AGENTX_CONTROL_WORK_PACKAGE_ED25519_PRIVATE_KEY_PEM; servicePublicJson = $RuntimeExisting.AGENTX_RUNTIME_SERVICE_JWT_PUBLIC_KEYS_JSON; bffPublicJson = $ObservabilityExisting.AGENTX_OBSERVABILITY_BFF_JWT_PUBLIC_KEYS_JSON; bundlePublicJson = $RuntimeExisting.AGENTX_RUNTIME_BUNDLE_PUBLIC_KEYS_JSON; workPackagePublicJson = $RuntimeExisting.AGENTX_RUNTIME_WORK_PACKAGE_PUBLIC_KEYS_JSON; userPrivate = $ControlExisting.AGENTX_CONTROL_USER_JWT_PRIVATE_KEY_PEM; userPublicJson = $RuntimeExisting.AGENTX_RUNTIME_USER_JWT_PUBLIC_KEYS_JSON }
+        ($requiredObservability | Where-Object { -not $ObservabilityExisting.ContainsKey($_) -or -not $ObservabilityExisting[$_] }).Count -eq 0 -and
+        ($requiredEgress | Where-Object { -not $EgressExisting.ContainsKey($_) -or -not $EgressExisting[$_] }).Count -eq 0)
+    if ($allExisting) {
+        return @{ servicePrivate = $ControlExisting.AGENTX_CONTROL_PUBLISHER_JWT_PRIVATE_KEY_PEM; projectorPrivate = $ControlExisting.AGENTX_CONTROL_PROJECTOR_JWT_PRIVATE_KEY_PEM; bffPrivate = $ControlExisting.AGENTX_CONTROL_BFF_JWT_PRIVATE_KEY_PEM; bundlePrivate = $ControlExisting.AGENTX_CONTROL_BUNDLE_ED25519_PRIVATE_KEY_PEM; workPackagePrivate = $ControlExisting.AGENTX_CONTROL_WORK_PACKAGE_ED25519_PRIVATE_KEY_PEM; servicePublicJson = $RuntimeExisting.AGENTX_RUNTIME_SERVICE_JWT_PUBLIC_KEYS_JSON; bffPublicJson = $ObservabilityExisting.AGENTX_OBSERVABILITY_BFF_JWT_PUBLIC_KEYS_JSON; bundlePublicJson = $RuntimeExisting.AGENTX_RUNTIME_BUNDLE_PUBLIC_KEYS_JSON; workPackagePublicJson = $RuntimeExisting.AGENTX_RUNTIME_WORK_PACKAGE_PUBLIC_KEYS_JSON; userPrivate = $ControlExisting.AGENTX_CONTROL_USER_JWT_PRIVATE_KEY_PEM; userPublicJson = $RuntimeExisting.AGENTX_RUNTIME_USER_JWT_PUBLIC_KEYS_JSON; runtimeGatewayEgressPrivate = $RuntimeExisting.AGENTX_RUNTIME_GATEWAY_EGRESS_JWT_PRIVATE_KEY_PEM; workflowRuntimeEgressPrivate = $RuntimeExisting.AGENTX_WORKFLOW_RUNTIME_EGRESS_JWT_PRIVATE_KEY_PEM; workflowWorkerEgressPrivate = $RuntimeExisting.AGENTX_WORKFLOW_WORKER_EGRESS_JWT_PRIVATE_KEY_PEM; sandboxEgressPrivate = $RuntimeExisting.AGENTX_SANDBOX_EGRESS_JWT_PRIVATE_KEY_PEM; egressPublicJson = $EgressExisting.AGENTX_EGRESS_JWT_PUBLIC_KEYS_JSON; egressTlsCertificate = $EgressExisting.'tls.crt'; egressTlsPrivateKey = $EgressExisting.'tls.key' }
     }
     $json = (& cargo run --quiet -p agentx-v2-ops --bin agentx-keygen) -join "`n"
     if ($LASTEXITCODE -ne 0) { throw "Failed to generate V2 signing material." }
     $material = $json | ConvertFrom-Json
-    return @{
+    $generated = @{
         servicePrivate = [string]$material.servicePrivateKeyPem
         projectorPrivate = [string]$material.projectorPrivateKeyPem
         bffPrivate = [string]$material.bffPrivateKeyPem
@@ -250,7 +254,47 @@ function Get-SigningMaterial {
         workPackagePublicJson = (@{ "work-package-current" = [string]$material.workPackagePublicKeyBase64 } | ConvertTo-Json -Compress)
         userPrivate = [string]$material.userPrivateKeyPem
         userPublicJson = (@{ "user-current" = [string]$material.userPublicKeyPem } | ConvertTo-Json -Compress)
+        runtimeGatewayEgressPrivate = [string]$material.runtimeGatewayEgressPrivateKeyPem
+        workflowRuntimeEgressPrivate = [string]$material.workflowRuntimeEgressPrivateKeyPem
+        workflowWorkerEgressPrivate = [string]$material.workflowWorkerEgressPrivateKeyPem
+        sandboxEgressPrivate = [string]$material.sandboxEgressPrivateKeyPem
+        egressPublicJson = (@{ "runtime-gateway-current" = [string]$material.runtimeGatewayEgressPublicKeyPem; "workflow-runtime-current" = [string]$material.workflowRuntimeEgressPublicKeyPem; "workflow-worker-current" = [string]$material.workflowWorkerEgressPublicKeyPem; "sandbox-current" = [string]$material.sandboxEgressPublicKeyPem } | ConvertTo-Json -Compress)
+        egressTlsCertificate = [string]$material.egressTlsCertificatePem
+        egressTlsPrivateKey = [string]$material.egressTlsPrivateKeyPem
     }
+    $serviceFamily = @("AGENTX_CONTROL_PUBLISHER_JWT_PRIVATE_KEY_PEM", "AGENTX_CONTROL_PROJECTOR_JWT_PRIVATE_KEY_PEM", "AGENTX_CONTROL_BFF_JWT_PRIVATE_KEY_PEM")
+    if (($serviceFamily | Where-Object { -not $ControlExisting.ContainsKey($_) -or -not $ControlExisting[$_] }).Count -eq 0 -and $RuntimeExisting.AGENTX_RUNTIME_SERVICE_JWT_PUBLIC_KEYS_JSON -and $ObservabilityExisting.AGENTX_OBSERVABILITY_BFF_JWT_PUBLIC_KEYS_JSON) {
+        $generated.servicePrivate = $ControlExisting.AGENTX_CONTROL_PUBLISHER_JWT_PRIVATE_KEY_PEM
+        $generated.projectorPrivate = $ControlExisting.AGENTX_CONTROL_PROJECTOR_JWT_PRIVATE_KEY_PEM
+        $generated.bffPrivate = $ControlExisting.AGENTX_CONTROL_BFF_JWT_PRIVATE_KEY_PEM
+        $generated.servicePublicJson = $RuntimeExisting.AGENTX_RUNTIME_SERVICE_JWT_PUBLIC_KEYS_JSON
+        $generated.bffPublicJson = $ObservabilityExisting.AGENTX_OBSERVABILITY_BFF_JWT_PUBLIC_KEYS_JSON
+    }
+    if ($ControlExisting.AGENTX_CONTROL_BUNDLE_ED25519_PRIVATE_KEY_PEM -and $RuntimeExisting.AGENTX_RUNTIME_BUNDLE_PUBLIC_KEYS_JSON) {
+        $generated.bundlePrivate = $ControlExisting.AGENTX_CONTROL_BUNDLE_ED25519_PRIVATE_KEY_PEM
+        $generated.bundlePublicJson = $RuntimeExisting.AGENTX_RUNTIME_BUNDLE_PUBLIC_KEYS_JSON
+    }
+    if ($ControlExisting.AGENTX_CONTROL_WORK_PACKAGE_ED25519_PRIVATE_KEY_PEM -and $RuntimeExisting.AGENTX_RUNTIME_WORK_PACKAGE_PUBLIC_KEYS_JSON) {
+        $generated.workPackagePrivate = $ControlExisting.AGENTX_CONTROL_WORK_PACKAGE_ED25519_PRIVATE_KEY_PEM
+        $generated.workPackagePublicJson = $RuntimeExisting.AGENTX_RUNTIME_WORK_PACKAGE_PUBLIC_KEYS_JSON
+    }
+    if ($ControlExisting.AGENTX_CONTROL_USER_JWT_PRIVATE_KEY_PEM -and $RuntimeExisting.AGENTX_RUNTIME_USER_JWT_PUBLIC_KEYS_JSON) {
+        $generated.userPrivate = $ControlExisting.AGENTX_CONTROL_USER_JWT_PRIVATE_KEY_PEM
+        $generated.userPublicJson = $RuntimeExisting.AGENTX_RUNTIME_USER_JWT_PUBLIC_KEYS_JSON
+    }
+    $egressPrivateKeys = @("AGENTX_RUNTIME_GATEWAY_EGRESS_JWT_PRIVATE_KEY_PEM", "AGENTX_WORKFLOW_RUNTIME_EGRESS_JWT_PRIVATE_KEY_PEM", "AGENTX_WORKFLOW_WORKER_EGRESS_JWT_PRIVATE_KEY_PEM", "AGENTX_SANDBOX_EGRESS_JWT_PRIVATE_KEY_PEM")
+    if (($egressPrivateKeys | Where-Object { -not $RuntimeExisting.ContainsKey($_) -or -not $RuntimeExisting[$_] }).Count -eq 0 -and $EgressExisting.AGENTX_EGRESS_JWT_PUBLIC_KEYS_JSON) {
+        $generated.runtimeGatewayEgressPrivate = $RuntimeExisting.AGENTX_RUNTIME_GATEWAY_EGRESS_JWT_PRIVATE_KEY_PEM
+        $generated.workflowRuntimeEgressPrivate = $RuntimeExisting.AGENTX_WORKFLOW_RUNTIME_EGRESS_JWT_PRIVATE_KEY_PEM
+        $generated.workflowWorkerEgressPrivate = $RuntimeExisting.AGENTX_WORKFLOW_WORKER_EGRESS_JWT_PRIVATE_KEY_PEM
+        $generated.sandboxEgressPrivate = $RuntimeExisting.AGENTX_SANDBOX_EGRESS_JWT_PRIVATE_KEY_PEM
+        $generated.egressPublicJson = $EgressExisting.AGENTX_EGRESS_JWT_PUBLIC_KEYS_JSON
+    }
+    if ($EgressExisting.'tls.crt' -and $EgressExisting.'tls.key') {
+        $generated.egressTlsCertificate = $EgressExisting.'tls.crt'
+        $generated.egressTlsPrivateKey = $EgressExisting.'tls.key'
+    }
+    return $generated
 }
 
 function Resolve-Namespaces {
@@ -274,6 +318,16 @@ function Resolve-Namespaces {
         dependencies = "agentx-v2-$Stage-deps-$Suffix"
         ingressClass = $ingressClass
     }
+}
+
+function Set-RunScopedSandboxAccess {
+    param($Profile, [string]$Suffix, [string]$Stage)
+    if (-not $Suffix -or [string]$Profile.network.egressGateway.sandboxAccess.mode -ne "nodePort") { return }
+    $hash = [Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes("$Stage-$Suffix"))
+    $nodePort = 32000 + ((([int]$hash[0] * 256) + [int]$hash[1]) % 768)
+    $endpoint = [UriBuilder][string]$Profile.network.egressGateway.sandboxAccess.endpoint
+    $endpoint.Port = $nodePort
+    $Profile.network.egressGateway.sandboxAccess.endpoint = $endpoint.Uri.AbsoluteUri.TrimEnd('/')
 }
 
 function Assert-SafeNamespaces {
@@ -303,7 +357,7 @@ function Assert-V2Isolation {
             throw "MySQL pool budget must not exceed 70% of serverMaxConnections."
         }
     }
-    foreach ($service in @($Profile.services.webConsole, $Profile.services.platformControl, $Profile.services.runtimeGateway, $Profile.services.workflowRuntime, $Profile.services.workflowWorker, $Profile.services.sandboxManager, $Profile.services.observability)) {
+    foreach ($service in @($Profile.services.webConsole, $Profile.services.platformControl, $Profile.services.runtimeGateway, $Profile.services.workflowRuntime, $Profile.services.workflowWorker, $Profile.services.sandboxManager, $Profile.services.egressGateway, $Profile.services.observability)) {
         if ([int64]$service.replicas -gt [int64]$service.maxReplicas) { throw "Service replicas must not exceed maxReplicas." }
     }
     $controlPool = [int64]$Profile.services.platformControl.maxReplicas * [int64]$Profile.services.platformControl.mysqlPool
@@ -320,6 +374,25 @@ function Assert-V2Isolation {
     if ($Profile.components.clickhouse.queryUser -eq $Profile.components.clickhouse.migrateUser) { throw "ClickHouse Query and Migration users must be distinct." }
     $clickhouseUsers = @($Profile.components.clickhouse.queryUser, $Profile.components.clickhouse.consumerUser, $Profile.components.clickhouse.migrateUser)
     if (($clickhouseUsers | Select-Object -Unique).Count -ne 3) { throw "ClickHouse Query, Consumer and Migration users must be distinct." }
+}
+
+function Test-InternalLoadBalancerAnnotation {
+    param($Annotations)
+    if (-not $Annotations) { return $false }
+    $supported = @{
+        "service.beta.kubernetes.io/aws-load-balancer-internal" = @("true")
+        "service.beta.kubernetes.io/aws-load-balancer-scheme" = @("internal")
+        "service.beta.kubernetes.io/azure-load-balancer-internal" = @("true")
+        "networking.gke.io/load-balancer-type" = @("internal")
+        "cloud.google.com/load-balancer-type" = @("internal")
+    }
+    foreach ($property in @($Annotations.PSObject.Properties)) {
+        if ($supported.ContainsKey($property.Name) -and
+            @($supported[$property.Name]) -contains ([string]$property.Value).Trim().ToLowerInvariant()) {
+            return $true
+        }
+    }
+    return $false
 }
 
 function Assert-ProductionProfile {
@@ -345,17 +418,29 @@ function Assert-ProductionProfile {
     if ([bool]$Profile.components.objectStorage.allowHttp -or -not [bool]$Profile.components.sandbox.secureAccess) { throw "Production S3 HTTP and insecure OpenSandbox access are forbidden." }
     if (-not $Profile.network.externalEgress -or -not $Profile.backup) { throw "Production requires external Egress and backup policy declarations." }
     $requiredEgress = @("controlMysql", "runtimeMysql", "runtimeRedis", "objectStorage", "vault", "opensandbox", "clickhouse")
+    $legacyProviderTargets = @($Profile.network.externalEgress.PSObject.Properties.Name | Where-Object { $_ -like "provider*" })
+    if ($legacyProviderTargets.Count -gt 0) { throw "externalEgress provider* targets were removed in v2alpha3; public providers must use agentx-egress-gateway." }
     foreach ($name in $requiredEgress) {
         $entry = $Profile.network.externalEgress.PSObject.Properties[$name].Value
         if (-not $entry) { throw "Production external Egress target '$name' is missing." }
         foreach ($cidr in @($entry.cidrs)) { if ($cidr -in @("0.0.0.0/0", "::/0")) { throw "Broad production Egress CIDR is forbidden." } }
     }
-    $requiredImages = @("agentx-migrate", "agentx-bootstrap", "agentx-doctor", "platform-control", "web-console", "runtime-gateway", "workflow-runtime", "workflow-worker", "sandbox-manager", "observability")
+    $sandboxAccess = $Profile.network.egressGateway.sandboxAccess
+    if (@($Profile.network.egressGateway.allowedPublicPorts) -notcontains 443) { throw "Egress Gateway public ports must contain 443." }
+    if ($Profile.environment -eq "production") {
+        if ($sandboxAccess.mode -eq "nodePort") { throw "Production Sandbox egress cannot use NodePort." }
+        if ($sandboxAccess.mode -eq "privateLoadBalancer" -and
+            (@($sandboxAccess.sourceCidrs).Count -eq 0 -or -not (Test-InternalLoadBalancerAnnotation $sandboxAccess.serviceAnnotations))) {
+            throw "Production privateLoadBalancer requires source CIDRs and a supported internal load balancer annotation for AWS, Azure, or GCP."
+        }
+        if (-not $sandboxAccess.tlsSecretName) { throw "Production Sandbox egress requires a TLS Secret." }
+    }
+    $requiredImages = @("agentx-migrate", "agentx-bootstrap", "agentx-doctor", "platform-control", "web-console", "runtime-gateway", "workflow-runtime", "workflow-worker", "sandbox-manager", "agentx-egress-gateway", "observability")
     foreach ($name in $requiredImages) {
         $digest = [string]$Profile.images.digests.PSObject.Properties[$name].Value
         if ($digest -notmatch '^sha256:[0-9a-f]{64}$') { throw "Production image '$name' must have an immutable digest." }
     }
-    $requiredSecrets = @("platformControl", "controlMigration", "runtimeGateway", "workflowRuntime", "workflowWorker", "sandboxManager", "runtimeMigration", "observability", "observabilityMigration", "controlBackup", "runtimeBackup", "observabilityBackup")
+    $requiredSecrets = @("platformControl", "controlMigration", "runtimeGateway", "workflowRuntime", "workflowWorker", "sandboxManager", "egressGateway", "runtimeMigration", "observability", "observabilityMigration", "controlBackup", "runtimeBackup", "observabilityBackup")
     foreach ($name in $requiredSecrets) { if (-not $Profile.secrets.workloads.PSObject.Properties[$name].Value) { throw "Production workload Secret '$name' is missing." } }
 }
 
@@ -386,7 +471,8 @@ function Get-ImageReference {
 
 function Set-RenderedEnvValue {
     param([string]$Document, [string]$Name, [string]$Value)
-    return [regex]::Replace($Document, "(?ms)(- name: $([regex]::Escape($Name))\r?\n\s+value: )[^\r\n]+", { param($match) "$($match.Groups[1].Value)$Value" })
+    $yamlString = ConvertTo-Json -InputObject $Value -Compress
+    return [regex]::Replace($Document, "(?ms)(- name: $([regex]::Escape($Name))\r?\n\s+value: )[^\r\n]+", { param($match) "$($match.Groups[1].Value)$yamlString" })
 }
 
 function Add-ProjectedCaBundle {
@@ -398,17 +484,26 @@ function Add-ProjectedCaBundle {
         $sources.Add("          - secret:`n              name: $($entry.secret)`n              items:`n                - key: ca.crt`n                  path: $($entry.file)")
         $envLines.Add("        - name: $($entry.env)`n          value: /etc/agentx-ca/$($entry.file)")
     }
-    $volume = "      volumes:`n      - name: external-ca`n        projected:`n          sources:`n$($sources -join "`n")`n"
-    $mount = "        volumeMounts:`n        - name: external-ca`n          mountPath: /etc/agentx-ca`n          readOnly: true`n"
-    $Document = [regex]::Replace($Document, '(?m)^      serviceAccountName:', "$volume      serviceAccountName:", 1)
+    $volumeEntry = "      - name: external-ca`n        projected:`n          sources:`n$($sources -join "`n")`n"
+    if ($Document -match '(?m)^      volumes:\s*$') {
+        $Document = [regex]::Replace($Document, '(?m)^      volumes:\s*$', "      volumes:`n$volumeEntry", 1)
+    } else {
+        $Document = [regex]::Replace($Document, '(?m)^      serviceAccountName:', "      volumes:`n$volumeEntry      serviceAccountName:", 1)
+    }
     $beforeEnv = $Document
     $Document = [regex]::Replace($Document, '(?m)^        env:\s*$', "        env:`n$($envLines -join "`n")", 1)
     if ($Document -eq $beforeEnv) {
         $Document = [regex]::Replace($Document, '(?m)^      - env:\s*$', "      - env:`n$($envLines -join "`n")", 1)
     }
-    $Document = [regex]::Replace($Document, '(?m)^        ports:', "$mount        ports:", 1)
-    if ($Document -notmatch '(?m)^        ports:') {
-        $Document = [regex]::Replace($Document, '(?m)^        image:', "$mount        image:", 1)
+    $mountEntry = "        - name: external-ca`n          mountPath: /etc/agentx-ca`n          readOnly: true`n"
+    if ($Document -match '(?m)^        volumeMounts:\s*$') {
+        $Document = [regex]::Replace($Document, '(?m)^        volumeMounts:\s*$', "        volumeMounts:`n$mountEntry", 1)
+    } else {
+        $mount = "        volumeMounts:`n$mountEntry"
+        $Document = [regex]::Replace($Document, '(?m)^        ports:', "$mount        ports:", 1)
+        if ($Document -notmatch '(?m)^        ports:') {
+            $Document = [regex]::Replace($Document, '(?m)^        image:', "$mount        image:", 1)
+        }
     }
     return $Document
 }
@@ -423,7 +518,7 @@ function Import-ReleaseImages {
         if (-not ($manifestText | Test-Json -SchemaFile $schema)) { throw "Release Manifest does not match agentx.io/v2-release/v1." }
     }
     $manifest = $manifestText | ConvertFrom-Json
-    $requiredImages = @("agentx-migrate", "agentx-bootstrap", "agentx-doctor", "platform-control", "web-console", "runtime-gateway", "workflow-runtime", "workflow-worker", "sandbox-manager", "observability")
+    $requiredImages = @("agentx-migrate", "agentx-bootstrap", "agentx-doctor", "platform-control", "web-console", "runtime-gateway", "workflow-runtime", "workflow-worker", "sandbox-manager", "agentx-egress-gateway", "observability")
     $names = @($manifest.images | ForEach-Object { [string]$_.name })
     if (@($names | Select-Object -Unique).Count -ne $requiredImages.Count -or @($requiredImages | Where-Object { $_ -notin $names }).Count -gt 0) {
         throw "Release Manifest must contain every V2 image exactly once."
@@ -517,7 +612,7 @@ function Get-ExternalDependencyStatus {
         }
         $result += [ordered]@{
             name = $definition.name
-            endpoint = [string]$definition.endpoint
+            endpoint = [string](Resolve-Endpoint ([string]$definition.endpoint) $Profile $Namespaces)
             caSecret = if ($definition.ca) { [string]$definition.ca } else { $null }
             configured = [bool]$definition.endpoint
             caPresent = $caPresent
@@ -533,12 +628,34 @@ function Assert-ExistingSecrets {
         control = @("platformControl", "controlMigration", "controlBackup")
         runtime = @("runtimeGateway", "workflowRuntime", "workflowWorker", "sandboxManager", "runtimeMigration", "runtimeBackup")
         observability = @("observability", "observabilityMigration", "observabilityBackup")
+        dependencies = @("egressGateway")
     }
-    foreach ($plane in $Planes | Where-Object { $_ -ne "dependencies" }) {
+    foreach ($plane in $Planes) {
         foreach ($field in $fields[$plane]) {
             $name = [string]$Profile.secrets.workloads.PSObject.Properties[$field].Value
             & kubectl -n $Namespaces[$plane] get secret $name -o name | Out-Null
             if ($LASTEXITCODE -ne 0) { throw "Required production Secret $($Namespaces[$plane])/$name does not exist." }
+        }
+    }
+
+    $requiredKeys = @(
+        @{ namespace = $Namespaces.runtime; secret = [string]$Profile.secrets.workloads.runtimeGateway; key = "AGENTX_RUNTIME_GATEWAY_EGRESS_JWT_PRIVATE_KEY_PEM" },
+        @{ namespace = $Namespaces.runtime; secret = [string]$Profile.secrets.workloads.workflowRuntime; key = "AGENTX_WORKFLOW_RUNTIME_EGRESS_JWT_PRIVATE_KEY_PEM" },
+        @{ namespace = $Namespaces.runtime; secret = [string]$Profile.secrets.workloads.workflowWorker; key = "AGENTX_WORKFLOW_WORKER_EGRESS_JWT_PRIVATE_KEY_PEM" },
+        @{ namespace = $Namespaces.runtime; secret = [string]$Profile.secrets.workloads.sandboxManager; key = "AGENTX_SANDBOX_EGRESS_JWT_PRIVATE_KEY_PEM" },
+        @{ namespace = $Namespaces.dependencies; secret = [string]$Profile.secrets.workloads.egressGateway; key = "AGENTX_EGRESS_JWT_PUBLIC_KEYS_JSON" },
+        @{ namespace = $Namespaces.dependencies; secret = [string]$Profile.network.egressGateway.sandboxAccess.tlsSecretName; key = "tls.crt" },
+        @{ namespace = $Namespaces.dependencies; secret = [string]$Profile.network.egressGateway.sandboxAccess.tlsSecretName; key = "tls.key" }
+    )
+    if ($Profile.network.egressGateway.sandboxAccess.caSecretName) {
+        $requiredKeys += @{ namespace = $Namespaces.runtime; secret = [string]$Profile.network.egressGateway.sandboxAccess.caSecretName; key = "ca.crt" }
+    }
+    foreach ($requirement in $requiredKeys) {
+        $payload = (& kubectl -n $requirement.namespace get secret $requirement.secret -o json 2>$null) -join "`n"
+        if (-not $payload) { throw "Required production Secret $($requirement.namespace)/$($requirement.secret) does not exist." }
+        $secret = $payload | ConvertFrom-Json
+        if (-not $secret.data.PSObject.Properties[$requirement.key]) {
+            throw "Required production Secret $($requirement.namespace)/$($requirement.secret) is missing key $($requirement.key)."
         }
     }
 }
@@ -601,6 +718,7 @@ function Replace-ProfileValues {
     $result = $result.Replace('nginx.ingress.kubernetes.io/cors-allow-origin: "http://agentx.localhost"', "nginx.ingress.kubernetes.io/cors-allow-origin: `"$gatewayAllowedOrigins`"")
     $result = $result.Replace("nginx.ingress.kubernetes.io/cors-allow-origin: http://agentx.localhost", "nginx.ingress.kubernetes.io/cors-allow-origin: $gatewayAllowedOrigins")
     $result = $result.Replace("value: http://run.agentx.localhost", "value: $runtimeOrigin")
+    $result = $result.Replace("value: https://host.docker.internal:31429", "value: $([string]$Profile.network.egressGateway.sandboxAccess.endpoint)")
     if ($Namespaces.dependencies) { $result = $result.Replace("value: http://vault.$($Namespaces.dependencies).svc:8200", "value: $([string](Resolve-Endpoint $secretProvider.endpoint $Profile $Namespaces))") }
     $result = $result.Replace("value: secret", "value: $([string]$secretProvider.mount)")
     if ($Namespaces.dependencies) { $result = $result.Replace("value: http://opensandbox.$($Namespaces.dependencies).svc:8080", "value: $([string](Resolve-Endpoint $Profile.components.sandbox.endpoint $Profile $Namespaces))") }
@@ -613,6 +731,88 @@ function Replace-ProfileValues {
     $documents = $result -split "(?m)^---\r?$"
     for ($documentIndex = 0; $documentIndex -lt $documents.Count; $documentIndex++) {
         $document = $documents[$documentIndex]
+        $resourceName = Get-YamlResourceName $document
+        $resourceKind = Get-YamlResourceKind $document
+        if ($resourceName -eq "agentx-egress-gateway" -and $resourceKind -eq "Deployment") {
+            $document = Set-RenderedEnvValue $document "AGENTX_EGRESS_ALLOWED_PUBLIC_PORTS" (@($Profile.network.egressGateway.allowedPublicPorts) -join ',')
+            $allowDockerDesktopDns = ($Profile.environment -in @("local", "test")).ToString().ToLowerInvariant()
+            $document = Set-RenderedEnvValue $document "AGENTX_EGRESS_ALLOW_DOCKER_DESKTOP_DNS" $allowDockerDesktopDns
+            $document = $document.Replace("secretName: agentx-egress-tls", "secretName: $([string]$Profile.network.egressGateway.sandboxAccess.tlsSecretName)")
+        }
+        if ($resourceName -eq "sandbox-manager" -and $resourceKind -eq "Deployment") {
+            $document = Set-RenderedEnvValue $document "AGENTX_EGRESS_SANDBOX_PROXY_URL" ([string]$Profile.network.egressGateway.sandboxAccess.endpoint)
+            $caSecretName = [string]$Profile.network.egressGateway.sandboxAccess.caSecretName
+            if ($caSecretName) {
+                $document = $document.Replace("secretName: agentx-egress-tls", "secretName: $caSecretName")
+            } else {
+                $document = [regex]::Replace($document, '(?ms)^\s*- \{ name: AGENTX_EGRESS_SANDBOX_CA_PATH, value: [^\r\n]+\}\r?\n', '')
+                $document = [regex]::Replace($document, '(?ms)^\s*volumeMounts:\r?\n\s*- \{ name: egress-ca[^\r\n]+\}\r?\n', '')
+                $document = [regex]::Replace($document, '(?ms)^\s*volumes:\r?\n\s*- name: egress-ca\r?\n\s*secret: \{ secretName: agentx-egress-tls, optional: true \}\r?\n', '')
+            }
+        }
+        if ($resourceName -eq "agentx-egress-sandbox" -and $resourceKind -eq "Service") {
+            $sandboxAccess = $Profile.network.egressGateway.sandboxAccess
+            $endpointUri = [Uri][string]$sandboxAccess.endpoint
+            $serviceSpec = [ordered]@{
+                selector = @{ "app.kubernetes.io/name" = "agentx-egress-gateway" }
+                ports = @(@{ name = "sandbox-proxy"; port = $endpointUri.Port; targetPort = "sandbox-proxy" })
+            }
+            switch ([string]$sandboxAccess.mode) {
+                "nodePort" {
+                    if ($endpointUri.Port -lt 30000 -or $endpointUri.Port -gt 32767) { throw "Sandbox nodePort endpoint must use a port in 30000..32767." }
+                    $serviceSpec.type = "NodePort"
+                    $serviceSpec.ports[0].nodePort = $endpointUri.Port
+                }
+                "cluster" { $serviceSpec.type = "ClusterIP" }
+                "privateLoadBalancer" {
+                    $serviceSpec.type = "LoadBalancer"
+                    $serviceSpec.loadBalancerSourceRanges = @($sandboxAccess.sourceCidrs)
+                }
+                default { throw "Unsupported Sandbox egress access mode $($sandboxAccess.mode)." }
+            }
+            $annotations = @{}
+            foreach ($annotation in @($sandboxAccess.serviceAnnotations.PSObject.Properties)) { $annotations[$annotation.Name] = [string]$annotation.Value }
+            $metadata = @{ name = "agentx-egress-sandbox"; namespace = [string]$Namespaces.dependencies }
+            if ($annotations.Count -gt 0) { $metadata.annotations = $annotations }
+            $document = @{ apiVersion = "v1"; kind = "Service"; metadata = $metadata; spec = $serviceSpec } | ConvertTo-Json -Depth 12
+        }
+        if ($resourceName -eq "agentx-egress-gateway-ingress" -and $resourceKind -eq "NetworkPolicy") {
+            $sandboxPeers = [Collections.Generic.List[object]]::new()
+            if ($Profile.network.egressGateway.sandboxAccess.mode -eq "cluster") {
+                $sandboxPeers.Add(@{ namespaceSelector = @{ matchLabels = @{ "agentx.io/plane" = "dependencies" } } })
+            }
+            foreach ($cidr in @($Profile.network.egressGateway.sandboxAccess.sourceCidrs)) { $sandboxPeers.Add(@{ ipBlock = @{ cidr = [string]$cidr } }) }
+            $document = @{
+                apiVersion = "networking.k8s.io/v1"; kind = "NetworkPolicy"
+                metadata = @{ name = "agentx-egress-gateway-ingress"; namespace = [string]$Namespaces.dependencies }
+                spec = @{
+                    podSelector = @{ matchLabels = @{ "app.kubernetes.io/name" = "agentx-egress-gateway" } }
+                    policyTypes = @("Ingress")
+                    ingress = @(
+                        @{ from = @(@{ namespaceSelector = @{ matchLabels = @{ "agentx.io/plane" = "runtime" } }; podSelector = @{ matchLabels = @{ "agentx.io/egress-client" = "managed" } } }); ports = @(@{ protocol = "TCP"; port = 3128 }) },
+                        @{ from = @($sandboxPeers); ports = @(@{ protocol = "TCP"; port = 3129 }) }
+                    )
+                }
+            } | ConvertTo-Json -Depth 20
+        }
+        if ($resourceName -eq "agentx-egress-gateway-public-egress" -and $resourceKind -eq "NetworkPolicy") {
+            $publicPorts = @($Profile.network.egressGateway.allowedPublicPorts | ForEach-Object { @{ protocol = "TCP"; port = [int]$_ } })
+            $blockedV4 = @("0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16", "172.16.0.0/12", "192.0.0.0/24", "192.168.0.0/16", "224.0.0.0/4", "240.0.0.0/4")
+            if ($Profile.environment -eq "production") { $blockedV4 += "198.18.0.0/15" }
+            $blockedV6 = @("::/128", "::1/128", "64:ff9b::/96", "100::/64", "2001::/23", "2001:db8::/32", "2002::/16", "3fff::/20", "fc00::/7", "fe80::/10", "ff00::/8")
+            $document = @{
+                apiVersion = "networking.k8s.io/v1"; kind = "NetworkPolicy"
+                metadata = @{ name = "agentx-egress-gateway-public-egress"; namespace = [string]$Namespaces.dependencies }
+                spec = @{
+                    podSelector = @{ matchLabels = @{ "app.kubernetes.io/name" = "agentx-egress-gateway" } }
+                    policyTypes = @("Egress")
+                    egress = @(
+                        @{ to = @(@{ namespaceSelector = @{}; podSelector = @{ matchLabels = @{ "k8s-app" = "kube-dns" } } }); ports = @(@{ protocol = "UDP"; port = 53 }, @{ protocol = "TCP"; port = 53 }) },
+                        @{ to = @(@{ ipBlock = @{ cidr = "0.0.0.0/0"; except = $blockedV4 } }, @{ ipBlock = @{ cidr = "::/0"; except = $blockedV6 } }); ports = $publicPorts }
+                    )
+                }
+            } | ConvertTo-Json -Depth 20
+        }
         if ($Profile.environment -eq "production" -and $document -match '(?m)^kind: Namespace$') {
             $document = [regex]::Replace($document, '(?m)^(\s+)agentx\.io/plane: (control|runtime|observability)\s*$', { param($match) "$($match.Groups[1].Value)agentx.io/plane: $($match.Groups[2].Value)`n$($match.Groups[1].Value)pod-security.kubernetes.io/enforce: restricted`n$($match.Groups[1].Value)pod-security.kubernetes.io/audit: restricted`n$($match.Groups[1].Value)pod-security.kubernetes.io/warn: restricted" })
         }
@@ -635,7 +835,6 @@ function Replace-ProfileValues {
                 $document = Set-RenderedEnvValue $document "AGENTX_OBSERVABILITY_S3_ALLOW_HTTP" (([string]$Profile.components.objectStorage.allowHttp).ToLowerInvariant())
                 $document = Set-RenderedEnvValue $document "AGENTX_OBSERVABILITY_S3_PATH_STYLE" (([string]$Profile.components.objectStorage.pathStyle).ToLowerInvariant())
             }
-            $resourceName = Get-YamlResourceName $document
             $caEntries = switch ($resourceName) {
                 "platform-control" { @(
                     @{ secret = $control.caSecretName; file = "mysql.pem"; env = "AGENTX_CONTROL_MYSQL_TLS_CA_PATH" },
@@ -690,6 +889,7 @@ function Replace-ProfileValues {
                 @{ workload = "workflow-runtime"; old = "agentx-runtime-secrets"; field = "workflowRuntime" },
                 @{ workload = "workflow-worker"; old = "agentx-runtime-secrets"; field = "workflowWorker" },
                 @{ workload = "sandbox-manager"; old = "agentx-runtime-secrets"; field = "sandboxManager" },
+                @{ workload = "agentx-egress-gateway"; old = "agentx-egress-gateway-secrets"; field = "egressGateway" },
                 @{ workload = "runtime-migrate"; old = "agentx-runtime-secrets"; field = "runtimeMigration" },
                 @{ workload = "observability"; old = "agentx-observability-secrets"; field = "observability" },
                 @{ workload = "clickhouse-migrate"; old = "agentx-observability-secrets"; field = "observabilityMigration" }
@@ -708,6 +908,7 @@ function Replace-ProfileValues {
             @{ name = "workflow-runtime"; replicas = $Profile.services.workflowRuntime.replicas },
             @{ name = "workflow-worker"; replicas = $Profile.services.workflowWorker.replicas },
             @{ name = "sandbox-manager"; replicas = $Profile.services.sandboxManager.replicas },
+            @{ name = "agentx-egress-gateway"; replicas = $Profile.services.egressGateway.replicas },
             @{ name = "observability"; replicas = $Profile.services.observability.replicas }
         )) {
             if ($document -match "(?m)^kind: Deployment$" -and $document -match "(?m)^  name: $([regex]::Escape($service.name))$") {
@@ -749,10 +950,10 @@ function Replace-ProfileValues {
         }
         $documents[$documentIndex] = $document
     }
-    $result = $documents -join "---`n"
+    $result = $documents -join "`n---`n"
     $migrateImage = Get-ImageReference $Profile "agentx-migrate"
     $result = $result.Replace("image: agentx/agentx-migrate:dev", "image: $migrateImage")
-    foreach ($image in @("platform-control", "web-console", "runtime-gateway", "workflow-runtime", "workflow-worker", "sandbox-manager", "observability")) {
+    foreach ($image in @("platform-control", "web-console", "runtime-gateway", "workflow-runtime", "workflow-worker", "sandbox-manager", "agentx-egress-gateway", "observability")) {
         $imageReference = Get-ImageReference $Profile $image
         $result = $result.Replace("image: agentx/$image`:dev", "image: $imageReference")
     }
@@ -802,7 +1003,9 @@ function Remove-BundledDocuments {
         "control-mysql", "control-mysql-init", "control-mysql-access", "control-egress",
         "runtime-mysql", "runtime-mysql-init", "runtime-redis", "runtime-data-access", "runtime-migration-data-access",
         "runtime-gateway-data-access", "workflow-worker-vault-egress", "runtime-mysql-ingress", "runtime-redis-ingress", "runtime-provider-egress",
-        "clickhouse", "clickhouse-init", "observability-data-access", "observability-migration-data-access", "observability-ops-data-access", "clickhouse-ingress"
+        "clickhouse", "clickhouse-init", "observability-data-access", "observability-migration-data-access", "observability-ops-data-access", "clickhouse-ingress",
+        "object-storage", "object-storage-bootstrap", "object-storage-ingress", "vault", "vault-bootstrap", "vault-ingress",
+        "dependencies-egress", "runtime-provider-egress", "runtime-provider-ingress"
     )
     $kept = foreach ($document in ($Manifest -split '(?m)^---\s*$')) {
         if ((Get-YamlResourceName $document) -notin $remove) {
@@ -815,7 +1018,6 @@ function Remove-BundledDocuments {
 function New-ExternalEgressManifest {
     param([string]$Plane, $Profile, [hashtable]$Namespaces)
     if ($Profile.environment -ne "production") { return "" }
-    $providerTargets = @($Profile.network.externalEgress.PSObject.Properties.Name | Where-Object { $_ -like "provider*" })
     $workloads = switch ($Plane) {
         "control" {
             @(
@@ -826,8 +1028,8 @@ function New-ExternalEgressManifest {
         "runtime" {
             @(
                 @{ name = "runtime-gateway"; targets = @("runtimeMysql", "runtimeRedis", "objectStorage", "vault") },
-                @{ name = "workflow-runtime"; targets = @("runtimeMysql", "runtimeRedis", "objectStorage", "vault") + $providerTargets },
-                @{ name = "workflow-worker"; targets = @("runtimeMysql", "runtimeRedis", "objectStorage", "vault") + $providerTargets },
+                @{ name = "workflow-runtime"; targets = @("runtimeMysql", "runtimeRedis", "objectStorage", "vault") },
+                @{ name = "workflow-worker"; targets = @("runtimeMysql", "runtimeRedis", "objectStorage", "vault") },
                 @{ name = "sandbox-manager"; targets = @("runtimeMysql", "opensandbox") },
                 @{ name = "runtime-migrate"; targets = @("runtimeMysql") }
             )
@@ -868,15 +1070,11 @@ function Get-RenderedManifest {
     param([string[]]$Planes, $Profile, [hashtable]$Namespaces, [string[]]$PreserveReplicaWorkloadNames = @(), [switch]$IncludeIngressController)
     $parts = foreach ($plane in $Planes) {
         $planeParts = [Collections.Generic.List[string]]::new()
-        if (-not ($plane -eq "dependencies" -and $Profile.environment -eq "production")) {
-            $rendered = (& kubectl kustomize (Join-Path $root "deploy/k8s/v2/$plane")) -join "`n"
-            if ($LASTEXITCODE -ne 0) { throw "V2 $plane Kustomize render failed." }
-            $rendered = Replace-ProfileValues $rendered $Profile $Namespaces $PreserveReplicaWorkloadNames
-            $rendered = Remove-BundledDocuments $rendered $Profile
-            if ($rendered.Trim()) { $planeParts.Add($rendered) }
-        } else {
-            $planeParts.Add("apiVersion: v1`nkind: Namespace`nmetadata:`n  name: $($Namespaces.dependencies)`n  labels:`n    agentx.io/plane: dependencies`n    agentx.io/ingress: allowed`n    app.kubernetes.io/managed-by: agentx-v2-deploy")
-        }
+        $rendered = (& kubectl kustomize (Join-Path $root "deploy/k8s/v2/$plane")) -join "`n"
+        if ($LASTEXITCODE -ne 0) { throw "V2 $plane Kustomize render failed." }
+        $rendered = Replace-ProfileValues $rendered $Profile $Namespaces $PreserveReplicaWorkloadNames
+        $rendered = Remove-BundledDocuments $rendered $Profile
+        if ($rendered.Trim()) { $planeParts.Add($rendered) }
         $externalPolicy = New-ExternalEgressManifest $plane $Profile $Namespaces
         if ($externalPolicy) { $planeParts.Add($externalPolicy) }
         if ($plane -eq "dependencies" -and $IncludeIngressController) { $planeParts.Add((Get-IngressRenderedManifest $Profile $Namespaces)) }
@@ -1142,10 +1340,10 @@ function Reset-V2DataDomains {
 $configPath = if ([IO.Path]::IsPathRooted($ConfigFile)) { $ConfigFile } else { Join-Path $root $ConfigFile }
 $profileJson = Get-Content -Raw -LiteralPath $configPath
 $profile = $profileJson | ConvertFrom-Json
-if ($profile.apiVersion -ne "agentx.io/deployment/v2alpha2") { throw "Only deployment/v2alpha2 three-namespace Profiles are accepted; v2alpha1 is no longer supported." }
+if ($profile.apiVersion -ne "agentx.io/deployment/v2alpha3") { throw "Only deployment/v2alpha3 Profiles are accepted; v2alpha2 and earlier must be upgraded." }
 $schemaPath = Join-Path $root "deploy/profiles/deployment-profile-v2.schema.json"
 if (Get-Command Test-Json -ErrorAction SilentlyContinue) {
-    if (-not ($profileJson | Test-Json -SchemaFile $schemaPath)) { throw "V2 Profile does not match the v2alpha2 three-namespace schema." }
+    if (-not ($profileJson | Test-Json -SchemaFile $schemaPath)) { throw "V2 Profile does not match the v2alpha3 three-namespace egress schema." }
 }
 Assert-V2Isolation $profile
 Assert-ProductionProfile $profile
@@ -1158,6 +1356,7 @@ if ($Action -eq "Rollback") {
 $stage = if ($RunId -match '^08-') { "08" } elseif ($RunId -match '^07-') { "07" } elseif ($RunId -match '^06-') { "06" } elseif ($RunId -match '^05-') { "05" } elseif ($RunId -match '^04-') { "04" } elseif ($RunId -match '^03-') { "03" } elseif ($RunId -match '^02-') { "02" } else { "01" }
 $namespaceRunId = if ($RunId -match '^(02|03|04|05|06|07|08)-(.+)$') { $Matches[2] } else { $RunId }
 $namespaces = Resolve-Namespaces $profile $namespaceRunId $stage
+Set-RunScopedSandboxAccess $profile $namespaceRunId $stage
 Assert-SafeNamespaces $namespaces
 $planes = @(Get-TargetPlanes $Target $profile)
 
@@ -1167,6 +1366,13 @@ if ($Action -eq "Validate") {
 }
 
 if ($Action -eq "Uninstall") {
+    if ($planes -contains "dependencies" -and $planes -notcontains "runtime") {
+        $runtimeDeployments = (& kubectl -n $namespaces.runtime get deployment --ignore-not-found -o json 2>$null | ConvertFrom-Json)
+        $gatewayUsers = @($runtimeDeployments.items | Where-Object {
+            $_.spec.template.metadata.labels.'agentx.io/egress-client' -eq 'managed'
+        })
+        if ($gatewayUsers.Count -gt 0) { throw "Dependencies uninstall is refused while Runtime deployments reference agentx-egress-gateway." }
+    }
     Remove-LegacyAutoscalingResources $planes $namespaces
     $rendered = Get-RenderedManifest $planes $profile $namespaces
     $resourceManifest = (($rendered -split '(?m)^---\s*$') | Where-Object { $_.Trim() -and (Get-YamlResourceKind $_) -ne "Namespace" }) -join "---`n"
@@ -1191,6 +1397,7 @@ if ($Action -eq "Status") {
             "control" { @("platform-control", "web-console") }
             "runtime" { @("runtime-gateway", "workflow-runtime", "workflow-worker", "sandbox-manager") }
             "observability" { @("observability") }
+            "dependencies" { @("agentx-egress-gateway") }
             default { @() }
         }
         $scopedItems = if ($plane -eq "dependencies") { $items } else {
@@ -1262,7 +1469,7 @@ if ($Action -eq "Render") {
 try {
     if ($BuildImages) {
         if ($profile.environment -eq "production") { throw "Production images must be supplied by immutable digest; -BuildImages is forbidden." }
-        & (Join-Path $PSScriptRoot "build-images.ps1") -Tag ([string]$profile.images.tag) -Namespace ([string]$namespaces.dependencies) -Services @("agentx-migrate", "agentx-bootstrap", "agentx-doctor", "platform-control", "runtime-gateway", "workflow-runtime", "workflow-worker", "sandbox-manager", "observability", "web-console")
+        & (Join-Path $PSScriptRoot "build-images.ps1") -Tag ([string]$profile.images.tag) -Namespace ([string]$namespaces.dependencies) -Services @("agentx-migrate", "agentx-bootstrap", "agentx-doctor", "platform-control", "runtime-gateway", "workflow-runtime", "workflow-worker", "sandbox-manager", "agentx-egress-gateway", "observability", "web-console")
     }
 
     $physicalTargets = @(
@@ -1299,7 +1506,10 @@ try {
     $observabilityObjectPassword = Get-OrCreateValue $dependenciesOld "OBSERVABILITY_OBJECT_PASSWORD"
     $controlVaultToken = Get-OrCreateValue $controlOld "AGENTX_CONTROL_VAULT_TOKEN"
     $runtimeVaultToken = Get-OrCreateValue $runtimeOld "AGENTX_RUNTIME_VAULT_TOKEN"
-    $signing = Get-SigningMaterial $controlOld $runtimeOld $observabilityOld
+    $egressOld = Get-SecretData $namespaces.dependencies "agentx-egress-gateway-secrets"
+    $egressTlsOld = Get-SecretData $namespaces.dependencies ([string]$profile.network.egressGateway.sandboxAccess.tlsSecretName)
+    foreach ($entry in $egressTlsOld.GetEnumerator()) { $egressOld[$entry.Key] = $entry.Value }
+    $signing = Get-SigningMaterial $controlOld $runtimeOld $observabilityOld $egressOld
     $runtimeRedisPassword = Get-OrCreateValue $runtimeOld "AGENTX_RUNTIME_REDIS_PASSWORD"
     $observabilityRedisPassword = Get-OrCreateValue $observabilityOld "AGENTX_OBSERVABILITY_REDIS_PASSWORD"
 
@@ -1339,6 +1549,10 @@ try {
         AGENTX_RUNTIME_USER_JWT_PUBLIC_KEYS_JSON = $signing.userPublicJson
         AGENTX_RUNTIME_VAULT_TOKEN = $runtimeVaultToken
         AGENTX_OPENSANDBOX_API_KEY = Get-OrCreateValue $runtimeOld "AGENTX_OPENSANDBOX_API_KEY" "agentx-local-opensandbox-key"
+        AGENTX_RUNTIME_GATEWAY_EGRESS_JWT_PRIVATE_KEY_PEM = $signing.runtimeGatewayEgressPrivate
+        AGENTX_WORKFLOW_RUNTIME_EGRESS_JWT_PRIVATE_KEY_PEM = $signing.workflowRuntimeEgressPrivate
+        AGENTX_WORKFLOW_WORKER_EGRESS_JWT_PRIVATE_KEY_PEM = $signing.workflowWorkerEgressPrivate
+        AGENTX_SANDBOX_EGRESS_JWT_PRIVATE_KEY_PEM = $signing.sandboxEgressPrivate
     }
     Set-DomainSecret $namespaces.observability "agentx-observability-secrets" @{
         AGENTX_CLICKHOUSE_QUERY_PASSWORD = Get-OrCreateValue $observabilityOld "AGENTX_CLICKHOUSE_QUERY_PASSWORD"
@@ -1359,11 +1573,23 @@ try {
         CONTROL_VAULT_TOKEN = $controlVaultToken
         RUNTIME_VAULT_TOKEN = $runtimeVaultToken
     }
+    Set-DomainSecret $namespaces.dependencies "agentx-egress-gateway-secrets" @{
+        AGENTX_EGRESS_JWT_PUBLIC_KEYS_JSON = $signing.egressPublicJson
+    }
+    $egressTlsValues = @{ "tls.crt" = $signing.egressTlsCertificate; "tls.key" = $signing.egressTlsPrivateKey; "ca.crt" = $signing.egressTlsCertificate }
+    Set-DomainSecret $namespaces.dependencies ([string]$profile.network.egressGateway.sandboxAccess.tlsSecretName) $egressTlsValues
+    if ($profile.network.egressGateway.sandboxAccess.caSecretName) {
+        Set-DomainSecret $namespaces.runtime ([string]$profile.network.egressGateway.sandboxAccess.caSecretName) @{ "ca.crt" = $signing.egressTlsCertificate }
+    }
     } else {
         Assert-ExistingSecrets $planes $profile $namespaces
     }
 
     if ($Action -eq "Doctor") {
+        if ($planes -contains "dependencies") {
+            Invoke-Kubectl -Arguments @("-n", $namespaces.dependencies, "rollout", "status", "deployment/agentx-egress-gateway", "--timeout=300s")
+            Invoke-Kubectl -Arguments @("-n", $namespaces.dependencies, "get", "endpoints", "agentx-egress-gateway", "-o", "name")
+        }
         foreach ($plane in $planes | Where-Object { $_ -ne "dependencies" }) { Invoke-OpsJob "doctor" $plane "$plane-doctor" $profile $namespaces }
         Write-Output (@{ status = "healthy"; target = $Target; planes = $planes } | ConvertTo-Json -Compress)
         exit 0
@@ -1377,6 +1603,7 @@ try {
         @{ plane = "runtime"; namespace = $namespaces.runtime; name = "workflow-runtime" },
         @{ plane = "runtime"; namespace = $namespaces.runtime; name = "workflow-worker" },
         @{ plane = "runtime"; namespace = $namespaces.runtime; name = "sandbox-manager" },
+        @{ plane = "dependencies"; namespace = $namespaces.dependencies; name = "agentx-egress-gateway" },
         @{ plane = "observability"; namespace = $namespaces.observability; name = "observability" }
     ) | Where-Object { $_.namespace -and $planes -contains $_.plane })) {
         if ($Action -notin @("Upgrade", "Rollback")) { continue }
@@ -1387,24 +1614,33 @@ try {
     $rendered = Get-RenderedManifest $planes $profile $namespaces $preserveReplicaWorkloadNames.ToArray()
     $applicationNames = @(
         "platform-control", "web-console", "runtime-gateway", "workflow-runtime",
-        "workflow-worker", "sandbox-manager", "observability"
+        "workflow-worker", "sandbox-manager", "agentx-egress-gateway", "observability"
     )
     $applicationManifest = ""
+    $gatewayManifest = ""
     if ($Action -eq "Rollback") {
         $rendered = (($rendered -split '(?m)^---\s*$') | Where-Object { (Get-YamlResourceName $_) -notin @("control-migrate", "runtime-migrate", "clickhouse-migrate") }) -join "---`n"
         Invoke-KubectlInput $rendered @("apply", "-f", "-")
+        if ($planes -contains "dependencies") { Invoke-Kubectl -Arguments @("-n", $namespaces.dependencies, "rollout", "status", "deployment/agentx-egress-gateway", "--timeout=300s") }
     } else {
         $documents = @(($rendered -split '(?m)^---\s*$') | Where-Object { $_.Trim() })
         $applicationDocuments = @($documents | Where-Object {
             (Get-YamlResourceKind $_) -eq "Deployment" -and
             (Get-YamlResourceName $_) -in $applicationNames
         })
+        $gatewayDocuments = @($applicationDocuments | Where-Object { (Get-YamlResourceName $_) -eq "agentx-egress-gateway" })
+        $applicationDocuments = @($applicationDocuments | Where-Object { (Get-YamlResourceName $_) -ne "agentx-egress-gateway" })
         $foundationDocuments = @($documents | Where-Object {
             -not ((Get-YamlResourceKind $_) -eq "Deployment" -and
                 (Get-YamlResourceName $_) -in $applicationNames)
         })
         $applicationManifest = $applicationDocuments -join "---`n"
+        $gatewayManifest = $gatewayDocuments -join "---`n"
         Invoke-KubectlInput ($foundationDocuments -join "---`n") @("apply", "-f", "-")
+        if ($gatewayManifest) {
+            Invoke-KubectlInput $gatewayManifest @("apply", "-f", "-")
+            Invoke-Kubectl -Arguments @("-n", $namespaces.dependencies, "rollout", "status", "deployment/agentx-egress-gateway", "--timeout=300s")
+        }
     }
 
     if ($planes -contains "control" -and $profile.components.controlMysql.mode -eq "bundled") { Invoke-Kubectl -Arguments @("-n", $namespaces.control, "rollout", "status", "statefulset/control-mysql", "--timeout=300s") }
@@ -1440,12 +1676,18 @@ try {
         Invoke-Kubectl -Arguments @("-n", $namespaces.runtime, "rollout", "status", "deployment/$workload", "--timeout=300s")
     } }
     if ($planes -contains "observability") { Invoke-Kubectl -Arguments @("-n", $namespaces.observability, "rollout", "status", "deployment/observability", "--timeout=300s") }
+    if ($planes -contains "dependencies" -and $Action -ne "Rollback") { Invoke-Kubectl -Arguments @("-n", $namespaces.dependencies, "rollout", "status", "deployment/agentx-egress-gateway", "--timeout=300s") }
     $appliedManifest = if ($Action -eq "Rollback") { $PreviousReleaseManifest } else { $ReleaseManifest }
     Set-ReleaseState $planes $namespaces (Get-ReleaseDescriptor $profile $appliedManifest $Action)
     Write-Output (@{ status = "ready"; action = $Action; target = $Target; apiVersion = $profile.apiVersion; namespaces = $namespaces } | ConvertTo-Json -Depth 5 -Compress)
 }
 catch {
     if ($CleanupOnFailure -and $profile.environment -ne "production" -and $Target -eq "All") {
+        foreach ($namespace in @($namespaces.control, $namespaces.runtime) | Select-Object -Unique) {
+            if ((& kubectl get namespace $namespace --ignore-not-found -o name 2>$null) -join "") {
+                Invoke-Kubectl -Arguments @("-n", $namespace, "delete", "ingress", "--all", "--ignore-not-found", "--wait=true")
+            }
+        }
         Remove-IngressController $namespaces
         Remove-V2Namespaces $namespaces
     }

@@ -70,6 +70,7 @@ V2 首期应用构建产物预算固定为 7 类：`web-console`、`platform-con
 | [contracts/v1-deletion-ledger.md](contracts/v1-deletion-ledger.md) | V1 API/Profile/Adapter/Projector/共享依赖删除台账 |
 | [contracts/claim-lease-guide.md](contracts/claim-lease-guide.md) | MySQL Claim/Lease/Fencing 公共协议 |
 | [contracts/boundary-policy.json](contracts/boundary-policy.json) | Cargo、SQL、Env、Secret、NetworkPolicy 冻结例外基线 |
+| [evidence/egress-gateway.md](evidence/egress-gateway.md) | V2alpha3 受控公网出口、真实模型、密钥轮换、30分钟稳定性与当前 CNI 限制证据 |
 
 ## 5. 实施原则
 

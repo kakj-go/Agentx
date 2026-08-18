@@ -22,7 +22,7 @@ spec:
   selector: { matchLabels: { app.kubernetes.io/name: runtime-gateway } }
   template:
     metadata:
-      labels: { app.kubernetes.io/name: runtime-gateway, agentx.io/plane: runtime, agentx.io/internal-api: runtime-v1, agentx.io/public-api: runtime, agentx.io/metrics: enabled }
+      labels: { app.kubernetes.io/name: runtime-gateway, agentx.io/plane: runtime, agentx.io/internal-api: runtime-v1, agentx.io/public-api: runtime, agentx.io/egress-client: managed, agentx.io/metrics: enabled }
     spec:
       serviceAccountName: runtime-gateway
       automountServiceAccountToken: false
@@ -47,6 +47,10 @@ spec:
             - { name: AGENTX_RUNTIME_USER_JWT_ISSUER, value: agentx-platform }
             - { name: AGENTX_RUNTIME_USER_JWT_AUDIENCE, value: agentx-runtime-gateway }
             - { name: AGENTX_RUNTIME_VAULT_ENDPOINT, value: http://vault.agentx-v2-deps.svc:8200 }
+            - { name: AGENTX_EGRESS_PROXY_URL, value: http://agentx-egress-gateway.agentx-v2-deps.svc:3128 }
+            - { name: AGENTX_EGRESS_JWT_KEY_ID, value: runtime-gateway-current }
+            - name: AGENTX_EGRESS_JWT_PRIVATE_KEY_PEM
+              valueFrom: { secretKeyRef: { name: agentx-runtime-secrets, key: AGENTX_RUNTIME_GATEWAY_EGRESS_JWT_PRIVATE_KEY_PEM } }
             - { name: AGENTX_RUNTIME_S3_ENDPOINT, value: http://object-storage.agentx-v2-deps.svc:9000 }
             - { name: AGENTX_RUNTIME_S3_BUCKET, value: agentx-runtime }
             - { name: AGENTX_RUNTIME_S3_REGION, value: us-east-1 }
@@ -111,7 +115,7 @@ spec:
   strategy: { type: RollingUpdate, rollingUpdate: { maxUnavailable: 1, maxSurge: 1 } }
   selector: { matchLabels: { app.kubernetes.io/name: workflow-runtime } }
   template:
-    metadata: { labels: { app.kubernetes.io/name: workflow-runtime, agentx.io/plane: runtime, agentx.io/runtime-data: mysql-redis, agentx.io/metrics: enabled } }
+    metadata: { labels: { app.kubernetes.io/name: workflow-runtime, agentx.io/plane: runtime, agentx.io/runtime-data: mysql-redis, agentx.io/egress-client: managed, agentx.io/metrics: enabled } }
     spec:
       serviceAccountName: workflow-runtime
       automountServiceAccountToken: false
@@ -137,6 +141,10 @@ spec:
             - { name: AGENTX_RUNTIME_S3_REGION, value: us-east-1 }
             - { name: AGENTX_RUNTIME_S3_ALLOW_HTTP, value: "true" }
             - { name: AGENTX_RUNTIME_S3_PATH_STYLE, value: "true" }
+            - { name: AGENTX_EGRESS_PROXY_URL, value: http://agentx-egress-gateway.agentx-v2-deps.svc:3128 }
+            - { name: AGENTX_EGRESS_JWT_KEY_ID, value: workflow-runtime-current }
+            - name: AGENTX_EGRESS_JWT_PRIVATE_KEY_PEM
+              valueFrom: { secretKeyRef: { name: agentx-runtime-secrets, key: AGENTX_WORKFLOW_RUNTIME_EGRESS_JWT_PRIVATE_KEY_PEM } }
             - name: AGENTX_RUNTIME_MYSQL_PASSWORD
               valueFrom: { secretKeyRef: { name: agentx-runtime-secrets, key: AGENTX_RUNTIME_MYSQL_PASSWORD } }
             - name: AGENTX_RUNTIME_REDIS_PASSWORD
@@ -178,7 +186,7 @@ spec:
   strategy: { type: RollingUpdate, rollingUpdate: { maxUnavailable: 1, maxSurge: 1 } }
   selector: { matchLabels: { app.kubernetes.io/name: workflow-worker } }
   template:
-    metadata: { labels: { app.kubernetes.io/name: workflow-worker, agentx.io/plane: runtime, agentx.io/runtime-data: mysql-redis, agentx.io/capability: general, agentx.io/metrics: enabled } }
+    metadata: { labels: { app.kubernetes.io/name: workflow-worker, agentx.io/plane: runtime, agentx.io/runtime-data: mysql-redis, agentx.io/capability: general, agentx.io/egress-client: managed, agentx.io/metrics: enabled } }
     spec:
       serviceAccountName: workflow-worker
       automountServiceAccountToken: false
@@ -203,6 +211,10 @@ spec:
             - { name: AGENTX_RUNTIME_REDIS_URL, value: redis://runtime-redis:6379/ }
             - { name: AGENTX_RUNTIME_VAULT_ENDPOINT, value: http://vault.agentx-v2-deps.svc:8200 }
             - { name: AGENTX_RUNTIME_VAULT_MOUNT, value: secret }
+            - { name: AGENTX_EGRESS_PROXY_URL, value: http://agentx-egress-gateway.agentx-v2-deps.svc:3128 }
+            - { name: AGENTX_EGRESS_JWT_KEY_ID, value: workflow-worker-current }
+            - name: AGENTX_EGRESS_JWT_PRIVATE_KEY_PEM
+              valueFrom: { secretKeyRef: { name: agentx-runtime-secrets, key: AGENTX_WORKFLOW_WORKER_EGRESS_JWT_PRIVATE_KEY_PEM } }
             - { name: AGENTX_SANDBOX_MANAGER_ENDPOINT, value: http://sandbox-manager:8080 }
             - { name: AGENTX_RUNTIME_S3_ENDPOINT, value: http://object-storage.agentx-v2-deps.svc:9000 }
             - { name: AGENTX_RUNTIME_S3_BUCKET, value: agentx-runtime }
@@ -267,6 +279,11 @@ spec:
             - { name: AGENTX_RUNTIME_MYSQL_TLS_MODE, value: disabled }
             - { name: AGENTX_OPENSANDBOX_ENDPOINT, value: http://opensandbox.agentx-v2-deps.svc:8080 }
             - { name: AGENTX_OPENSANDBOX_SECURE_ACCESS, value: "true" }
+            - { name: AGENTX_EGRESS_SANDBOX_PROXY_URL, value: https://host.docker.internal:31429 }
+            - { name: AGENTX_EGRESS_JWT_KEY_ID, value: sandbox-current }
+            - { name: AGENTX_EGRESS_SANDBOX_CA_PATH, value: /var/run/agentx-egress-ca/ca.crt }
+            - name: AGENTX_EGRESS_JWT_PRIVATE_KEY_PEM
+              valueFrom: { secretKeyRef: { name: agentx-runtime-secrets, key: AGENTX_SANDBOX_EGRESS_JWT_PRIVATE_KEY_PEM } }
             - name: AGENTX_OPENSANDBOX_API_KEY
               valueFrom: { secretKeyRef: { name: agentx-runtime-secrets, key: AGENTX_OPENSANDBOX_API_KEY } }
             - name: AGENTX_RUNTIME_MYSQL_PASSWORD
@@ -281,6 +298,11 @@ spec:
           readinessProbe: { httpGet: { path: /health/ready, port: http }, periodSeconds: 5, failureThreshold: 2 }
           livenessProbe: { httpGet: { path: /health/live, port: http }, periodSeconds: 10, failureThreshold: 3 }
           lifecycle: { preStop: { httpGet: { path: /health/drain, port: admin, scheme: HTTP } } }
+          volumeMounts:
+            - { name: egress-ca, mountPath: /var/run/agentx-egress-ca, readOnly: true }
+      volumes:
+        - name: egress-ca
+          secret: { secretName: agentx-egress-tls, optional: true }
 ---
 apiVersion: v1
 kind: Service

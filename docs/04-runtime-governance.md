@@ -248,7 +248,12 @@ SSE、取消和重试边界：
 
 安全基线：
 
-- 创建请求默认 `networkPolicy.defaultAction=deny`，只允许节点声明且经 Workflow Grant 校验的域名或 CIDR。
+- Sandbox Profile 的强类型网络上限固定为 `{"defaultAction":"deny","egressMode":"none|public_https"}`；旧数据和缺失字段归一为 `none`。
+- Code 节点默认 `egressMode=none`。只有节点和其绑定的 Sandbox Profile 同时开启 `public_https` 才能联网，创建不可变 Workflow Version 时校验并固化到 Bundle；节点不能提升 Profile 的能力。
+- `public_https` 只允许 DNS 和 `agentx-egress-gateway` 的 Sandbox TLS 代理入口。Manager 通过 execd `envs` 注入短期 `HTTPS_PROXY`，可选私有 CA 通过临时文件注入；Token、CA 和 Credential 不进入命令、日志或 Artifact。
+- 固定 OpenSandbox Lifecycle Spec 的网络规则只支持 FQDN，不支持端口字段；Agentx 不发送供应商未定义的 `port/ports`。端口收敛由 Gateway 专用 Service/NodePort/私有 LB 仅映射 Profile Endpoint 到容器 `3129` 实现，生产代理域名/IP 禁止复用其他服务。
+- Gateway 对每个 CONNECT 重新解析并固定已验证的公共地址，永久拒绝私网、集群地址、Kubernetes API、Metadata、回环和链路本地地址。代码不能绕过代理直连公网。
+- Runtime CONNECT Token 单次使用且最长 60 秒；Sandbox wildcard Token 不超过 Sandbox TTL，并默认限制为单 Token 4 个并发 Tunnel、32 次连接和累计 1 小时。四个签发身份的 KID 必须匹配各自角色前缀，轮换期间只允许当前/上一把公钥短暂重叠。
 - 基础镜像使用 Sandbox Profile 指定的镜像 tag，默认只读；临时写入只进入受限工作目录，输出通过 Artifact 收集。tag 不提供 digest 级别的不可变性，生产环境应通过受控 Registry、镜像签名或发布流程保证 tag 不被静默改写。
 - CPU、内存、进程数、磁盘、TTL 和租户并发在 Agentx 与 OpenSandbox 两侧同时限制。
 - Credential 优先通过 OpenSandbox Credential Vault 或 Agentx 短期凭证代理注入，不得进入命令行、stdout、stderr、Trace 或持久镜像。

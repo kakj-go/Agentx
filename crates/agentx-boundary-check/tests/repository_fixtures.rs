@@ -32,6 +32,21 @@ fn runtime_gateway_redis_outside_sse_wakeup_fails_the_production_checker() {
     assert_checker(&fixture, false, "gateway_redis");
 }
 
+#[test]
+fn unmanaged_provider_http_client_fails_the_production_checker() {
+    for category in [
+        "provider_http",
+        "provider_http_alias",
+        "provider_http_builder_import",
+        "provider_http_ca_builder",
+        "provider_http_nested_module",
+    ] {
+        let fixture = fixture_repository();
+        introduce_violation(fixture.path(), category);
+        assert_checker(&fixture, false, category);
+    }
+}
+
 fn assert_checker(fixture: &TempDir, expected_success: bool, category: &str) {
     let output = Command::new(env!("CARGO_BIN_EXE_agentx-boundary-check"))
         .arg("fixture")
@@ -208,6 +223,31 @@ spec:
             root,
             "services/agentx-v2-runtime/src/gateway.rs",
             "fn forbidden(client: redis::Client) { let _ = client; }\n",
+        ),
+        "provider_http" => write(
+            root,
+            "services/agentx-v2-runtime/src/resource_check.rs",
+            "fn forbidden() { let _ = reqwest::Client::new(); }\n",
+        ),
+        "provider_http_alias" => write(
+            root,
+            "services/agentx-v2-runtime/src/resource_check.rs",
+            "use reqwest as external_http; fn forbidden() { let _ = external_http::Client::new(); }\n",
+        ),
+        "provider_http_builder_import" => write(
+            root,
+            "services/agentx-v2-runtime/src/worker_runtime.rs",
+            "use reqwest::{header::HeaderMap, ClientBuilder as ProviderBuilder}; fn forbidden() { let _ = ProviderBuilder::new(); }\n",
+        ),
+        "provider_http_ca_builder" => write(
+            root,
+            "services/agentx-v2-runtime/src/trigger.rs",
+            "fn forbidden() { let _ = agentx_service_kit::reqwest_client_builder_with_ca(\"CA_PATH\"); }\n",
+        ),
+        "provider_http_nested_module" => write(
+            root,
+            "services/agentx-v2-runtime/src/worker_runtime/provider.rs",
+            "type ProviderClient = reqwest::Client;\n",
         ),
         _ => panic!("unknown fixture category {category}"),
     }

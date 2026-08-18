@@ -33,7 +33,7 @@ RUN apt-get update \
 COPY --from=builder /tmp/agentx-service /usr/local/bin/agentx-service
 
 ENV AGENTX_BIND_ADDR=0.0.0.0:8080
-EXPOSE 8080 9092
+EXPOSE 8080 3128 3129 9091 9092
 
 USER 65532:65532
 ENTRYPOINT ["/usr/local/bin/agentx-service"]
