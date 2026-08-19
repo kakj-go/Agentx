@@ -1,7 +1,44 @@
 {
+  "$defs": {
+    "TraceEventKindV1": {
+      "enum": [
+        "started",
+        "updated",
+        "finished"
+      ],
+      "type": "string"
+    },
+    "TraceSpanKindV1": {
+      "enum": [
+        "execution",
+        "node",
+        "attempt",
+        "agent_run",
+        "agent_iteration",
+        "runtime_call",
+        "sandbox",
+        "wait"
+      ],
+      "type": "string"
+    }
+  },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "properties": {
+    "agentIterationId": {
+      "format": "uuid",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "agentRunId": {
+      "format": "uuid",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "attemptId": {
       "format": "uuid",
       "type": [
@@ -13,8 +50,15 @@
     "contentHash": {
       "type": "string"
     },
+    "contentPreview": true,
     "contentRef": {
       "format": "uuid",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "contentRole": {
       "type": [
         "string",
         "null"
@@ -39,9 +83,18 @@
         "null"
       ]
     },
+    "errorMessage": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "eventId": {
       "format": "uuid",
       "type": "string"
+    },
+    "eventKind": {
+      "$ref": "#/$defs/TraceEventKindV1"
     },
     "eventType": {
       "type": "string"
@@ -114,6 +167,13 @@
         "null"
       ]
     },
+    "sandboxLeaseId": {
+      "format": "uuid",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "schemaVersion": {
       "format": "uint32",
       "minimum": 0,
@@ -121,6 +181,12 @@
     },
     "spanId": {
       "format": "uuid",
+      "type": "string"
+    },
+    "spanKind": {
+      "$ref": "#/$defs/TraceSpanKindV1"
+    },
+    "spanName": {
       "type": "string"
     },
     "status": {
@@ -133,6 +199,13 @@
     "traceId": {
       "format": "uuid",
       "type": "string"
+    },
+    "waitId": {
+      "format": "uuid",
+      "type": [
+        "string",
+        "null"
+      ]
     }
   },
   "required": [
@@ -143,6 +216,9 @@
     "executionSequence",
     "traceId",
     "spanId",
+    "eventKind",
+    "spanKind",
+    "spanName",
     "eventType",
     "status",
     "costMicros",

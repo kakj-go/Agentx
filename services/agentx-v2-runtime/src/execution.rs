@@ -410,16 +410,15 @@ pub async fn create_runtime_invocation_tx(
         .bind(command_id).bind(tenant_id).bind(execution_id.to_string()).bind(format!("execution:start:{execution_id}")).bind(&command_payload).execute(&mut **tx).await?;
     sqlx::query("INSERT INTO execution_outbox(id,tenant_id,execution_id,message_type,capability,payload_json,status) VALUES(?,?,?,'runtime_event',NULL,?,'pending')")
         .bind(Uuid::now_v7()).bind(tenant_id).bind(execution_id).bind(json!({"type":"invocation.accepted","commandId":command_id})).execute(&mut **tx).await?;
-    crate::trace_delivery::enqueue(
-        tx,
-        crate::trace_delivery::TraceDraft::execution(
-            tenant_id,
-            execution_id,
-            "execution.accepted",
-            "queued",
-        ),
-    )
-    .await?;
+    let mut trace = crate::trace_delivery::TraceDraft::execution(
+        tenant_id,
+        execution_id,
+        "execution.accepted",
+        "queued",
+    );
+    trace.content_role = Some("input".into());
+    trace.content_preview = crate::trace_delivery::bounded_preview(&input);
+    crate::trace_delivery::enqueue_best_effort(tx, trace).await;
     sqlx::query("INSERT INTO invocation_events(tenant_id,invocation_id,event_id,sequence_number,event_type,payload_json) VALUES(?,?,?,1,'invocation.accepted',?)")
         .bind(tenant_id).bind(invocation_id).bind(Uuid::now_v7()).bind(json!({"executionId":execution_id,"bundleId":selected_bundle_id,"admissionEpoch":admission_epoch,"status":"queued"})).execute(&mut **tx).await?;
     Ok(InvocationAcceptedV1 {
@@ -809,7 +808,8 @@ async fn reject_start_execution(
         "failed",
     );
     trace.error_code = Some(error_code.into());
-    crate::trace_delivery::enqueue(&mut tx, trace).await?;
+    trace.error_message = Some(error_message.into());
+    crate::trace_delivery::enqueue_best_effort(&mut tx, trace).await;
     let updated = sqlx::query("UPDATE runtime_commands SET status='failed',result_json=?,error_code=?,error_message=?,completed_at=UTC_TIMESTAMP(6),locked_by=NULL,locked_until=NULL WHERE id=? AND locked_by=? AND fencing_token=? AND locked_until>UTC_TIMESTAMP(6)")
         .bind(json!({"executionId":claim.execution_id,"status":"failed"})).bind(error_code).bind(error_message)
         .bind(claim.command_id).bind(claim.owner_id).bind(claim.fencing_token).execute(&mut *tx).await?;
@@ -862,6 +862,21 @@ async fn process_cancel_command(
             .bind(claim.execution_id).bind(claim.tenant_id).execute(&mut *tx).await?;
         sqlx::query("UPDATE runtime_calls SET status=CASE WHEN status='sent' THEN 'outcome_unknown' ELSE 'cancelled' END,ended_at=UTC_TIMESTAMP(6) WHERE execution_id=? AND tenant_id=? AND status IN ('reserved','sent')")
             .bind(claim.execution_id).bind(claim.tenant_id).execute(&mut *tx).await?;
+        sqlx::query("UPDATE sandbox_leases SET status='interrupting',expires_at=UTC_TIMESTAMP(6),last_error='execution_cancelled',locked_by=NULL,locked_until=NULL WHERE execution_id=? AND tenant_id=? AND status IN ('creating','ready','running')")
+            .bind(claim.execution_id).bind(claim.tenant_id).execute(&mut *tx).await?;
+        sqlx::query("UPDATE agent_iterations i JOIN agent_runs r ON r.id=i.agent_run_id SET i.status='cancelled',i.ended_at=UTC_TIMESTAMP(6) WHERE r.execution_id=? AND r.tenant_id=? AND i.status='running'")
+            .bind(claim.execution_id).bind(claim.tenant_id).execute(&mut *tx).await?;
+        sqlx::query("UPDATE agent_runs SET status='cancelled',ended_at=UTC_TIMESTAMP(6),stop_reason='cancelled' WHERE execution_id=? AND tenant_id=? AND status='running'")
+            .bind(claim.execution_id).bind(claim.tenant_id).execute(&mut *tx).await?;
+        if let Err(error) = crate::engine_trace::finish_cancelled_spans(
+            &mut tx,
+            claim.tenant_id,
+            claim.execution_id,
+        )
+        .await
+        {
+            tracing::warn!(%error, execution_id = %claim.execution_id, "Cancelled Span finalization failed");
+        }
         sqlx::query("UPDATE bundle_references SET released_at=UTC_TIMESTAMP(6) WHERE tenant_id=? AND reference_kind='active_execution' AND owner_id=? AND released_at IS NULL")
             .bind(claim.tenant_id).bind(claim.execution_id).execute(&mut *tx).await?;
         sqlx::query("UPDATE bundle_references r JOIN wait_subscriptions w ON w.id=r.owner_id SET r.released_at=UTC_TIMESTAMP(6) WHERE r.tenant_id=? AND r.reference_kind='pending_wait' AND w.execution_id=? AND r.released_at IS NULL")
@@ -886,7 +901,7 @@ async fn process_cancel_command(
             .bind(Uuid::now_v7()).bind(claim.tenant_id).bind(claim.execution_id)
             .bind(json!({"type":"execution.cancelled","invocationId":invocation_id}))
             .execute(&mut *tx).await?;
-        crate::trace_delivery::enqueue(
+        crate::trace_delivery::enqueue_best_effort(
             &mut tx,
             crate::trace_delivery::TraceDraft::execution(
                 claim.tenant_id,
@@ -895,7 +910,7 @@ async fn process_cancel_command(
                 "cancelled",
             ),
         )
-        .await?;
+        .await;
     }
     let updated = sqlx::query("UPDATE runtime_commands SET status='completed',result_json=?,completed_at=UTC_TIMESTAMP(6),locked_by=NULL,locked_until=NULL WHERE id=? AND locked_by=? AND fencing_token=? AND locked_until>UTC_TIMESTAMP(6)")
         .bind(json!({"executionId":claim.execution_id,"status":if status == "cancelled" { "replayed" } else { "cancelled" }}))

@@ -1,20 +1,36 @@
 {
   "$defs": {
-    "TraceEventEnvelopeV1": {
+    "TraceSpanKindV1": {
+      "enum": [
+        "execution",
+        "node",
+        "attempt",
+        "agent_run",
+        "agent_iteration",
+        "runtime_call",
+        "sandbox",
+        "wait"
+      ],
+      "type": "string"
+    },
+    "TraceSpanSummaryV1": {
       "additionalProperties": false,
       "properties": {
-        "attemptId": {
+        "agentIterationId": {
           "format": "uuid",
           "type": [
             "string",
             "null"
           ]
         },
-        "attributes": true,
-        "contentHash": {
-          "type": "string"
+        "agentRunId": {
+          "format": "uuid",
+          "type": [
+            "string",
+            "null"
+          ]
         },
-        "contentRef": {
+        "attemptId": {
           "format": "uuid",
           "type": [
             "string",
@@ -34,27 +50,26 @@
             "null"
           ]
         },
+        "endedAt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "errorCode": {
           "type": [
             "string",
             "null"
           ]
         },
-        "eventId": {
-          "format": "uuid",
-          "type": "string"
+        "errorMessage": {
+          "type": [
+            "string",
+            "null"
+          ]
         },
-        "eventType": {
-          "type": "string"
-        },
-        "executionId": {
-          "format": "uuid",
-          "type": "string"
-        },
-        "executionSequence": {
-          "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
+        "hasDetails": {
+          "type": "boolean"
         },
         "inputTokens": {
           "format": "uint64",
@@ -70,9 +85,6 @@
             "string",
             "null"
           ]
-        },
-        "occurredAt": {
-          "type": "string"
         },
         "outputTokens": {
           "format": "uint64",
@@ -115,41 +127,45 @@
             "null"
           ]
         },
-        "schemaVersion": {
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
+        "sandboxLeaseId": {
+          "format": "uuid",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "spanId": {
           "format": "uuid",
           "type": "string"
         },
+        "spanKind": {
+          "$ref": "#/$defs/TraceSpanKindV1"
+        },
+        "spanName": {
+          "type": "string"
+        },
+        "startedAt": {
+          "type": "string"
+        },
         "status": {
           "type": "string"
         },
-        "tenantId": {
+        "waitId": {
           "format": "uuid",
-          "type": "string"
-        },
-        "traceId": {
-          "format": "uuid",
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
-        "schemaVersion",
-        "eventId",
-        "tenantId",
-        "executionId",
-        "executionSequence",
-        "traceId",
         "spanId",
-        "eventType",
+        "spanKind",
+        "spanName",
         "status",
+        "startedAt",
         "costMicros",
-        "attributes",
-        "occurredAt",
-        "contentHash"
+        "hasDetails"
       ],
       "type": "object"
     }
@@ -168,12 +184,6 @@
     "degraded": {
       "type": "boolean"
     },
-    "events": {
-      "items": {
-        "$ref": "#/$defs/TraceEventEnvelopeV1"
-      },
-      "type": "array"
-    },
     "executionId": {
       "format": "uuid",
       "type": "string"
@@ -187,6 +197,29 @@
       "format": "uint64",
       "minimum": 0,
       "type": "integer"
+    },
+    "next": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "spans": {
+      "items": {
+        "$ref": "#/$defs/TraceSpanSummaryV1"
+      },
+      "type": "array"
+    },
+    "totalSpans": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "warningCode": {
+      "type": [
+        "string",
+        "null"
+      ]
     }
   },
   "required": [
@@ -196,7 +229,8 @@
     "expectedWatermark",
     "complete",
     "degraded",
-    "events"
+    "totalSpans",
+    "spans"
   ],
   "title": "ExecutionTraceV1",
   "type": "object"

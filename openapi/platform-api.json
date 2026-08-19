@@ -6059,6 +6059,25 @@
         ],
         "type": "object"
       },
+      "TraceContent": {
+        "properties": {
+          "contentRef": {
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "preview": {},
+          "role": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "role"
+        ],
+        "type": "object"
+      },
       "TraceEventResponse": {
         "properties": {
           "agentRunId": {
@@ -6246,9 +6265,76 @@
       },
       "TraceResponse": {
         "properties": {
+          "complete": {
+            "type": "boolean"
+          },
+          "degraded": {
+            "type": "boolean"
+          },
+          "executionId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "expectedWatermark": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "ingestedWatermark": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "spans": {
+            "items": {
+              "$ref": "#/components/schemas/TraceSpanSummary"
+            },
+            "type": "array"
+          },
+          "totalSpans": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "traceId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "warningCode": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "executionId",
+          "traceId",
+          "spans",
+          "complete",
+          "degraded",
+          "totalSpans",
+          "expectedWatermark",
+          "ingestedWatermark"
+        ],
+        "type": "object"
+      },
+      "TraceSpanDetailResponse": {
+        "properties": {
+          "attributes": {
+            "additionalProperties": true,
+            "type": "object"
+          },
           "events": {
             "items": {
-              "$ref": "#/components/schemas/TraceEventResponse"
+              "additionalProperties": true,
+              "type": "object"
             },
             "type": "array"
           },
@@ -6256,11 +6342,28 @@
             "format": "uuid",
             "type": "string"
           },
-          "nextCursor": {
-            "type": [
-              "string",
-              "null"
+          "input": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/TraceContent"
+              },
+              {
+                "type": "null"
+              }
             ]
+          },
+          "output": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/TraceContent"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "span": {
+            "$ref": "#/components/schemas/TraceSpanSummary"
           },
           "traceId": {
             "format": "uuid",
@@ -6270,7 +6373,179 @@
         "required": [
           "executionId",
           "traceId",
+          "span",
+          "attributes",
           "events"
+        ],
+        "type": "object"
+      },
+      "TraceSpanSummary": {
+        "properties": {
+          "agentIterationId": {
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "agentRunId": {
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "attemptId": {
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "costMicros": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "durationMs": {
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "endedAt": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "errorCode": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "errorMessage": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "hasDetails": {
+            "type": "boolean"
+          },
+          "inputTokens": {
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "nodeExecutionId": {
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "outputTokens": {
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "parentSpanId": {
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "resourceId": {
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "resourceType": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "resourceVersion": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "runtimeCallId": {
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sandboxLeaseId": {
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "spanId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "spanKind": {
+            "enum": [
+              "execution",
+              "node",
+              "attempt",
+              "agent_run",
+              "agent_iteration",
+              "runtime_call",
+              "sandbox",
+              "wait"
+            ],
+            "type": "string"
+          },
+          "spanName": {
+            "type": "string"
+          },
+          "startedAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "waitId": {
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "spanId",
+          "parentSpanId",
+          "spanKind",
+          "spanName",
+          "status",
+          "startedAt",
+          "endedAt",
+          "durationMs",
+          "costMicros",
+          "hasDetails"
         ],
         "type": "object"
       },
@@ -9473,7 +9748,88 @@
     "/api/v1/executions/{id}/trace": {
       "get": {
         "operationId": "execution_trace",
-        "responses": {},
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "maximum": 1000,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TraceResponse"
+                }
+              }
+            },
+            "description": "Trace Span page"
+          }
+        },
+        "tags": [
+          "operations"
+        ]
+      }
+    },
+    "/api/v1/executions/{id}/trace/spans/{span_id}": {
+      "get": {
+        "operationId": "execution_trace_span",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "span_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TraceSpanDetailResponse"
+                }
+              }
+            },
+            "description": "Trace Span detail"
+          }
+        },
         "tags": [
           "operations"
         ]

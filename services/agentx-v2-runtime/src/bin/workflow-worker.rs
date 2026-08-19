@@ -237,7 +237,10 @@ async fn process_worker_batch(
             continue;
         };
         let mut lease = claim.lease.clone();
-        let execution = worker.execute(&claim);
+        let execution = agentx_v2_runtime::worker_support::with_operation_deadline(
+            claim.task.deadline_at,
+            worker.execute(&claim),
+        );
         tokio::pin!(execution);
         let drain_deadline = lifecycle.drain_deadline();
         tokio::pin!(drain_deadline);
@@ -245,24 +248,99 @@ async fn process_worker_batch(
         heartbeat.tick().await;
         let outcome = loop {
             tokio::select! {
-                result = &mut execution => break result,
+                result = &mut execution => break result.unwrap_or_else(|_| agentx_v2_runtime::worker_runtime::WorkerExecution {
+                    status: agentx_runtime_contracts::WorkerResultStatusV1::Failed,
+                    outputs: std::collections::BTreeMap::new(),
+                    error_code: Some("NODE_EXECUTION_TIMED_OUT".into()),
+                    error_message: Some("Node execution exceeded its operation deadline".into()),
+                }),
                 () = &mut drain_deadline => return Ok(()),
                 _ = heartbeat.tick() => {
                     lease = agentx_v2_runtime::engine::heartbeat_attempt(pool, &lease).await?;
                 }
             }
         };
+        tracing::info!(
+            attempt_id = %claim.task.attempt_id,
+            execution_id = %claim.task.execution_id,
+            %capability,
+            "Worker execution finished; finalizing result"
+        );
+        // Provider work may consume almost the entire 30-second Attempt Lease.
+        // Refresh it before Artifact/result finalization so a valid result is
+        // not reclaimed while it is being made durable.
+        lease = agentx_v2_runtime::engine::heartbeat_attempt(pool, &lease).await?;
         let mut result = worker.build_result(&claim, outcome).await?;
         result.fencing_token = lease.fencing_token;
-        agentx_v2_runtime::engine::submit_worker_result_with_objects(
-            pool,
-            worker.object_store(),
-            &result,
-        )
-        .await?;
+        tracing::info!(
+            attempt_id = %claim.task.attempt_id,
+            execution_id = %claim.task.execution_id,
+            %capability,
+            "Worker result built; submitting authoritative transition"
+        );
+        submit_result_with_retry(pool, worker, &mut lease, &result, capability).await?;
         runtime_task_queue::ack(redis, &item).await?;
     }
     Ok(())
+}
+
+async fn submit_result_with_retry(
+    pool: &sqlx::MySqlPool,
+    worker: &agentx_v2_runtime::worker_runtime::RuntimeWorker,
+    lease: &mut agentx_runtime_contracts::WorkerAttemptLeaseV1,
+    result: &agentx_runtime_contracts::WorkerResultV1,
+    capability: &str,
+) -> Result<()> {
+    const MAX_ATTEMPTS: u32 = 3;
+    const SUBMIT_TIMEOUT: Duration = Duration::from_secs(20);
+    for attempt in 1..=MAX_ATTEMPTS {
+        let submitted = tokio::time::timeout(
+            SUBMIT_TIMEOUT,
+            agentx_v2_runtime::engine::submit_worker_result_with_objects(
+                pool,
+                worker.object_store(),
+                result,
+            ),
+        )
+        .await;
+        match submitted {
+            Ok(Ok(_)) => {
+                tracing::info!(
+                    attempt_id = %result.attempt_id,
+                    %capability,
+                    submit_attempt = attempt,
+                    "Worker result transition committed"
+                );
+                return Ok(());
+            }
+            Ok(Err(agentx_v2_runtime::error::RuntimeError::DatabaseUnavailable))
+                if attempt < MAX_ATTEMPTS =>
+            {
+                tracing::warn!(
+                    attempt_id = %result.attempt_id,
+                    %capability,
+                    submit_attempt = attempt,
+                    "Worker result submission hit a transient database failure; retrying"
+                );
+            }
+            Ok(Err(error)) => return Err(error.into()),
+            Err(_) if attempt < MAX_ATTEMPTS => {
+                tracing::warn!(
+                    attempt_id = %result.attempt_id,
+                    %capability,
+                    submit_attempt = attempt,
+                    timeout_seconds = SUBMIT_TIMEOUT.as_secs(),
+                    "Worker result submission timed out; retrying idempotently"
+                );
+            }
+            Err(_) => {
+                anyhow::bail!("Worker result submission timed out after {MAX_ATTEMPTS} attempts");
+            }
+        }
+        *lease = agentx_v2_runtime::engine::heartbeat_attempt(pool, lease).await?;
+        tokio::time::sleep(Duration::from_millis(100 * u64::from(attempt))).await;
+    }
+    unreachable!("bounded Worker result retry loop always returns")
 }
 
 async fn collect_worker_metrics(

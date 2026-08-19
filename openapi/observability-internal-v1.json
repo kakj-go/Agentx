@@ -4787,21 +4787,37 @@
       },
       "ExecutionTraceV1": {
         "$defs": {
-          "TraceEventEnvelopeV1": {
+          "TraceSpanKindV1": {
+            "enum": [
+              "execution",
+              "node",
+              "attempt",
+              "agent_run",
+              "agent_iteration",
+              "runtime_call",
+              "sandbox",
+              "wait"
+            ],
+            "type": "string"
+          },
+          "TraceSpanSummaryV1": {
             "additionalProperties": false,
             "properties": {
-              "attemptId": {
+              "agentIterationId": {
                 "format": "uuid",
                 "type": [
                   "string",
                   "null"
                 ]
               },
-              "attributes": true,
-              "contentHash": {
-                "type": "string"
+              "agentRunId": {
+                "format": "uuid",
+                "type": [
+                  "string",
+                  "null"
+                ]
               },
-              "contentRef": {
+              "attemptId": {
                 "format": "uuid",
                 "type": [
                   "string",
@@ -4821,27 +4837,26 @@
                   "null"
                 ]
               },
+              "endedAt": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "errorCode": {
                 "type": [
                   "string",
                   "null"
                 ]
               },
-              "eventId": {
-                "format": "uuid",
-                "type": "string"
+              "errorMessage": {
+                "type": [
+                  "string",
+                  "null"
+                ]
               },
-              "eventType": {
-                "type": "string"
-              },
-              "executionId": {
-                "format": "uuid",
-                "type": "string"
-              },
-              "executionSequence": {
-                "format": "uint64",
-                "minimum": 0,
-                "type": "integer"
+              "hasDetails": {
+                "type": "boolean"
               },
               "inputTokens": {
                 "format": "uint64",
@@ -4857,9 +4872,6 @@
                   "string",
                   "null"
                 ]
-              },
-              "occurredAt": {
-                "type": "string"
               },
               "outputTokens": {
                 "format": "uint64",
@@ -4902,41 +4914,45 @@
                   "null"
                 ]
               },
-              "schemaVersion": {
-                "format": "uint32",
-                "minimum": 0,
-                "type": "integer"
+              "sandboxLeaseId": {
+                "format": "uuid",
+                "type": [
+                  "string",
+                  "null"
+                ]
               },
               "spanId": {
                 "format": "uuid",
                 "type": "string"
               },
+              "spanKind": {
+                "$ref": "#/$defs/TraceSpanKindV1"
+              },
+              "spanName": {
+                "type": "string"
+              },
+              "startedAt": {
+                "type": "string"
+              },
               "status": {
                 "type": "string"
               },
-              "tenantId": {
+              "waitId": {
                 "format": "uuid",
-                "type": "string"
-              },
-              "traceId": {
-                "format": "uuid",
-                "type": "string"
+                "type": [
+                  "string",
+                  "null"
+                ]
               }
             },
             "required": [
-              "schemaVersion",
-              "eventId",
-              "tenantId",
-              "executionId",
-              "executionSequence",
-              "traceId",
               "spanId",
-              "eventType",
+              "spanKind",
+              "spanName",
               "status",
+              "startedAt",
               "costMicros",
-              "attributes",
-              "occurredAt",
-              "contentHash"
+              "hasDetails"
             ],
             "type": "object"
           }
@@ -4955,12 +4971,6 @@
           "degraded": {
             "type": "boolean"
           },
-          "events": {
-            "items": {
-              "$ref": "#/$defs/TraceEventEnvelopeV1"
-            },
-            "type": "array"
-          },
           "executionId": {
             "format": "uuid",
             "type": "string"
@@ -4974,6 +4984,29 @@
             "format": "uint64",
             "minimum": 0,
             "type": "integer"
+          },
+          "next": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "spans": {
+            "items": {
+              "$ref": "#/$defs/TraceSpanSummaryV1"
+            },
+            "type": "array"
+          },
+          "totalSpans": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "warningCode": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -4983,7 +5016,8 @@
           "expectedWatermark",
           "complete",
           "degraded",
-          "events"
+          "totalSpans",
+          "spans"
         ],
         "title": "ExecutionTraceV1",
         "type": "object"
@@ -15831,9 +15865,46 @@
         "type": "object"
       },
       "TraceEventEnvelopeV1": {
+        "$defs": {
+          "TraceEventKindV1": {
+            "enum": [
+              "started",
+              "updated",
+              "finished"
+            ],
+            "type": "string"
+          },
+          "TraceSpanKindV1": {
+            "enum": [
+              "execution",
+              "node",
+              "attempt",
+              "agent_run",
+              "agent_iteration",
+              "runtime_call",
+              "sandbox",
+              "wait"
+            ],
+            "type": "string"
+          }
+        },
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
+          "agentIterationId": {
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "agentRunId": {
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "attemptId": {
             "format": "uuid",
             "type": [
@@ -15845,8 +15916,15 @@
           "contentHash": {
             "type": "string"
           },
+          "contentPreview": true,
           "contentRef": {
             "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "contentRole": {
             "type": [
               "string",
               "null"
@@ -15871,9 +15949,18 @@
               "null"
             ]
           },
+          "errorMessage": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "eventId": {
             "format": "uuid",
             "type": "string"
+          },
+          "eventKind": {
+            "$ref": "#/$defs/TraceEventKindV1"
           },
           "eventType": {
             "type": "string"
@@ -15946,6 +16033,13 @@
               "null"
             ]
           },
+          "sandboxLeaseId": {
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "schemaVersion": {
             "format": "uint32",
             "minimum": 0,
@@ -15953,6 +16047,12 @@
           },
           "spanId": {
             "format": "uuid",
+            "type": "string"
+          },
+          "spanKind": {
+            "$ref": "#/$defs/TraceSpanKindV1"
+          },
+          "spanName": {
             "type": "string"
           },
           "status": {
@@ -15965,6 +16065,13 @@
           "traceId": {
             "format": "uuid",
             "type": "string"
+          },
+          "waitId": {
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -15975,6 +16082,9 @@
           "executionSequence",
           "traceId",
           "spanId",
+          "eventKind",
+          "spanKind",
+          "spanName",
           "eventType",
           "status",
           "costMicros",
@@ -15990,6 +16100,20 @@
           "TraceEventEnvelopeV1": {
             "additionalProperties": false,
             "properties": {
+              "agentIterationId": {
+                "format": "uuid",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "agentRunId": {
+                "format": "uuid",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "attemptId": {
                 "format": "uuid",
                 "type": [
@@ -16001,8 +16125,15 @@
               "contentHash": {
                 "type": "string"
               },
+              "contentPreview": true,
               "contentRef": {
                 "format": "uuid",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "contentRole": {
                 "type": [
                   "string",
                   "null"
@@ -16027,9 +16158,18 @@
                   "null"
                 ]
               },
+              "errorMessage": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "eventId": {
                 "format": "uuid",
                 "type": "string"
+              },
+              "eventKind": {
+                "$ref": "#/$defs/TraceEventKindV1"
               },
               "eventType": {
                 "type": "string"
@@ -16102,6 +16242,13 @@
                   "null"
                 ]
               },
+              "sandboxLeaseId": {
+                "format": "uuid",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "schemaVersion": {
                 "format": "uint32",
                 "minimum": 0,
@@ -16109,6 +16256,12 @@
               },
               "spanId": {
                 "format": "uuid",
+                "type": "string"
+              },
+              "spanKind": {
+                "$ref": "#/$defs/TraceSpanKindV1"
+              },
+              "spanName": {
                 "type": "string"
               },
               "status": {
@@ -16121,6 +16274,13 @@
               "traceId": {
                 "format": "uuid",
                 "type": "string"
+              },
+              "waitId": {
+                "format": "uuid",
+                "type": [
+                  "string",
+                  "null"
+                ]
               }
             },
             "required": [
@@ -16131,6 +16291,9 @@
               "executionSequence",
               "traceId",
               "spanId",
+              "eventKind",
+              "spanKind",
+              "spanName",
               "eventType",
               "status",
               "costMicros",
@@ -16139,6 +16302,27 @@
               "contentHash"
             ],
             "type": "object"
+          },
+          "TraceEventKindV1": {
+            "enum": [
+              "started",
+              "updated",
+              "finished"
+            ],
+            "type": "string"
+          },
+          "TraceSpanKindV1": {
+            "enum": [
+              "execution",
+              "node",
+              "attempt",
+              "agent_run",
+              "agent_iteration",
+              "runtime_call",
+              "sandbox",
+              "wait"
+            ],
+            "type": "string"
           }
         },
         "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -16238,6 +16422,465 @@
           "limit"
         ],
         "title": "TraceSearchRequestV1",
+        "type": "object"
+      },
+      "TraceSpanDetailV1": {
+        "$defs": {
+          "TraceContentV1": {
+            "additionalProperties": false,
+            "properties": {
+              "contentRef": {
+                "format": "uuid",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "preview": true,
+              "role": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "role"
+            ],
+            "type": "object"
+          },
+          "TraceEventEnvelopeV1": {
+            "additionalProperties": false,
+            "properties": {
+              "agentIterationId": {
+                "format": "uuid",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "agentRunId": {
+                "format": "uuid",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "attemptId": {
+                "format": "uuid",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "attributes": true,
+              "contentHash": {
+                "type": "string"
+              },
+              "contentPreview": true,
+              "contentRef": {
+                "format": "uuid",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "contentRole": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "costMicros": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "durationMs": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "errorCode": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "errorMessage": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "eventId": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "eventKind": {
+                "$ref": "#/$defs/TraceEventKindV1"
+              },
+              "eventType": {
+                "type": "string"
+              },
+              "executionId": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "executionSequence": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "inputTokens": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "nodeExecutionId": {
+                "format": "uuid",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "occurredAt": {
+                "type": "string"
+              },
+              "outputTokens": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "parentSpanId": {
+                "format": "uuid",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "resourceId": {
+                "format": "uuid",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "resourceType": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "resourceVersion": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "runtimeCallId": {
+                "format": "uuid",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "sandboxLeaseId": {
+                "format": "uuid",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "schemaVersion": {
+                "format": "uint32",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "spanId": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "spanKind": {
+                "$ref": "#/$defs/TraceSpanKindV1"
+              },
+              "spanName": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string"
+              },
+              "tenantId": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "traceId": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "waitId": {
+                "format": "uuid",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "schemaVersion",
+              "eventId",
+              "tenantId",
+              "executionId",
+              "executionSequence",
+              "traceId",
+              "spanId",
+              "eventKind",
+              "spanKind",
+              "spanName",
+              "eventType",
+              "status",
+              "costMicros",
+              "attributes",
+              "occurredAt",
+              "contentHash"
+            ],
+            "type": "object"
+          },
+          "TraceEventKindV1": {
+            "enum": [
+              "started",
+              "updated",
+              "finished"
+            ],
+            "type": "string"
+          },
+          "TraceSpanKindV1": {
+            "enum": [
+              "execution",
+              "node",
+              "attempt",
+              "agent_run",
+              "agent_iteration",
+              "runtime_call",
+              "sandbox",
+              "wait"
+            ],
+            "type": "string"
+          },
+          "TraceSpanSummaryV1": {
+            "additionalProperties": false,
+            "properties": {
+              "agentIterationId": {
+                "format": "uuid",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "agentRunId": {
+                "format": "uuid",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "attemptId": {
+                "format": "uuid",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "costMicros": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "durationMs": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "endedAt": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "errorCode": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "errorMessage": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "hasDetails": {
+                "type": "boolean"
+              },
+              "inputTokens": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "nodeExecutionId": {
+                "format": "uuid",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "outputTokens": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "parentSpanId": {
+                "format": "uuid",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "resourceId": {
+                "format": "uuid",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "resourceType": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "resourceVersion": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "runtimeCallId": {
+                "format": "uuid",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "sandboxLeaseId": {
+                "format": "uuid",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "spanId": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "spanKind": {
+                "$ref": "#/$defs/TraceSpanKindV1"
+              },
+              "spanName": {
+                "type": "string"
+              },
+              "startedAt": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string"
+              },
+              "waitId": {
+                "format": "uuid",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "spanId",
+              "spanKind",
+              "spanName",
+              "status",
+              "startedAt",
+              "costMicros",
+              "hasDetails"
+            ],
+            "type": "object"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "apiVersion": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "attributes": true,
+          "events": {
+            "items": {
+              "$ref": "#/$defs/TraceEventEnvelopeV1"
+            },
+            "type": "array"
+          },
+          "executionId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "input": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/TraceContentV1"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "output": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/TraceContentV1"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "span": {
+            "$ref": "#/$defs/TraceSpanSummaryV1"
+          }
+        },
+        "required": [
+          "apiVersion",
+          "executionId",
+          "span",
+          "attributes",
+          "events"
+        ],
+        "title": "TraceSpanDetailV1",
         "type": "object"
       },
       "WorkerAttemptLeaseV1": {
@@ -16679,6 +17322,50 @@
           }
         ],
         "summary": "Get Execution Trace"
+      }
+    },
+    "/internal/observability/v1/executions/{id}/trace/spans/{span_id}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "span_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TraceSpanDetailV1"
+                }
+              }
+            },
+            "description": "Applied"
+          }
+        },
+        "security": [
+          {
+            "delegationJwt": [
+              "observability.trace.read"
+            ]
+          }
+        ],
+        "summary": "Get Trace Span"
       }
     },
     "/internal/observability/v1/traces:search": {

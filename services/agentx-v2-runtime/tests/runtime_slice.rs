@@ -46,7 +46,7 @@ use agentx_v2_runtime::{
         activate_deployment, apply_admission, disable_deployment, prepare_bundle,
         rollback_deployment,
     },
-    query::{get_execution, search_executions},
+    query::{get_execution, get_execution_artifact, search_executions},
     retention::run_once as run_retention_once,
     trigger::{TriggerProvider, TriggerProviderResponse},
     worker_runtime::{RuntimeWorker, WorkerProvider, WorkerProviderError, WorkerProviderResponse},
@@ -206,6 +206,7 @@ async fn v2_publish_execution_query_recovery_and_gc_are_fenced_and_idempotent() 
     agentx_runtime_infrastructure::migrate_runtime_mysql(&pool)
         .await
         .unwrap();
+    trace_watermarks_are_atomic_under_concurrency(&pool).await;
     composite_timeout_commands_are_idempotent(&pool).await;
     quota_projection_claim_is_single_owner(&pool).await;
     trigger_claim_takeover_and_provider_failure_are_fenced(&pool).await;
@@ -269,6 +270,7 @@ async fn v2_publish_execution_query_recovery_and_gc_are_fenced_and_idempotent() 
     assert_eq!(accepted.admission_epoch, 1);
 
     invocation_and_dispatch_recovery_are_fenced(&fixture, accepted.execution_id).await;
+    retry_policy_creates_a_second_attempt_and_trace(&fixture).await;
     session_message_appends_one_assistant_response(&fixture).await;
     fork_uses_checkpoint_machine_and_preserves_source(&fixture, accepted.execution_id).await;
     query_is_tenant_application_and_execution_scoped(&fixture, accepted.execution_id).await;
@@ -334,6 +336,84 @@ async fn v2_publish_execution_query_recovery_and_gc_are_fenced_and_idempotent() 
     quota_projection_covers_all_dimensions_and_has_no_terminal_residue(&fixture).await;
     retention_dry_run_reference_block_and_object_sweep_are_fenced(&fixture).await;
     event_sequencer_quarantines_invalid_payload_without_blocking_valid_events(&fixture).await;
+}
+
+async fn trace_watermarks_are_atomic_under_concurrency(pool: &MySqlPool) {
+    const EVENT_COUNT: u64 = 16;
+    let tenant_id = Uuid::now_v7();
+    let workflow_id = Uuid::now_v7();
+    let version_id = Uuid::now_v7();
+    let execution_id = Uuid::now_v7();
+    sqlx::query("INSERT INTO workflow_executions(id,tenant_id,workflow_id,workflow_version_id,trace_id,trigger_type,status,started_at) VALUES(?,?,?,?,?,'debug','running',UTC_TIMESTAMP(6))")
+        .bind(execution_id)
+        .bind(tenant_id)
+        .bind(workflow_id)
+        .bind(version_id)
+        .bind(Uuid::now_v7())
+        .execute(pool)
+        .await
+        .unwrap();
+
+    let mut tasks = tokio::task::JoinSet::new();
+    for index in 0..EVENT_COUNT {
+        let pool = pool.clone();
+        tasks.spawn(async move {
+            let mut tx = pool.begin().await.unwrap();
+            let mut draft = agentx_v2_runtime::trace_delivery::TraceDraft::execution(
+                tenant_id,
+                execution_id,
+                format!("execution.concurrent_{index}"),
+                "running",
+            );
+            draft.attributes = json!({"index":index});
+            let sequence = agentx_v2_runtime::trace_delivery::enqueue(&mut tx, draft)
+                .await
+                .unwrap();
+            tx.commit().await.unwrap();
+            sequence
+        });
+    }
+    let mut sequences = Vec::with_capacity(EVENT_COUNT as usize);
+    while let Some(result) = tasks.join_next().await {
+        sequences.push(result.unwrap());
+    }
+    sequences.sort_unstable();
+    assert_eq!(sequences, (1..=EVENT_COUNT).collect::<Vec<_>>());
+    let watermark: u64 =
+        sqlx::query_scalar("SELECT trace_watermark FROM workflow_executions WHERE id=?")
+            .bind(execution_id)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    assert_eq!(watermark, EVENT_COUNT);
+    let persisted: Vec<u64> = sqlx::query_scalar(
+        "SELECT execution_sequence FROM trace_outbox WHERE tenant_id=? AND execution_id=? ORDER BY execution_sequence",
+    )
+    .bind(tenant_id)
+    .bind(execution_id)
+    .fetch_all(pool)
+    .await
+    .unwrap();
+    assert_eq!(persisted, sequences);
+
+    sqlx::query("DELETE FROM trace_outbox WHERE tenant_id=? AND execution_id=?")
+        .bind(tenant_id)
+        .bind(execution_id)
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM execution_events WHERE tenant_id=? AND execution_id=?")
+        .bind(tenant_id)
+        .bind(execution_id)
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM workflow_executions WHERE tenant_id=? AND id=?")
+        .bind(tenant_id)
+        .bind(execution_id)
+        .execute(pool)
+        .await
+        .unwrap();
 }
 
 async fn composite_timeout_commands_are_idempotent(pool: &MySqlPool) {
@@ -1289,6 +1369,71 @@ async fn large_worker_results_are_externalized_and_verified(fixture: &Fixture) {
     .await
     .unwrap();
     assert_ne!(terminal_object_id, object.object_id);
+    let input_artifact_id: Uuid = sqlx::query_scalar(
+        "SELECT r.artifact_id FROM artifact_references r JOIN node_attempts a ON a.node_execution_id=UUID_TO_BIN(r.owner_id) WHERE r.tenant_id=? AND a.id=? AND r.reference_role=? LIMIT 1",
+    )
+    .bind(fixture.tenant_id)
+    .bind(result.attempt_id)
+    .bind(format!("trace_input:{}", result.attempt_id))
+    .fetch_one(&fixture.state.pool)
+    .await
+    .unwrap();
+    assert_ne!(input_artifact_id, object.object_id);
+    let trace_refs: Vec<String> = sqlx::query_scalar(
+        "SELECT DISTINCT CAST(JSON_UNQUOTE(JSON_EXTRACT(payload_json,'$.contentRef')) AS CHAR(36)) FROM trace_outbox WHERE tenant_id=? AND execution_id=? AND JSON_EXTRACT(payload_json,'$.contentRef') IS NOT NULL",
+    )
+    .bind(fixture.tenant_id)
+    .bind(execution_id)
+    .fetch_all(&fixture.state.pool)
+    .await
+    .unwrap();
+    assert!(trace_refs.contains(&input_artifact_id.to_string()));
+    assert!(trace_refs.contains(&object.object_id.to_string()));
+    let artifact_subject = Uuid::now_v7();
+    sqlx::query("INSERT INTO runtime_user_admission(tenant_id,user_id,token_version,status,tenant_query_enabled,admission_epoch) VALUES(?,?,1,'active',FALSE,1)")
+        .bind(fixture.tenant_id).bind(artifact_subject).execute(&fixture.state.pool).await.unwrap();
+    sqlx::query("INSERT INTO runtime_user_application_grants(tenant_id,user_id,application_id,grant_version,status,can_invoke,can_query,admission_epoch) VALUES(?,?,?,1,'active',TRUE,TRUE,1)")
+        .bind(fixture.tenant_id).bind(artifact_subject).bind(fixture.application_id).execute(&fixture.state.pool).await.unwrap();
+    sqlx::query("INSERT INTO runtime_user_workflow_grants(tenant_id,user_id,workflow_id,grant_version,status,admission_epoch) VALUES(?,?,?,1,'active',1)")
+        .bind(fixture.tenant_id).bind(artifact_subject).bind(fixture.workflow_id).execute(&fixture.state.pool).await.unwrap();
+    let artifact_hash = agentx_runtime_contracts::content_hash(
+        &json!({"operation":"execution_artifact","executionId":execution_id}),
+    )
+    .unwrap();
+    let downloaded = get_execution_artifact(
+        State(fixture.state.clone()),
+        delegation_headers(
+            fixture.tenant_id,
+            artifact_subject,
+            BTreeSet::from(["runtime.query.execution".into()]),
+            BTreeSet::new(),
+            BTreeSet::from([execution_id]),
+            artifact_hash.clone(),
+        ),
+        Path((execution_id, input_artifact_id)),
+    )
+    .await
+    .unwrap();
+    assert!(
+        !to_bytes(downloaded.into_body(), usize::MAX)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    let denied = get_execution_artifact(
+        State(fixture.state.clone()),
+        delegation_headers(
+            fixture.tenant_id,
+            artifact_subject,
+            BTreeSet::from(["runtime.query.execution".into()]),
+            BTreeSet::new(),
+            BTreeSet::from([Uuid::now_v7()]),
+            artifact_hash,
+        ),
+        Path((execution_id, input_artifact_id)),
+    )
+    .await;
+    assert!(matches!(denied, Err(RuntimeError::Unauthorized)));
     let checkpoint: (Uuid, Uuid) = sqlx::query_as(
         "SELECT id,payload_artifact_id FROM checkpoints WHERE tenant_id=? AND execution_id=? AND payload_json IS NULL ORDER BY sequence_number DESC LIMIT 1",
     )
@@ -2092,7 +2237,13 @@ async fn sandbox_manager_is_fenced_and_idempotent(fixture: &Fixture) {
         );
     let provider_task = tokio::spawn(async move { axum::serve(listener, provider).await.unwrap() });
     let worker_id = Uuid::now_v7();
-    let execution_id = Uuid::now_v7();
+    let execution_id: Uuid = sqlx::query_scalar(
+        "SELECT id FROM workflow_executions WHERE tenant_id=? ORDER BY created_at,id LIMIT 1",
+    )
+    .bind(fixture.tenant_id)
+    .fetch_one(&fixture.state.pool)
+    .await
+    .unwrap();
     let node_execution_id = Uuid::now_v7();
     let attempt_id = Uuid::now_v7();
     sqlx::query(
@@ -2335,6 +2486,73 @@ async fn sandbox_manager_is_fenced_and_idempotent(fixture: &Fixture) {
     .await
     .unwrap();
     assert_eq!(reconciled, ("terminated".into(), 2, 1));
+    for (status, last_error, expected_event) in [
+        (
+            "interrupting",
+            Some("execution_cancelled"),
+            "sandbox.cancelled",
+        ),
+        ("running", None, "sandbox.timed_out"),
+    ] {
+        let lease_id = Uuid::now_v7();
+        sqlx::query(
+            "INSERT INTO sandbox_leases(id,tenant_id,execution_id,node_execution_id,attempt_id,worker_lease_token,sandbox_id,lease_token_hash,profile_version_id,idempotency_key,status,provider_labels_json,request_hash,expires_at,fencing_token,outcome_unknown,last_error) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,DATE_SUB(UTC_TIMESTAMP(6),INTERVAL 1 SECOND),1,FALSE,?)",
+        )
+        .bind(lease_id)
+        .bind(fixture.tenant_id)
+        .bind(execution_id)
+        .bind(node_execution_id)
+        .bind(attempt_id)
+        .bind(Uuid::now_v7())
+        .bind(format!("sandbox-{lease_id}"))
+        .bind(format!("{:x}", Sha256::digest(lease_id.as_bytes())))
+        .bind(Uuid::now_v7())
+        .bind(format!("sandbox:terminal:{lease_id}"))
+        .bind(status)
+        .bind(json!({"agentxLeaseId":lease_id}))
+        .bind(
+            agentx_runtime_contracts::content_hash(&json!({"terminal":lease_id}))
+                .unwrap()
+                .as_str(),
+        )
+        .bind(last_error)
+        .execute(&fixture.state.pool)
+        .await
+        .unwrap();
+        let mut reconciled_target = false;
+        for _ in 0..16 {
+            assert!(
+                agentx_v2_runtime::sandbox::reconcile_one(&manager_state)
+                    .await
+                    .unwrap()
+            );
+            let lease_status: String =
+                sqlx::query_scalar("SELECT status FROM sandbox_leases WHERE id=?")
+                    .bind(lease_id)
+                    .fetch_one(&fixture.state.pool)
+                    .await
+                    .unwrap();
+            if lease_status == "terminated" {
+                reconciled_target = true;
+                break;
+            }
+        }
+        assert!(
+            reconciled_target,
+            "Sandbox Reaper must reach the target Lease"
+        );
+        let traced: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM trace_outbox WHERE tenant_id=? AND execution_id=? AND JSON_UNQUOTE(JSON_EXTRACT(payload_json,'$.sandboxLeaseId'))=? AND JSON_UNQUOTE(JSON_EXTRACT(payload_json,'$.eventType'))=?",
+        )
+        .bind(fixture.tenant_id)
+        .bind(execution_id)
+        .bind(lease_id.to_string())
+        .bind(expected_event)
+        .fetch_one(&fixture.state.pool)
+        .await
+        .unwrap();
+        assert_eq!(traced, 1, "Sandbox terminal path must close its Span");
+    }
     provider_task.abort();
 }
 
@@ -4272,6 +4490,139 @@ async fn invocation_and_dispatch_recovery_are_fenced(
     replacement_result
 }
 
+async fn retry_policy_creates_a_second_attempt_and_trace(fixture: &Fixture) {
+    let accepted = create_invocation(
+        &fixture.state.pool,
+        fixture.tenant_id,
+        fixture.application_id,
+        fixture.key_id,
+        &InvocationRequestV1 {
+            input: json!({"message":"retry-me"}),
+            idempotency_key: "runtime-slice-retry".into(),
+        },
+    )
+    .await
+    .unwrap();
+    let owner = Uuid::now_v7();
+    let command = claim_commands(&fixture.state.pool, owner, 100)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|claim| claim.execution_id == accepted.execution_id)
+        .unwrap();
+    process_command(&fixture.state.pool, &command)
+        .await
+        .unwrap();
+    let dispatch = claim_dispatch(&fixture.state.pool, owner)
+        .await
+        .unwrap()
+        .unwrap();
+    let first_task = dispatch.task().unwrap();
+    complete_dispatch(&fixture.state.pool, &dispatch)
+        .await
+        .unwrap();
+    let first_worker = Uuid::now_v7();
+    agentx_v2_runtime::engine::register_worker(
+        &fixture.state.pool,
+        first_worker,
+        first_task.capability.as_str(),
+        env!("CARGO_PKG_VERSION"),
+    )
+    .await
+    .unwrap();
+    let first = agentx_v2_runtime::engine::claim_worker_attempt(
+        &fixture.state.pool,
+        first_worker,
+        first_task.capability.as_str(),
+        &first_task,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    let failed_status = WorkerResultStatusV1::Failed;
+    let failed = WorkerResultV1 {
+        protocol_version: 1,
+        attempt_id: first.task.attempt_id,
+        worker_id: first.lease.worker_id,
+        fencing_token: first.lease.fencing_token,
+        status: failed_status,
+        result_hash: agentx_v2_runtime::engine::worker_result_hash(
+            failed_status,
+            &BTreeMap::new(),
+            None,
+            Some("CONTROLLED_FIRST_FAILURE"),
+            Some("The first Attempt fails for retry verification"),
+            None,
+        )
+        .unwrap(),
+        outputs: BTreeMap::new(),
+        output_object: None,
+        error_code: Some("CONTROLLED_FIRST_FAILURE".into()),
+        error_message: Some("The first Attempt fails for retry verification".into()),
+        partial_output_object: None,
+    };
+    agentx_v2_runtime::engine::submit_worker_result(&fixture.state.pool, &failed)
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    let attempts = sqlx::query("SELECT id,attempt_number,status FROM node_attempts WHERE tenant_id=? AND execution_id=? ORDER BY attempt_number")
+        .bind(fixture.tenant_id).bind(accepted.execution_id).fetch_all(&fixture.state.pool).await.unwrap();
+    assert_eq!(attempts.len(), 2);
+    assert_eq!(attempts[0].try_get::<u16, _>("attempt_number").unwrap(), 1);
+    assert_eq!(
+        attempts[0].try_get::<String, _>("status").unwrap(),
+        "failed"
+    );
+    assert_eq!(attempts[1].try_get::<u16, _>("attempt_number").unwrap(), 2);
+    let dispatch = claim_dispatch(&fixture.state.pool, owner)
+        .await
+        .unwrap()
+        .unwrap();
+    let second_task = dispatch.task().unwrap();
+    assert_eq!(
+        second_task.attempt_id,
+        attempts[1].try_get::<Uuid, _>("id").unwrap()
+    );
+    complete_dispatch(&fixture.state.pool, &dispatch)
+        .await
+        .unwrap();
+    let second_worker = Uuid::now_v7();
+    agentx_v2_runtime::engine::register_worker(
+        &fixture.state.pool,
+        second_worker,
+        second_task.capability.as_str(),
+        env!("CARGO_PKG_VERSION"),
+    )
+    .await
+    .unwrap();
+    let second = agentx_v2_runtime::engine::claim_worker_attempt(
+        &fixture.state.pool,
+        second_worker,
+        second_task.capability.as_str(),
+        &second_task,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    agentx_v2_runtime::engine::submit_worker_result(
+        &fixture.state.pool,
+        &successful_worker_result(&second),
+    )
+    .await
+    .unwrap();
+    let execution_status: String =
+        sqlx::query_scalar("SELECT status FROM workflow_executions WHERE tenant_id=? AND id=?")
+            .bind(fixture.tenant_id)
+            .bind(accepted.execution_id)
+            .fetch_one(&fixture.state.pool)
+            .await
+            .unwrap();
+    assert_eq!(execution_status, "succeeded");
+    let traced_attempts: i64 = sqlx::query_scalar("SELECT COUNT(DISTINCT JSON_UNQUOTE(JSON_EXTRACT(payload_json,'$.attemptId'))) FROM trace_outbox WHERE tenant_id=? AND execution_id=? AND JSON_UNQUOTE(JSON_EXTRACT(payload_json,'$.spanKind'))='attempt'")
+        .bind(fixture.tenant_id).bind(accepted.execution_id).fetch_one(&fixture.state.pool).await.unwrap();
+    assert_eq!(traced_attempts, 2);
+}
+
 fn successful_worker_result(
     claim: &agentx_v2_runtime::engine::ClaimedWorkerAttempt,
 ) -> WorkerResultV1 {
@@ -5052,7 +5403,7 @@ fn definition() -> WorkflowDefinition {
     serde_json::from_value(json!({
         "schemaVersion":"4.0",
         "start":{"inputs":{"type":"object","properties":{"message":{"type":"string"}},"required":["message"],"additionalProperties":false},"contexts":{}},
-        "nodes":[{"id":"pass","key":"pass","type":"no_op","typeVersion":1,"name":"Pass","parameters":{},"outputProjection":{},"contextWrites":[],"resourceReferences":[]}],
+        "nodes":[{"id":"pass","key":"pass","type":"no_op","typeVersion":1,"name":"Pass","parameters":{},"settings":{"retryOnFail":true,"maxTries":2,"waitBetweenTriesMs":5},"outputProjection":{},"contextWrites":[],"resourceReferences":[]}],
         "connections":[
             {"id":"start-pass","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"pass","targetHandle":"main","order":0},
             {"id":"pass-end","sourceNodeId":"pass","sourceHandle":"main","targetNodeId":"__end__","targetHandle":"main","order":0}

@@ -1,37 +1,8 @@
 const translations = {
   "trace": "查看 Trace",
-  "traceDelayed": "Trace 延迟",
-  "traceDelayedDescription": "权威执行状态已可用，Trace 摄取仍在追赶。",
-  "traceUnavailable": "Trace 不可用",
-  "traceUnavailableDescription": "可观测服务恢复期间，权威执行状态仍可正常查看。",
+  "mainViews": { "trace": "Trace", "recovery": "恢复" },
   "runVersion": "运行版本",
-  "loadingRuntime": "正在加载智能体 Runtime 明细…",
-  "noRuntimeDetails": "该执行没有智能体、Runtime 调用或沙箱记录。",
-  "runtimeDetails": "智能体 Runtime 明细",
-  "agentRuns": "智能体运行记录",
-  "inputTokens": "输入 Token",
-  "outputTokens": "输出 Token",
   "cost": "成本",
-  "agents": "智能体",
-  "runtimeCalls": "Runtime 调用",
-  "sandboxes": "沙箱",
-  "sandbox": "沙箱",
-  "iterations": "迭代",
-  "modelCalls": "模型调用",
-  "toolCalls": "工具调用",
-  "tokens": "Token",
-  "stopReason": "停止原因",
-  "state": "状态",
-  "iterationLedger": "迭代明细",
-  "kind": "类型",
-  "resource": "资源",
-  "fingerprint": "调用指纹",
-  "sideEffect": "副作用",
-  "result": "结果",
-  "profileVersion": "配置版本",
-  "expires": "过期时间",
-  "terminationAttempts": "清理次数",
-  "lastError": "最后错误",
   "title": "执行记录",
   "description": "查询工作流执行、Trace 和检查点。",
   "search": "搜索执行或工作流",
@@ -45,10 +16,7 @@ const translations = {
   ,"recovery": {
     "ariaLabel": "恢复与事件", "title": "时间线与恢复", "wait": "等待", "approval": "审批", "sideEffectConfirmation": "副作用确认", "wake": "唤醒", "timeout": "超时", "openApproval": "打开审批", "irreversibleWaiting": "不可逆节点正在等待恢复决策。", "handle": "处理", "checkpoints": "检查点 · {{count}}", "noCheckpoints": "尚无检查点", "events": "事件", "noEvents": "尚无时间线事件", "activationsAndDeliveries": "{{activations}} 次激活 · {{deliveries}} 次投递", "download": "下载"
   }
-  ,"downloadArtifact": "下载 Artifact {{id}}"
-  ,"callKinds": { "model": "模型调用", "tool": "工具调用", "memory": "记忆调用", "skill": "技能调用", "mcp_tool": "MCP 工具调用" }
   ,"sideEffects": { "none": "无", "reversible": "可恢复", "irreversible": "不可逆" }
-  ,"stopReasons": { "completed": "已完成", "max_iterations": "达到最大迭代次数", "cancelled": "已取消", "tool_error": "工具错误", "failed": "失败" }
   ,"forkDialog": {
     "title": "派生执行", "description": "预览派生执行将复用、重跑和需要确认的节点", "intro": "原执行保持只读，新执行拥有独立状态与 Trace。", "checkpoint": "检查点", "scope": "执行范围", "targetNode": "目标节点", "inputOverrides": "输入覆盖", "selectCheckpoint": "请选择检查点", "selectNode": "请选择节点", "preview": "执行预览", "previewSummary": "{{rerun}} 个重跑 · {{reuse}} 个复用", "run": "运行", "rerun": "重跑", "reuseOutput": "复用输出", "willExecute": "将执行", "noSideEffect": "无副作用", "decision": "{{name}} 的副作用决策", "dryRun": "预演", "reusePreviousOutput": "复用之前的输出", "confirmExecute": "确认执行", "risk": "{{count}} 个不可逆节点需要明确决策。预演不会调用远程副作用，复用输出不代表重新执行。", "noNodes": "没有可预览节点", "creating": "正在创建…", "create": "创建派生执行", "modes": { "whole": "完整执行", "node": "单节点", "to_node": "执行到节点", "from_node": "从节点继续" }
   }

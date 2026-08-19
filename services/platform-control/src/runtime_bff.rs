@@ -50,6 +50,10 @@ pub fn routes() -> Router<ControlApiState> {
             post(confirm_side_effect),
         )
         .route("/api/v1/executions/{id}/trace", get(get_trace))
+        .route(
+            "/api/v1/executions/{id}/trace/spans/{span_id}",
+            get(get_trace_span),
+        )
 }
 
 #[derive(Default, Deserialize)]
@@ -458,6 +462,7 @@ async fn confirm_side_effect(
 #[derive(Default, Deserialize)]
 struct TraceQuery {
     limit: Option<u32>,
+    cursor: Option<String>,
 }
 
 async fn get_trace(
@@ -470,7 +475,65 @@ async fn get_trace(
     let detail = runtime_execution_detail(&state, &actor, id).await?;
     let request_hash = content_hash(&json!({
         "operation":"execution-trace","executionId":id,
-        "expectedWatermark":detail.trace_watermark,"limit":query.limit.unwrap_or(200)
+        "expectedWatermark":detail.trace_watermark,"limit":query.limit.unwrap_or(200),
+        "cursor":query.cursor
+    }))
+    .map_err(ApiError::internal)?;
+    let token = delegation_token_with_audience(
+        &state,
+        &actor,
+        "agentx-observability-query",
+        "observability.trace.read",
+        BTreeSet::new(),
+        BTreeSet::new(),
+        BTreeSet::from([id]),
+        false,
+        request_hash.clone(),
+    )?;
+    let cursor_query = query
+        .cursor
+        .as_deref()
+        .map(|cursor| format!("&cursor={cursor}"))
+        .unwrap_or_default();
+    let response = state
+        .http
+        .get(format!(
+            "{}/internal/observability/v1/executions/{id}/trace?expectedWatermark={}&limit={}{}",
+            state.observability_query_url,
+            detail.trace_watermark,
+            query.limit.unwrap_or(200).clamp(1, 1000),
+            cursor_query
+        ))
+        .header("x-agentx-request-hash", request_hash.as_str())
+        .bearer_auth(token)
+        .send()
+        .await
+        .map_err(observability_unavailable)?;
+    if response.status() == reqwest::StatusCode::ACCEPTED {
+        return Err(ApiError::accepted(
+            "TRACE_DELAYED",
+            "Execution is complete but its trace has not reached the expected watermark",
+            2,
+        ));
+    }
+    let trace: agentx_runtime_contracts::ExecutionTraceV1 = observability_json(response).await?;
+    Ok(Json(json!({
+        "executionId":id,"traceId":detail.summary.trace_id,"spans":trace.spans,
+        "nextCursor":trace.next,"complete":trace.complete,"degraded":trace.degraded,
+        "warningCode":trace.warning_code,"totalSpans":trace.total_spans,
+        "expectedWatermark":trace.expected_watermark,"ingestedWatermark":trace.ingested_watermark
+    })))
+}
+
+async fn get_trace_span(
+    State(state): State<ControlApiState>,
+    actor: Actor,
+    Path((id, span_id)): Path<(Uuid, Uuid)>,
+) -> ApiResult<Json<Value>> {
+    actor.require("trace:view")?;
+    let detail = runtime_execution_detail(&state, &actor, id).await?;
+    let request_hash = content_hash(&json!({
+        "operation":"trace-span-detail","executionId":id,"spanId":span_id
     }))
     .map_err(ApiError::internal)?;
     let token = delegation_token_with_audience(
@@ -487,27 +550,18 @@ async fn get_trace(
     let response = state
         .http
         .get(format!(
-            "{}/internal/observability/v1/executions/{id}/trace?expectedWatermark={}&limit={}",
-            state.observability_query_url,
-            detail.trace_watermark,
-            query.limit.unwrap_or(200).clamp(1, 1000)
+            "{}/internal/observability/v1/executions/{id}/trace/spans/{span_id}",
+            state.observability_query_url
         ))
         .header("x-agentx-request-hash", request_hash.as_str())
         .bearer_auth(token)
         .send()
         .await
         .map_err(observability_unavailable)?;
-    if response.status() == reqwest::StatusCode::ACCEPTED {
-        return Err(ApiError::accepted(
-            "TRACE_DELAYED",
-            "Execution is complete but its trace has not reached the expected watermark",
-            2,
-        ));
-    }
-    let trace: agentx_runtime_contracts::ExecutionTraceV1 = observability_json(response).await?;
+    let span: agentx_runtime_contracts::TraceSpanDetailV1 = observability_json(response).await?;
     Ok(Json(json!({
-        "executionId":id,"traceId":detail.summary.trace_id,"events":trace.events,
-        "nextCursor":null,"complete":trace.complete,"degraded":trace.degraded
+        "executionId":id,"traceId":detail.summary.trace_id,"span":span.span,
+        "attributes":span.attributes,"input":span.input,"output":span.output,"events":span.events
     })))
 }
 

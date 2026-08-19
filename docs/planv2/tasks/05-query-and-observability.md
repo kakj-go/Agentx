@@ -39,7 +39,7 @@ Q0 Runtime 状态/索引事务化
 | V2Q-002 | done | V2Q-001、V2A-002 | Runtime 以全局单调 Cursor 暴露受限 Event Export/Long Poll 和 Snapshot Export；Control Projector 多副本拉取，Receipt/投影/Cursor 同事务 | Runtime Export API、Control Pull Projector | Runtime 零反向调用；Control 不连 Runtime DB；离线恢复无重复通知/审批/评测；旧 Version 不覆盖新值 |
 | V2Q-007 | done | V2Q-002 | 为 Approval/Evaluation/Notification、Debug/Retention 结果和必要审计/告警实现治理 Snapshot+增量重建；暴露重建状态 | 治理投影和重建任务 | Cursor 超保留窗仍能从 Snapshot 恢复；重建时不把缺失显示为不存在；不复制通用列表/成本/Status |
 | V2Q-005 | done | V2Q-001、V2R-004 | Runtime `trace-relay` Claim MySQL Trace Outbox 并 XADD；Observability Consumer Group 批写 ClickHouse，以稳定 Event ID 去重 | Trace Relay、Consumer、CH Repository | Consumer 无 Runtime DB 凭据；XADD/标记/ACK 任意点强退允许重复但不丢失；CH 停机后补投 |
-| V2Q-006 | done | V2Q-005 | 提供 Trace/Cost/Error/Aggregation API；限制时间范围、行数、Cursor、Tenant 并发、Query ID 和取消；前端组合 Runtime 终态与 Trace | Observability API/OpenAPI/UI | 租户隔离、超时/取消、脱敏和重查询限流通过；CH 故障时页面仍显示权威终态并标记延迟 |
+| V2Q-006 | done | V2Q-005 | 提供 Trace/Cost/Error/Aggregation API；Trace Envelope 携带真实 Span 生命周期与实体关联，按 Span 聚合并以 `(startedAt, spanId)` 分页；前端共享树形瀑布并组合 Runtime 终态与 Trace | Observability API/OpenAPI/UI | 租户隔离、乱序/重复/不完整 Span、稳定分页、脱敏、Artifact 授权、超时/取消和重查询限流通过；CH 故障时页面仍显示权威终态并标记延迟 |
 
 ## 5. 一致性和保留测试
 
@@ -58,6 +58,8 @@ Q0 Runtime 状态/索引事务化
 - Control Projector 停机、重复、乱序、Cursor 超窗和多副本竞争测试通过。
 - ClickHouse 故障不影响 Workflow 终态；恢复后 Trace 无丢失且可去重。
 - UI 对 Trace 延迟、治理投影重建和 Runtime Query 不可用有明确且一致的状态。
+- Observability 只聚合 ClickHouse Envelope；Span 详情中的 Artifact 仅返回 Runtime 引用，下载继续走 Platform → Runtime 授权链路。
+- Span 列表先在 ClickHouse 服务端按 `span_id` 生成稳定页键，再回取当前页事件；禁止通过移除行数上限而一次加载完整 Execution Trace。
 
 阶段证据摘要保存为 `docs/planv2/evidence/v2-05.md`，至少包含 E2E-V2-009 及 ClickHouse 故障结果。
 

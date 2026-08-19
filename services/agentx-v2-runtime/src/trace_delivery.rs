@@ -1,7 +1,9 @@
-use agentx_runtime_contracts::{TraceEventEnvelopeV1, content_hash};
+use agentx_runtime_contracts::{
+    TraceEventEnvelopeV1, TraceEventKindV1, TraceSpanKindV1, content_hash, deterministic_uuid,
+};
 use redis::{AsyncCommands, aio::ConnectionManager};
 use serde_json::{Value, json};
-use sqlx::{MySql, Row, Transaction};
+use sqlx::{Executor, MySql, Row, Transaction};
 use time::OffsetDateTime;
 use uuid::Uuid;
 
@@ -13,10 +15,19 @@ pub struct TraceDraft {
     pub tenant_id: Uuid,
     pub execution_id: Uuid,
     pub event_type: String,
+    pub event_kind: TraceEventKindV1,
+    pub span_kind: TraceSpanKindV1,
+    pub span_name: String,
+    pub span_id: Uuid,
+    pub parent_span_id: Option<Uuid>,
     pub status: String,
     pub node_execution_id: Option<Uuid>,
     pub attempt_id: Option<Uuid>,
+    pub agent_run_id: Option<Uuid>,
+    pub agent_iteration_id: Option<Uuid>,
     pub runtime_call_id: Option<Uuid>,
+    pub sandbox_lease_id: Option<Uuid>,
+    pub wait_id: Option<Uuid>,
     pub resource_type: Option<String>,
     pub resource_id: Option<Uuid>,
     pub resource_version: Option<String>,
@@ -25,8 +36,12 @@ pub struct TraceDraft {
     pub output_tokens: Option<u64>,
     pub cost_micros: u64,
     pub error_code: Option<String>,
+    pub error_message: Option<String>,
     pub attributes: Value,
     pub content_ref: Option<Uuid>,
+    pub content_role: Option<String>,
+    pub content_preview: Option<Value>,
+    pub occurred_at: OffsetDateTime,
 }
 
 impl TraceDraft {
@@ -36,14 +51,35 @@ impl TraceDraft {
         event_type: impl Into<String>,
         status: impl Into<String>,
     ) -> Self {
+        let event_type = event_type.into();
+        let status = status.into();
+        let event_kind = if event_type == "execution.accepted" {
+            TraceEventKindV1::Started
+        } else if matches!(
+            status.as_str(),
+            "succeeded" | "failed" | "cancelled" | "timed_out"
+        ) {
+            TraceEventKindV1::Finished
+        } else {
+            TraceEventKindV1::Updated
+        };
         Self {
             tenant_id,
             execution_id,
-            event_type: event_type.into(),
-            status: status.into(),
+            event_type,
+            event_kind,
+            span_kind: TraceSpanKindV1::Execution,
+            span_name: "Workflow execution".into(),
+            span_id: trace_span_id(execution_id, TraceSpanKindV1::Execution),
+            parent_span_id: None,
+            status,
             node_execution_id: None,
             attempt_id: None,
+            agent_run_id: None,
+            agent_iteration_id: None,
             runtime_call_id: None,
+            sandbox_lease_id: None,
+            wait_id: None,
             resource_type: None,
             resource_id: None,
             resource_version: None,
@@ -52,8 +88,109 @@ impl TraceDraft {
             output_tokens: None,
             cost_micros: 0,
             error_code: None,
+            error_message: None,
             attributes: json!({}),
             content_ref: None,
+            content_role: None,
+            content_preview: None,
+            occurred_at: OffsetDateTime::now_utc(),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn span(
+        tenant_id: Uuid,
+        execution_id: Uuid,
+        entity_id: Uuid,
+        parent_entity: Option<(Uuid, TraceSpanKindV1)>,
+        span_kind: TraceSpanKindV1,
+        span_name: impl Into<String>,
+        event_kind: TraceEventKindV1,
+        event_type: impl Into<String>,
+        status: impl Into<String>,
+    ) -> Self {
+        let mut draft = Self::execution(tenant_id, execution_id, event_type, status);
+        draft.event_kind = event_kind;
+        draft.span_kind = span_kind;
+        draft.span_name = span_name.into();
+        draft.span_id = trace_span_id(entity_id, span_kind);
+        draft.parent_span_id = parent_entity.map(|(id, kind)| trace_span_id(id, kind));
+        draft
+    }
+}
+
+pub fn trace_span_id(entity_id: Uuid, kind: TraceSpanKindV1) -> Uuid {
+    let kind = match kind {
+        TraceSpanKindV1::Execution => "execution",
+        TraceSpanKindV1::Node => "node",
+        TraceSpanKindV1::Attempt => "attempt",
+        TraceSpanKindV1::AgentRun => "agent_run",
+        TraceSpanKindV1::AgentIteration => "agent_iteration",
+        TraceSpanKindV1::RuntimeCall => "runtime_call",
+        TraceSpanKindV1::Sandbox => "sandbox",
+        TraceSpanKindV1::Wait => "wait",
+    };
+    deterministic_uuid(entity_id, format!("agentx-trace-span-v1:{kind}").as_bytes())
+}
+
+pub fn bounded_preview(value: &Value) -> Option<Value> {
+    let mut preview = value.clone();
+    redact_preview(&mut preview);
+    serde_json::to_vec(&preview)
+        .ok()
+        .filter(|encoded| encoded.len() <= 16 * 1024)
+        .map(|_| preview)
+}
+
+fn redact_preview(value: &mut Value) {
+    match value {
+        Value::Object(fields) => {
+            for (key, value) in fields {
+                let normalized = key.to_ascii_lowercase().replace(['-', '_'], "");
+                if normalized.contains("password")
+                    || normalized.contains("secret")
+                    || normalized.contains("token")
+                    || normalized.contains("authorization")
+                    || normalized.contains("apikey")
+                    || normalized.contains("credential")
+                {
+                    *value = Value::String("[REDACTED]".into());
+                } else {
+                    redact_preview(value);
+                }
+            }
+        }
+        Value::Array(values) => values.iter_mut().for_each(redact_preview),
+        _ => {}
+    }
+}
+
+/// Adds a Trace event without allowing observability failure to roll back Runtime state.
+pub async fn enqueue_best_effort(tx: &mut Transaction<'_, MySql>, draft: TraceDraft) {
+    // MySQL rejects SAVEPOINT when it is sent through the prepared-statement
+    // protocol. Executing a raw statement keeps this best-effort boundary on
+    // the text protocol while all data-bearing statements remain prepared.
+    if let Err(error) = (&mut **tx).execute("SAVEPOINT agentx_trace_event").await {
+        tracing::warn!(%error, "Trace savepoint creation failed");
+        return;
+    }
+    match enqueue(tx, draft).await {
+        Ok(_) => {
+            if let Err(error) = (&mut **tx)
+                .execute("RELEASE SAVEPOINT agentx_trace_event")
+                .await
+            {
+                tracing::warn!(%error, "Trace savepoint release failed");
+            }
+        }
+        Err(error) => {
+            let rollback = (&mut **tx)
+                .execute("ROLLBACK TO SAVEPOINT agentx_trace_event")
+                .await;
+            let _ = (&mut **tx)
+                .execute("RELEASE SAVEPOINT agentx_trace_event")
+                .await;
+            tracing::warn!(%error, rollback_error = ?rollback.err(), "Trace enqueue failed; Runtime state will continue");
         }
     }
 }
@@ -65,28 +202,57 @@ pub async fn enqueue(tx: &mut Transaction<'_, MySql>, draft: TraceDraft) -> Runt
             "Trace attributes exceed the reviewed object budget".into(),
         ));
     }
-    let execution = sqlx::query("SELECT trace_id,trace_watermark FROM workflow_executions WHERE tenant_id=? AND id=? FOR UPDATE")
-        .bind(draft.tenant_id).bind(draft.execution_id).fetch_one(&mut **tx).await?;
-    let sequence = execution.try_get::<u64, _>("trace_watermark")? + 1;
+    // Read the immutable Trace identity without locking the Runtime authority
+    // row. The sequence itself is allocated atomically below, immediately
+    // before the outbox writes, so Envelope construction no longer holds an
+    // execution-row lock across the initial read/modify/write cycle.
+    let trace_id: Uuid =
+        sqlx::query_scalar("SELECT trace_id FROM workflow_executions WHERE tenant_id=? AND id=?")
+            .bind(draft.tenant_id)
+            .bind(draft.execution_id)
+            .fetch_one(&mut **tx)
+            .await?;
+    let changed = sqlx::query(
+        "UPDATE workflow_executions SET trace_watermark=LAST_INSERT_ID(trace_watermark+1) WHERE tenant_id=? AND id=?",
+    )
+    .bind(draft.tenant_id)
+    .bind(draft.execution_id)
+    .execute(&mut **tx)
+    .await?;
+    if changed.rows_affected() != 1 {
+        return Err(RuntimeError::NotFound);
+    }
+    // LAST_INSERT_ID(expr) is scoped to the transaction's pinned MySQL
+    // connection and therefore returns exactly the value allocated above.
+    let sequence: u64 = sqlx::query_scalar("SELECT LAST_INSERT_ID()")
+        .fetch_one(&mut **tx)
+        .await?;
     let event_id = Uuid::now_v7();
-    let occurred_at = OffsetDateTime::now_utc();
+    let occurred_at = draft.occurred_at;
     let unsigned = json!({
         "schemaVersion":1,"eventId":event_id,"tenantId":draft.tenant_id,
         "executionId":draft.execution_id,"executionSequence":sequence,
-        "traceId":execution.try_get::<Uuid,_>("trace_id")?,"spanId":event_id,
-        "parentSpanId":Value::Null,"nodeExecutionId":draft.node_execution_id,
-        "attemptId":draft.attempt_id,"runtimeCallId":draft.runtime_call_id,
+        "traceId":trace_id,"spanId":draft.span_id,
+        "parentSpanId":draft.parent_span_id,"eventKind":draft.event_kind,
+        "spanKind":draft.span_kind,"spanName":draft.span_name,
+        "nodeExecutionId":draft.node_execution_id,
+        "attemptId":draft.attempt_id,"agentRunId":draft.agent_run_id,
+        "agentIterationId":draft.agent_iteration_id,"runtimeCallId":draft.runtime_call_id,
+        "sandboxLeaseId":draft.sandbox_lease_id,"waitId":draft.wait_id,
         "resourceType":draft.resource_type,"resourceId":draft.resource_id,
         "resourceVersion":draft.resource_version,"eventType":draft.event_type,
         "status":draft.status,"durationMs":draft.duration_ms,"inputTokens":draft.input_tokens,
         "outputTokens":draft.output_tokens,"costMicros":draft.cost_micros,
-        "errorCode":draft.error_code,"attributes":draft.attributes,
-        "contentRef":draft.content_ref,"occurredAt":occurred_at
+        "errorCode":draft.error_code,"errorMessage":draft.error_message,
+        "attributes":draft.attributes,
+        "contentRef":draft.content_ref,"contentRole":draft.content_role,
+        "contentPreview":draft.content_preview,"occurredAt":occurred_at
     });
     let hash = content_hash(&unsigned).map_err(|error| RuntimeError::Internal(error.into()))?;
     let event_summary = json!({
         "nodeExecutionId":draft.node_execution_id,"attemptId":draft.attempt_id,
         "runtimeCallId":draft.runtime_call_id,"errorCode":draft.error_code,
+        "errorMessage":draft.error_message,
         "attributes":draft.attributes
     });
     let envelope = TraceEventEnvelopeV1 {
@@ -95,12 +261,19 @@ pub async fn enqueue(tx: &mut Transaction<'_, MySql>, draft: TraceDraft) -> Runt
         tenant_id: draft.tenant_id,
         execution_id: draft.execution_id,
         execution_sequence: sequence,
-        trace_id: execution.try_get("trace_id")?,
-        span_id: event_id,
-        parent_span_id: None,
+        trace_id,
+        span_id: draft.span_id,
+        parent_span_id: draft.parent_span_id,
+        event_kind: draft.event_kind,
+        span_kind: draft.span_kind,
+        span_name: draft.span_name,
         node_execution_id: draft.node_execution_id,
         attempt_id: draft.attempt_id,
+        agent_run_id: draft.agent_run_id,
+        agent_iteration_id: draft.agent_iteration_id,
         runtime_call_id: draft.runtime_call_id,
+        sandbox_lease_id: draft.sandbox_lease_id,
+        wait_id: draft.wait_id,
         resource_type: draft.resource_type,
         resource_id: draft.resource_id,
         resource_version: draft.resource_version,
@@ -111,8 +284,11 @@ pub async fn enqueue(tx: &mut Transaction<'_, MySql>, draft: TraceDraft) -> Runt
         output_tokens: draft.output_tokens,
         cost_micros: draft.cost_micros,
         error_code: draft.error_code,
+        error_message: draft.error_message,
         attributes: draft.attributes,
         content_ref: draft.content_ref,
+        content_role: draft.content_role,
+        content_preview: draft.content_preview,
         occurred_at,
         content_hash: hash.clone(),
     };
@@ -124,12 +300,6 @@ pub async fn enqueue(tx: &mut Transaction<'_, MySql>, draft: TraceDraft) -> Runt
             "Trace Envelope exceeds 64 KiB".into(),
         ));
     }
-    sqlx::query("UPDATE workflow_executions SET trace_watermark=? WHERE tenant_id=? AND id=?")
-        .bind(sequence)
-        .bind(draft.tenant_id)
-        .bind(draft.execution_id)
-        .execute(&mut **tx)
-        .await?;
     sqlx::query("INSERT INTO trace_outbox(event_id,tenant_id,execution_id,execution_sequence,payload_json,content_hash,status) VALUES(?,?,?,?,?,?,'pending')")
         .bind(event_id).bind(draft.tenant_id).bind(draft.execution_id).bind(sequence)
         .bind(serde_json::to_value(&envelope).map_err(|error|RuntimeError::Internal(error.into()))?)
@@ -252,4 +422,41 @@ pub async fn requeue_after_stream_loss(pool: &sqlx::MySqlPool) -> RuntimeResult<
     .execute(pool)
     .await?;
     Ok(changed.rows_affected())
+}
+
+#[cfg(test)]
+mod tests {
+    use agentx_runtime_contracts::{TraceSpanKindV1, deterministic_uuid};
+    use serde_json::json;
+    use uuid::Uuid;
+
+    use super::{bounded_preview, trace_span_id};
+
+    #[test]
+    fn span_ids_use_the_versioned_kind_namespace() {
+        let entity_id = Uuid::parse_str("018f0000-0000-7000-8000-000000000001").unwrap();
+        assert_eq!(
+            trace_span_id(entity_id, TraceSpanKindV1::AgentIteration),
+            deterministic_uuid(entity_id, b"agentx-trace-span-v1:agent_iteration")
+        );
+        assert_ne!(
+            trace_span_id(entity_id, TraceSpanKindV1::AgentIteration),
+            trace_span_id(entity_id, TraceSpanKindV1::AgentRun)
+        );
+    }
+
+    #[test]
+    fn inline_previews_are_recursively_redacted_and_bounded() {
+        let preview = bounded_preview(&json!({
+            "authorization":"Bearer value",
+            "nested":{"api_key":"value","safe":"visible"},
+            "items":[{"password":"value"}]
+        }))
+        .unwrap();
+        assert_eq!(preview["authorization"], "[REDACTED]");
+        assert_eq!(preview["nested"]["api_key"], "[REDACTED]");
+        assert_eq!(preview["nested"]["safe"], "visible");
+        assert_eq!(preview["items"][0]["password"], "[REDACTED]");
+        assert!(bounded_preview(&json!({"value":"x".repeat(17 * 1024)})).is_none());
+    }
 }

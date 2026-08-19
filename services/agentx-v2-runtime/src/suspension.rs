@@ -135,6 +135,17 @@ pub(crate) async fn create(
                 .await?;
         }
         crate::event_export::enqueue_approval_event_from_task(tx, tenant_id, task_id).await?;
+        emit_wait_started(
+            tx,
+            tenant_id,
+            execution_id,
+            node_execution_id,
+            task_id,
+            "approval",
+            &title,
+            request.as_ref(),
+        )
+        .await;
     } else {
         let mut raw = [0_u8; 32];
         OsRng.fill_bytes(&mut raw);
@@ -206,6 +217,17 @@ pub(crate) async fn create(
                 .bind(resume_at).bind(timeout_at).bind(node.parameters.get("authenticationMode").and_then(Value::as_str).unwrap_or("signed"))
         };
         query.execute(&mut **tx).await?;
+        emit_wait_started(
+            tx,
+            tenant_id,
+            execution_id,
+            node_execution_id,
+            wait_id,
+            kind,
+            &node.name,
+            None,
+        )
+        .await;
         sqlx::query(
             "INSERT INTO bundle_references(id,tenant_id,bundle_id,reference_kind,owner_id) VALUES(?,?,?,'pending_wait',?)",
         )
@@ -217,4 +239,41 @@ pub(crate) async fn create(
         .await?;
     }
     Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn emit_wait_started(
+    tx: &mut Transaction<'_, MySql>,
+    tenant_id: Uuid,
+    execution_id: Uuid,
+    node_execution_id: NodeExecutionId,
+    wait_id: Uuid,
+    wait_kind: &str,
+    span_name: &str,
+    content: Option<&Value>,
+) {
+    let mut trace = crate::trace_delivery::TraceDraft::span(
+        tenant_id,
+        execution_id,
+        wait_id,
+        Some((
+            node_execution_id.as_uuid(),
+            agentx_runtime_contracts::TraceSpanKindV1::Node,
+        )),
+        agentx_runtime_contracts::TraceSpanKindV1::Wait,
+        if wait_kind == "approval" {
+            format!("Approval · {span_name}")
+        } else {
+            format!("Wait · {span_name}")
+        },
+        agentx_runtime_contracts::TraceEventKindV1::Started,
+        "wait.started",
+        "waiting",
+    );
+    trace.node_execution_id = Some(node_execution_id.as_uuid());
+    trace.wait_id = Some(wait_id);
+    trace.attributes = json!({"waitKind":wait_kind});
+    trace.content_role = content.map(|_| "input".into());
+    trace.content_preview = content.and_then(crate::trace_delivery::bounded_preview);
+    crate::trace_delivery::enqueue_best_effort(tx, trace).await;
 }

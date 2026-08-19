@@ -1,4 +1,4 @@
-use agentx_domain::{ContextScope, NodeExecutionId};
+use agentx_domain::{ContextScope, ContextWriteOperation, NodeExecutionId};
 use agentx_node_protocol::Item;
 use agentx_runtime::{
     ExecutionMachine, ExpressionContext, ExpressionEngine, RuntimeExecutionStatus,
@@ -13,6 +13,81 @@ use crate::{
     engine_protocol::runtime_bad_request,
     error::{RuntimeError, RuntimeResult},
 };
+
+pub(crate) fn apply_context_write(
+    context: &mut Value,
+    path: &str,
+    operation: ContextWriteOperation,
+    value: Value,
+) -> RuntimeResult<()> {
+    let segments = path
+        .split('.')
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>();
+    if segments.is_empty() {
+        return Err(runtime_bad_request(
+            "INVALID_CONTEXT_PATH",
+            "Context path is empty",
+        ));
+    }
+    let mut target = context;
+    for segment in &segments[..segments.len() - 1] {
+        let object = target.as_object_mut().ok_or_else(|| {
+            runtime_bad_request("INVALID_CONTEXT_PATH", "Context path is not an object")
+        })?;
+        target = object
+            .entry((*segment).to_owned())
+            .or_insert_with(|| json!({}));
+    }
+    let object = target.as_object_mut().ok_or_else(|| {
+        runtime_bad_request("INVALID_CONTEXT_PATH", "Context parent is not an object")
+    })?;
+    let key = segments[segments.len() - 1];
+    let current = object.get(key).cloned().unwrap_or(Value::Null);
+    let next = match operation {
+        ContextWriteOperation::Set => Some(value),
+        ContextWriteOperation::SetIfAbsent => current.is_null().then_some(value),
+        ContextWriteOperation::Delete => None,
+        ContextWriteOperation::Append => {
+            let mut values = current.as_array().cloned().unwrap_or_default();
+            match value {
+                Value::Array(items) => values.extend(items),
+                value => values.push(value),
+            }
+            Some(Value::Array(values))
+        }
+        ContextWriteOperation::MergeObject => {
+            let mut values = current.as_object().cloned().unwrap_or_default();
+            values.extend(value.as_object().cloned().unwrap_or_default());
+            Some(Value::Object(values))
+        }
+        ContextWriteOperation::Increment => Some(json!(
+            current.as_f64().unwrap_or(0.0) + value.as_f64().unwrap_or(0.0)
+        )),
+        ContextWriteOperation::Min => Some(json!(
+            current
+                .as_f64()
+                .unwrap_or(f64::INFINITY)
+                .min(value.as_f64().unwrap_or(f64::INFINITY))
+        )),
+        ContextWriteOperation::Max => Some(json!(
+            current
+                .as_f64()
+                .unwrap_or(f64::NEG_INFINITY)
+                .max(value.as_f64().unwrap_or(f64::NEG_INFINITY))
+        )),
+        ContextWriteOperation::CompareAndSet => {
+            let expected = value.get("expected").cloned().unwrap_or(Value::Null);
+            (current == expected).then(|| value.get("value").cloned().unwrap_or(Value::Null))
+        }
+    };
+    if let Some(next) = next {
+        object.insert(key.to_owned(), next);
+    } else if operation == ContextWriteOperation::Delete {
+        object.remove(key);
+    }
+    Ok(())
+}
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn persist_checkpoint(
@@ -229,7 +304,12 @@ pub(super) async fn finish_execution(
         .and_then(|value| value.get("code"))
         .and_then(Value::as_str)
         .map(str::to_owned);
-    crate::trace_delivery::enqueue(tx, trace).await?;
+    trace.error_message = error
+        .as_ref()
+        .and_then(|value| value.get("message"))
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    crate::trace_delivery::enqueue_best_effort(tx, trace).await;
     Ok(())
 }
 

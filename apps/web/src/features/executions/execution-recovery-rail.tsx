@@ -1,28 +1,25 @@
-import { CheckCircle2, Clock3, Download, ExternalLink, GitFork, History, ShieldAlert, TimerReset } from 'lucide-react'
+import { CheckCircle2, Clock3, ExternalLink, GitFork, ShieldAlert, TimerReset } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
 
-import type { Approval, Checkpoint, ExecutionWait, NodeExecution, Trace } from '../../shared/api/types'
+import type { Approval, Checkpoint, ExecutionWait, NodeExecution } from '../../shared/api/types'
 import { useLocaleFormat } from '../../shared/lib/locale-format'
 import { localizedValue } from '../../shared/lib/localized-value'
 import { Button } from '../../shared/ui/button'
 
 type RecoveryRailProps = {
-  trace?: Trace
   checkpoints: Checkpoint[]
   waits: ExecutionWait[]
   approvals: Approval[]
   nodes: NodeExecution[]
   canConfirm: boolean
   onConfirm: (node: NodeExecution) => void
-  onDownloadArtifact: (artifactId: string) => void
 }
 
-export function ExecutionRecoveryRail({ trace, checkpoints, waits, approvals, nodes, canConfirm, onConfirm, onDownloadArtifact }: RecoveryRailProps) {
+export function ExecutionRecoveryRail({ checkpoints, waits, approvals, nodes, canConfirm, onConfirm }: RecoveryRailProps) {
   const { t } = useTranslation()
   const { formatDateTime } = useLocaleFormat()
-  const events = trace?.events.slice().reverse().slice(0, 16) ?? []
   const confirmations = nodes.filter((node) => node.sideEffectLevel === 'irreversible' && node.status === 'waiting')
   return <aside aria-label={t('executions.recovery.ariaLabel')} className="min-w-0 border-l border-border bg-surface max-xl:border-l-0 max-xl:border-t">
     <div className="flex h-12 items-center border-b border-border px-4"><strong className="text-xs">{t('executions.recovery.title')}</strong></div>
@@ -39,10 +36,6 @@ export function ExecutionRecoveryRail({ trace, checkpoints, waits, approvals, no
       <RailSection icon={GitFork} title={t('executions.recovery.checkpoints', { count: checkpoints.length })}>
         {checkpoints.slice().reverse().slice(0, 8).map((checkpoint) => <div className="border-b border-border/70 py-2.5 last:border-0" key={checkpoint.id}><div className="flex items-center justify-between gap-2"><strong className="text-[11px]">#{checkpoint.sequenceNumber} {checkpoint.checkpointType}</strong><span className="text-[9px] text-muted-foreground">{formatDateTime(checkpoint.createdAt)}</span></div><p className="mt-1 truncate font-mono text-[9px] text-muted-foreground" title={checkpoint.stateHash}>{checkpoint.stateHash}</p><p className="mt-1 text-[9px] text-muted-foreground">{t('executions.recovery.activationsAndDeliveries', { activations: checkpoint.activationCount, deliveries: checkpoint.deliveryCount })}</p></div>)}
         {!checkpoints.length && <p className="py-3 text-[10px] text-muted-foreground">{t('executions.recovery.noCheckpoints')}</p>}
-      </RailSection>
-      <RailSection icon={History} title={t('executions.recovery.events')}>
-        {events.map((event) => <div className="relative border-l border-border pb-3 pl-4 last:pb-0" key={event.eventId}><span className="absolute -left-1 top-1 size-2 rounded-full bg-muted-foreground ring-2 ring-surface" /><div className="flex items-start justify-between gap-2"><strong className="text-[10px]">{event.eventType}</strong><span className="shrink-0 text-[9px] text-muted-foreground">{formatDateTime(event.eventTime)}</span></div><p className="mt-1 truncate text-[9px] text-muted-foreground">{event.nodeId ?? (event.status ? localizedValue(t, 'common', event.status) : '—')}</p>{event.contentRef && <Button className="mt-2" onClick={() => onDownloadArtifact(event.contentRef!)} size="sm" variant="secondary"><Download className="size-3.5" />{t('executions.recovery.download')}</Button>}</div>)}
-        {!events.length && <p className="py-3 text-[10px] text-muted-foreground">{t('executions.recovery.noEvents')}</p>}
       </RailSection>
     </div>
   </aside>

@@ -187,6 +187,10 @@ React Flow 的 Node 和 Edge 结构只属于前端编辑状态，不能直接成
 - 自动保存使用 Server Revision；Undo/Redo 只改变本地 Editor State，不能回退服务端 Revision。
 - Execution Event 使用 Cursor 重连，断线后通过 Execution Query 校准；非终态运行更新最多每 100ms 合并一次，终态立即提交；完整 Trace 和大型输出不进入 Zustand。
 
+Workflow Studio 底部 Trace 与独立执行详情复用 `features/traces` 中的分页 Query Hook、`TraceWaterfall` 和 `TraceDetail`。Span 数据只保存在 TanStack Query Cache，不复制到 Zustand。瀑布保留筛选匹配项的祖先上下文，支持层级折叠、类型/异常筛选、搜索、50%–200% 时间轴缩放、键盘 treegrid 操作和继续加载；默认选择首个失败 Span，其次运行中 Span，最后选择 Execution 根 Span。运行中宽度按当前时间刷新，终态只使用服务端耗时。
+
+桌面端详情列固定约 370px，低于 1120px 后移到瀑布下方。Studio 首次进入 Trace 页签时，低于 420px 的执行轨道扩展到 420px，但不缩小用户手动设置的更大高度；选择 Node 或子 Span 时联动画布节点。Node Inspector 复用同一 Span 详情。独立执行详情使用 Trace 和 Recovery 两个主视图并默认显示 Trace；Recovery 保留节点数据、Checkpoint、Wait、Approval、Side Effect 与 Fork，Agent、Runtime Call、Sandbox 不再维护第二套重复展示面板。
+
 ## 10. 路由
 
 一级路由与企业工作台菜单保持一致：

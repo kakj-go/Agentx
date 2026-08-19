@@ -181,6 +181,28 @@ async fn execute(
         .bind(LEASE_SECONDS)
         .execute(&mut *tx)
         .await?;
+        let mut trace = crate::trace_delivery::TraceDraft::span(
+            request.tenant_id,
+            request.execution_id,
+            lease_id,
+            Some((
+                request.attempt_id,
+                agentx_runtime_contracts::TraceSpanKindV1::Attempt,
+            )),
+            agentx_runtime_contracts::TraceSpanKindV1::Sandbox,
+            "OpenSandbox execution",
+            agentx_runtime_contracts::TraceEventKindV1::Started,
+            "sandbox.started",
+            "creating",
+        );
+        trace.node_execution_id = Some(request.node_execution_id);
+        trace.attempt_id = Some(request.attempt_id);
+        trace.sandbox_lease_id = Some(lease_id);
+        trace.resource_type = Some("sandbox_profile".into());
+        trace.resource_id = Some(request.profile.resource_id);
+        trace.content_role = Some("input".into());
+        trace.content_preview = crate::trace_delivery::bounded_preview(&request.input);
+        crate::trace_delivery::enqueue_best_effort(&mut tx, trace).await;
         tx.commit().await?;
         break SandboxOperation {
             lease_id,
@@ -613,13 +635,14 @@ async fn complete_lease(
             "Sandbox Lease was lost before recording termination",
         ));
     }
+    emit_sandbox_finished(&state.pool, lease_id, "succeeded", None).await;
     Ok(())
 }
 
 pub async fn reconcile_one(state: &SandboxManagerState) -> RuntimeResult<bool> {
     let mut tx = state.pool.begin().await?;
     let Some(row) = sqlx::query(
-        "SELECT id,sandbox_id,fencing_token,idempotency_key FROM sandbox_leases WHERE (status='orphaned' OR (status IN ('ready','running','interrupting','terminating') AND expires_at<=UTC_TIMESTAMP(6))) AND (locked_until IS NULL OR locked_until<=UTC_TIMESTAMP(6)) ORDER BY expires_at,id LIMIT 1 FOR UPDATE SKIP LOCKED",
+        "SELECT id,sandbox_id,fencing_token,idempotency_key,status,last_error FROM sandbox_leases WHERE (status='orphaned' OR (status IN ('ready','running','interrupting','terminating') AND expires_at<=UTC_TIMESTAMP(6))) AND (locked_until IS NULL OR locked_until<=UTC_TIMESTAMP(6)) ORDER BY expires_at,id LIMIT 1 FOR UPDATE SKIP LOCKED",
     )
     .fetch_optional(&mut *tx)
     .await?
@@ -628,6 +651,8 @@ pub async fn reconcile_one(state: &SandboxManagerState) -> RuntimeResult<bool> {
         return Ok(false);
     };
     let lease_id: Uuid = row.try_get("id")?;
+    let previous_status: String = row.try_get("status")?;
+    let previous_error: Option<String> = row.try_get("last_error")?;
     let fencing_token = row.try_get::<u64, _>("fencing_token")? + 1;
     sqlx::query(
         "UPDATE sandbox_leases SET status='terminating',locked_by=?,locked_until=DATE_ADD(UTC_TIMESTAMP(6),INTERVAL ? SECOND),fencing_token=?,termination_attempts=termination_attempts+1 WHERE id=?",
@@ -678,6 +703,7 @@ pub async fn reconcile_one(state: &SandboxManagerState) -> RuntimeResult<bool> {
     } else {
         Ok(())
     };
+    let termination_succeeded = termination.is_ok();
     let changed = match termination {
         Ok(()) => sqlx::query(
             "UPDATE sandbox_leases SET status='terminated',sandbox_id=COALESCE(sandbox_id,?),terminated_at=UTC_TIMESTAMP(6),locked_by=NULL,locked_until=NULL,outcome_unknown=FALSE WHERE id=? AND locked_by=? AND fencing_token=? AND locked_until>UTC_TIMESTAMP(6)",
@@ -701,6 +727,34 @@ pub async fn reconcile_one(state: &SandboxManagerState) -> RuntimeResult<bool> {
     if changed.rows_affected() != 1 {
         return Err(conflict("Sandbox Reaper Lease was lost"));
     }
+    let (trace_status, trace_error) = if !termination_succeeded {
+        (
+            "outcome_unknown",
+            Some("Sandbox Reaper could not confirm termination"),
+        )
+    } else if previous_error.as_deref() == Some("execution_cancelled") {
+        ("cancelled", Some("Execution cancelled the active Sandbox"))
+    } else if matches!(previous_status.as_str(), "ready" | "running") {
+        (
+            "timed_out",
+            Some("Sandbox lease exceeded its configured TTL"),
+        )
+    } else if previous_status == "orphaned" {
+        (
+            "outcome_unknown",
+            previous_error
+                .as_deref()
+                .or(Some("Sandbox outcome remained unknown during cleanup")),
+        )
+    } else {
+        (
+            "outcome_unknown",
+            previous_error
+                .as_deref()
+                .or(Some("Sandbox termination required Reaper reconciliation")),
+        )
+    };
+    emit_sandbox_finished(&state.pool, lease_id, trace_status, trace_error).await;
     Ok(true)
 }
 
@@ -1406,6 +1460,7 @@ async fn mark_orphaned(
     if changed.rows_affected() != 1 {
         return Err(conflict("Sandbox Lease was lost while recording orphan"));
     }
+    emit_sandbox_finished(&state.pool, lease_id, "outcome_unknown", Some(error)).await;
     Ok(())
 }
 
@@ -1430,7 +1485,86 @@ async fn fail_lease(
     if changed.rows_affected() != 1 {
         return Err(conflict("Sandbox Lease was lost while recording failure"));
     }
+    emit_sandbox_finished(
+        &state.pool,
+        lease_id,
+        if outcome_unknown {
+            "outcome_unknown"
+        } else {
+            "failed"
+        },
+        Some(error),
+    )
+    .await;
     Ok(())
+}
+
+async fn emit_sandbox_finished(
+    pool: &sqlx::MySqlPool,
+    lease_id: Uuid,
+    status: &str,
+    error: Option<&str>,
+) {
+    let row = match sqlx::query("SELECT tenant_id,execution_id,node_execution_id,attempt_id,profile_version_id,result_json FROM sandbox_leases WHERE id=?")
+        .bind(lease_id).fetch_optional(pool).await
+    {
+        Ok(Some(row)) => row,
+        Ok(None) => return,
+        Err(error) => { tracing::warn!(%error, %lease_id, "Sandbox Trace lookup failed"); return; }
+    };
+    let (Ok(tenant_id), Ok(execution_id), Ok(attempt_id)) = (
+        row.try_get::<Uuid, _>("tenant_id"),
+        row.try_get::<Uuid, _>("execution_id"),
+        row.try_get::<Uuid, _>("attempt_id"),
+    ) else {
+        return;
+    };
+    let mut trace = crate::trace_delivery::TraceDraft::span(
+        tenant_id,
+        execution_id,
+        lease_id,
+        Some((
+            attempt_id,
+            agentx_runtime_contracts::TraceSpanKindV1::Attempt,
+        )),
+        agentx_runtime_contracts::TraceSpanKindV1::Sandbox,
+        "OpenSandbox execution",
+        agentx_runtime_contracts::TraceEventKindV1::Finished,
+        match status {
+            "cancelled" => "sandbox.cancelled",
+            "timed_out" => "sandbox.timed_out",
+            "outcome_unknown" => "sandbox.outcome_unknown",
+            "failed" => "sandbox.failed",
+            _ => "sandbox.finished",
+        },
+        status,
+    );
+    trace.node_execution_id = row.try_get("node_execution_id").ok();
+    trace.attempt_id = Some(attempt_id);
+    trace.sandbox_lease_id = Some(lease_id);
+    trace.resource_type = Some("sandbox_profile".into());
+    trace.resource_id = row.try_get("profile_version_id").ok();
+    trace.error_code = error.map(|_| match status {
+        "cancelled" => "EXECUTION_CANCELLED".into(),
+        "timed_out" => "SANDBOX_EXECUTION_TIMED_OUT".into(),
+        "outcome_unknown" => "SANDBOX_OUTCOME_UNKNOWN".into(),
+        _ => "SANDBOX_EXECUTION_FAILED".into(),
+    });
+    trace.error_message = error.map(|value| value.chars().take(1000).collect());
+    trace.attributes =
+        json!({"error":error.map(|value| value.chars().take(500).collect::<String>())});
+    trace.content_role = Some("output".into());
+    trace.content_preview = row
+        .try_get::<Option<Value>, _>("result_json")
+        .ok()
+        .flatten()
+        .as_ref()
+        .and_then(crate::trace_delivery::bounded_preview);
+    let Ok(mut tx) = pool.begin().await else {
+        return;
+    };
+    crate::trace_delivery::enqueue_best_effort(&mut tx, trace).await;
+    let _ = tx.commit().await;
 }
 
 fn stable_id(namespace: Uuid, label: &[u8]) -> Uuid {

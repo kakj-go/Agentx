@@ -80,13 +80,18 @@ async function grantResource(page: Page, name: string, resourceType: string, sub
 
 async function bootstrap(page: Page) {
   await page.goto('/')
-  await page.waitForURL((url) => ['/setup', '/login', '/'].includes(url.pathname))
-  if (new URL(page.url()).pathname === '/setup') {
+  const setup = page.getByRole('button', { name: '初始化并进入工作台' })
+  await Promise.race([
+    setup.waitFor({ state: 'visible' }),
+    page.getByRole('button', { name: /^(登录|Sign in|Login)$/ }).waitFor({ state: 'visible' }),
+    page.locator('nav').waitFor({ state: 'visible' }),
+  ])
+  if (await setup.isVisible()) {
     await page.getByLabel('公司名称').fill(company)
     await page.getByLabel('用户名').fill('admin')
     await page.getByLabel('管理员姓名').fill('E2E Admin')
     await page.getByLabel('密码').fill(adminPassword)
-    await page.getByRole('button', { name: '初始化并进入工作台' }).click()
+    await setup.click()
     await expect(page).toHaveURL(/\/$/)
   } else {
     await loginIfNeeded(page)
@@ -644,6 +649,21 @@ async function verifyExternalResourceUniqueness(page: Page) {
   await expect(await field(form, '记忆命名空间')).toHaveAttribute('aria-invalid', 'true')
   await form.getByRole('button', { name: '取消' }).click()
 }
+
+test('required form fields show markers and actionable errors', async ({ page }) => {
+  await bootstrap(page)
+  await page.getByRole('link', { name: '模型服务', exact: true }).click()
+  await page.getByRole('button', { name: '新建模型' }).click()
+  const create = await dialog(page, '新建模型')
+  await expect(create.locator('label').filter({ hasText: '连接名称' }).getByText('*', { exact: true })).toBeVisible()
+  await expect(create.locator('label').filter({ hasText: 'API 格式' }).getByText('*', { exact: true })).toBeVisible()
+  await expect(create.locator('label').filter({ hasText: '所属部门' }).getByText('*', { exact: true })).toBeVisible()
+  await create.getByRole('button', { name: '保存', exact: true }).click()
+  await expect(create.getByText('此项为必填项', { exact: true }).first()).toBeVisible()
+  await expect(await field(create, '连接名称')).toBeFocused()
+  await expect(await field(create, '连接名称')).toHaveAttribute('aria-invalid', 'true')
+  await expect(create.getByText('Unprocessable Entity', { exact: true })).toHaveCount(0)
+})
 
 test('M2.1 control plane works through real UI actions', async ({ browser, page }) => {
   await bootstrap(page)

@@ -14,18 +14,16 @@ Trace 丢失不应改变 Workflow 结果；Checkpoint 丢失会影响恢复；�
 
 ## 2. Trace 层级
 
-推荐层级：
+Workflow Trace 使用真实 Span 生命周期，而不是由查询端从 Runtime 明细推断调用关系。固定层级为：
 
-- Application Invocation
-  - Workflow Execution
-    - Node Execution
-      - Node Attempt
-      - Model Call
-      - Tool Call
-      - RAG Retrieval
-      - Memory Read/Write
-      - Sandbox Execution
-      - Approval Wait
+- Execution → Node → Attempt
+- Attempt → Agent Run → Agent Iteration → Runtime Call
+- Attempt → Sandbox
+- Node → Wait；Approval 使用 `waitKind=approval`
+
+每个 Runtime 实体通过 `deterministic_uuid(entityId, "agentx-trace-span-v1:<kind>")` 生成稳定 Span ID。同一 Span 的 `started`、`updated`、`finished` 事件复用该 ID；`occurredAt` 是状态变化发生的业务时间，不由 Outbox、Redis Relay 或 ClickHouse Consumer 改写。重试创建新的 Attempt 实体及 Span，取消、超时、失败、等待恢复和 Outcome Unknown 都必须关闭相关活动 Span。
+
+节点自动重试以状态机的 `attemptNumber` 为准；每次 Attempt 使用独立幂等键和 Span，`waitBetweenTriesMs` 映射为派发 Outbox 的 `available_at`，Node Span 在重试期间保持打开并发出 `retry_scheduled/retry_started` 更新。Worker operation deadline、Sandbox TTL、Execution 取消分别产生 `timed_out`、`sandbox.timed_out`、`sandbox.cancelled` 终止事件，后续 Reaper 清理不得把已有取消/超时终态覆盖成成功。
 
 Trace Event 记录：
 
@@ -41,11 +39,13 @@ Trace Event 记录：
 - Sandbox ID 和资源用量
 - Agent Iteration
 
+小型输入输出先递归脱敏，再以不超过 Envelope 预算的预览内联；大型内容复用 Runtime Artifact，通过 `contentRef + contentRole` 引用。Artifact 仍由 Runtime 授权下载，Observability 不访问 Runtime MySQL 或对象存储。Trace 入队使用事务保存点降级，任何 Trace 序列化、预算或存储错误均不得回滚执行权威状态。
+
 ## 3. 平台 Trace 页面
 
 不依赖 Prometheus 或 Grafana。平台直接通过内部 API 查询 MySQL 和 ClickHouse。
 
-页面能力：
+页面使用 SkyWalking/Phoenix 风格的共享树形瀑布：左侧展示可折叠 Span 层级、状态、耗时和时间轴，右侧展示所选 Span 的概览、输入、输出、生命周期事件与原始 Envelope。页面能力：
 
 - 按租户、Workflow、版本、状态、时间和发起者查询
 - 在画布上显示运行路径
@@ -57,6 +57,8 @@ Trace Event 记录：
 - 查看审批等待时间
 - 从 Checkpoint 创建 Fork
 - 对比两次 Execution
+
+Trace API 按 `(startedAt, spanId)` 稳定分页，默认 200、最大 1000。ClickHouse 先按 `span_id` 计算稳定页键和总数，再只回取当前页 Span 的生命周期事件，避免把完整 Execution Trace 读入 Observability 内存。查询端按 `spanId` 聚合乱序或重复事件：最早 started 事件确定开始时间，finished 事件确定终态和结束时间；缺少 started 或 finished 时仍返回可诊断的不完整/运行中 Span。Runtime MySQL 的 `trace_watermark` 与 ClickHouse 摄取水位决定完整性：已有部分数据时返回 HTTP 200、Span 数据和 `warningCode=TRACE_DELAYED`；ClickHouse 完全不可用时返回明确 Observability 错误，但 Runtime 执行状态仍可查询。
 
 MySQL 保存列表摘要，ClickHouse 保存详细事件，避免每次列表查询扫描 Trace 明细。
 

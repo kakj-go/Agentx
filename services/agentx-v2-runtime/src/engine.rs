@@ -1,6 +1,6 @@
 use std::{collections::BTreeMap, sync::Arc};
 
-use agentx_domain::{ContextScope, ContextWriteOperation, NodeExecutionId};
+use agentx_domain::{ContextScope, NodeExecutionId};
 use agentx_node_protocol::{ExecutionStyle, Item, NodeCapability, SideEffectLevel};
 use agentx_runtime::{
     ActivationStatus, ExecutionMachine, ExpressionContext, ExpressionEngine, RuntimeExecutionStatus,
@@ -17,11 +17,15 @@ use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
 
 use crate::{
-    engine_names::{activation_status, is_terminal, machine_status, worker_result_status},
+    engine_names::{
+        activation_status, context_operation_name, context_value, is_terminal, machine_status,
+        worker_result_status,
+    },
     engine_persistence::{
-        authorize_resources, authorize_snapshot, finish_execution, initial_context_for_execution,
-        insert_invocation_event, load_output_namespace, merge_output_namespace, persist_lineage,
-        policy_timeout_from_snapshot, single_port_output, upsert_activation,
+        apply_context_write, authorize_resources, authorize_snapshot, finish_execution,
+        initial_context_for_execution, insert_invocation_event, load_output_namespace,
+        merge_output_namespace, persist_lineage, policy_timeout_from_snapshot, single_port_output,
+        upsert_activation,
     },
     engine_protocol::{
         complete_command, ensure_command_lease, ensure_result_lease, ensure_task_matches,
@@ -34,7 +38,6 @@ use crate::{
 
 pub(crate) use crate::engine_persistence::persist_checkpoint;
 pub use crate::engine_protocol::worker_result_hash;
-
 #[derive(Clone, Debug)]
 pub struct ClaimedWorkerAttempt {
     pub lease: WorkerAttemptLeaseV1,
@@ -505,6 +508,20 @@ pub async fn resume_execution(pool: &MySqlPool, claim: &RuntimeCommandClaim) -> 
         .await?;
         crate::event_export::enqueue_approval_event_from_task(&mut tx, claim.tenant_id, task_id)
             .await?;
+    }
+    if let Err(error) = crate::engine_trace::finish_resumed_spans(
+        &mut tx,
+        claim.tenant_id,
+        claim.execution_id,
+        node_execution_id,
+        resumed_status,
+        wait_status,
+        &resume_output,
+        claim.payload.pointer("/error/code").and_then(Value::as_str),
+    )
+    .await
+    {
+        tracing::warn!(%error, execution_id = %claim.execution_id, "Resumed Span finalization failed");
     }
     sqlx::query(
         "UPDATE bundle_references r JOIN wait_subscriptions w ON w.id=r.owner_id SET r.released_at=UTC_TIMESTAMP(6) WHERE r.tenant_id=? AND r.reference_kind='pending_wait' AND w.execution_id=? AND w.node_execution_id=? AND r.released_at IS NULL",
@@ -1015,7 +1032,7 @@ async fn submit_worker_result_resolved(
         return Ok(true);
     }
     let attempt = sqlx::query(
-        "SELECT a.tenant_id,a.execution_id,a.node_execution_id,a.status,a.lease_token,a.fencing_token,COALESCE(a.locked_until>UTC_TIMESTAMP(6),FALSE) lease_active,n.node_key,n.run_index,e.bundle_id,e.work_package_id,e.state_version,e.invocation_id,e.input_json,s.policy_snapshot_json,s.worker_compatibility_json,s.resource_snapshot_json FROM node_attempts a JOIN node_executions n ON n.id=a.node_execution_id JOIN workflow_executions e ON e.id=a.execution_id JOIN execution_snapshots s ON s.execution_id=a.execution_id WHERE a.id=? FOR UPDATE",
+        "SELECT a.tenant_id,a.execution_id,a.node_execution_id,a.attempt_number,a.status,a.lease_token,a.fencing_token,COALESCE(a.locked_until>UTC_TIMESTAMP(6),FALSE) lease_active,n.node_key,COALESCE(NULLIF(n.node_name,''),n.node_key) node_name,n.run_index,e.bundle_id,e.work_package_id,e.state_version,e.invocation_id,e.input_json,s.policy_snapshot_json,s.worker_compatibility_json,s.resource_snapshot_json FROM node_attempts a JOIN node_executions n ON n.id=a.node_execution_id JOIN workflow_executions e ON e.id=a.execution_id JOIN execution_snapshots s ON s.execution_id=a.execution_id WHERE a.id=? FOR UPDATE",
     )
     .bind(result.attempt_id)
     .fetch_one(&mut *tx)
@@ -1117,7 +1134,7 @@ async fn submit_worker_result_resolved(
                             node_execution_id,
                             "SESSION_CONTEXT_VERSION_CONFLICT",
                             "Session Context changed while the node was running",
-                            false,
+                            true,
                         )
                         .map_err(machine_error)?;
                 }
@@ -1137,11 +1154,15 @@ async fn submit_worker_result_resolved(
                     .error_message
                     .as_deref()
                     .unwrap_or("Worker execution failed"),
-                false,
+                result.status == WorkerResultStatusV1::Failed,
             )
             .map_err(machine_error)?,
         WorkerResultStatusV1::Cancelled => machine.cancel(),
     }
+    let will_retry = effective_status == WorkerResultStatusV1::Failed
+        && machine
+            .activation(node_execution_id)
+            .is_some_and(|activation| activation.status == ActivationStatus::Ready);
     let db_status = worker_result_status(effective_status);
     sqlx::query(
         "UPDATE node_attempts SET status=?,output_json=?,result_hash=?,result_object_id=?,outcome_unknown=?,error_code=?,error_message=?,ended_at=UTC_TIMESTAMP(6),locked_until=NULL,heartbeat_at=NULL WHERE id=?",
@@ -1177,7 +1198,7 @@ async fn submit_worker_result_resolved(
     crate::quota::release_attempt(&mut tx, tenant_id, result.attempt_id, "attempt_terminal")
         .await?;
     sqlx::query(
-        "UPDATE node_executions SET status=?,output_json=?,error_code=?,error_message=?,ended_at=UTC_TIMESTAMP(6) WHERE id=?",
+        "UPDATE node_executions SET status=?,output_json=?,error_code=?,error_message=?,ended_at=IF(?='ready',NULL,UTC_TIMESTAMP(6)) WHERE id=?",
     )
     .bind(activation_status(
         machine
@@ -1195,20 +1216,78 @@ async fn submit_worker_result_resolved(
     )
     .bind(&effective_error_code)
     .bind(&effective_error_message)
+    .bind(activation_status(
+        machine
+            .activation(node_execution_id)
+            .map(|activation| activation.status)
+            .unwrap_or(ActivationStatus::Failed),
+    ))
     .bind(node_execution_id.as_uuid())
     .execute(&mut *tx)
     .await?;
-    let mut node_trace = crate::trace_delivery::TraceDraft::execution(
+    let output_preview = result
+        .output_object
+        .is_none()
+        .then(|| serde_json::to_value(&effective_outputs).ok())
+        .flatten()
+        .and_then(|value| crate::trace_delivery::bounded_preview(&value));
+    let attempt_event_kind = if effective_status == WorkerResultStatusV1::Suspended {
+        agentx_runtime_contracts::TraceEventKindV1::Updated
+    } else {
+        agentx_runtime_contracts::TraceEventKindV1::Finished
+    };
+    let mut attempt_trace = crate::trace_delivery::TraceDraft::span(
         tenant_id,
         execution_id,
+        result.attempt_id,
+        Some((
+            node_execution_id.as_uuid(),
+            agentx_runtime_contracts::TraceSpanKindV1::Node,
+        )),
+        agentx_runtime_contracts::TraceSpanKindV1::Attempt,
+        format!("Attempt {}", attempt.try_get::<u32, _>("attempt_number")?),
+        attempt_event_kind,
         node_event_type(effective_status),
         db_status,
+    );
+    attempt_trace.node_execution_id = Some(node_execution_id.as_uuid());
+    attempt_trace.attempt_id = Some(result.attempt_id);
+    attempt_trace.error_code = effective_error_code.clone();
+    attempt_trace.error_message = effective_error_message.clone();
+    attempt_trace.content_ref = result.output_object.as_ref().map(|object| object.object_id);
+    attempt_trace.content_role = Some("output".into());
+    attempt_trace.content_preview = output_preview.clone();
+    crate::trace_delivery::enqueue_best_effort(&mut tx, attempt_trace).await;
+    let mut node_trace = crate::trace_delivery::TraceDraft::span(
+        tenant_id,
+        execution_id,
+        node_execution_id.as_uuid(),
+        Some((
+            execution_id,
+            agentx_runtime_contracts::TraceSpanKindV1::Execution,
+        )),
+        agentx_runtime_contracts::TraceSpanKindV1::Node,
+        attempt.try_get::<String, _>("node_name")?,
+        if will_retry {
+            agentx_runtime_contracts::TraceEventKindV1::Updated
+        } else {
+            attempt_event_kind
+        },
+        if will_retry {
+            "node.retry_scheduled"
+        } else {
+            node_event_type(effective_status)
+        },
+        if will_retry { "retrying" } else { db_status },
     );
     node_trace.node_execution_id = Some(node_execution_id.as_uuid());
     node_trace.attempt_id = Some(result.attempt_id);
     node_trace.error_code = effective_error_code;
+    node_trace.error_message = effective_error_message;
     node_trace.content_ref = result.output_object.as_ref().map(|object| object.object_id);
-    crate::trace_delivery::enqueue(&mut tx, node_trace).await?;
+    node_trace.content_role = Some("output".into());
+    node_trace.content_preview = output_preview;
+    crate::trace_delivery::enqueue_best_effort(&mut tx, node_trace).await;
     let next_version = current_version + 1;
     let policy: agentx_runtime_contracts::RuntimePolicyV1 =
         serde_json::from_value(attempt.try_get("policy_snapshot_json")?)
@@ -1430,101 +1509,6 @@ async fn apply_context_writes(
     })
 }
 
-fn apply_context_write(
-    context: &mut Value,
-    path: &str,
-    operation: ContextWriteOperation,
-    value: Value,
-) -> RuntimeResult<()> {
-    let segments = path
-        .split('.')
-        .filter(|value| !value.is_empty())
-        .collect::<Vec<_>>();
-    if segments.is_empty() {
-        return Err(runtime_bad_request(
-            "INVALID_CONTEXT_PATH",
-            "Context path is empty",
-        ));
-    }
-    let mut target = context;
-    for segment in &segments[..segments.len() - 1] {
-        let object = target.as_object_mut().ok_or_else(|| {
-            runtime_bad_request("INVALID_CONTEXT_PATH", "Context path is not an object")
-        })?;
-        target = object
-            .entry((*segment).to_owned())
-            .or_insert_with(|| json!({}));
-    }
-    let object = target.as_object_mut().ok_or_else(|| {
-        runtime_bad_request("INVALID_CONTEXT_PATH", "Context parent is not an object")
-    })?;
-    let key = segments[segments.len() - 1];
-    let current = object.get(key).cloned().unwrap_or(Value::Null);
-    let next = match operation {
-        ContextWriteOperation::Set => Some(value),
-        ContextWriteOperation::SetIfAbsent => current.is_null().then_some(value),
-        ContextWriteOperation::Delete => None,
-        ContextWriteOperation::Append => {
-            let mut values = current.as_array().cloned().unwrap_or_default();
-            match value {
-                Value::Array(items) => values.extend(items),
-                value => values.push(value),
-            }
-            Some(Value::Array(values))
-        }
-        ContextWriteOperation::MergeObject => {
-            let mut values = current.as_object().cloned().unwrap_or_default();
-            values.extend(value.as_object().cloned().unwrap_or_default());
-            Some(Value::Object(values))
-        }
-        ContextWriteOperation::Increment => Some(json!(
-            current.as_f64().unwrap_or(0.0) + value.as_f64().unwrap_or(0.0)
-        )),
-        ContextWriteOperation::Min => Some(json!(
-            current
-                .as_f64()
-                .unwrap_or(f64::INFINITY)
-                .min(value.as_f64().unwrap_or(f64::INFINITY))
-        )),
-        ContextWriteOperation::Max => Some(json!(
-            current
-                .as_f64()
-                .unwrap_or(f64::NEG_INFINITY)
-                .max(value.as_f64().unwrap_or(f64::NEG_INFINITY))
-        )),
-        ContextWriteOperation::CompareAndSet => {
-            let expected = value.get("expected").cloned().unwrap_or(Value::Null);
-            (current == expected).then(|| value.get("value").cloned().unwrap_or(Value::Null))
-        }
-    };
-    if let Some(next) = next {
-        object.insert(key.to_owned(), next);
-    } else if operation == ContextWriteOperation::Delete {
-        object.remove(key);
-    }
-    Ok(())
-}
-
-fn context_value<'a>(context: &'a Value, path: &str) -> Option<&'a Value> {
-    path.split('.')
-        .filter(|segment| !segment.is_empty())
-        .try_fold(context, |value, segment| value.get(segment))
-}
-
-const fn context_operation_name(operation: ContextWriteOperation) -> &'static str {
-    match operation {
-        ContextWriteOperation::Set => "set",
-        ContextWriteOperation::SetIfAbsent => "set_if_absent",
-        ContextWriteOperation::Delete => "delete",
-        ContextWriteOperation::Append => "append",
-        ContextWriteOperation::MergeObject => "merge_object",
-        ContextWriteOperation::Increment => "increment",
-        ContextWriteOperation::Min => "min",
-        ContextWriteOperation::Max => "max",
-        ContextWriteOperation::CompareAndSet => "compare_and_set",
-    }
-}
-
 struct ReadySchedule<'a> {
     tenant_id: Uuid,
     execution_id: Uuid,
@@ -1550,7 +1534,7 @@ async fn schedule_ready(
     .fetch_one(&mut **tx)
     .await?;
     while let Some(node_execution_id) = ready.machine.next_ready() {
-        let mut activation = ready
+        let activation = ready
             .machine
             .activation(node_execution_id)
             .cloned()
@@ -1568,11 +1552,6 @@ async fn schedule_ready(
                     crate::debug_overlay::items(&overlay.payload),
                 )
                 .map_err(machine_error)?;
-            activation = ready
-                .machine
-                .activation(node_execution_id)
-                .cloned()
-                .ok_or_else(|| RuntimeError::Internal(anyhow::anyhow!("activation disappeared")))?;
         }
         let attempt_id = ready
             .machine
@@ -1587,6 +1566,29 @@ async fn schedule_ready(
                 .suspend(node_execution_id)
                 .map_err(machine_error)?;
         }
+        let activation = ready
+            .machine
+            .activation(node_execution_id)
+            .cloned()
+            .ok_or_else(|| RuntimeError::Internal(anyhow::anyhow!("activation disappeared")))?;
+        let attempt_number = activation
+            .attempts
+            .last()
+            .map(|attempt| attempt.attempt_number)
+            .ok_or_else(|| RuntimeError::Internal(anyhow::anyhow!("attempt disappeared")))?;
+        let retry_delay_ms = if attempt_number > 1 {
+            node.settings.wait_between_tries_ms
+        } else {
+            0
+        };
+        let reservation_seconds = ready
+            .policy
+            .operation_deadline_seconds
+            .saturating_add(u32::try_from(retry_delay_ms.div_ceil(1_000)).unwrap_or(u32::MAX));
+        let available_at = OffsetDateTime::now_utc()
+            + Duration::milliseconds(i64::try_from(retry_delay_ms).unwrap_or(i64::MAX));
+        let deadline_at =
+            available_at + Duration::seconds(i64::from(ready.policy.operation_deadline_seconds));
         upsert_activation(tx, ready.tenant_id, ready.execution_id, &activation, &node).await?;
         let input_json = serde_json::to_value(&activation.inputs)
             .map_err(|error| RuntimeError::Internal(error.into()))?;
@@ -1595,21 +1597,34 @@ async fn schedule_ready(
             .as_ref()
             .is_some_and(|overlay| crate::debug_overlay::completes_node(&overlay.kind));
         sqlx::query(
-            "INSERT INTO node_attempts(id,tenant_id,execution_id,node_execution_id,attempt_number,capability,worker_protocol_version,ir_schema_version,compiler_version,manifest_version,status,idempotency_key,deadline_at,input_json) VALUES(?,?,?,?,1,?,1,1,?,? ,?,?,DATE_ADD(UTC_TIMESTAMP(6),INTERVAL ? SECOND),?)",
+            "INSERT INTO node_attempts(id,tenant_id,execution_id,node_execution_id,attempt_number,capability,worker_protocol_version,ir_schema_version,compiler_version,manifest_version,status,idempotency_key,deadline_at,input_json) VALUES(?,?,?,?,?,?,1,1,?,? ,?,?,?,?)",
         )
         .bind(attempt_id.as_uuid())
         .bind(ready.tenant_id)
         .bind(ready.execution_id)
         .bind(node_execution_id.as_uuid())
+        .bind(attempt_number)
         .bind(node.capability.as_str())
         .bind(&ready.machine.workflow().compiler_version)
         .bind(manifest_version)
         .bind(if overlay_completes { "succeeded" } else if matches!(node.execution_style, ExecutionStyle::Suspend | ExecutionStyle::SubWorkflow) { "suspended" } else { "queued" })
-        .bind(format!("{}:{node_execution_id}:1", ready.execution_id))
-        .bind(ready.policy.operation_deadline_seconds)
+        .bind(format!("{}:{node_execution_id}:{attempt_number}", ready.execution_id))
+        .bind(deadline_at)
         .bind(&input_json)
         .execute(&mut **tx)
         .await?;
+        crate::engine_trace::start_node_attempt_spans(
+            tx,
+            ready.tenant_id,
+            ready.execution_id,
+            node_execution_id.as_uuid(),
+            attempt_id.as_uuid(),
+            &node.name,
+            &input_json,
+            attempt_number,
+            overlay_completes,
+        )
+        .await;
         if let Some(overlay) = overlay.as_ref().filter(|_| overlay_completes) {
             let outputs = crate::debug_overlay::items(&overlay.payload);
             ready
@@ -1639,7 +1654,7 @@ async fn schedule_ready(
             trace.node_execution_id = Some(node_execution_id.as_uuid());
             trace.attempt_id = Some(attempt_id.as_uuid());
             trace.attributes = json!({"nodeId":node.id,"overlayKind":overlay.kind});
-            crate::trace_delivery::enqueue(tx, trace).await?;
+            crate::trace_delivery::enqueue_best_effort(tx, trace).await;
             continue;
         }
         if node.execution_style == ExecutionStyle::Suspend {
@@ -1724,8 +1739,7 @@ async fn schedule_ready(
             work_package_id: ready.work_package_id,
             state_version: ready.state_version,
             compatibility_hash,
-            deadline_at: OffsetDateTime::now_utc()
-                + Duration::seconds(i64::from(ready.policy.operation_deadline_seconds)),
+            deadline_at,
         };
         crate::quota::reserve(
             tx,
@@ -1735,7 +1749,7 @@ async fn schedule_ready(
             &attempt_id.to_string(),
             &format!("attempt:{attempt_id}:node_concurrency"),
             1,
-            ready.policy.operation_deadline_seconds,
+            reservation_seconds,
         )
         .await?;
         if node.capability == NodeCapability::Sandbox {
@@ -1747,14 +1761,14 @@ async fn schedule_ready(
                 &attempt_id.to_string(),
                 &format!("attempt:{attempt_id}:sandbox_concurrency"),
                 1,
-                ready.policy.operation_deadline_seconds,
+                reservation_seconds,
             )
             .await?;
         }
         crate::quota::reserve_attempt_budget(
             tx,
             ready.tenant_id,
-            ready.policy.operation_deadline_seconds,
+            reservation_seconds,
             &node,
             attempt_id.as_uuid(),
             ready.resources,
@@ -1765,7 +1779,7 @@ async fn schedule_ready(
         let task_hash = agentx_runtime_contracts::content_hash(&task)
             .map_err(|error| RuntimeError::Internal(error.into()))?;
         sqlx::query(
-            "INSERT INTO execution_outbox(id,tenant_id,execution_id,node_execution_id,attempt_id,message_type,capability,payload_json,task_hash,status) VALUES(?,?,?,?,?,'dispatch_node',?,?,?,'pending')",
+            "INSERT INTO execution_outbox(id,tenant_id,execution_id,node_execution_id,attempt_id,message_type,capability,payload_json,task_hash,status,available_at) VALUES(?,?,?,?,?,'dispatch_node',?,?,?,'pending',?)",
         )
         .bind(Uuid::now_v7())
         .bind(ready.tenant_id)
@@ -1775,6 +1789,7 @@ async fn schedule_ready(
         .bind(node.capability.as_str())
         .bind(task_json)
         .bind(task_hash.as_str())
+        .bind(available_at)
         .execute(&mut **tx)
         .await?;
     }

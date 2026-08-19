@@ -1325,6 +1325,11 @@ export interface components {
             tags: string[];
             version: number;
         };
+        TraceContent: {
+            contentRef?: string | null;
+            preview?: unknown;
+            role: string;
+        };
         TraceEventResponse: {
             agentRunId?: string | null;
             attemptId?: string | null;
@@ -1360,10 +1365,56 @@ export interface components {
             traceId: string;
         };
         TraceResponse: {
-            events: components["schemas"]["TraceEventResponse"][];
+            complete: boolean;
+            degraded: boolean;
             executionId: string;
+            expectedWatermark: number;
+            ingestedWatermark: number;
             nextCursor?: string | null;
+            spans: components["schemas"]["TraceSpanSummary"][];
+            totalSpans: number;
             traceId: string;
+            warningCode?: string | null;
+        };
+        TraceSpanDetailResponse: {
+            attributes: {
+                [key: string]: unknown;
+            };
+            events: {
+                [key: string]: unknown;
+            }[];
+            executionId: string;
+            input?: components["schemas"]["TraceContent"] | null;
+            output?: components["schemas"]["TraceContent"] | null;
+            span: components["schemas"]["TraceSpanSummary"];
+            traceId: string;
+        };
+        TraceSpanSummary: {
+            agentIterationId?: string | null;
+            agentRunId?: string | null;
+            attemptId?: string | null;
+            costMicros: number;
+            durationMs: number | null;
+            endedAt: string | null;
+            errorCode?: string | null;
+            errorMessage?: string | null;
+            hasDetails: boolean;
+            inputTokens?: number | null;
+            nodeExecutionId?: string | null;
+            outputTokens?: number | null;
+            parentSpanId: string | null;
+            resourceId?: string | null;
+            resourceType?: string | null;
+            resourceVersion?: string | null;
+            runtimeCallId?: string | null;
+            sandboxLeaseId?: string | null;
+            spanId: string;
+            /** @enum {string} */
+            spanKind: "execution" | "node" | "attempt" | "agent_run" | "agent_iteration" | "runtime_call" | "sandbox" | "wait";
+            spanName: string;
+            startedAt: string;
+            status: string;
+            waitId?: string | null;
         };
         UpdateApplicationRequest: {
             description?: string | null;

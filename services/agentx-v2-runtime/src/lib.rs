@@ -8,6 +8,7 @@ pub mod engine;
 mod engine_names;
 mod engine_persistence;
 mod engine_protocol;
+mod engine_trace;
 pub mod error;
 pub mod event_export;
 pub mod execution;
@@ -27,12 +28,14 @@ pub mod retention;
 pub mod sandbox;
 pub mod sse_wakeup;
 mod suspension;
+mod trace_artifact;
 pub use suspension::enqueue_due as enqueue_due_waits;
 pub mod trace_delivery;
 pub mod trigger;
 pub mod vault;
 mod work_package_execution;
 pub mod worker_runtime;
+pub mod worker_support;
 
 use std::sync::Arc;
 

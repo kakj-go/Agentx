@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use agentx_runtime_contracts::{
     ObservabilityAggregateRequestV1, ObservabilityDimensionV1, ObservabilityMetricV1,
+    TraceEventEnvelopeV1, TraceEventKindV1, TraceSpanKindV1, content_hash,
 };
 use clickhouse::Client;
 use serde_json::json;
@@ -14,9 +15,150 @@ use time::OffsetDateTime;
 use uuid::Uuid;
 
 use super::{
-    AggregateRow, TraceConflictRow, TraceRow, aggregate_query_sql, existing_trace_hash,
+    AggregateRow, TraceConflictRow, TraceRow, TraceSpanKeyRow, aggregate_query_sql,
+    aggregate_spans, existing_trace_hash, parse_span_cursor, span_cursor, span_page_sql,
     timestamp_micros,
 };
+
+#[test]
+fn span_aggregation_handles_out_of_order_and_incomplete_lifecycles() {
+    let execution_id = Uuid::now_v7();
+    let span_id = Uuid::now_v7();
+    let started = OffsetDateTime::from_unix_timestamp(100).unwrap();
+    let finished = started + time::Duration::seconds(2);
+    let mut finished_event = trace_event(
+        execution_id,
+        span_id,
+        2,
+        TraceEventKindV1::Finished,
+        "failed",
+        finished,
+    );
+    finished_event.span_name = "stale technical key".into();
+    let events = vec![
+        finished_event,
+        trace_event(
+            execution_id,
+            span_id,
+            1,
+            TraceEventKindV1::Started,
+            "running",
+            started,
+        ),
+    ];
+    let span = aggregate_spans(&events).pop().unwrap();
+    assert_eq!(span.started_at, started);
+    assert_eq!(span.ended_at, Some(finished));
+    assert_eq!(span.duration_ms, Some(2_000));
+    assert_eq!(span.status, "failed");
+    assert_eq!(span.span_name, "Model call");
+
+    let mut usage_event = trace_event(
+        execution_id,
+        span_id,
+        3,
+        TraceEventKindV1::Updated,
+        "running",
+        started + time::Duration::seconds(1),
+    );
+    usage_event.input_tokens = Some(12);
+    usage_event.output_tokens = Some(8);
+    usage_event.cost_micros = 42;
+    let mut completed_without_usage = trace_event(
+        execution_id,
+        span_id,
+        4,
+        TraceEventKindV1::Finished,
+        "succeeded",
+        finished,
+    );
+    completed_without_usage.span_name = "stale technical key".into();
+    let usage_span = aggregate_spans(&[completed_without_usage, usage_event])
+        .pop()
+        .unwrap();
+    assert_eq!(usage_span.input_tokens, Some(12));
+    assert_eq!(usage_span.output_tokens, Some(8));
+    assert_eq!(usage_span.cost_micros, 42);
+
+    let running_id = Uuid::now_v7();
+    let running = aggregate_spans(&[trace_event(
+        execution_id,
+        running_id,
+        3,
+        TraceEventKindV1::Started,
+        "running",
+        started,
+    )])
+    .pop()
+    .unwrap();
+    assert_eq!(running.ended_at, None);
+    assert_eq!(running.duration_ms, None);
+}
+
+#[test]
+fn span_cursor_round_trips_the_stable_sort_tuple() {
+    let event = trace_event(
+        Uuid::now_v7(),
+        Uuid::now_v7(),
+        1,
+        TraceEventKindV1::Started,
+        "running",
+        OffsetDateTime::from_unix_timestamp(123).unwrap() + time::Duration::microseconds(456),
+    );
+    let span = aggregate_spans(&[event]).pop().unwrap();
+    assert_eq!(
+        parse_span_cursor(&span_cursor(&span)).unwrap(),
+        (span.started_at, span.span_id)
+    );
+    assert!(parse_span_cursor("broken").is_err());
+}
+
+fn trace_event(
+    execution_id: Uuid,
+    span_id: Uuid,
+    sequence: u64,
+    event_kind: TraceEventKindV1,
+    status: &str,
+    occurred_at: OffsetDateTime,
+) -> TraceEventEnvelopeV1 {
+    TraceEventEnvelopeV1 {
+        schema_version: 1,
+        event_id: Uuid::now_v7(),
+        tenant_id: Uuid::now_v7(),
+        execution_id,
+        execution_sequence: sequence,
+        trace_id: Uuid::now_v7(),
+        span_id,
+        parent_span_id: None,
+        event_kind,
+        span_kind: TraceSpanKindV1::RuntimeCall,
+        span_name: "Model call".into(),
+        node_execution_id: None,
+        attempt_id: None,
+        agent_run_id: None,
+        agent_iteration_id: None,
+        runtime_call_id: Some(span_id),
+        sandbox_lease_id: None,
+        wait_id: None,
+        resource_type: Some("model".into()),
+        resource_id: None,
+        resource_version: None,
+        event_type: "runtime_call.lifecycle".into(),
+        status: status.into(),
+        duration_ms: None,
+        input_tokens: None,
+        output_tokens: None,
+        cost_micros: 0,
+        error_code: (status == "failed").then(|| "MODEL_FAILED".into()),
+        error_message: (status == "failed").then(|| "Model request failed".into()),
+        attributes: json!({}),
+        content_ref: None,
+        content_role: None,
+        content_preview: None,
+        occurred_at,
+        content_hash: content_hash(&json!({"sequence":sequence})).unwrap(),
+    }
+}
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn clickhouse_trace_queries_decode_aggregate_and_exclude_conflicts() {
@@ -40,6 +182,11 @@ async fn clickhouse_trace_queries_decode_aggregate_and_exclude_conflicts() {
     execute_migration(
         &admin,
         include_str!("../../../migrations/observability/0002_query_and_observability.sql"),
+    )
+    .await;
+    execute_migration(
+        &admin,
+        include_str!("../../../migrations/observability/0003_trace_spans.sql"),
     )
     .await;
 
@@ -139,6 +286,72 @@ async fn clickhouse_trace_queries_decode_aggregate_and_exclude_conflicts() {
         .await
         .unwrap();
     assert_eq!(watermark, 2);
+
+    let mut extra = admin.insert("workflow_trace_events").unwrap();
+    for sequence in 3..=5 {
+        extra
+            .write(&trace_row(
+                Uuid::now_v7(),
+                tenant_id,
+                execution_id,
+                sequence,
+                now + time::Duration::microseconds(sequence as i64),
+                1,
+                1,
+            ))
+            .await
+            .unwrap();
+    }
+    extra.end().await.unwrap();
+
+    let first_page = admin
+        .query(span_page_sql(false))
+        .bind(tenant_id)
+        .bind(execution_id)
+        .bind(tenant_id)
+        .bind(2_u64)
+        .fetch_all::<TraceSpanKeyRow>()
+        .await
+        .unwrap();
+    assert_eq!(first_page.len(), 2);
+    let first_cursor = first_page.last().unwrap();
+    let second_page = admin
+        .query(span_page_sql(true))
+        .bind(tenant_id)
+        .bind(execution_id)
+        .bind(tenant_id)
+        .bind(timestamp_micros(first_cursor.started_at).unwrap())
+        .bind(first_cursor.span_id)
+        .bind(2_u64)
+        .fetch_all::<TraceSpanKeyRow>()
+        .await
+        .unwrap();
+    assert_eq!(second_page.len(), 2);
+    let first_ids = first_page
+        .iter()
+        .map(|row| row.span_id)
+        .collect::<std::collections::HashSet<_>>();
+    assert!(
+        second_page
+            .iter()
+            .all(|row| !first_ids.contains(&row.span_id))
+    );
+    let second_cursor = second_page.last().unwrap();
+    let exhausted = admin
+        .query(span_page_sql(true))
+        .bind(tenant_id)
+        .bind(execution_id)
+        .bind(tenant_id)
+        .bind(timestamp_micros(second_cursor.started_at).unwrap())
+        .bind(second_cursor.span_id)
+        .bind(2_u64)
+        .fetch_all::<TraceSpanKeyRow>()
+        .await
+        .unwrap();
+    assert!(
+        exhausted.is_empty(),
+        "Cursor pagination must not repeat or skip a clean Span"
+    );
 }
 
 fn trace_row(
@@ -158,9 +371,16 @@ fn trace_row(
         trace_id: Uuid::now_v7(),
         span_id: Uuid::now_v7(),
         parent_span_id: None,
+        event_kind: "finished".into(),
+        span_kind: "runtime_call".into(),
+        span_name: "Model call".into(),
         node_execution_id: None,
         attempt_id: None,
+        agent_run_id: None,
+        agent_iteration_id: None,
         runtime_call_id: None,
+        sandbox_lease_id: None,
+        wait_id: None,
         workflow_id: None,
         application_id: None,
         resource_type: Some("model".into()),
@@ -169,12 +389,15 @@ fn trace_row(
         event_type: "runtime_call.completed".into(),
         status: "succeeded".into(),
         error_code: None,
+        error_message: None,
         duration_ms: Some(4),
         input_tokens: Some(input_tokens),
         output_tokens: Some(2),
         cost_micros,
         attributes_json: json!({"provider":"fixture"}).to_string(),
         content_ref: None,
+        content_role: None,
+        content_preview_json: None,
         content_hash: hash('a'),
         occurred_at,
     }

@@ -1,9 +1,31 @@
+use agentx_domain::ContextWriteOperation;
 use agentx_node_protocol::SideEffectLevel;
 use agentx_runtime::{ActivationStatus, RuntimeExecutionStatus};
 use agentx_runtime_contracts::{
     PartialExecutionModeV1, SideEffectResolutionV1, WorkerResultStatusV1,
 };
+use serde_json::Value;
 use uuid::Uuid;
+
+pub(crate) fn context_value<'a>(context: &'a Value, path: &str) -> Option<&'a Value> {
+    path.split('.')
+        .filter(|segment| !segment.is_empty())
+        .try_fold(context, |value, segment| value.get(segment))
+}
+
+pub(crate) const fn context_operation_name(operation: ContextWriteOperation) -> &'static str {
+    match operation {
+        ContextWriteOperation::Set => "set",
+        ContextWriteOperation::SetIfAbsent => "set_if_absent",
+        ContextWriteOperation::Delete => "delete",
+        ContextWriteOperation::Append => "append",
+        ContextWriteOperation::MergeObject => "merge_object",
+        ContextWriteOperation::Increment => "increment",
+        ContextWriteOperation::Min => "min",
+        ContextWriteOperation::Max => "max",
+        ContextWriteOperation::CompareAndSet => "compare_and_set",
+    }
+}
 
 pub(crate) const fn partial_mode(mode: PartialExecutionModeV1) -> &'static str {
     match mode {

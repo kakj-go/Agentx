@@ -24,9 +24,9 @@ import { useProviderOptions } from "../api/use-provider-options";
 import { deleteOverlay, saveOverlay } from "../api/studio-api";
 import type {
   NodeExecution,
-  RuntimeDetails,
-  Trace,
 } from "../../../shared/api/types";
+import { TraceDetail } from "../../traces/trace-detail";
+import { useExecutionTrace } from "../../traces/use-trace";
 import type {
   ActionNodeData,
   BindingNodeData,
@@ -50,7 +50,6 @@ import {
 import { insertAtSelection } from "../forms/reference-picker/reference-insertion";
 import { ResourcePicker } from "../forms/resource-picker";
 import { NodeIcon } from "../nodes/node-icon";
-import { nodeTraceView } from "../utils/node-trace";
 import { Badge } from "../../../shared/ui/badge";
 
 type InspectableNodeData = ActionNodeData | BindingNodeData;
@@ -137,25 +136,15 @@ export function NodeInspector({
       ),
     enabled: Boolean(executionId && nodeId),
   });
-  const runtimeDetails = useQuery({
-    queryKey: ["studio-node-trace", executionId],
-    queryFn: () =>
-      apiRequest<RuntimeDetails>(`/executions/${executionId}/runtime-details`),
-    enabled: Boolean(executionId),
-  });
-  const trace = useQuery({
-    queryKey: ["studio-node-trace-events", executionId],
-    queryFn: () => apiRequest<Trace>(`/executions/${executionId}/trace`),
-    enabled: Boolean(executionId),
-  });
+  const trace = useExecutionTrace(executionId, tab === "trace");
   const selectedRuns = useMemo(
     () => nodeRuns.data?.items.filter((node) => node.nodeId === nodeId) ?? [],
     [nodeId, nodeRuns.data?.items],
   );
   const selectedRun = selectedRuns.at(-1);
-  const traceView = useMemo(
-    () => nodeTraceView(nodeId, selectedRuns, runtimeDetails.data, trace.data),
-    [nodeId, runtimeDetails.data, selectedRuns, trace.data],
+  const selectedExecutionIds = new Set(selectedRuns.map((run) => run.id));
+  const selectedSpan = trace.spans.find(
+    (span) => span.spanKind === "node" && Boolean(span.nodeExecutionId && selectedExecutionIds.has(span.nodeExecutionId)),
   );
   const [overlayText, setOverlayText] = useState("{}");
   const overlay = useMutation({
@@ -354,8 +343,8 @@ export function NodeInspector({
             value={overlayText}
           />
         </TabsContent>
-        <TabsContent className="min-h-0 flex-1 overflow-auto p-4" value="trace">
-          <JsonValue value={traceView} />
+        <TabsContent className="min-h-0 flex-1 overflow-auto" value="trace">
+          {executionId ? <TraceDetail executionId={executionId} span={selectedSpan} /> : <p className="p-4 text-xs text-muted-foreground">{t("studio.runtime.noExecution")}</p>}
         </TabsContent>
       </Tabs>
       <div className="shrink-0 border-t border-border p-4">

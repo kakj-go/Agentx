@@ -271,6 +271,18 @@ impl ProviderHttpClient {
         self.request(Method::POST, endpoint, context, timeout)
     }
 
+    /// Builds the one trusted worker-to-Sandbox-Manager request. This deliberately
+    /// bypasses the public provider proxy, but only after validating the fixed
+    /// internal service name and contract path.
+    pub fn post_sandbox_manager(
+        &self,
+        endpoint: &str,
+        timeout: Duration,
+    ) -> Result<reqwest::RequestBuilder> {
+        let url = validate_sandbox_manager_execute_url(endpoint)?;
+        Ok(self.direct.post(url).timeout(timeout))
+    }
+
     pub fn request(
         &self,
         method: Method,
@@ -351,16 +363,44 @@ pub fn validate_provider_url(endpoint: &str) -> Result<Url> {
     Ok(url)
 }
 
+pub fn validate_sandbox_manager_execute_url(endpoint: &str) -> Result<Url> {
+    let url = Url::parse(endpoint).context("Sandbox Manager endpoint is invalid")?;
+    if url.scheme() != "http" || url.host_str().is_none() {
+        bail!("Sandbox Manager endpoint must be an internal HTTP URL with a host");
+    }
+    if !url.username().is_empty() || url.password().is_some() {
+        bail!("Sandbox Manager endpoint userinfo is forbidden");
+    }
+    if url.query().is_some() || url.fragment().is_some() {
+        bail!("Sandbox Manager endpoint query and fragment are forbidden");
+    }
+    if url.path() != "/internal/runtime/v1/sandboxes:execute" {
+        bail!("Sandbox Manager endpoint path is not the runtime execute contract");
+    }
+    let host = url
+        .host_str()
+        .expect("host presence was checked")
+        .trim_end_matches('.')
+        .to_ascii_lowercase();
+    let trusted_service = host == "sandbox-manager"
+        || (host.starts_with("sandbox-manager.")
+            && (host.ends_with(".svc") || host.ends_with(".svc.cluster.local")));
+    if !trusted_service {
+        bail!("Sandbox Manager endpoint must target the sandbox-manager Kubernetes service");
+    }
+    Ok(url)
+}
+
 fn is_managed_cluster_fixture(url: &Url) -> bool {
     let Some(host) = url.host_str() else {
         return false;
     };
-    url.scheme() == "http"
-        && (host.ends_with(".svc")
-            || host.ends_with(".svc.cluster.local")
-            || host == "echo-mcp"
-            || host == "lightrag"
-            || host == "mem0")
+    let host = host.trim_end_matches('.').to_ascii_lowercase();
+    let service = host.split('.').next().unwrap_or_default();
+    let fixture_service = matches!(service, "echo-mcp" | "echo-node" | "lightrag" | "mem0");
+    let fixture_dns =
+        !host.contains('.') || host.ends_with(".svc") || host.ends_with(".svc.cluster.local");
+    url.scheme() == "http" && fixture_service && fixture_dns
 }
 
 fn provider_builder() -> Result<reqwest::ClientBuilder> {
@@ -371,7 +411,9 @@ fn provider_builder() -> Result<reqwest::ClientBuilder> {
 mod tests {
     use reqwest::{Method, StatusCode, header};
 
-    use super::{prepare_redirect_request, validate_provider_url};
+    use super::{
+        prepare_redirect_request, validate_provider_url, validate_sandbox_manager_execute_url,
+    };
 
     #[test]
     fn public_endpoints_require_https_and_forbid_userinfo() {
@@ -388,6 +430,44 @@ mod tests {
                 .is_ok()
         );
         assert!(validate_provider_url("http://10.0.0.1:8090/mcp").is_err());
+        assert!(
+            validate_provider_url("http://arbitrary-service.test.svc.cluster.local:8090/mcp")
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn only_the_fixed_sandbox_manager_execute_endpoint_is_trusted() {
+        assert!(
+            validate_sandbox_manager_execute_url(
+                "http://sandbox-manager:8080/internal/runtime/v1/sandboxes:execute"
+            )
+            .is_ok()
+        );
+        assert!(
+            validate_sandbox_manager_execute_url(
+                "http://sandbox-manager.agentx-v2-runtime.svc.cluster.local:8080/internal/runtime/v1/sandboxes:execute"
+            )
+            .is_ok()
+        );
+        assert!(
+            validate_sandbox_manager_execute_url(
+                "http://10.0.0.8:8080/internal/runtime/v1/sandboxes:execute"
+            )
+            .is_err()
+        );
+        assert!(
+            validate_sandbox_manager_execute_url(
+                "http://arbitrary-service.agentx-v2-runtime.svc:8080/internal/runtime/v1/sandboxes:execute"
+            )
+            .is_err()
+        );
+        assert!(
+            validate_sandbox_manager_execute_url(
+                "http://sandbox-manager:8080/internal/runtime/v1/admin"
+            )
+            .is_err()
+        );
     }
 
     #[test]

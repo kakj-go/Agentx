@@ -3,6 +3,7 @@ param(
     [string]$RunId = (Get-Date).ToUniversalTime().ToString("yyyyMMddHHmmss"),
     [switch]$BuildImages,
     [switch]$SkipLocalGates,
+    [switch]$SkipControlUi,
     [ValidateRange(30, 120)][int]$StabilityMinutes = 30,
     [string]$OpenSandboxEndpoint = "http://127.0.0.1:18080",
     [string]$OpenSandboxApiKey = "agentx-local-opensandbox-key"
@@ -93,36 +94,48 @@ function Save-RedactedText([string]$Path, [object[]]$Content) {
     $text | Set-Content -LiteralPath $Path -Encoding utf8NoBOM
 }
 function Capture-FailureEvidence {
-    $directory = Join-Path $artifactDirectory "failure"
-    New-Item -ItemType Directory -Force -Path $directory | Out-Null
-    foreach ($plane in @("control", "runtime", "dependencies")) {
-        $namespace = [string]$namespaces[$plane]
-        if (-not (& kubectl get namespace $namespace --ignore-not-found -o name 2>$null)) { continue }
-        Save-RedactedText (Join-Path $directory "$plane-workloads.log") @(& kubectl -n $namespace get pods,deployments,statefulsets,jobs -o wide 2>&1)
-        Save-RedactedText (Join-Path $directory "$plane-events.log") @(& kubectl -n $namespace get events --sort-by=.lastTimestamp 2>&1)
-        $pods = @(& kubectl -n $namespace get pods -o name 2>$null)
-        foreach ($pod in $pods) {
-            $podName = ($pod -replace '^pod/', '')
-            Save-RedactedText (Join-Path $directory "$plane-$podName.log") @(& kubectl -n $namespace logs $pod --all-containers=true --prefix=true --tail=1000 2>&1)
-        }
-    }
-    $runtimeSnapshots = [Collections.Generic.List[string]]::new()
-    $runtimeQueries = [ordered]@{
-        executions = "SELECT BIN_TO_UUID(id),BIN_TO_UUID(tenant_id),BIN_TO_UUID(workflow_id),BIN_TO_UUID(application_id),status,state_version,error_json,created_at FROM workflow_executions ORDER BY created_at DESC LIMIT 20;"
-        users = "SELECT BIN_TO_UUID(user_id),token_version,status,tenant_query_enabled,admission_epoch FROM runtime_user_admission ORDER BY tenant_id,user_id LIMIT 20;"
-        workflows = "SELECT BIN_TO_UUID(user_id),BIN_TO_UUID(workflow_id),grant_version,status,admission_epoch FROM runtime_user_workflow_grants ORDER BY tenant_id,user_id,workflow_id LIMIT 20;"
-        commands = "SELECT status,COUNT(*) FROM runtime_commands GROUP BY status;"
-        attempts = "SELECT status,COUNT(*) FROM node_attempts GROUP BY status;"
-    }
-    foreach ($query in $runtimeQueries.GetEnumerator()) {
-        $runtimeSnapshots.Add("## $($query.Key)")
-        try { $runtimeSnapshots.AddRange([string[]]@(Invoke-RuntimeSql $query.Value)) }
-        catch { $runtimeSnapshots.Add("ERROR: $($_.Exception.Message)") }
-    }
-    Save-RedactedText (Join-Path $directory "runtime-state.tsv") $runtimeSnapshots
+    $nativePreference = $PSNativeCommandUseErrorActionPreference
     try {
-        Save-RedactedText (Join-Path $directory "control-outbox.tsv") @(Invoke-ControlSql "SELECT event_type,aggregate_type,aggregate_id,status,attempt_count,last_error,occurred_at FROM outbox WHERE aggregate_type IN ('runtime_user_admission','workflow_admission') ORDER BY occurred_at DESC LIMIT 40;")
-    } catch { Save-RedactedText (Join-Path $directory "control-outbox-error.log") @($_.Exception.Message) }
+        # Evidence collection is best-effort: an initializing or terminating Pod
+        # commonly makes one kubectl subcommand fail and must not hide the actual
+        # product/deployment failure or prevent the remaining snapshots.
+        $PSNativeCommandUseErrorActionPreference = $false
+        $directory = Join-Path $artifactDirectory "failure"
+        New-Item -ItemType Directory -Force -Path $directory | Out-Null
+        foreach ($plane in @("control", "runtime", "dependencies")) {
+            $namespace = [string]$namespaces[$plane]
+            if (-not (& kubectl get namespace $namespace --ignore-not-found -o name 2>$null)) { continue }
+            Save-RedactedText (Join-Path $directory "$plane-workloads.log") @(& kubectl -n $namespace get pods,deployments,statefulsets,jobs -o wide 2>&1)
+            Save-RedactedText (Join-Path $directory "$plane-events.log") @(& kubectl -n $namespace get events --sort-by=.lastTimestamp 2>&1)
+            $pods = @(& kubectl -n $namespace get pods -o name 2>$null)
+            foreach ($pod in $pods) {
+                $podName = ($pod -replace '^pod/', '')
+                Save-RedactedText (Join-Path $directory "$plane-$podName.log") @(& kubectl -n $namespace logs $pod --all-containers=true --prefix=true --tail=1000 2>&1)
+            }
+        }
+        $runtimeSnapshots = [Collections.Generic.List[string]]::new()
+        $runtimeQueries = [ordered]@{
+            executions = "SELECT BIN_TO_UUID(id),BIN_TO_UUID(tenant_id),BIN_TO_UUID(workflow_id),BIN_TO_UUID(application_id),status,state_version,error_json,created_at FROM workflow_executions ORDER BY created_at DESC LIMIT 20;"
+            users = "SELECT BIN_TO_UUID(user_id),token_version,status,tenant_query_enabled,admission_epoch FROM runtime_user_admission ORDER BY tenant_id,user_id LIMIT 20;"
+            workflows = "SELECT BIN_TO_UUID(user_id),BIN_TO_UUID(workflow_id),grant_version,status,admission_epoch FROM runtime_user_workflow_grants ORDER BY tenant_id,user_id,workflow_id LIMIT 20;"
+            commands = "SELECT status,COUNT(*) FROM runtime_commands GROUP BY status;"
+            attempts = "SELECT status,COUNT(*) FROM node_attempts GROUP BY status;"
+            recent_nodes = "SELECT BIN_TO_UUID(n.execution_id),BIN_TO_UUID(n.id),n.node_key,n.capability,n.status,n.started_at,n.ended_at FROM node_executions n JOIN workflow_executions e ON e.id=n.execution_id ORDER BY e.created_at DESC,n.created_at DESC LIMIT 40;"
+            recent_attempts = "SELECT BIN_TO_UUID(a.execution_id),BIN_TO_UUID(a.node_execution_id),BIN_TO_UUID(a.id),a.capability,a.status,a.fencing_token,a.locked_until,a.heartbeat_at,a.started_at,a.ended_at,a.error_code FROM node_attempts a JOIN workflow_executions e ON e.id=a.execution_id ORDER BY e.created_at DESC,a.created_at DESC LIMIT 40;"
+            recent_leases = "SELECT BIN_TO_UUID(a.execution_id),BIN_TO_UUID(l.node_attempt_id),BIN_TO_UUID(l.worker_id),l.fencing_token,l.heartbeat_at,l.expires_at,l.released_at FROM worker_leases l JOIN node_attempts a ON a.id=l.node_attempt_id JOIN workflow_executions e ON e.id=a.execution_id ORDER BY e.created_at DESC,l.acquired_at DESC LIMIT 40;"
+            recent_receipts = "SELECT BIN_TO_UUID(a.execution_id),BIN_TO_UUID(r.attempt_id),r.status,r.created_at FROM worker_result_receipts r JOIN node_attempts a ON a.id=r.attempt_id JOIN workflow_executions e ON e.id=a.execution_id ORDER BY e.created_at DESC,r.created_at DESC LIMIT 40;"
+        }
+        foreach ($query in $runtimeQueries.GetEnumerator()) {
+            $runtimeSnapshots.Add("## $($query.Key)")
+            try { $runtimeSnapshots.AddRange([string[]]@(Invoke-RuntimeSql $query.Value)) }
+            catch { $runtimeSnapshots.Add("ERROR: $($_.Exception.Message)") }
+        }
+        Save-RedactedText (Join-Path $directory "runtime-state.tsv") $runtimeSnapshots
+        try {
+            Save-RedactedText (Join-Path $directory "control-outbox.tsv") @(Invoke-ControlSql "SELECT event_type,aggregate_type,aggregate_id,status,attempt_count,last_error,occurred_at FROM outbox WHERE aggregate_type IN ('runtime_user_admission','workflow_admission') ORDER BY occurred_at DESC LIMIT 40;")
+        } catch { Save-RedactedText (Join-Path $directory "control-outbox-error.log") @($_.Exception.Message) }
+    }
+    finally { $PSNativeCommandUseErrorActionPreference = $nativePreference }
 }
 function Record-And-StopDevelopment {
     foreach ($namespace in @("agentx", "agentx-v2-control", "agentx-v2-runtime")) {
@@ -294,17 +307,17 @@ function Assert-V2MigrationHistory {
     if ($control -ne "1,2,3,4,5,6,7") {
         throw "Control Migration history is incomplete ($control); rebuild agentx-migrate before V2-08A."
     }
-    if ($runtime -ne "1,2,3,4,5,6,7") {
+    if ($runtime -ne "1,2,3,4,5,6,7,8") {
         throw "Runtime Migration history is incomplete ($runtime); rebuild agentx-migrate before V2-08A."
     }
     $observability = (Invoke-Kubectl @(
         "-n", $namespaces.observability, "exec", "statefulset/clickhouse", "--", "sh", "-ec",
         'clickhouse-client --user "$CLICKHOUSE_USER" --password "$CLICKHOUSE_PASSWORD" --database "$CLICKHOUSE_DB" --query "SELECT count()*100+sum(version) FROM observability_schema_migrations"'
     ) -join "").Trim()
-    if ($observability -ne "203") {
+    if ($observability -ne "306") {
         throw "Observability Migration history is incomplete ($observability); rebuild agentx-migrate before V2-08A."
     }
-    Complete-Scenario "migration-history-complete" @("control=1..7", "runtime=1..7", "observability=1..2")
+    Complete-Scenario "migration-history-complete" @("control=1..7", "runtime=1..8", "observability=1..3")
 }
 function Invoke-FailureMatrix {
     foreach ($deployment in @("platform-control", "web-console")) { Invoke-Kubectl @("-n", $namespaces.control, "scale", "deployment/$deployment", "--replicas=0") | Out-Null }
@@ -449,7 +462,11 @@ try {
     }
     foreach ($name in @("echo-mcp", "echo-node", "lightrag", "mem0-postgres", "mem0")) { Wait-Deployment $namespaces.dependencies $name }
     Install-OpenSandboxEgress
-    Invoke-Kubectl @("-n", $namespaces.control, "set", "env", "deployment/web-console", "AGENTX_RUNTIME_PUBLIC_BASE_URL=http://$($profile.ingress.runtimeHost):18083") | Out-Null
+    # Route the public Runtime URL through the managed Ingress so the browser
+    # exercises the production CORS boundary. Chromium maps only this ephemeral
+    # run host to the loopback port-forward; no machine-wide hosts entry is used.
+    $runtimeBrowserUrl = "http://$($profile.ingress.runtimeHost):18083"
+    Invoke-Kubectl @("-n", $namespaces.control, "set", "env", "deployment/web-console", "AGENTX_RUNTIME_PUBLIC_BASE_URL=$runtimeBrowserUrl") | Out-Null
     foreach ($entry in @(
         @($namespaces.control, "platform-control"), @($namespaces.control, "web-console"),
         @($namespaces.runtime, "runtime-gateway"), @($namespaces.runtime, "workflow-runtime"),
@@ -466,12 +483,13 @@ try {
     Start-Forward $namespaces.dependencies "service/$($profile.ingress.className)-08-$safeRunId-controller" 18083 80
     $corsOrigin = "http://127.0.0.1:18081"
     $corsProbe = Invoke-WebRequest -NoProxy -SkipHttpErrorCheck -Method Options `
-        -Uri "http://$($profile.ingress.runtimeHost):18083/gateway/v1/applications/e2e-cors-probe/sessions" `
-        -Headers @{ Origin = $corsOrigin; "Access-Control-Request-Method" = "POST"; "Access-Control-Request-Headers" = "authorization,content-type,idempotency-key" }
+        -Uri "http://127.0.0.1:18083/gateway/v1/applications/e2e-cors-probe/sessions" `
+        -Headers @{ Host = [string]$profile.ingress.runtimeHost; Origin = $corsOrigin; "Access-Control-Request-Method" = "POST"; "Access-Control-Request-Headers" = "authorization,content-type,idempotency-key" }
     if ([string]$corsProbe.Headers["Access-Control-Allow-Origin"] -ne $corsOrigin) {
         throw "RunId ingress CORS preflight did not allow $corsOrigin."
     }
-    Complete-Scenario "runid-browser-cors" @("runtime-config=http://$($profile.ingress.runtimeHost):18083", "allow-origin=$corsOrigin")
+    Complete-Scenario "runid-browser-cors" @("runtime-config=$runtimeBrowserUrl", "allow-origin=$corsOrigin", "ingress-host=$($profile.ingress.runtimeHost)")
+    $env:AGENTX_E2E_HOST_RESOLVER_RULES = "MAP $($profile.ingress.runtimeHost) 127.0.0.1"
     $env:AGENTX_E2E_ECHO_BASE_URL = "http://echo-mcp.$($namespaces.dependencies).svc.cluster.local:8090"
     $env:AGENTX_E2E_REMOTE_NODE_ENDPOINT = "http://echo-node.$($namespaces.dependencies).svc.cluster.local:8080"
     $env:AGENTX_E2E_LIGHTRAG_BASE_URL = "http://lightrag.$($namespaces.dependencies).svc.cluster.local:9621"
@@ -480,8 +498,15 @@ try {
     Invoke-Playwright "api-first" @("tests/v2-08-api-first.spec.ts")
     $script:runtimeContext = Get-Content -Raw -LiteralPath $runtimeContextPath | ConvertFrom-Json
     Invoke-Playwright "workflow4" @("tests/workflow4-closure.spec.ts", "--retries=1")
-    Invoke-Playwright "control-ui" @("tests/m2.1-control-plane.spec.ts", "tests/resource-grant-requests.spec.ts")
-    Invoke-Playwright "product-closure" @("tests/m6-workflow-studio.spec.ts", "tests/m7-business-closure.spec.ts", "tests/safe-deletion.spec.ts")
+    if (-not $SkipControlUi) {
+        Invoke-Playwright "control-ui" @("tests/m2.1-control-plane.spec.ts", "tests/resource-grant-requests.spec.ts")
+    }
+    $productTests = if ($SkipControlUi) {
+        @("tests/m6-workflow-studio.spec.ts", "--grep", "M6 Studio creates")
+    } else {
+        @("tests/m6-workflow-studio.spec.ts", "tests/m7-business-closure.spec.ts", "tests/safe-deletion.spec.ts")
+    }
+    Invoke-Playwright "product-closure" $productTests
     Invoke-FailureMatrix
     Invoke-PerformanceRegression
     foreach ($target in @("Control", "Runtime", "Observability")) {
@@ -509,6 +534,7 @@ finally {
     Remove-Item -LiteralPath $runtimeContextPath -Force -ErrorAction SilentlyContinue
     Remove-Item Env:AGENTX_V2_08_CONTEXT_OUTPUT -ErrorAction SilentlyContinue
     Remove-Item Env:AGENTX_E2E_RUNTIME_URL -ErrorAction SilentlyContinue
+    Remove-Item Env:AGENTX_E2E_HOST_RESOLVER_RULES -ErrorAction SilentlyContinue
     try { Restore-Development } catch { $errors.Add($_.Exception.Message) }
     try { Remove-OwnedMetricsClusterResources } catch { $errors.Add($_.Exception.Message) }
     if (Test-Path -LiteralPath $profilePath -PathType Leaf) {

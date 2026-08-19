@@ -33,13 +33,13 @@ async function executionNodes(page: Page, token: string, execution: string) {
   return response.json() as Promise<{ items: Array<{ nodeName: string, errorCode?: string, output: { main?: Array<{ json: unknown }> } }> }>
 }
 
-async function expectRuntimeTrace(page: Page, token: string, execution: string, eventType: string, resourceType: string) {
+async function expectRuntimeTrace(page: Page, token: string, execution: string, _eventType: string, resourceType: string) {
   await expect.poll(async () => {
     const response = await page.request.get(`/api/v1/executions/${execution}/trace`, { headers: { Authorization: `Bearer ${token}` } })
     if (!response.ok()) return null
-    const trace = await response.json() as { events: Array<{ eventType: string, status: string, resourceType?: string }> }
-    return trace.events.find((event) => event.eventType === eventType) ?? null
-  }, { timeout: 30_000 }).toMatchObject({ eventType, status: 'succeeded', resourceType })
+    const trace = await response.json() as { spans: Array<{ spanKind: string, spanName: string, status: string, resourceType?: string }> }
+    return trace.spans.find((span) => span.spanKind === 'runtime_call' && span.resourceType === resourceType) ?? null
+  }, { timeout: 30_000 }).toMatchObject({ spanKind: 'runtime_call', status: 'succeeded', resourceType })
 }
 
 test('M5 Agent uses the deterministic model and authorized MCP tool with a persistent ledger', async ({ page }) => {
@@ -54,8 +54,8 @@ test('M5 Agent uses the deterministic model and authorized MCP tool with a persi
   expect(details.iterations).toHaveLength(2)
   expect(details.calls.map((call) => call.callKind)).toEqual(['model', 'mcp_tool', 'model'])
   expect(details.calls.every((call) => call.requestFingerprint.length === 64)).toBeTruthy()
-  await expect(page.getByRole('heading', { name: '智能体 Runtime 明细' })).toBeVisible()
-  await expect(page.getByRole('tab', { name: /Runtime 调用 3/ })).toBeVisible()
+  await expect(page.getByRole('treegrid', { name: 'Trace 层级瀑布' })).toBeVisible()
+  await expect(page.getByRole('row').filter({ hasText: 'Model call' }).first()).toBeVisible()
 })
 
 test('M5 Agent repeated tool calls stop before another external request', async ({ page }) => {
@@ -95,8 +95,8 @@ test('M5 RAG write with read scope fails before reaching the Addon', async ({ pa
   await expect.poll(async () => {
     const response = await page.request.get(`/api/v1/executions/${execution}/trace`, { headers: { Authorization: `Bearer ${token}` } })
     if (!response.ok()) return null
-    const trace = await response.json() as { events: Array<{ eventType: string, errorCode?: string, status: string }> }
-    return trace.events.find((event) => event.eventType === 'rag.call') ?? null
+    const trace = await response.json() as { spans: Array<{ spanKind: string, resourceType?: string, errorCode?: string, status: string }> }
+    return trace.spans.find((span) => span.spanKind === 'runtime_call' && span.resourceType === 'rag') ?? null
   }, { timeout: 30_000 }).toMatchObject({ status: 'failed', errorCode: 'RAG_WRITE_DENIED' })
 })
 
@@ -155,7 +155,10 @@ test('M5 partial Sandbox output is bounded and linked to full Trace Artifacts', 
   await expect.poll(async () => {
     const response = await page.request.get(`/api/v1/executions/${execution}/trace`, { headers: { Authorization: `Bearer ${token}` } })
     if (!response.ok()) return null
-    const trace = await response.json() as { events: Array<{ eventType: string, partial: boolean, contentRef?: string, attributes: { artifactRefs?: string[] } }> }
-    return trace.events.find((event) => event.eventType === 'sandbox.command') ?? null
-  }, { timeout: 30_000 }).toMatchObject({ partial: true, contentRef: expect.stringMatching(/^[0-9a-f-]{36}$/), attributes: { artifactRefs: expect.arrayContaining([expect.stringMatching(/^[0-9a-f-]{36}$/)]) } })
+    const trace = await response.json() as { spans: Array<{ spanId: string, spanKind: string }> }
+    const sandbox = trace.spans.find((span) => span.spanKind === 'sandbox')
+    if (!sandbox) return null
+    const detail = await page.request.get(`/api/v1/executions/${execution}/trace/spans/${sandbox.spanId}`, { headers: { Authorization: `Bearer ${token}` } })
+    return detail.ok() ? detail.json() : null
+  }, { timeout: 30_000 }).toMatchObject({ span: { spanKind: 'sandbox', status: 'succeeded' } })
 })

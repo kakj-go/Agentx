@@ -249,6 +249,29 @@ async fn migrate_observability_locked(
             .execute()
             .await?;
     }
+    let trace_spans_applied = client
+        .query("SELECT count() FROM observability_schema_migrations WHERE version = 3")
+        .fetch_one::<u64>()
+        .await?;
+    if trace_spans_applied == 0 {
+        let rows = client
+            .query("SELECT count() FROM workflow_trace_events")
+            .fetch_one::<u64>()
+            .await?;
+        ensure!(
+            rows == 0,
+            "Trace Span migration refuses to reinterpret historical flat Trace data; rerun deployment with explicit -RecreateV2Data"
+        );
+        execute_clickhouse_migration(
+            client,
+            include_str!("../../../migrations/observability/0003_trace_spans.sql"),
+        )
+        .await?;
+        client
+            .query("INSERT INTO observability_schema_migrations (version) VALUES (3)")
+            .execute()
+            .await?;
+    }
     grant_observability_privileges(client, settings).await?;
     Ok(())
 }
@@ -479,7 +502,7 @@ async fn doctor_observability() -> Result<DoctorReport> {
         .await?;
     ensure!(exists == 1, "Observability schema is incomplete");
     let migration = client
-        .query("SELECT count() FROM observability_schema_migrations WHERE version=2")
+        .query("SELECT count() FROM observability_schema_migrations WHERE version=3")
         .fetch_one::<u64>()
         .await?;
     ensure!(
@@ -635,13 +658,13 @@ pub async fn bootstrap(plane: Plane) -> Result<()> {
             let client = ObservabilitySettings::from_env()?.clickhouse();
             let row = client
                 .query(
-                    "SELECT version FROM observability_schema_migrations WHERE version=2 LIMIT 1",
+                    "SELECT version FROM observability_schema_migrations WHERE version=3 LIMIT 1",
                 )
                 .fetch_optional::<u64>()
                 .await?;
             ensure!(
-                row == Some(2),
-                "Observability migration version 2 is not applied"
+                row == Some(3),
+                "Observability migration version 3 is not applied"
             );
         }
     }

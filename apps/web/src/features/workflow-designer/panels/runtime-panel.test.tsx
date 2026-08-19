@@ -20,10 +20,26 @@ describe('RuntimePanel execution rail', () => {
     expect(expand.closest('section')).toHaveClass('h-10')
     fireEvent.click(expand)
     expect(screen.getByRole('tab', { name: /Events|事件/ })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('tab', { name: 'Trace' }))
+    expect(screen.getByTestId('runtime-rail')).toHaveStyle({ height: '420px' })
     const select = await screen.findByRole('combobox', { name: /切换执行/ })
     await waitFor(() => expect(select).not.toBeDisabled())
     fireEvent.click(select)
     fireEvent.click(await screen.findByRole('option', { name: /成功/ }))
     expect(onExecutionChange).toHaveBeenCalledWith('execution-1')
+  })
+
+  it('does not shrink a manually enlarged rail when Trace opens', () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ items: [] }), { headers: { 'Content-Type': 'application/json' } })))
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(<QueryClientProvider client={client}><ToastProvider><RuntimePanel events={[]} executionId="execution-1" onExecutionChange={vi.fn()} workflowId="workflow-1" /></ToastProvider></QueryClientProvider>)
+
+    fireEvent.pointerDown(screen.getByRole('button', { name: /调整运行面板高度/ }), { clientY: 600 })
+    fireEvent.pointerMove(window, { clientY: 300 })
+    const enlargedHeight = screen.getByTestId('runtime-rail').style.height
+    expect(Number.parseFloat(enlargedHeight)).toBeGreaterThan(420)
+    fireEvent.click(screen.getByRole('tab', { name: 'Trace' }))
+    expect(screen.getByTestId('runtime-rail').style.height).toBe(enlargedHeight)
+    fireEvent.pointerUp(window)
   })
 })

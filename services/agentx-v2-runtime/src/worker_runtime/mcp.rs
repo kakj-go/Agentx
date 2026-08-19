@@ -151,6 +151,14 @@ impl RuntimeWorker {
         {
             return WorkerExecution::failed("RUNTIME_CALL_COMMIT_FAILED", error.to_string(), true);
         }
+        self.emit_runtime_call_trace(
+            call_id,
+            agentx_runtime_contracts::TraceEventKindV1::Finished,
+            "succeeded",
+            None,
+            Some(&payload),
+        )
+        .await;
         WorkerExecution::succeeded(payload)
     }
 

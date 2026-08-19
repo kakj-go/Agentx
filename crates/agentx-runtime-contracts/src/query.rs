@@ -456,9 +456,16 @@ pub struct TraceEventEnvelopeV1 {
     pub trace_id: Uuid,
     pub span_id: Uuid,
     pub parent_span_id: Option<Uuid>,
+    pub event_kind: TraceEventKindV1,
+    pub span_kind: TraceSpanKindV1,
+    pub span_name: String,
     pub node_execution_id: Option<Uuid>,
     pub attempt_id: Option<Uuid>,
+    pub agent_run_id: Option<Uuid>,
+    pub agent_iteration_id: Option<Uuid>,
     pub runtime_call_id: Option<Uuid>,
+    pub sandbox_lease_id: Option<Uuid>,
+    pub wait_id: Option<Uuid>,
     pub resource_type: Option<String>,
     pub resource_id: Option<Uuid>,
     pub resource_version: Option<String>,
@@ -469,12 +476,90 @@ pub struct TraceEventEnvelopeV1 {
     pub output_tokens: Option<u64>,
     pub cost_micros: u64,
     pub error_code: Option<String>,
+    pub error_message: Option<String>,
     pub attributes: Value,
     pub content_ref: Option<Uuid>,
+    pub content_role: Option<String>,
+    pub content_preview: Option<Value>,
     #[schemars(with = "String")]
     #[serde(with = "time::serde::rfc3339")]
     pub occurred_at: OffsetDateTime,
     pub content_hash: ContentHash,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TraceEventKindV1 {
+    Started,
+    Updated,
+    Finished,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TraceSpanKindV1 {
+    Execution,
+    Node,
+    Attempt,
+    AgentRun,
+    AgentIteration,
+    RuntimeCall,
+    Sandbox,
+    Wait,
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TraceSpanSummaryV1 {
+    pub span_id: Uuid,
+    pub parent_span_id: Option<Uuid>,
+    pub span_kind: TraceSpanKindV1,
+    pub span_name: String,
+    pub status: String,
+    #[schemars(with = "String")]
+    #[serde(with = "time::serde::rfc3339")]
+    pub started_at: OffsetDateTime,
+    #[schemars(with = "Option<String>")]
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub ended_at: Option<OffsetDateTime>,
+    pub duration_ms: Option<u64>,
+    pub node_execution_id: Option<Uuid>,
+    pub attempt_id: Option<Uuid>,
+    pub agent_run_id: Option<Uuid>,
+    pub agent_iteration_id: Option<Uuid>,
+    pub runtime_call_id: Option<Uuid>,
+    pub sandbox_lease_id: Option<Uuid>,
+    pub wait_id: Option<Uuid>,
+    pub resource_type: Option<String>,
+    pub resource_id: Option<Uuid>,
+    pub resource_version: Option<String>,
+    pub input_tokens: Option<u64>,
+    pub output_tokens: Option<u64>,
+    pub cost_micros: u64,
+    pub error_code: Option<String>,
+    pub error_message: Option<String>,
+    pub has_details: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TraceContentV1 {
+    pub role: String,
+    pub preview: Option<Value>,
+    pub content_ref: Option<Uuid>,
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TraceSpanDetailV1 {
+    #[serde(deserialize_with = "crate::deserialize_v1")]
+    pub api_version: u32,
+    pub execution_id: Uuid,
+    pub span: TraceSpanSummaryV1,
+    pub attributes: Value,
+    pub input: Option<TraceContentV1>,
+    pub output: Option<TraceContentV1>,
+    pub events: Vec<TraceEventEnvelopeV1>,
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
@@ -517,7 +602,10 @@ pub struct ExecutionTraceV1 {
     pub expected_watermark: u64,
     pub complete: bool,
     pub degraded: bool,
-    pub events: Vec<TraceEventEnvelopeV1>,
+    pub warning_code: Option<String>,
+    pub total_spans: u64,
+    pub next: Option<String>,
+    pub spans: Vec<TraceSpanSummaryV1>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]

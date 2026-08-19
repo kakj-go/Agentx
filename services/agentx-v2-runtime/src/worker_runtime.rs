@@ -25,9 +25,20 @@ use crate::{
     egress::{EgressRequestContext, ProviderHttpClient},
     engine::ClaimedWorkerAttempt,
     vault::RuntimeVault,
+    worker_support::{
+        openai_chat_completions_endpoint, provider_secret_header, raw_hash,
+        runtime_call_fingerprint, runtime_call_span_name, stable_id,
+    },
 };
 
 mod mcp;
+#[path = "worker_runtime_output.rs"]
+mod output;
+
+use output::{
+    effective_agent_budget, openai_chat_request, openai_execution_output, provider_usage,
+    provider_usage_detail, runtime_call_is_replayable, sandbox_execution_output,
+};
 
 pub struct WorkerExecution {
     pub status: WorkerResultStatusV1,
@@ -59,6 +70,18 @@ pub trait WorkerProvider: Send + Sync {
         headers: HeaderMap,
         body: &Value,
     ) -> Result<WorkerProviderResponse, WorkerProviderError>;
+
+    async fn post_sandbox_manager_json(
+        &self,
+        endpoint: &str,
+        context: EgressRequestContext,
+        timeout: std::time::Duration,
+        headers: HeaderMap,
+        body: &Value,
+    ) -> Result<WorkerProviderResponse, WorkerProviderError> {
+        self.post_json(endpoint, context, timeout, headers, body)
+            .await
+    }
 }
 
 #[async_trait::async_trait]
@@ -100,6 +123,50 @@ impl WorkerProvider for ProviderHttpClient {
                 })?,
         })
     }
+
+    async fn post_sandbox_manager_json(
+        &self,
+        endpoint: &str,
+        _context: EgressRequestContext,
+        timeout: std::time::Duration,
+        headers: HeaderMap,
+        body: &Value,
+    ) -> Result<WorkerProviderResponse, WorkerProviderError> {
+        let mut request = self
+            .post_sandbox_manager(endpoint, timeout)
+            .map_err(|error| WorkerProviderError::Denied(error.to_string()))?;
+        for (name, value) in headers {
+            if let Some(name) = name {
+                request = request.header(name, value);
+            }
+        }
+        let response =
+            request
+                .json(body)
+                .send()
+                .await
+                .map_err(|error| WorkerProviderError::Request {
+                    message: error.to_string(),
+                    is_connect: error.is_connect(),
+                })?;
+        Ok(WorkerProviderResponse {
+            status: response.status(),
+            headers: response.headers().clone(),
+            body: response
+                .bytes()
+                .await
+                .map_err(|error| WorkerProviderError::Request {
+                    message: error.to_string(),
+                    is_connect: error.is_connect(),
+                })?,
+        })
+    }
+}
+
+#[derive(Clone, Copy)]
+enum RuntimeHttpTransport {
+    Provider,
+    SandboxManager,
 }
 
 impl WorkerExecution {
@@ -206,6 +273,7 @@ impl RuntimeWorker {
         claim: &ClaimedWorkerAttempt,
         execution: WorkerExecution,
     ) -> anyhow::Result<WorkerResultV1> {
+        crate::trace_artifact::externalize_attempt_input(&self.pool, &self.objects, claim).await;
         let encoded = agentx_runtime_contracts::canonical_bytes(&execution.outputs)?;
         let (outputs, output_object) =
             if encoded.len() > agentx_runtime_contracts::INLINE_RESULT_LIMIT_BYTES as usize {
@@ -264,7 +332,7 @@ impl RuntimeWorker {
                     && row.try_get::<String, _>("status")? == "ready",
                 "attempt output object identity conflicts with existing content"
             );
-            return Ok(RuntimeObjectReferenceV1 {
+            let artifact = RuntimeObjectReferenceV1 {
                 tenant_id: claim.task.tenant_id,
                 storage_domain: StorageDomain::Runtime,
                 object_id,
@@ -272,7 +340,16 @@ impl RuntimeWorker {
                 content_hash,
                 size_bytes: encoded.len() as u64,
                 media_type: "application/json".into(),
-            });
+            };
+            crate::trace_artifact::register_artifact(
+                &self.pool,
+                &artifact,
+                claim.task.execution_id,
+                claim.task.node_execution_id,
+                &format!("trace_output:{}", claim.task.attempt_id),
+            )
+            .await?;
+            return Ok(artifact);
         }
         let path = ObjectPath::from(object_key.clone());
         self.objects
@@ -299,7 +376,7 @@ impl RuntimeWorker {
             let _ = self.objects.delete(&path).await;
             return Err(error.into());
         }
-        Ok(RuntimeObjectReferenceV1 {
+        let artifact = RuntimeObjectReferenceV1 {
             tenant_id: claim.task.tenant_id,
             storage_domain: StorageDomain::Runtime,
             object_id,
@@ -307,7 +384,16 @@ impl RuntimeWorker {
             content_hash,
             size_bytes: encoded.len() as u64,
             media_type: "application/json".into(),
-        })
+        };
+        crate::trace_artifact::register_artifact(
+            &self.pool,
+            &artifact,
+            claim.task.execution_id,
+            claim.task.node_execution_id,
+            &format!("trace_output:{}", claim.task.attempt_id),
+        )
+        .await?;
+        Ok(artifact)
     }
 
     fn execute_builtin(&self, claim: &ClaimedWorkerAttempt) -> WorkerExecution {
@@ -321,12 +407,13 @@ impl RuntimeWorker {
         let before_hash = raw_hash(&state);
         let budget = effective_agent_budget(&claim.node_parameters);
         if let Err(error) = sqlx::query(
-            "INSERT INTO agent_runs(id,tenant_id,execution_id,node_execution_id,status,budget_json,state_hash) VALUES(?,?,?,?,'running',?,?) ON DUPLICATE KEY UPDATE id=id",
+            "INSERT INTO agent_runs(id,tenant_id,execution_id,node_execution_id,attempt_id,status,budget_json,state_hash) VALUES(?,?,?,?,?,'running',?,?) ON DUPLICATE KEY UPDATE id=id",
         )
         .bind(run_id)
         .bind(claim.task.tenant_id)
         .bind(claim.task.execution_id)
         .bind(claim.task.node_execution_id)
+        .bind(claim.task.attempt_id)
         .bind(&budget)
         .bind(&before_hash)
         .execute(&self.pool)
@@ -334,6 +421,15 @@ impl RuntimeWorker {
         {
             return WorkerExecution::failed("AGENT_STATE_UNAVAILABLE", error.to_string(), false);
         }
+        self.emit_agent_span(
+            run_id,
+            None,
+            agentx_runtime_contracts::TraceEventKindV1::Started,
+            "running",
+            None,
+            Some(&state),
+        )
+        .await;
         let maximum_iterations = budget["maxIterations"].as_u64().unwrap_or(1) as u32;
         let maximum_tokens = budget["maxTokens"].as_u64().unwrap_or(4096);
         let maximum_cost = budget["maxCostMicros"].as_u64().unwrap_or(1_000_000);
@@ -375,6 +471,15 @@ impl RuntimeWorker {
             {
                 return WorkerExecution::failed("AGENT_STATE_UNAVAILABLE", error.to_string(), false);
             }
+            self.emit_agent_span(
+                run_id,
+                Some(iteration_id),
+                agentx_runtime_contracts::TraceEventKindV1::Started,
+                "running",
+                None,
+                Some(&state),
+            )
+            .await;
             let model_result = self
                 .execute_provider_call(claim, model, state.clone(), iteration * 2)
                 .await;
@@ -539,6 +644,8 @@ impl RuntimeWorker {
         .bind(iteration_id)
         .execute(&self.pool)
         .await;
+        self.emit_agent_iteration_finish(iteration_id, status, stop_reason)
+            .await;
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -566,6 +673,15 @@ impl RuntimeWorker {
         .bind(stop_reason)
         .bind(run_id)
         .execute(&self.pool)
+        .await;
+        self.emit_agent_span(
+            run_id,
+            None,
+            agentx_runtime_contracts::TraceEventKindV1::Finished,
+            status,
+            (status == "failed").then_some(stop_reason),
+            None,
+        )
         .await;
     }
 
@@ -1067,9 +1183,8 @@ impl RuntimeWorker {
                     manager.trim_end_matches('/')
                 );
                 let execution = self
-                    .call_http(
+                    .call_sandbox_manager_http(
                         claim,
-                        "sandbox",
                         &endpoint,
                         serde_json::to_value(crate::sandbox::SandboxExecuteRequestV1 {
                             api_version: 1,
@@ -1086,8 +1201,6 @@ impl RuntimeWorker {
                         })
                         .unwrap_or(Value::Null),
                         call_index,
-                        None,
-                        "authorization",
                         Some(binding),
                     )
                     .await;
@@ -1125,6 +1238,55 @@ impl RuntimeWorker {
         secret: Option<&agentx_runtime_contracts::VaultSecretReferenceV1>,
         secret_header: &'static str,
         binding: Option<&RuntimeResourceBindingV1>,
+    ) -> WorkerExecution {
+        self.call_http_with_transport(
+            claim,
+            kind,
+            endpoint,
+            request,
+            call_index,
+            secret,
+            secret_header,
+            binding,
+            RuntimeHttpTransport::Provider,
+        )
+        .await
+    }
+
+    async fn call_sandbox_manager_http(
+        &self,
+        claim: &ClaimedWorkerAttempt,
+        endpoint: &str,
+        request: Value,
+        call_index: u32,
+        binding: Option<&RuntimeResourceBindingV1>,
+    ) -> WorkerExecution {
+        self.call_http_with_transport(
+            claim,
+            "sandbox",
+            endpoint,
+            request,
+            call_index,
+            None,
+            "authorization",
+            binding,
+            RuntimeHttpTransport::SandboxManager,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn call_http_with_transport(
+        &self,
+        claim: &ClaimedWorkerAttempt,
+        kind: &str,
+        endpoint: &str,
+        request: Value,
+        call_index: u32,
+        secret: Option<&agentx_runtime_contracts::VaultSecretReferenceV1>,
+        secret_header: &'static str,
+        binding: Option<&RuntimeResourceBindingV1>,
+        transport: RuntimeHttpTransport,
     ) -> WorkerExecution {
         let fingerprint = runtime_call_fingerprint(kind, &request);
         let call_id = stable_id(
@@ -1206,16 +1368,25 @@ impl RuntimeWorker {
                 false,
             );
         }
-        let response = match self
-            .provider
-            .post_json(
+        let context =
+            EgressRequestContext::execution(claim.task.tenant_id, claim.task.execution_id);
+        let response = match match transport {
+            RuntimeHttpTransport::Provider => self.provider.post_json(
                 endpoint,
-                EgressRequestContext::execution(claim.task.tenant_id, claim.task.execution_id),
+                context,
                 std::time::Duration::from_secs(300),
                 headers,
                 &request,
-            )
-            .await
+            ),
+            RuntimeHttpTransport::SandboxManager => self.provider.post_sandbox_manager_json(
+                endpoint,
+                context,
+                std::time::Duration::from_secs(300),
+                headers,
+                &request,
+            ),
+        }
+        .await
         {
             Ok(response) => response,
             Err(WorkerProviderError::Denied(message)) => {
@@ -1272,16 +1443,27 @@ impl RuntimeWorker {
                 .await;
         }
         if let Err(error) = sqlx::query(
-            "UPDATE runtime_calls SET status='succeeded',provider_request_id=?,response_json=?,ended_at=UTC_TIMESTAMP(6) WHERE id=? AND status='sent'",
+            "UPDATE runtime_calls SET status='succeeded',provider_request_id=?,response_json=?,input_tokens=?,output_tokens=?,cost_micros=?,ended_at=UTC_TIMESTAMP(6) WHERE id=? AND status='sent'",
         )
         .bind(provider_request_id)
         .bind(&payload)
+        .bind(provider_usage_detail(&payload).0)
+        .bind(provider_usage_detail(&payload).1)
+        .bind(provider_usage_detail(&payload).2)
         .bind(call_id)
         .execute(&self.pool)
         .await
         {
             return WorkerExecution::failed("RUNTIME_CALL_COMMIT_FAILED", error.to_string(), true);
         }
+        self.emit_runtime_call_trace(
+            call_id,
+            agentx_runtime_contracts::TraceEventKindV1::Finished,
+            "succeeded",
+            None,
+            Some(&payload),
+        )
+        .await;
         WorkerExecution::succeeded(payload)
     }
 
@@ -1338,13 +1520,15 @@ impl RuntimeWorker {
             ));
         }
         sqlx::query(
-            "INSERT INTO runtime_calls(id,tenant_id,execution_id,node_execution_id,attempt_id,call_index,call_kind,idempotency_key,request_fingerprint,resource_type,resource_id,resource_version_id,side_effect,status,request_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,'reserved',?)",
+            "INSERT INTO runtime_calls(id,tenant_id,execution_id,node_execution_id,attempt_id,agent_run_id,iteration_index,call_index,call_kind,idempotency_key,request_fingerprint,resource_type,resource_id,resource_version_id,side_effect,status,request_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'reserved',?)",
         )
         .bind(call_id)
         .bind(claim.task.tenant_id)
         .bind(claim.task.execution_id)
         .bind(claim.task.node_execution_id)
         .bind(claim.task.attempt_id)
+        .bind((claim.node_type == "agent").then(|| stable_id(claim.task.attempt_id, b"agent-run")))
+        .bind(if claim.node_type == "agent" { call_index / 2 } else { 0 })
         .bind(call_index)
         .bind(kind)
         .bind(idempotency_key)
@@ -1360,6 +1544,14 @@ impl RuntimeWorker {
         tx.commit().await.map_err(|error| {
             WorkerExecution::failed("RUNTIME_CALL_STATE_UNAVAILABLE", error.to_string(), false)
         })?;
+        self.emit_runtime_call_trace(
+            call_id,
+            agentx_runtime_contracts::TraceEventKindV1::Started,
+            "reserved",
+            None,
+            Some(request),
+        )
+        .await;
         Ok(None)
     }
 
@@ -1380,7 +1572,262 @@ impl RuntimeWorker {
         .bind(call_id)
         .execute(&self.pool)
         .await;
+        self.emit_runtime_call_trace(
+            call_id,
+            agentx_runtime_contracts::TraceEventKindV1::Finished,
+            if outcome_unknown {
+                "outcome_unknown"
+            } else {
+                "failed"
+            },
+            Some(code),
+            None,
+        )
+        .await;
         WorkerExecution::failed(code, message, outcome_unknown)
+    }
+
+    async fn emit_runtime_call_trace(
+        &self,
+        call_id: Uuid,
+        event_kind: agentx_runtime_contracts::TraceEventKindV1,
+        status: &str,
+        error_code: Option<&str>,
+        content: Option<&Value>,
+    ) {
+        let row = match sqlx::query("SELECT tenant_id,execution_id,node_execution_id,attempt_id,agent_run_id,iteration_index,call_kind,resource_type,resource_id,resource_version_id,input_tokens,output_tokens,cost_micros,error_message FROM runtime_calls WHERE id=?")
+            .bind(call_id)
+            .fetch_optional(&self.pool)
+            .await
+        {
+            Ok(Some(row)) => row,
+            Ok(None) => return,
+            Err(error) => {
+                tracing::warn!(%error, %call_id, "Runtime Call Trace lookup failed");
+                return;
+            }
+        };
+        let tenant_id = match row.try_get::<Uuid, _>("tenant_id") {
+            Ok(value) => value,
+            Err(_) => return,
+        };
+        let execution_id = match row.try_get::<Uuid, _>("execution_id") {
+            Ok(value) => value,
+            Err(_) => return,
+        };
+        let attempt_id = match row.try_get::<Uuid, _>("attempt_id") {
+            Ok(value) => value,
+            Err(_) => return,
+        };
+        let kind = row
+            .try_get::<String, _>("call_kind")
+            .unwrap_or_else(|_| "runtime".into());
+        let agent_run_id = row
+            .try_get::<Option<Uuid>, _>("agent_run_id")
+            .ok()
+            .flatten();
+        let agent_iteration_id = agent_run_id.map(|run_id| {
+            let index = row.try_get::<u32, _>("iteration_index").unwrap_or_default();
+            stable_id(run_id, format!("iteration-{index}").as_bytes())
+        });
+        let parent = agent_iteration_id
+            .map(|id| {
+                (
+                    id,
+                    agentx_runtime_contracts::TraceSpanKindV1::AgentIteration,
+                )
+            })
+            .unwrap_or((
+                attempt_id,
+                agentx_runtime_contracts::TraceSpanKindV1::Attempt,
+            ));
+        let mut trace = crate::trace_delivery::TraceDraft::span(
+            tenant_id,
+            execution_id,
+            call_id,
+            Some(parent),
+            agentx_runtime_contracts::TraceSpanKindV1::RuntimeCall,
+            runtime_call_span_name(&kind),
+            event_kind,
+            format!(
+                "runtime_call.{}",
+                if event_kind == agentx_runtime_contracts::TraceEventKindV1::Finished {
+                    "finished"
+                } else {
+                    "started"
+                }
+            ),
+            status,
+        );
+        trace.node_execution_id = row.try_get("node_execution_id").ok();
+        trace.attempt_id = Some(attempt_id);
+        trace.agent_run_id = agent_run_id;
+        trace.agent_iteration_id = agent_iteration_id;
+        trace.runtime_call_id = Some(call_id);
+        trace.resource_type = row.try_get("resource_type").ok();
+        trace.resource_id = row.try_get("resource_id").ok();
+        trace.resource_version = row
+            .try_get::<Option<Uuid>, _>("resource_version_id")
+            .ok()
+            .flatten()
+            .map(|value| value.to_string());
+        trace.input_tokens = row.try_get("input_tokens").ok();
+        trace.output_tokens = row.try_get("output_tokens").ok();
+        trace.cost_micros = row.try_get("cost_micros").unwrap_or_default();
+        trace.error_code = error_code.map(str::to_owned);
+        trace.error_message = row.try_get("error_message").ok();
+        trace.content_role = Some(
+            if event_kind == agentx_runtime_contracts::TraceEventKindV1::Started {
+                "input"
+            } else {
+                "output"
+            }
+            .into(),
+        );
+        trace.content_preview = content.and_then(crate::trace_delivery::bounded_preview);
+        let Ok(mut tx) = self.pool.begin().await else {
+            return;
+        };
+        if let Err(error) = crate::trace_delivery::enqueue(&mut tx, trace).await {
+            tracing::warn!(%error, %call_id, "Runtime Call Trace enqueue failed");
+            return;
+        }
+        if let Err(error) = tx.commit().await {
+            tracing::warn!(%error, %call_id, "Runtime Call Trace commit failed");
+        }
+    }
+
+    async fn emit_agent_iteration_finish(
+        &self,
+        iteration_id: Uuid,
+        status: &str,
+        stop_reason: &str,
+    ) {
+        let run_id =
+            sqlx::query_scalar::<_, Uuid>("SELECT agent_run_id FROM agent_iterations WHERE id=?")
+                .bind(iteration_id)
+                .fetch_optional(&self.pool)
+                .await
+                .ok()
+                .flatten();
+        if let Some(run_id) = run_id {
+            self.emit_agent_span(
+                run_id,
+                Some(iteration_id),
+                agentx_runtime_contracts::TraceEventKindV1::Finished,
+                status,
+                (status == "failed").then_some(stop_reason),
+                None,
+            )
+            .await;
+        }
+    }
+
+    async fn emit_agent_span(
+        &self,
+        run_id: Uuid,
+        iteration_id: Option<Uuid>,
+        event_kind: agentx_runtime_contracts::TraceEventKindV1,
+        status: &str,
+        error_code: Option<&str>,
+        content: Option<&Value>,
+    ) {
+        let row = match sqlx::query("SELECT tenant_id,execution_id,node_execution_id,attempt_id,input_tokens,output_tokens,cost_micros,stop_reason FROM agent_runs WHERE id=?")
+            .bind(run_id)
+            .fetch_optional(&self.pool)
+            .await
+        {
+            Ok(Some(row)) => row,
+            _ => return,
+        };
+        let Ok(tenant_id) = row.try_get::<Uuid, _>("tenant_id") else {
+            return;
+        };
+        let Ok(execution_id) = row.try_get::<Uuid, _>("execution_id") else {
+            return;
+        };
+        let Ok(attempt_id) = row.try_get::<Uuid, _>("attempt_id") else {
+            return;
+        };
+        let (entity_id, parent, kind, name, event_type) = if let Some(iteration_id) = iteration_id {
+            let index = sqlx::query_scalar::<_, u32>(
+                "SELECT iteration_index FROM agent_iterations WHERE id=?",
+            )
+            .bind(iteration_id)
+            .fetch_optional(&self.pool)
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+            (
+                iteration_id,
+                (run_id, agentx_runtime_contracts::TraceSpanKindV1::AgentRun),
+                agentx_runtime_contracts::TraceSpanKindV1::AgentIteration,
+                format!("Iteration {}", index + 1),
+                "agent_iteration",
+            )
+        } else {
+            (
+                run_id,
+                (
+                    attempt_id,
+                    agentx_runtime_contracts::TraceSpanKindV1::Attempt,
+                ),
+                agentx_runtime_contracts::TraceSpanKindV1::AgentRun,
+                "Agent run".into(),
+                "agent_run",
+            )
+        };
+        let mut trace = crate::trace_delivery::TraceDraft::span(
+            tenant_id,
+            execution_id,
+            entity_id,
+            Some(parent),
+            kind,
+            name,
+            event_kind,
+            format!(
+                "{event_type}.{}",
+                if event_kind == agentx_runtime_contracts::TraceEventKindV1::Finished {
+                    "finished"
+                } else {
+                    "started"
+                }
+            ),
+            status,
+        );
+        trace.node_execution_id = row.try_get("node_execution_id").ok();
+        trace.attempt_id = Some(attempt_id);
+        trace.agent_run_id = Some(run_id);
+        trace.agent_iteration_id = iteration_id;
+        trace.input_tokens = row.try_get("input_tokens").ok();
+        trace.output_tokens = row.try_get("output_tokens").ok();
+        trace.cost_micros = row.try_get("cost_micros").unwrap_or_default();
+        trace.error_code = error_code.map(str::to_owned);
+        trace.error_message = (status == "failed")
+            .then(|| {
+                row.try_get::<Option<String>, _>("stop_reason")
+                    .ok()
+                    .flatten()
+            })
+            .flatten();
+        trace.attributes =
+            json!({"stopReason":row.try_get::<Option<String>, _>("stop_reason").ok().flatten()});
+        trace.content_role = Some(
+            if event_kind == agentx_runtime_contracts::TraceEventKindV1::Started {
+                "input"
+            } else {
+                "output"
+            }
+            .into(),
+        );
+        trace.content_preview = content.and_then(crate::trace_delivery::bounded_preview);
+        let Ok(mut tx) = self.pool.begin().await else {
+            return;
+        };
+        if crate::trace_delivery::enqueue(&mut tx, trace).await.is_ok() {
+            let _ = tx.commit().await;
+        }
     }
 }
 
@@ -1494,478 +1941,6 @@ fn successful_value(execution: &WorkerExecution) -> Option<Value> {
         .map(|item| item.json.clone())
 }
 
-fn openai_chat_request(
-    claim: &ClaimedWorkerAttempt,
-    model: &str,
-    price_version: &str,
-    input: &Value,
-) -> Value {
-    let mut messages = Vec::new();
-    if let Some(system) = claim
-        .node_parameters
-        .get("systemPrompt")
-        .and_then(Value::as_str)
-        .filter(|value| !value.is_empty())
-    {
-        messages.push(json!({"role":"system","content":system}));
-    }
-    let content = claim
-        .node_parameters
-        .get("userQuestion")
-        .cloned()
-        .or_else(|| input.get("question").cloned())
-        .unwrap_or_else(|| input.clone());
-    messages.push(json!({"role":"user","content":json_text(&content)}));
-    if let Some(tool) = input.get("tool") {
-        messages.push(json!({
-            "role":"tool",
-            "tool_call_id":"agentx-runtime-tool",
-            "content":json_text(tool),
-        }));
-    }
-    let mut request = json!({
-        "model":model,
-        "messages":messages,
-        "stream":false,
-        "metadata":{"priceVersion":price_version},
-    });
-    if let Some(tool) = mcp_tool_binding(&claim.resources)
-        && let RuntimeResourceConfigurationV1::Mcp { tool_name, .. } = &tool.configuration
-    {
-        request["tools"] = json!([{
-            "type":"function",
-            "function":{
-                "name":tool_name,
-                "description":"Runtime-pinned MCP tool",
-                "parameters":{"type":"object","additionalProperties":true},
-            }
-        }]);
-    }
-    request
-}
-
-fn openai_execution_output(execution: WorkerExecution) -> WorkerExecution {
-    if execution.status != WorkerResultStatusV1::Succeeded {
-        return execution;
-    }
-    let Some(response) = successful_value(&execution) else {
-        return WorkerExecution::failed(
-            "PROVIDER_RESPONSE_INVALID",
-            "OpenAI-compatible response is empty",
-            false,
-        );
-    };
-    let Some(message) = response.pointer("/choices/0/message") else {
-        return WorkerExecution::failed(
-            "PROVIDER_RESPONSE_INVALID",
-            "OpenAI-compatible response has no assistant message",
-            false,
-        );
-    };
-    let usage = response.get("usage").cloned().unwrap_or_else(|| json!({}));
-    let normalized_usage = json!({
-        "inputTokens":usage.get("prompt_tokens").and_then(Value::as_u64).unwrap_or(0),
-        "outputTokens":usage.get("completion_tokens").and_then(Value::as_u64).unwrap_or(0),
-        "tokens":usage.get("total_tokens").and_then(Value::as_u64).unwrap_or(0),
-        "costMicros":0,
-    });
-    if let Some(arguments) = message
-        .pointer("/tool_calls/0/function/arguments")
-        .and_then(Value::as_str)
-    {
-        let arguments = serde_json::from_str(arguments).unwrap_or_else(|_| {
-            json!({
-                "value":arguments,
-            })
-        });
-        return WorkerExecution::succeeded(json!({
-            "toolCall":arguments,
-            "usage":normalized_usage,
-        }));
-    }
-    let content = message.get("content").cloned().unwrap_or(Value::Null);
-    WorkerExecution::succeeded(json!({
-        "done":true,
-        "answer":content,
-        "finalAnswer":content,
-        "usage":normalized_usage,
-    }))
-}
-
-fn json_text(value: &Value) -> String {
-    value
-        .as_str()
-        .map(str::to_owned)
-        .unwrap_or_else(|| value.to_string())
-}
-
-fn openai_chat_completions_endpoint(endpoint: &str) -> String {
-    let endpoint = endpoint.trim_end_matches('/');
-    if endpoint.ends_with("/chat/completions") {
-        endpoint.to_owned()
-    } else {
-        format!("{endpoint}/chat/completions")
-    }
-}
-
-fn provider_secret_header(value: &[u8], header: &str) -> Vec<u8> {
-    if header != "authorization" || value.starts_with(b"Bearer ") || value.starts_with(b"Basic ") {
-        return value.to_vec();
-    }
-    let mut header_value = b"Bearer ".to_vec();
-    header_value.extend_from_slice(value);
-    header_value
-}
-
-fn provider_usage(value: &Value) -> (u64, u64) {
-    let usage = value.get("usage").unwrap_or(value);
-    let input = usage
-        .get("inputTokens")
-        .or_else(|| usage.get("promptTokens"))
-        .and_then(Value::as_u64)
-        .unwrap_or(0);
-    let output = usage
-        .get("outputTokens")
-        .or_else(|| usage.get("completionTokens"))
-        .and_then(Value::as_u64)
-        .unwrap_or(0);
-    let total = usage
-        .get("tokens")
-        .or_else(|| usage.get("totalTokens"))
-        .and_then(Value::as_u64)
-        .unwrap_or_else(|| input.saturating_add(output));
-    let cost = usage.get("costMicros").and_then(Value::as_u64).unwrap_or(0);
-    (total, cost)
-}
-
-fn effective_agent_budget(parameters: &Value) -> Value {
-    let nested = parameters.get("budget");
-    let maximum_iterations = nested
-        .and_then(|budget| budget.get("maxIterations"))
-        .or_else(|| parameters.get("maxIterations"))
-        .and_then(Value::as_u64)
-        .unwrap_or(1)
-        .clamp(1, 100);
-    let maximum_tokens = nested
-        .and_then(|budget| budget.get("maxTokens"))
-        .or_else(|| parameters.get("maxTotalTokens"))
-        .and_then(Value::as_u64)
-        .unwrap_or(4096);
-    let maximum_cost = nested
-        .and_then(|budget| budget.get("maxCostMicros"))
-        .or_else(|| parameters.get("maxCostMicros"))
-        .and_then(Value::as_u64)
-        .unwrap_or(1_000_000);
-    json!({
-        "maxIterations": maximum_iterations,
-        "maxTokens": maximum_tokens,
-        "maxCostMicros": maximum_cost,
-    })
-}
-
-fn raw_hash(value: &Value) -> String {
-    let bytes = agentx_runtime_contracts::canonical_bytes(value).unwrap_or_default();
-    format!("{:x}", Sha256::digest(bytes))
-}
-
-fn runtime_call_fingerprint(kind: &str, request: &Value) -> String {
-    if kind != "sandbox" {
-        return raw_hash(request);
-    }
-    let mut stable_request = request.clone();
-    if let Some(object) = stable_request.as_object_mut() {
-        // These fields prove the current Attempt Lease to Sandbox Manager, but
-        // they are not part of the immutable provider operation. A replacement
-        // Worker must be able to replay the already committed Runtime Call
-        // response after the Attempt fencing token advances.
-        object.remove("workerId");
-        object.remove("fencingToken");
-    }
-    raw_hash(&stable_request)
-}
-
-fn runtime_call_is_replayable(status: &str, side_effect: &str) -> bool {
-    status == "reserved" || (status == "sent" && matches!(side_effect, "none" | "idempotent"))
-}
-
-fn sandbox_execution_output(execution: WorkerExecution) -> WorkerExecution {
-    if execution.status != WorkerResultStatusV1::Succeeded {
-        return execution;
-    }
-    let Some(response) = successful_value(&execution) else {
-        return WorkerExecution::failed(
-            "PROVIDER_RESPONSE_INVALID",
-            "Sandbox Manager returned no response payload",
-            false,
-        );
-    };
-    let Some(output) = response.get("output").cloned() else {
-        return WorkerExecution::failed(
-            "PROVIDER_RESPONSE_INVALID",
-            "Sandbox Manager response has no output",
-            false,
-        );
-    };
-    WorkerExecution::succeeded(output)
-}
-
-fn stable_id(namespace: Uuid, label: &[u8]) -> Uuid {
-    let mut hasher = Sha256::new();
-    hasher.update(namespace.as_bytes());
-    hasher.update(label);
-    let digest = hasher.finalize();
-    let mut bytes = [0_u8; 16];
-    bytes.copy_from_slice(&digest[..16]);
-    Uuid::from_bytes(bytes)
-}
-
 #[cfg(test)]
-mod tests {
-    use super::{
-        WorkerExecution, effective_agent_budget, execute_builtin_node, mcp_tool_binding,
-        openai_chat_completions_endpoint, openai_execution_output, provider_secret_header,
-        runtime_call_fingerprint, runtime_call_is_replayable, sandbox_execution_output,
-    };
-    use agentx_runtime_contracts::{
-        ContentHash, RuntimeResourceBindingV1, RuntimeResourceConfigurationV1,
-        RuntimeResourceKindV1, WorkerResultStatusV1,
-    };
-    use serde_json::json;
-    use uuid::Uuid;
-
-    fn mcp_binding(resource_id: Uuid, tool_name: &str) -> RuntimeResourceBindingV1 {
-        RuntimeResourceBindingV1 {
-            resource_kind: RuntimeResourceKindV1::Mcp,
-            resource_id,
-            resource_version: "1".into(),
-            state_epoch: 1,
-            content_hash: ContentHash::parse(
-                "sha256:0000000000000000000000000000000000000000000000000000000000000000",
-            )
-            .unwrap(),
-            configuration: RuntimeResourceConfigurationV1::Mcp {
-                endpoint: "http://mcp.example/mcp".into(),
-                tool_name: tool_name.into(),
-                tool_version: "1".into(),
-                input_schema_hash: ContentHash::parse(
-                    "sha256:1111111111111111111111111111111111111111111111111111111111111111",
-                )
-                .unwrap(),
-                credential: None,
-            },
-            object_ids: Vec::new(),
-        }
-    }
-
-    #[test]
-    fn mcp_server_closure_never_shadows_the_executable_tool_binding() {
-        let server = mcp_binding(Uuid::now_v7(), "__server__");
-        let tool_id = Uuid::now_v7();
-        let tool = mcp_binding(tool_id, "echo");
-        let resources = vec![server, tool];
-
-        let selected = mcp_tool_binding(&resources).expect("executable MCP tool binding");
-        assert_eq!(selected.resource_id, tool_id);
-        assert!(matches!(
-            &selected.configuration,
-            RuntimeResourceConfigurationV1::Mcp { tool_name, .. } if tool_name == "echo"
-        ));
-    }
-
-    #[test]
-    fn current_agent_manifest_budget_fields_override_defaults() {
-        assert_eq!(
-            effective_agent_budget(&json!({
-                "maxIterations": 3,
-                "maxTotalTokens": 1000,
-                "maxCostMicros": 1000,
-            })),
-            json!({
-                "maxIterations": 3,
-                "maxTokens": 1000,
-                "maxCostMicros": 1000,
-            })
-        );
-    }
-
-    #[test]
-    fn stop_and_error_is_a_failed_worker_result_with_frozen_parameters() {
-        let result = execute_builtin_node(
-            "stop_and_error",
-            &json!({"code":"EXPECTED_STOP","message":"expected message"}),
-            json!({"ignored":true}),
-        );
-        assert_eq!(result.status, WorkerResultStatusV1::Failed);
-        assert_eq!(result.error_code.as_deref(), Some("EXPECTED_STOP"));
-        assert_eq!(result.error_message.as_deref(), Some("expected message"));
-    }
-
-    #[test]
-    fn set_builtin_uses_resolved_values_and_keep_only_set() {
-        let result = execute_builtin_node(
-            "set",
-            &json!({"values":{"answer":"resolved"},"keepOnlySet":true}),
-            json!({"input":"not copied"}),
-        );
-        assert_eq!(result.status, WorkerResultStatusV1::Succeeded);
-        assert_eq!(result.outputs["main"][0].json, json!({"answer":"resolved"}));
-    }
-
-    #[test]
-    fn explicit_nested_agent_budget_takes_precedence() {
-        assert_eq!(
-            effective_agent_budget(&json!({
-                "budget": {
-                    "maxIterations": 4,
-                    "maxTokens": 2000,
-                    "maxCostMicros": 3000,
-                },
-                "maxIterations": 2,
-                "maxTotalTokens": 500,
-                "maxCostMicros": 700,
-            })),
-            json!({
-                "maxIterations": 4,
-                "maxTokens": 2000,
-                "maxCostMicros": 3000,
-            })
-        );
-    }
-
-    #[test]
-    fn sandbox_runtime_call_fingerprint_ignores_attempt_lease_identity() {
-        let first = json!({
-            "apiVersion": 1,
-            "attemptId": "018f0000-0000-7000-8000-000000000001",
-            "workerId": "018f0000-0000-7000-8000-000000000002",
-            "fencingToken": 1,
-            "idempotencyKey": "sandbox:execute:attempt",
-            "input": {"message": "stable"},
-        });
-        let replacement = json!({
-            "apiVersion": 1,
-            "attemptId": "018f0000-0000-7000-8000-000000000001",
-            "workerId": "018f0000-0000-7000-8000-000000000003",
-            "fencingToken": 2,
-            "idempotencyKey": "sandbox:execute:attempt",
-            "input": {"message": "stable"},
-        });
-        assert_eq!(
-            runtime_call_fingerprint("sandbox", &first),
-            runtime_call_fingerprint("sandbox", &replacement),
-        );
-        let changed = json!({
-            "apiVersion": 1,
-            "attemptId": "018f0000-0000-7000-8000-000000000001",
-            "workerId": "018f0000-0000-7000-8000-000000000003",
-            "fencingToken": 2,
-            "idempotencyKey": "sandbox:execute:attempt",
-            "input": {"message": "changed"},
-        });
-        assert_ne!(
-            runtime_call_fingerprint("sandbox", &first),
-            runtime_call_fingerprint("sandbox", &changed),
-        );
-    }
-
-    #[test]
-    fn only_uncommitted_or_idempotent_sent_runtime_calls_are_replayable() {
-        assert!(runtime_call_is_replayable("reserved", "irreversible"));
-        assert!(runtime_call_is_replayable("sent", "none"));
-        assert!(runtime_call_is_replayable("sent", "idempotent"));
-        assert!(!runtime_call_is_replayable("sent", "irreversible"));
-        assert!(!runtime_call_is_replayable("outcome_unknown", "none"));
-        assert!(!runtime_call_is_replayable("failed", "none"));
-    }
-
-    #[test]
-    fn sandbox_manager_envelope_is_not_exposed_as_node_output() {
-        let execution = sandbox_execution_output(WorkerExecution::succeeded(json!({
-            "apiVersion": 1,
-            "leaseId": "018f0000-0000-7000-8000-000000000001",
-            "sandboxId": "sandbox-v2",
-            "replayed": true,
-            "output": {"stdout": "agentx-v2-04", "exitCode": 0},
-        })));
-        assert_eq!(execution.status, WorkerResultStatusV1::Succeeded);
-        assert_eq!(
-            execution.outputs["main"][0].json,
-            json!({"stdout": "agentx-v2-04", "exitCode": 0}),
-        );
-    }
-
-    #[test]
-    fn openai_compatible_endpoint_targets_chat_completions_once() {
-        assert_eq!(
-            openai_chat_completions_endpoint("https://provider.example/v1"),
-            "https://provider.example/v1/chat/completions"
-        );
-        assert_eq!(
-            openai_chat_completions_endpoint("https://provider.example/v1/chat/completions/"),
-            "https://provider.example/v1/chat/completions"
-        );
-    }
-
-    #[test]
-    fn provider_authorization_secret_adds_bearer_only_when_needed() {
-        assert_eq!(
-            provider_secret_header(b"raw-secret", "authorization"),
-            b"Bearer raw-secret"
-        );
-        assert_eq!(
-            provider_secret_header(b"Bearer token", "authorization"),
-            b"Bearer token"
-        );
-        assert_eq!(
-            provider_secret_header(b"Basic token", "authorization"),
-            b"Basic token"
-        );
-        assert_eq!(
-            provider_secret_header(b"raw-secret", "x-api-key"),
-            b"raw-secret"
-        );
-    }
-
-    #[test]
-    fn openai_tool_call_is_normalized_for_the_agent_loop() {
-        let execution = openai_execution_output(WorkerExecution::succeeded(json!({
-            "choices": [{
-                "message": {
-                    "role": "assistant",
-                    "tool_calls": [{
-                        "id": "call-1",
-                        "type": "function",
-                        "function": {"name": "echo", "arguments": "{\"text\":\"hello\"}"}
-                    }]
-                }
-            }],
-            "usage": {"prompt_tokens": 11, "completion_tokens": 7, "total_tokens": 18}
-        })));
-        assert_eq!(execution.status, WorkerResultStatusV1::Succeeded);
-        assert_eq!(
-            execution.outputs["main"][0].json,
-            json!({
-                "toolCall": {"text": "hello"},
-                "usage": {"inputTokens": 11, "outputTokens": 7, "tokens": 18, "costMicros": 0}
-            })
-        );
-    }
-
-    #[test]
-    fn openai_final_answer_and_usage_are_normalized() {
-        let execution = openai_execution_output(WorkerExecution::succeeded(json!({
-            "choices": [{"message": {"role": "assistant", "content": "complete"}}],
-            "usage": {"prompt_tokens": 5, "completion_tokens": 3, "total_tokens": 8}
-        })));
-        assert_eq!(execution.status, WorkerResultStatusV1::Succeeded);
-        assert_eq!(
-            execution.outputs["main"][0].json,
-            json!({
-                "done": true,
-                "answer": "complete",
-                "finalAnswer": "complete",
-                "usage": {"inputTokens": 5, "outputTokens": 3, "tokens": 8, "costMicros": 0}
-            })
-        );
-    }
-}
+#[path = "worker_runtime_tests.rs"]
+mod tests;

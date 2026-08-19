@@ -24,7 +24,7 @@ type WorkflowVersion = { id: string; versionNumber: number }
 type GatewayInvocation = { id: string; executionId?: string; status: string; error?: unknown | null }
 type GatewayMessage = { role: string; parts: Array<{ content?: unknown }> }
 type PageResponse<T> = { items: T[] }
-type NamedResource = { id: string; name?: string; alias?: string; serverId?: string }
+type NamedResource = { id: string; name?: string; alias?: string; serverId?: string; version?: number }
 type StudioDraft = {
   revision: number
   definition: {
@@ -209,6 +209,16 @@ async function ensureStudioResources(page: Page, token: string) {
   if (!tools.some((item) => item.name === 'echo' && item.serverId === server.id)) {
     await mutate(page, token, `/mcp/servers/${server.id}/discover`, 'POST', {})
   }
+  await mutate(page, token, `/mcp/servers/${server.id}`, 'PATCH', {
+    name: studioMcpName,
+    description: 'M6 API-first MCP fixture',
+    transport: 'streamable_http',
+    endpoint: `${echoBaseUrl}/v2/runtime/mcp`,
+    credentialId: credential.id,
+    configuration: {},
+    status: 'active',
+    version: server.version,
+  })
 
   const sandboxes = await api<PageResponse<NamedResource>>(page, token, `/sandbox-profiles?pageSize=100&search=${encodeURIComponent(studioSandboxName)}`)
   if (!sandboxes.items.some((item) => item.name === studioSandboxName)) {
@@ -224,7 +234,7 @@ async function ensureStudioResources(page: Page, token: string) {
       diskBytes: 1073741824,
       timeoutSeconds: 120,
       outputLimitBytes: 1048576,
-      networkPolicy: { defaultAction: 'deny', allow: [] },
+      networkPolicy: { defaultAction: 'deny', egressMode: 'none' },
     })
   }
 }
@@ -532,6 +542,10 @@ test('M6 Studio creates, debugs, versions and publishes a manifest-driven Workfl
   await expect(agentConfigDetails.getByTestId('parameter-maxTotalTokens')).toContainText('Token')
 
   const configuredCodeDetails = await openNodeDetails(page, code)
+  const codeName = configuredCodeDetails.locator('[data-field-path="name"] input')
+  await codeName.fill('M6 Python Code')
+  await codeName.blur()
+  await expect(code).toContainText('M6 Python Code')
   await choose(page, page.getByTestId('parameter-runner'), /^Python$/)
   await fillMonaco(page, page.getByTestId('parameter-source'), 'print("m6-studio-ok")')
   await choose(page, page.getByTestId('resource-selector-sandbox_profile'), new RegExp(studioSandboxName))
@@ -603,6 +617,7 @@ test('M6 Studio creates, debugs, versions and publishes a manifest-driven Workfl
   expect(draft.definition.schemaVersion).toBe('4.0')
   expect(draft.definition.nodes.map((node) => node.type)).toEqual(expect.arrayContaining(['agent', 'code', 'approval', 'error_handler']))
   expect(draft.definition.nodes.map((node) => node.type)).not.toContain('manual_trigger')
+  expect(draft.definition.nodes.find((node) => node.type === 'code')?.name).toBe('M6 Python Code')
   expect(draft.definition.nodes.find((node) => node.type === 'agent')?.parameters.userQuestion).toBe('${{ inputs.question }}')
   expect(draft.definition.nodes.find((node) => node.type === 'agent')?.resourceReferences.map((item) => item.bindingRole)).toEqual(expect.arrayContaining(['ai_model', 'ai_tool']))
   expect(draft.definition.nodes.find((node) => node.type === 'code')?.settings.onError).toBe('continue_error_output')
@@ -634,13 +649,48 @@ test('M6 Studio creates, debugs, versions and publishes a manifest-driven Workfl
   await details.getByRole('tab', { name: '输出' }).click()
   await expect(details.getByRole('textbox', { name: '输出' })).toHaveValue(/m6-studio-ok/, { timeout: 30_000 })
   await details.getByRole('tab', { name: 'Trace' }).click()
-  await expect(details.getByRole('tabpanel')).toContainText(/runs|sandboxes/, { timeout: 30_000 })
+  await expect(details.getByTestId('trace-detail')).toContainText('M6 Python Code', { timeout: 30_000 })
+  await expect(details.getByTestId('trace-detail').getByRole('tab')).toHaveCount(5)
   const runtimeRail = page.getByTestId('runtime-rail')
-  await runtimeRail.getByRole('tab', { name: '事件' }).click()
-  await expect(runtimeRail.getByRole('tabpanel')).toContainText('node.completed')
+  await runtimeRail.getByRole('tab', { name: 'Trace' }).click()
+  await expect(runtimeRail).toHaveCSS('height', '420px')
+  await expect(runtimeRail.getByRole('treegrid', { name: 'Trace 层级瀑布' })).toBeVisible({ timeout: 30_000 })
+  type TraceSpan = { spanId: string; spanKind: string; spanName: string; status: string; inputTokens?: number; outputTokens?: number; costMicros: number; resourceType?: string }
+  let traceSnapshot: { complete: boolean; spans: TraceSpan[] } | undefined
+  await expect.poll(async () => {
+    traceSnapshot = await api<{ complete: boolean; spans: TraceSpan[] }>(page, token, `/executions/${firstExecution}/trace?limit=200`)
+    const kinds = new Set(traceSnapshot.spans.map((span) => span.spanKind))
+    return ['execution', 'node', 'attempt', 'agent_run', 'agent_iteration', 'runtime_call', 'sandbox', 'wait'].filter((kind) => !kinds.has(kind))
+  }, { timeout: 60_000, intervals: [500, 1_000, 2_000] }).toEqual([])
+  expect(traceSnapshot?.complete).toBe(true)
+  const modelCall = traceSnapshot?.spans.find((span) => span.spanKind === 'runtime_call' && span.spanName === 'Model call')
+  const mcpCall = traceSnapshot?.spans.find((span) => span.spanKind === 'runtime_call' && span.spanName === 'MCP tool call')
+  expect(modelCall).toMatchObject({ status: 'succeeded', resourceType: 'model', costMicros: 0 })
+  expect((modelCall?.inputTokens ?? 0) + (modelCall?.outputTokens ?? 0)).toBeGreaterThan(0)
+  expect(mcpCall).toMatchObject({ status: 'succeeded', resourceType: 'mcp' })
+  expect(traceSnapshot?.spans.find((span) => span.spanKind === 'sandbox')).toMatchObject({ status: 'succeeded' })
+  expect(traceSnapshot?.spans.find((span) => span.spanKind === 'wait')).toMatchObject({ status: expect.stringMatching(/approved|succeeded/) })
+  const codeTraceRow = runtimeRail.getByRole('row').filter({ hasText: 'M6 Python Code' }).first()
+  await expect(codeTraceRow).toBeVisible()
+  await codeTraceRow.click()
+  await page.screenshot({ path: testInfo.outputPath('trace-waterfall-skywalking.png'), fullPage: true })
+  const waterfall = runtimeRail.getByTestId('trace-waterfall')
+  await waterfall.getByRole('tab', { name: '事件' }).click()
+  await expect(waterfall.getByRole('tabpanel')).toContainText(/node\.(finished|completed)/)
   await runtimeRail.getByRole('button', { name: '折叠执行轨道' }).click()
   await expect(runtimeRail.getByRole('button', { name: '展开执行轨道' })).toBeVisible()
   await runtimeRail.getByRole('button', { name: '展开执行轨道' }).click()
+
+  const executionPage = await context.newPage()
+  await executionPage.goto(`/executions/${firstExecution}`)
+  const executionTraceTab = executionPage.getByRole('tab', { name: 'Trace', exact: true })
+  await expect(executionTraceTab).toHaveAttribute('aria-selected', 'true')
+  await expect(executionPage.getByRole('treegrid', { name: 'Trace 层级瀑布' })).toBeVisible({ timeout: 30_000 })
+  await executionPage.getByRole('row').filter({ hasText: 'M6 Python Code' }).first().click()
+  await expect(executionPage.getByTestId('trace-detail').getByRole('tab')).toHaveCount(5)
+  await executionPage.getByRole('tab', { name: '恢复', exact: true }).click()
+  await expect(executionPage.getByRole('complementary', { name: '执行节点大纲' })).toBeVisible()
+  await executionPage.close()
 
   const stableAgent = page.getByTestId(`rf__node-${draft.definition.nodes.find((node) => node.type === 'agent')!.id}`)
   const agentDetails = await openNodeDetails(page, stableAgent)
@@ -666,7 +716,7 @@ test('M6 Studio creates, debugs, versions and publishes a manifest-driven Workfl
   await page.unroute('**/api/v1/executions/*/events?*')
   const overlayEvents = await api<{ items: Array<{ eventType: string }> }>(page, token, `/executions/${overlayExecution}/events?after=0&limit=200`)
   expect(overlayEvents.items.filter((item) => item.eventType === 'node.debug_overlay_applied')).toHaveLength(2)
-  await expect(page.getByRole('tab', { name: '事件' })).toBeVisible()
+  await expect(runtimeRail.getByRole('tab', { name: '事件', exact: true }).first()).toBeVisible()
 
   await openNodeDetails(page, code)
   await selectDebugMode(page, 'single_node')
@@ -718,11 +768,15 @@ test('M6 Studio creates, debugs, versions and publishes a manifest-driven Workfl
   const viewports = [{ width: 1280, height: 800 }, { width: 1440, height: 900 }, { width: 1920, height: 1080 }]
   for (const locale of ['zh-CN', 'en-US'] as const) {
     await setLocale(page, locale)
+    await runtimeRail.getByRole('tab', { name: 'Trace' }).click()
     for (const theme of ['light', 'dark'] as const) {
       await setTheme(page, theme)
       for (const viewport of viewports) {
         await page.setViewportSize(viewport)
         await expect(page.getByTestId('workflow-canvas')).toBeVisible()
+        await expect(runtimeRail.getByTestId('trace-waterfall')).toBeVisible()
+        await expect(runtimeRail.getByRole('treegrid', { name: locale === 'zh-CN' ? 'Trace 层级瀑布' : 'Trace hierarchy waterfall' })).toBeVisible()
+        await expect(runtimeRail.getByTestId('trace-detail')).toBeVisible()
         await expect(page.locator('body')).not.toContainText(/studio\.[A-Za-z]/)
         await expect(page.getByText('Invalid Date', { exact: true })).toHaveCount(0)
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy()

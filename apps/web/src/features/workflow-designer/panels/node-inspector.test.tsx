@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { NodeManifest } from '../model/types'
@@ -92,5 +92,30 @@ describe('NodeInspector details view', () => {
     fireEvent.click(screen.getByRole('option', { name: 'session.answer' }))
     fireEvent.click(screen.getByRole('button', { name: /Save|保存/ }))
     expect(onChange).toHaveBeenCalledWith({ contextWrites: [{ operation: 'set', path: 'session.answer', value: '' }] })
+  })
+
+  it('uses the shared Span query to show the selected node Trace detail', async () => {
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input)
+      const body = url.endsWith('/nodes')
+        ? { items: [{ id: 'node-execution-1', nodeId: 'node-1', input: {}, output: {} }] }
+        : url.includes('/trace/spans/span-node-1')
+          ? { span: {}, attributes: {}, events: [] }
+          : { executionId: 'execution-1', traceId: 'trace-1', expectedWatermark: 3, ingestedWatermark: 3, complete: true, degraded: false, warningCode: null, totalSpans: 1, nextCursor: null, spans: [{ spanId: 'span-node-1', parentSpanId: null, spanKind: 'node', spanName: 'Selected Set node', status: 'succeeded', startedAt: '2026-08-19T00:00:00Z', endedAt: '2026-08-19T00:00:01Z', durationMs: 1000, costMicros: 0, hasDetails: true, nodeExecutionId: 'node-execution-1' }] }
+      return new Response(JSON.stringify(body), { headers: { 'Content-Type': 'application/json' } })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const data = { editorKind: 'action' as const, nodeType: 'set', typeVersion: 1, label: 'Set', key: 'set', parameters: {}, outputProjection: {}, contextWrites: [], resourceReferences: [], settings: {}, disabled: false }
+    render(<QueryClientProvider client={client}><NodeInspector data={data} executionId="execution-1" manifest={manifest} nodeId="node-1" onChange={vi.fn()} onDelete={vi.fn()} resources={{}} /></QueryClientProvider>)
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/nodes'), expect.anything()))
+    const traceTab = screen.getByRole('tab', { name: 'Trace' })
+    screen.getByRole('tab', { name: /Parameters|参数/ }).focus()
+    fireEvent.keyDown(screen.getByRole('tablist'), { key: 'End' })
+    fireEvent.keyDown(traceTab, { key: 'Enter' })
+    await waitFor(() => expect(traceTab).toHaveAttribute('data-state', 'active'))
+    expect(await screen.findByTestId('trace-detail')).toHaveTextContent('Selected Set node')
+    vi.unstubAllGlobals()
   })
 })

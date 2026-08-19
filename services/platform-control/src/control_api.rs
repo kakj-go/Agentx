@@ -170,7 +170,9 @@ impl ControlApiState {
 
 pub fn router(state: ControlApiState) -> Router {
     routes()
-        .layer(middleware::from_fn(crate::api_error::normalize_json_rejection))
+        .layer(middleware::from_fn(
+            crate::api_error::normalize_json_rejection,
+        ))
         .with_state(state)
 }
 

@@ -21,7 +21,8 @@ use agentx_runtime_contracts::{
     RuntimeTriggerSpecV1, RuntimeUserAdmissionV1, RuntimeUserApplicationGrantV1,
     RuntimeUserWorkflowGrantV1, RuntimeWorkPackageV1, SessionDetailV1, SessionSearchPageV1,
     SessionSearchRequestV1, SessionUpgradeCommandV1, SessionUpgradeReceiptV1, TraceEventEnvelopeV1,
-    TraceSearchPageV1, TraceSearchRequestV1, WorkerAttemptLeaseV1, WorkerResultV1, WorkerTaskV1,
+    TraceSearchPageV1, TraceSearchRequestV1, TraceSpanDetailV1, WorkerAttemptLeaseV1,
+    WorkerResultV1, WorkerTaskV1,
 };
 use anyhow::{Context, Result};
 use schemars::{JsonSchema, schema_for};
@@ -130,6 +131,7 @@ fn contract_schemas() -> Result<Map<String, Value>> {
     insert::<TraceSearchRequestV1>(&mut schemas, "TraceSearchRequestV1")?;
     insert::<TraceSearchPageV1>(&mut schemas, "TraceSearchPageV1")?;
     insert::<ExecutionTraceV1>(&mut schemas, "ExecutionTraceV1")?;
+    insert::<TraceSpanDetailV1>(&mut schemas, "TraceSpanDetailV1")?;
     insert::<ObservabilityAggregateRequestV1>(&mut schemas, "ObservabilityAggregateRequestV1")?;
     insert::<ObservabilityAggregatePageV1>(&mut schemas, "ObservabilityAggregatePageV1")?;
     insert::<RuntimeTriggerSpecV1>(&mut schemas, "RuntimeTriggerSpecV1")?;
@@ -239,6 +241,7 @@ fn observability_openapi(schemas: Map<String, Value>) -> Value {
         },
         "paths": {
             "/internal/observability/v1/executions/{id}/trace": observability_get("Get Execution Trace", "ExecutionTraceV1", "observability.trace.read"),
+            "/internal/observability/v1/executions/{id}/trace/spans/{span_id}": observability_span_get(),
             "/internal/observability/v1/traces:search": observability_post("Search Traces", "TraceSearchRequestV1", "TraceSearchPageV1", "observability.trace.read"),
             "/internal/observability/v1/aggregates:query": observability_post("Query Aggregates", "ObservabilityAggregateRequestV1", "ObservabilityAggregatePageV1", "observability.aggregate.read")
         },
@@ -249,6 +252,18 @@ fn observability_openapi(schemas: Map<String, Value>) -> Value {
             "schemas": schemas
         }
     })
+}
+
+fn observability_span_get() -> Value {
+    json!({"get": {
+        "summary": "Get Trace Span",
+        "parameters": [
+            {"name":"id","in":"path","required":true,"schema":{"type":"string","format":"uuid"}},
+            {"name":"span_id","in":"path","required":true,"schema":{"type":"string","format":"uuid"}}
+        ],
+        "responses": response("TraceSpanDetailV1"),
+        "security": [{"delegationJwt": ["observability.trace.read"]}]
+    }})
 }
 
 fn observability_post(summary: &str, request: &str, response_schema: &str, scope: &str) -> Value {

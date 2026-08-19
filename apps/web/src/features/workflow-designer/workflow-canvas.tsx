@@ -973,6 +973,10 @@ export function WorkflowCanvas() {
             events={runtime.events}
             executionId={executionId}
             onExecutionChange={setExecutionId}
+            onNodeSelect={(nodeId) => {
+              editor.select(nodeId);
+              setDetailsOpen(true);
+            }}
             workflowId={workflowId}
           />
         </div>

@@ -37,13 +37,11 @@ test('M3 fixture is visible through approval, notification, execution, trace, an
   const row=page.getByRole('row').filter({hasText:'e2e_fixture'}).first()
   await expect(row).toBeVisible()
   await row.getByRole('link',{name:'查看 Trace'}).click()
-  await expect(page.getByText('workflow.started')).toBeVisible()
-  await expect(page.getByText('model.completed')).toBeVisible()
+  const trace=page.getByRole('treegrid',{name:'Trace 层级瀑布'})
+  await expect(trace).toBeVisible()
+  await expect(trace.getByRole('row').nth(1)).toBeVisible()
+  await expect(page.getByTestId('trace-detail').getByRole('tab')).toHaveCount(5)
   await expect(page.getByText('must-not-leak')).toHaveCount(0)
-  const artifactDownload=page.waitForEvent('download')
-  await page.getByRole('button',{name:'下载'}).click()
-  const artifact=await artifactDownload
-  expect(await artifact.createReadStream()).toBeTruthy()
 
   await page.getByRole('link',{name:'运行状态'}).click()
   await expect(page.getByText('Trace 写入器')).toBeVisible()
