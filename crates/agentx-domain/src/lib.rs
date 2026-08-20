@@ -14,10 +14,12 @@ pub use resource::{
 };
 pub use workflow::{
     BindingEdge, BindingLayout, BoundaryLayout, ContextDefinition, ContextMergePolicy,
-    ContextScope, ContextWrite, ContextWriteOperation, DebugPlan, DefinitionIssue,
+    ContextScope, ContextWrite, ContextWriteOperation, DebugPlan, DefinitionIssue, DynamicValue,
     EditorAnnotation, EditorDocument, EditorEdge, EditorGroup, EditorViewport, EndErrorStrategy,
-    ExecutionOrder, ExecutionSource, NodeErrorPolicy, NodeLayout, NodeSettings,
-    OutputProjectionField, WORKFLOW_END_NODE_ID, WORKFLOW_START_NODE_ID, WorkflowBoundary,
+    ExecutionOrder, ExecutionSource, ExpressionBinaryOperator, ExpressionFunction, ExpressionNode,
+    ExpressionUnaryOperator, MissingValuePolicy, NodeErrorPolicy, NodeLayout, NodeSettings,
+    OutputProjectionField, TemplateSegment, ValueNamespace, ValuePathSegment, ValueSelection,
+    ValueSelector, WORKFLOW_END_NODE_ID, WORKFLOW_START_NODE_ID, WorkflowBoundary,
     WorkflowConnection, WorkflowDefinition, WorkflowEnd, WorkflowErrorEnd, WorkflowNode,
     WorkflowOutput, WorkflowSettings, WorkflowStart, canonical_content_hash, validate_definition,
     validate_editor_document,

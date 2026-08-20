@@ -924,7 +924,7 @@ mod tests {
         assert!(
             validate_config(
                 "streamable_http",
-                "http://echo-mcp.agentx-v2-deps.svc.cluster.local:8090/mcp",
+                "http://echo-mcp.agentx-deps.svc.cluster.local:8090/mcp",
                 &json!({}),
             )
             .is_ok()

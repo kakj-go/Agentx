@@ -636,7 +636,7 @@ try {
     if (-not $SkipLocalGates) {
         & cargo test -p agentx-runtime-contracts
         & cargo test -p agentx-bundle-builder
-        & cargo test -p agentx-v2-runtime --test runtime_slice -- --nocapture
+        & cargo test -p agentx-runtime --test runtime_slice -- --nocapture
         & cargo run --quiet -p agentx-boundary-check -- check
         & (Join-Path $PSScriptRoot "v2-profile-tests.ps1")
         Add-Timeline "Contracts, Builder, Runtime Slice and boundary gates passed."

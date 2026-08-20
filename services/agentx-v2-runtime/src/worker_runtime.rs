@@ -595,7 +595,18 @@ impl RuntimeWorker {
                     "completed",
                 )
                 .await;
-                return WorkerExecution::succeeded(state);
+                let text = model_output.get("text").cloned().unwrap_or(Value::Null);
+                return WorkerExecution::succeeded(json!({
+                    "text":text,
+                    "message":model_output.get("message").cloned().unwrap_or(Value::Null),
+                    "messages":[model_output.get("message").cloned().unwrap_or(Value::Null)],
+                    "toolCalls":[],
+                    "artifacts":[],
+                    "citations":model_output.get("citations").cloned().unwrap_or_else(|| json!([])),
+                    "usage":{"tokens":tokens,"costMicros":cost_micros},
+                    "finishReason":model_output.get("finishReason").cloned().unwrap_or(Value::Null),
+                    "partial":false
+                }));
             }
             if !seen.insert(state_after_hash.clone()) {
                 self.finish_iteration(iteration_id, "failed", &state_after_hash, "loop_detected")

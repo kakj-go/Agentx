@@ -159,7 +159,7 @@ Manifest `localizations` 是节点名称、说明、搜索关键词、端口和 
 React Flow 的 Node 和 Edge 结构只属于前端编辑状态，不能直接成为后端运行协议。Serializer 同时产出运行 Definition 和纯 UI Editor Document，Debug Overlay/运行高亮走独立模型。
 
     React Flow State
-          ├── serialize definition ──> Workflow Definition 4.0 ──> IR
+          ├── serialize definition ──> Workflow Definition 5.0 ──> IR
           └── serialize editor ──────> Editor Document
 
     Pin / Mock / Runtime Highlight ──> Debug Overlay / Execution State
@@ -175,14 +175,16 @@ React Flow 的 Node 和 Edge 结构只属于前端编辑状态，不能直接成
 
 服务端 Draft Revision 原子保存 Definition 和 Editor Document。TanStack Query 保存服务端权威数据；Zustand Editor Store 按 Document、Interaction、History 三个逻辑 slice 维护规范化编辑状态；History 以实体 ID 保存节点、边、便签和分组的前后 Patch，不保存视口、选择、Hover、临时连线或运行高亮；Runtime Overlay Store 按 executionId 隔离运行状态和结果。四者不得互相复制成为第二权威。
 
-所有 Manifest 标记为 `templatable` 的 Input、Textarea、Prompt、Expression、JSON 动态值和 Monaco 共用 Reference Picker。Prompt 使用原生多行文本输入，不加载富文本编辑器；引用树只读取 Start Inputs、声明 Context 和当前节点可达前置节点 Manifest Outputs。运行历史只能提供非权威样例值。选择器使用贴合当前输入框的上下翻转双列面板，不占用固定详情列；类型、基数和不可插入状态直接随引用项展示。选择引用后在当前 Selection 插入可编辑的 `${{ ... }}`，并保留 Undo/Redo、Esc 和外部点击关闭语义。敏感 Context 不允许插入普通字段或 Preview。
+所有声明 `x-agentx-dynamicValue` 的 Input、Textarea、Prompt、Expression、JSON 和 Mapper 叶子共用 Reference Picker。文本类字段使用 Lexical Token Editor，将普通文本与变量 Chip 作为独立节点混排，支持光标、选区、Backspace/Delete、Undo/Redo、中英文 IME，以及携带 Agentx 自定义 MIME 的复制粘贴；UI 不展示协议字符串。Expression 使用递归 Visual Builder 编辑 Literal、Reference、Unary/Binary、Conditional、Call、Array 和 Object AST，不向普通 Studio 暴露 CEL/Monaco 源码。
+
+引用树只读取 Start Inputs、声明 Context 和当前节点可达前置节点的 Effective Output Contract。选择器以 Node ID 持久化，以节点名称、端口和字段路径显示；节点重命名不修改 Selector。运行历史只能提供非权威样例值。敏感 Context 不允许插入普通字段或 Preview。
 
 ## 9. 画布扩展
 
 - ELK.js 用于自动布局。
 - Zustand 保存编辑器状态。
 - History slice 以手势事务管理 Undo 和 Redo；拖动开始记录参与实体旧位置、结束只提交这些实体的一个 Patch 命令。
-- Monaco Editor 用于 Expression、JSON 和 Code；Prompt 使用支持光标插入的原生多行文本输入。
+- Monaco Editor 只用于 Code；Prompt/Template 使用 Lexical Token Editor，Expression 使用 Visual Builder，JSON/Mapper 使用结构化叶子绑定控件。
 - 大型 Workflow 在 150 节点启用可见元素渲染、300 节点隐藏 MiniMap；缩放低于 0.65 隐藏标签，低于 0.35 使用简化内容。`IncrementalGraphIndex` 稳定复用 `nodeById`、`portByHandle`、源/目标端口边索引和 Binding 摘要 Map，只更新结构、端口或边的变化项；位置帧不重建连接索引。Group、Node 和 Edge 视图索引保持无关对象引用稳定，节点运行态只替换自身与关联边。
 - 自动保存使用 Server Revision；Undo/Redo 只改变本地 Editor State，不能回退服务端 Revision。
 - Execution Event 使用 Cursor 重连，断线后通过 Execution Query 校准；非终态运行更新最多每 100ms 合并一次，终态立即提交；完整 Trace 和大型输出不进入 Zustand。

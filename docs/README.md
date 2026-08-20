@@ -23,7 +23,7 @@ Agentx 是一个采用 n8n 式画布交互、但使用 Agentx 原生 Workflow/No
 | [09-codebase-architecture.md](09-codebase-architecture.md) | Monorepo、Rust 服务、公共 Crate 和依赖边界 |
 | [10-frontend-architecture.md](10-frontend-architecture.md) | Tailwind UI 体系、企业工作台和 React Flow 画布 |
 | [11-node-integration.md](11-node-integration.md) | Node Manifest、Action/Provider/Lifecycle HTTP 协议与接入验证 |
-| [12-workflow-4.md](12-workflow-4.md) | Workflow Definition 4.0、Expression、Context、Composite、Gateway 与导入导出契约 |
+| [12-workflow-5.md](12-workflow-5.md) | Workflow Definition 5.0、DynamicValue、Selector、输出契约与故障终态 |
 | [13-architecture-service-data-map.md](13-architecture-service-data-map.md) | 当前架构、服务访问链路、全量表目录和跨域 ER 关系 |
 | [reference/mysql-schema-catalog.md](reference/mysql-schema-catalog.md) | V2-00 逐表处置使用的历史 V1 MySQL 字段、索引与外键快照 |
 | [planv2/contracts/table-disposition.json](planv2/contracts/table-disposition.json) | 历史 133 表迁往 Control/Runtime/Split/Delete 的机器可读处置输入 |
@@ -45,7 +45,7 @@ Agentx 是一个采用 n8n 式画布交互、但使用 Agentx 原生 Workflow/No
 | [plan/m5-acceptance-evidence.md](plan/m5-acceptance-evidence.md) | M5 当前实现、自动化证据、未关闭门禁和生产强隔离边界 |
 | [plan/m6-acceptance-evidence.md](plan/m6-acceptance-evidence.md) | M6 Workflow Studio 契约、实现、静态门禁和 Kubernetes E2E 验收证据 |
 | [plan/m7-acceptance-evidence.md](plan/m7-acceptance-evidence.md) | M7 业务闭环、Vault、发布自动化和剩余生产门禁证据 |
-| [plan/workflow4-acceptance-evidence.md](plan/workflow4-acceptance-evidence.md) | Workflow 4.0 Definition、Expression、Context、Composite、API、Package 与 20 项验收证据 |
+| [plan/workflow4-acceptance-evidence.md](plan/workflow4-acceptance-evidence.md) | Workflow 5.0 Definition、Expression、Context、Composite、API、Package 与 20 项验收证据 |
 | [plan/resource-grant-requests-acceptance-evidence.md](plan/resource-grant-requests-acceptance-evidence.md) | 画布资源六态、直接授权、跨部门会签、脱敏、通知和运行闭环验收证据 |
 | [plan/uniqueness-validation-acceptance-evidence.md](plan/uniqueness-validation-acceptance-evidence.md) | 用户输入唯一字段前检、并发兜底、字段错误、Artifact 补偿与 UI 验收证据 |
 | [plan/e2e-testing-standard.md](plan/e2e-testing-standard.md) | 临时 Kubernetes Playwright 端到端测试规范 |

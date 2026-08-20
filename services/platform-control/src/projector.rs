@@ -39,7 +39,7 @@ impl Projector {
         Ok(Self {
             pool,
             runtime_url: env::var("AGENTX_RUNTIME_INTERNAL_URL").unwrap_or_else(|_| {
-                "http://runtime-gateway-internal.agentx-v2-runtime.svc:8080".into()
+                "http://runtime-gateway-internal.agentx-runtime.svc:8080".into()
             }),
             http: reqwest::Client::builder()
                 .timeout(Duration::from_secs(35))

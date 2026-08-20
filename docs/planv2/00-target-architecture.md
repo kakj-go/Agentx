@@ -66,7 +66,7 @@ flowchart TB
     platform -->|"Runtime Event Export Pull"| gateway
 ```
 
-图中的 Control、Runtime、Observability 是逻辑数据与权限边界；当前部署拓扑固定为三个物理 Namespace：Control 独立，Runtime 与 Observability 共用 `agentx-v2-runtime`，共享依赖和专用 ingress-nginx 位于 `agentx-v2-deps`。共用 Namespace 不改变 ADR-V2-001 至 ADR-V2-005 的数据所有权，跨 Role 权限继续由独立 Secret、ServiceAccount、Redis ACL、数据库账号和基于 Pod 标签的 NetworkPolicy 保证。
+图中的 Control、Runtime、Observability 是逻辑数据与权限边界；当前部署拓扑固定为三个物理 Namespace：Control 独立，Runtime 与 Observability 共用 `agentx-runtime`，共享依赖和专用 ingress-nginx 位于 `agentx-deps`。共用 Namespace 不改变 ADR-V2-001 至 ADR-V2-005 的数据所有权，跨 Role 权限继续由独立 Secret、ServiceAccount、Redis ACL、数据库账号和基于 Pod 标签的 NetworkPolicy 保证。
 
 ## 3. 固定架构决策
 

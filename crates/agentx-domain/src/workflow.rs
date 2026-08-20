@@ -184,15 +184,190 @@ pub struct DebugPlan {
 #[derive(JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum WorkflowSchemaVersion {
-    #[serde(rename = "4.0")]
-    V4,
+    #[serde(rename = "5.0")]
+    V5,
+}
+
+/// A persisted dynamic value is always a tagged object.  It deliberately
+/// lives beside ordinary JSON rather than overloading strings, so business
+/// payloads cannot accidentally become expressions.
+#[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", tag = "kind", deny_unknown_fields)]
+pub enum DynamicValue {
+    Literal {
+        value: Value,
+    },
+    Reference {
+        selector: ValueSelector,
+        #[serde(default, rename = "missingPolicy")]
+        missing_policy: MissingValuePolicy,
+    },
+    Template {
+        segments: Vec<TemplateSegment>,
+    },
+    Expression {
+        root: ExpressionNode,
+    },
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ValueSelector {
+    pub namespace: ValueNamespace,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_node_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub port: Option<String>,
+    #[serde(default)]
+    pub run: ValueSelection,
+    #[serde(default)]
+    pub item: ValueSelection,
+    #[serde(default)]
+    pub path: Vec<ValuePathSegment>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ValueNamespace {
+    Inputs,
+    Outputs,
+    Contexts,
+    Execution,
+    Item,
+    Loop,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", tag = "kind", deny_unknown_fields)]
+pub enum ValueSelection {
+    #[default]
+    Current,
+    First,
+    Last,
+    All,
+    Index {
+        index: u32,
+    },
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Serialize)]
+#[serde(untagged)]
+pub enum ValuePathSegment {
+    Key(String),
+    Index(u32),
+}
+
+#[derive(Clone, Debug, Default, Deserialize, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", tag = "kind", deny_unknown_fields)]
+pub enum MissingValuePolicy {
+    #[default]
+    Error,
+    Null,
+    Default {
+        value: Box<DynamicValue>,
+    },
+    Omit,
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", tag = "kind", deny_unknown_fields)]
+pub enum TemplateSegment {
+    Text {
+        text: String,
+    },
+    Reference {
+        selector: ValueSelector,
+        #[serde(default, rename = "missingPolicy")]
+        missing_policy: MissingValuePolicy,
+    },
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", tag = "kind", deny_unknown_fields)]
+pub enum ExpressionNode {
+    Literal {
+        value: Value,
+    },
+    Reference {
+        selector: ValueSelector,
+        #[serde(default, rename = "missingPolicy")]
+        missing_policy: MissingValuePolicy,
+    },
+    Unary {
+        operator: ExpressionUnaryOperator,
+        operand: Box<ExpressionNode>,
+    },
+    Binary {
+        operator: ExpressionBinaryOperator,
+        left: Box<ExpressionNode>,
+        right: Box<ExpressionNode>,
+    },
+    Conditional {
+        condition: Box<ExpressionNode>,
+        then_value: Box<ExpressionNode>,
+        else_value: Box<ExpressionNode>,
+    },
+    Call {
+        function: ExpressionFunction,
+        arguments: Vec<ExpressionNode>,
+    },
+    Array {
+        items: Vec<ExpressionNode>,
+    },
+    Object {
+        fields: BTreeMap<String, ExpressionNode>,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExpressionUnaryOperator {
+    Not,
+    Negate,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExpressionBinaryOperator {
+    Eq,
+    Ne,
+    Gt,
+    Gte,
+    Lt,
+    Lte,
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+    Modulo,
+    And,
+    Or,
+    In,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExpressionFunction {
+    Contains,
+    Double,
+    Duration,
+    EndsWith,
+    Int,
+    Matches,
+    Max,
+    Min,
+    Size,
+    StartsWith,
+    String,
+    Timestamp,
+    Uint,
 }
 
 impl WorkflowDefinition {
     #[must_use]
     pub fn empty() -> Self {
         Self {
-            schema_version: "4.0".to_owned(),
+            schema_version: "5.0".to_owned(),
             start: WorkflowStart::default(),
             nodes: Vec::new(),
             connections: Vec::new(),
@@ -310,7 +485,7 @@ pub enum EndErrorStrategy {
 #[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WorkflowOutput {
-    pub expression: String,
+    pub value: DynamicValue,
     #[serde(default)]
     pub schema: Value,
     #[serde(default)]
@@ -324,7 +499,7 @@ pub struct WorkflowOutput {
 pub struct ContextWrite {
     pub operation: ContextWriteOperation,
     pub path: String,
-    pub value: Value,
+    pub value: DynamicValue,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
@@ -448,7 +623,7 @@ pub struct WorkflowNode {
 #[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct OutputProjectionField {
-    pub expression: String,
+    pub value: DynamicValue,
     #[serde(default)]
     pub schema: Value,
     #[serde(default)]
@@ -478,12 +653,12 @@ pub struct DefinitionIssue {
 #[must_use]
 pub fn validate_definition(definition: &WorkflowDefinition) -> Vec<DefinitionIssue> {
     let mut issues = Vec::new();
-    if definition.schema_version != "4.0" {
+    if definition.schema_version != "5.0" {
         issue(
             &mut issues,
             "UNSUPPORTED_SCHEMA",
             "schemaVersion",
-            "Only schema version 4.0 is supported",
+            "Only schema version 5.0 is supported",
         );
     }
     if definition.settings.activation_budget == 0 {
@@ -590,7 +765,7 @@ pub fn validate_definition(definition: &WorkflowDefinition) -> Vec<DefinitionIss
                 &mut issues,
                 "TRIGGER_NODE_REMOVED",
                 &format!("nodes[{index}].type"),
-                "Trigger nodes were removed in Workflow Definition 4.0; configure a Trigger Binding instead",
+                "Trigger nodes were removed in Workflow Definition 5.0; configure a Trigger Binding instead",
             );
         }
         if node.node_type.is_empty()
@@ -649,14 +824,6 @@ pub fn validate_definition(definition: &WorkflowDefinition) -> Vec<DefinitionIss
                         "INVALID_PROJECTION_FIELD_KEY",
                         &path,
                         "Projection field keys must use lowercase ASCII letters, digits and underscores",
-                    );
-                }
-                if field.expression.trim().is_empty() {
-                    issue(
-                        &mut issues,
-                        "PROJECTION_EXPRESSION_REQUIRED",
-                        &format!("{path}.expression"),
-                        "Projection expression is required",
                     );
                 }
                 if !field.schema.is_object() {
@@ -777,14 +944,6 @@ fn validate_workflow_outputs(
                 "INVALID_END_OUTPUT_KEY",
                 &format!("{path}.{name}"),
                 "End output keys must use lowercase ASCII letters, digits and underscores",
-            );
-        }
-        if output.expression.trim().is_empty() {
-            issue(
-                issues,
-                "END_OUTPUT_EXPRESSION_REQUIRED",
-                &format!("{path}.{name}.expression"),
-                "End output expression is required",
             );
         }
         if !output.schema.is_object() {
@@ -1127,7 +1286,7 @@ mod tests {
     #[test]
     fn rejects_dangling_cycles_and_mismatched_resources() {
         let definition: WorkflowDefinition = serde_json::from_value(json!({
-            "schemaVersion":"4.0",
+            "schemaVersion":"5.0",
             "start":{"inputs":{"type":"object","properties":{},"additionalProperties":false},"contexts":{}},
             "nodes":[
                 {"id":"root","key":"root","type":"no_op","typeVersion":1,"name":"Root","outputProjection":{},"contextWrites":[],"resourceReferences":[]},
@@ -1154,7 +1313,7 @@ mod tests {
     #[test]
     fn accepts_controlled_cycles() {
         let definition: WorkflowDefinition = serde_json::from_value(json!({
-            "schemaVersion":"4.0",
+            "schemaVersion":"5.0",
             "start":{"inputs":{"type":"object","properties":{},"additionalProperties":false},"contexts":{}},
             "nodes":[
                 {"id":"root","key":"root","type":"no_op","typeVersion":1,"name":"Root","outputProjection":{},"contextWrites":[]},
@@ -1172,7 +1331,7 @@ mod tests {
     #[test]
     fn connection_order_is_scoped_to_the_source_port() {
         let definition: WorkflowDefinition = serde_json::from_value(json!({
-            "schemaVersion":"4.0",
+            "schemaVersion":"5.0",
             "start":{"inputs":{"type":"object","properties":{},"additionalProperties":false},"contexts":{}},
             "nodes":[
                 {"id":"source","key":"source","type":"switch","typeVersion":1,"name":"Source","outputProjection":{},"contextWrites":[]},

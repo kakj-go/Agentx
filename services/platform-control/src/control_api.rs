@@ -87,10 +87,10 @@ impl ControlApiState {
             control_objects,
             work_packages: crate::work_packages::WorkPackageClient::from_env()?,
             runtime_query_url: env::var("AGENTX_RUNTIME_INTERNAL_URL").unwrap_or_else(|_| {
-                "http://runtime-gateway-internal.agentx-v2-runtime.svc:8080".into()
+                "http://runtime-gateway-internal.agentx-runtime.svc:8080".into()
             }),
             observability_query_url: env::var("AGENTX_OBSERVABILITY_INTERNAL_URL")
-                .unwrap_or_else(|_| "http://observability.agentx-v2-observability.svc:8080".into()),
+                .unwrap_or_else(|_| "http://observability.agentx-runtime.svc:8080".into()),
             delegation_kid: env::var("AGENTX_CONTROL_BFF_JWT_KID")?,
             delegation_key: SecretString::from(env::var("AGENTX_CONTROL_BFF_JWT_PRIVATE_KEY_PEM")?),
             runtime_command_kid: env::var("AGENTX_CONTROL_PUBLISHER_JWT_KID")?,

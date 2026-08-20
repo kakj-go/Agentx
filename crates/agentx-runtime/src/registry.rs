@@ -922,7 +922,7 @@ fn populate_parameter_localizations(manifest: &mut NodeManifestVersion) {
                 localization
                     .parameter_placeholders
                     .entry(path.clone())
-                    .or_insert_with(|| "${{ inputs.value }}".into());
+                    .or_insert_with(|| "选择变量或输入固定值".into());
             }
             if let Some(options) = property.get("enum").and_then(Value::as_array) {
                 let labels = options
@@ -1173,11 +1173,40 @@ fn configure_workflow_v4_capabilities(manifest: &mut NodeManifestVersion) {
                 );
             }
         }
-        "wait" | "approval" => {
+        "wait" => {
             for port in &manifest.output_ports {
                 manifest.output_cardinality.insert(
                     port.name.clone(),
                     agentx_node_protocol::OutputCardinality::ZeroOrOne,
+                );
+            }
+        }
+        "approval" => {
+            for port in &manifest.output_ports {
+                manifest.output_cardinality.insert(
+                    port.name.clone(),
+                    agentx_node_protocol::OutputCardinality::ZeroOrOne,
+                );
+            }
+            for (port, decision, action) in [
+                ("approved", "approved", "approve"),
+                ("rejected", "rejected", "reject"),
+            ] {
+                manifest.output_port_schemas.insert(
+                    port.into(),
+                    json!({
+                        "type":"object",
+                        "properties":{
+                            "taskId":{"type":"string","format":"uuid"},
+                            "decision":{"type":"string","enum":[decision]},
+                            "decidedBy":{"type":"string","format":"uuid"},
+                            "reason":{"type":["string","null"]},
+                            "action":{"type":"string","enum":[action]},
+                            "input":{}
+                        },
+                        "required":["taskId","decision","decidedBy"],
+                        "additionalProperties":false
+                    }),
                 );
             }
         }
@@ -1189,14 +1218,14 @@ fn configure_workflow_v4_capabilities(manifest: &mut NodeManifestVersion) {
             );
         }
         "model" => {
-            manifest.output_schema = json!({"type":"object","properties":{"text":{"type":"string"},"message":{},"structuredJson":{},"citations":{"type":"array"},"toolCalls":{"type":"array"},"usage":{"type":"object"},"finishReason":{"type":["string","null"]},"stopReason":{"type":["string","null"]},"partial":{"type":"boolean"}},"required":["text","toolCalls","usage","partial"]});
+            manifest.output_schema = json!({"type":"object","properties":{"text":{"type":"string"},"reasoningContent":{"type":["string","null"]},"message":{},"structuredOutput":{},"citations":{"type":"array"},"toolCalls":{"type":"array"},"files":{"type":"array"},"usage":{"type":"object"},"finishReason":{"type":["string","null"]},"partial":{"type":"boolean"}},"required":["text","toolCalls","files","usage","partial"]});
             manifest.output_cardinality.insert(
                 "main".into(),
                 agentx_node_protocol::OutputCardinality::ExactlyOne,
             );
         }
         "agent" => {
-            manifest.output_schema = json!({"type":"object","properties":{"finalAnswer":{"type":"string"},"message":{},"messages":{"type":"array"},"toolCalls":{"type":"integer"},"artifacts":{"type":"array"},"citations":{"type":"array"},"usage":{"type":"object"},"stopReason":{"type":["string","null"]}},"required":["finalAnswer","messages","artifacts","citations","usage"]});
+            manifest.output_schema = json!({"type":"object","properties":{"text":{"type":"string"},"message":{},"messages":{"type":"array"},"toolCalls":{"type":"array"},"artifacts":{"type":"array"},"citations":{"type":"array"},"usage":{"type":"object"},"finishReason":{"type":["string","null"]},"partial":{"type":"boolean"}},"required":["text","messages","toolCalls","artifacts","citations","usage","partial"]});
             manifest.output_cardinality.insert(
                 "main".into(),
                 agentx_node_protocol::OutputCardinality::ExactlyOne,
@@ -1275,26 +1304,18 @@ fn configure_workflow_v4_capabilities(manifest: &mut NodeManifestVersion) {
                     | "select"
             ) && let Some(property) = properties.get_mut(&name).and_then(Value::as_object_mut)
             {
-                property.insert("templatable".into(), Value::Bool(true));
-                property.insert(
-                    "allowedNamespaces".into(),
-                    json!(["inputs", "outputs", "contexts", "execution", "item", "loop"]),
-                );
-                property.insert(
-                    "expectedType".into(),
-                    property
-                        .get("type")
-                        .cloned()
-                        .unwrap_or_else(|| json!("any")),
-                );
-                property.insert(
-                    "multiline".into(),
-                    Value::Bool(matches!(
-                        control.as_str(),
-                        "textarea" | "prompt" | "expression" | "json"
-                    )),
-                );
-                property.insert("richText".into(), Value::Bool(false));
+                property.insert("x-agentx-dynamicValue".into(), json!({
+                    "modes": if control == "prompt" || control == "textarea" { json!(["literal","reference","template"]) } else if control == "expression" { json!(["literal","reference","expression"]) } else { json!(["literal","reference"]) },
+                    "allowedNamespaces":["inputs","outputs","contexts","execution","item","loop"],
+                    "acceptedCardinality":["single"],
+                    "missingPolicies":["error","null","default","omit"],
+                    "recursive":matches!(control.as_str(), "json" | "mapper" | "fixed_collection")
+                }));
+                property.remove("templatable");
+                property.remove("allowedNamespaces");
+                property.remove("expectedType");
+                property.remove("multiline");
+                property.remove("richText");
             }
         }
     }
@@ -1322,6 +1343,26 @@ mod tests {
             .as_array()
             .expect("wait kinds");
         assert!(kinds.iter().any(|kind| kind == "form"));
+    }
+
+    #[test]
+    fn approval_manifest_declares_decision_output_contracts() {
+        let registry = NodeRegistry::m5_defaults();
+        let manifest = registry.get("approval", 1).expect("approval manifest");
+
+        for (port, decision) in [("approved", "approved"), ("rejected", "rejected")] {
+            let schema = manifest
+                .output_port_schemas
+                .get(port)
+                .expect("decision port schema");
+            assert_eq!(schema["properties"]["decision"]["enum"], json!([decision]));
+            assert_eq!(
+                schema["required"],
+                json!(["taskId", "decision", "decidedBy"])
+            );
+        }
+        assert!(!manifest.output_port_schemas.contains_key("timed_out"));
+        assert!(!manifest.output_port_schemas.contains_key("error"));
     }
 
     #[test]

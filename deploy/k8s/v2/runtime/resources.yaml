@@ -2,19 +2,19 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: workflow-runtime
-  namespace: agentx-v2-runtime
+  namespace: agentx-runtime
 automountServiceAccountToken: false
 ---
 apiVersion: v1
 kind: Service
-metadata: { name: runtime-mysql, namespace: agentx-v2-runtime }
+metadata: { name: runtime-mysql, namespace: agentx-runtime }
 spec:
   selector: { app.kubernetes.io/name: runtime-mysql }
   ports: [{ name: mysql, port: 3306 }]
 ---
 apiVersion: apps/v1
 kind: StatefulSet
-metadata: { name: runtime-mysql, namespace: agentx-v2-runtime }
+metadata: { name: runtime-mysql, namespace: agentx-runtime }
 spec:
   serviceName: runtime-mysql
   replicas: 1
@@ -60,14 +60,14 @@ spec:
 ---
 apiVersion: v1
 kind: Service
-metadata: { name: runtime-redis, namespace: agentx-v2-runtime }
+metadata: { name: runtime-redis, namespace: agentx-runtime }
 spec:
   selector: { app.kubernetes.io/name: runtime-redis }
   ports: [{ name: redis, port: 6379 }]
 ---
 apiVersion: apps/v1
 kind: StatefulSet
-metadata: { name: runtime-redis, namespace: agentx-v2-runtime }
+metadata: { name: runtime-redis, namespace: agentx-runtime }
 spec:
   serviceName: runtime-redis
   replicas: 1
@@ -105,7 +105,7 @@ spec:
 ---
 apiVersion: batch/v1
 kind: Job
-metadata: { name: runtime-migrate, namespace: agentx-v2-runtime }
+metadata: { name: runtime-migrate, namespace: agentx-runtime }
 spec:
   backoffLimit: 2
   template:
@@ -141,12 +141,12 @@ spec:
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
-metadata: { name: runtime-default-deny, namespace: agentx-v2-runtime }
+metadata: { name: runtime-default-deny, namespace: agentx-runtime }
 spec: { podSelector: {}, policyTypes: [Ingress, Egress] }
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
-metadata: { name: runtime-data-access, namespace: agentx-v2-runtime }
+metadata: { name: runtime-data-access, namespace: agentx-runtime }
 spec:
   podSelector: { matchLabels: { agentx.io/runtime-data: mysql-redis } }
   policyTypes: [Egress]
@@ -164,7 +164,7 @@ spec:
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
-metadata: { name: runtime-migration-data-access, namespace: agentx-v2-runtime }
+metadata: { name: runtime-migration-data-access, namespace: agentx-runtime }
 spec:
   podSelector: { matchLabels: { agentx.io/runtime-data: mysql } }
   policyTypes: [Egress]
@@ -176,7 +176,7 @@ spec:
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
-metadata: { name: runtime-gateway-data-access, namespace: agentx-v2-runtime }
+metadata: { name: runtime-gateway-data-access, namespace: agentx-runtime }
 spec:
   podSelector: { matchLabels: { app.kubernetes.io/name: runtime-gateway } }
   policyTypes: [Egress]
@@ -198,7 +198,7 @@ spec:
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
-metadata: { name: workflow-worker-vault-egress, namespace: agentx-v2-runtime }
+metadata: { name: workflow-worker-vault-egress, namespace: agentx-runtime }
 spec:
   podSelector: { matchLabels: { app.kubernetes.io/name: workflow-worker } }
   policyTypes: [Egress]
@@ -210,7 +210,7 @@ spec:
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
-metadata: { name: runtime-mysql-ingress, namespace: agentx-v2-runtime }
+metadata: { name: runtime-mysql-ingress, namespace: agentx-runtime }
 spec:
   podSelector: { matchLabels: { app.kubernetes.io/name: runtime-mysql } }
   policyTypes: [Ingress]
@@ -220,7 +220,7 @@ spec:
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
-metadata: { name: runtime-redis-ingress, namespace: agentx-v2-runtime }
+metadata: { name: runtime-redis-ingress, namespace: agentx-runtime }
 spec:
   podSelector: { matchLabels: { app.kubernetes.io/name: runtime-redis } }
   policyTypes: [Ingress]
@@ -232,7 +232,7 @@ spec:
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
-metadata: { name: runtime-internal-api-ingress, namespace: agentx-v2-runtime }
+metadata: { name: runtime-internal-api-ingress, namespace: agentx-runtime }
 spec:
   podSelector: { matchLabels: { agentx.io/internal-api: runtime-v1 } }
   policyTypes: [Ingress]
@@ -244,7 +244,7 @@ spec:
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
-metadata: { name: runtime-provider-egress, namespace: agentx-v2-runtime }
+metadata: { name: runtime-provider-egress, namespace: agentx-runtime }
 spec:
   podSelector: { matchLabels: { agentx.io/plane: runtime } }
   policyTypes: [Egress]
@@ -267,7 +267,7 @@ spec:
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
-metadata: { name: runtime-managed-egress-gateway, namespace: agentx-v2-runtime }
+metadata: { name: runtime-managed-egress-gateway, namespace: agentx-runtime }
 spec:
   podSelector: { matchLabels: { agentx.io/egress-client: managed } }
   policyTypes: [Egress]
@@ -285,7 +285,7 @@ spec:
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
-metadata: { name: sandbox-manager-ingress, namespace: agentx-v2-runtime }
+metadata: { name: sandbox-manager-ingress, namespace: agentx-runtime }
 spec:
   podSelector: { matchLabels: { app.kubernetes.io/name: sandbox-manager } }
   policyTypes: [Ingress]
@@ -295,7 +295,7 @@ spec:
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
-metadata: { name: workflow-worker-sandbox-egress, namespace: agentx-v2-runtime }
+metadata: { name: workflow-worker-sandbox-egress, namespace: agentx-runtime }
 spec:
   podSelector: { matchLabels: { app.kubernetes.io/name: workflow-worker } }
   policyTypes: [Egress]
@@ -305,7 +305,7 @@ spec:
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
-metadata: { name: runtime-public-api-ingress, namespace: agentx-v2-runtime }
+metadata: { name: runtime-public-api-ingress, namespace: agentx-runtime }
 spec:
   podSelector: { matchLabels: { agentx.io/public-api: runtime } }
   policyTypes: [Ingress]

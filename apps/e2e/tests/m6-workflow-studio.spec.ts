@@ -16,7 +16,7 @@ const resourceNames = [
 ] as const
 const resourceTabs = { credential: '凭证', model: '模型', mcp_server: 'MCP 服务', mcp_tool: 'MCP 工具', sandbox_profile: '沙箱配置' } as const
 
-type Execution = { id: string; status: string }
+type Execution = { id: string; status: string; errorCode?: string | null }
 type Approval = { id: string; executionId: string; status: string }
 type Application = { id: string; name: string; slug: string }
 type ApplicationDeployment = { id: string; status: string; publishErrorCode?: string | null; publishErrorMessage?: string | null }
@@ -31,9 +31,9 @@ type StudioDraft = {
     schemaVersion: string
     start: { inputs: unknown; contexts: Record<string, unknown> }
     settings: Record<string, unknown>
-    nodes: Array<{ id: string; key: string; type: string; name: string; parameters: Record<string, unknown>; resourceReferences: Array<{ bindingRole?: string }>; outputProjection: Record<string, Record<string, { expression: string }>>; contextWrites: Array<{ operation: string; path: string; value: unknown }>; settings: { onError?: string } }>
+    nodes: Array<{ id: string; key: string; type: string; name: string; parameters: Record<string, unknown>; resourceReferences: Array<{ bindingRole?: string }>; outputProjection: Record<string, Record<string, { value: DynamicValue }>>; contextWrites: Array<{ operation: string; path: string; value: DynamicValue }>; settings: { onError?: string } }>
     connections: Array<{ id: string; sourceNodeId: string; sourceHandle: string; targetNodeId: string; targetHandle: string; order: number }>
-    end: { outputs: Record<string, { expression: string }>; error: { strategy: string; collectWindowMs: number; outputs: Record<string, { expression: string }> } }
+    end: { outputs: Record<string, { value: DynamicValue }>; error: { strategy: string; collectWindowMs: number; outputs: Record<string, { value: DynamicValue }> } }
   }
   editorDocument: { bindingEdges: unknown[] }
 }
@@ -151,6 +151,7 @@ async function connect(page: Page, source: Locator, sourceHandle: string, target
   await page.mouse.up()
   await expect(edges).toHaveCount(edgeCount + 1)
 }
+type DynamicValue = { kind: string; selector?: { namespace: string; sourceNodeId?: string; port?: string; path: Array<string | number> }; missingPolicy?: { kind: string } }
 
 async function waitApplicationDeployment(page: Page, token: string, applicationId: string, deploymentId: string) {
   await expect.poll(async () => {
@@ -306,8 +307,21 @@ async function fillNativeText(page: Page, scope: Locator, value: string, index =
   const editor = scope.getByRole('textbox').nth(index)
   await expect(editor).toBeVisible()
   await editor.fill(value)
-  await expect(editor).toHaveValue(value)
+  if (await editor.getAttribute('contenteditable') === 'true') await expect(editor).toHaveText(value)
+  else await expect(editor).toHaveValue(value)
   await page.keyboard.press('Escape')
+}
+
+async function chooseReference(page: Page, scope: Locator, namespace: RegExp, labels: string[]) {
+  const editor = scope.getByRole('textbox', { name: 'Value' }).first()
+  await editor.click()
+  const picker = page.getByTestId('reference-picker')
+  await expect(picker).toBeVisible()
+  await picker.getByRole('button', { name: namespace }).click()
+  for (const label of labels) {
+    await picker.getByRole('button', { name: new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i') }).first().click()
+  }
+  await expect(picker).toBeHidden()
 }
 
 async function setEndOutput(page: Page, nodeKey: string, fieldPath = 'json', port = 'main', required = true, type = 'string') {
@@ -323,12 +337,10 @@ async function setEndOutput(page: Page, nodeKey: string, fieldPath = 'json', por
     await dialog.getByLabel(/类型|Type/).click()
     await page.getByRole('option', { name: /对象|Object/ }).click()
   }
-  const expression = dialog.getByLabel(/表达式|Expression/)
-  await expression.fill(`\${{ outputs.${nodeKey}.${port}.current.${fieldPath} }}`)
-  await dialog.dispatchEvent('mousedown')
-  await expect(page.getByTestId('reference-picker')).toBeHidden()
+  const fields = fieldPath.split('.').filter((field) => field !== 'json')
+  await chooseReference(page, dialog, /输出|Outputs/, [nodeKey, port, 'current', ...fields])
   if (required) await dialog.getByLabel(/必填|Required/).check()
-  await expect(expression).toHaveValue(`\${{ outputs.${nodeKey}.${port}.current.${fieldPath} }}`)
+  await expect(dialog.locator('[data-agentx-variable]')).toBeVisible()
   await dialog.getByRole('button', { name: /保存|Save/ }).click()
   await panel.getByRole('button', { name: /^(关闭|Close)$/ }).click()
 }
@@ -377,15 +389,14 @@ async function configureProjectionAndContextWrite(page: Page, details: Locator) 
   const outputName = outputDialog.getByLabel(/输出名称|Output name/)
   await outputName.fill('summary')
   await outputName.blur()
-  await outputDialog.getByLabel(/表达式|Expression/).fill('${{ item.json.stdout }}')
+  await chooseReference(page, outputDialog, /当前数据|Current data/, ['当前节点原始输出', 'stdout'])
   await outputDialog.getByRole('button', { name: /保存|Save/ }).click()
   await details.getByRole('button', { name: /添加全局变量写入|Add global variable write/ }).click()
   const writeDialog = page.getByRole('dialog', { name: /添加全局变量写入|Add global variable write/ })
   await writeDialog.getByLabel(/全局变量|Global variable/).click()
   await page.getByRole('option', { name: 'session_note' }).click()
-  await writeDialog.getByLabel(/表达式|Expression/).fill(`\${{ outputs.${key}.main.current.json.summary }}`)
+  await chooseReference(page, writeDialog, /输出|Outputs/, [key, 'main', 'current', 'summary'])
   await writeDialog.getByRole('button', { name: /保存|Save/ }).click()
-  return key
 }
 
 async function setEndErrorOutput(page: Page) {
@@ -400,12 +411,8 @@ async function setEndErrorOutput(page: Page) {
   const outputName = dialog.getByLabel(/输出名称|Output name/)
   await outputName.fill('failure_message')
   await outputName.blur()
-  const expression = dialog.getByLabel(/表达式|Expression/)
-  await expression.focus()
-  await page.getByRole('button', { name: /当前数据|Current data/ }).click()
-  await page.getByRole('button', { name: /当前错误|Current error/ }).click()
-  await page.getByRole('button', { name: /错误消息|Error message/ }).click()
-  await expect(expression).toHaveValue('${{ item.json.message }}')
+  await chooseReference(page, dialog, /当前数据|Current data/, ['当前错误', '错误消息'])
+  await expect(dialog.locator('[data-agentx-variable]')).toBeVisible()
   await dialog.getByRole('button', { name: /保存|Save/ }).click()
   await panel.getByRole('button', { name: /^(关闭|Close)$/ }).click()
 }
@@ -532,11 +539,11 @@ test('M6 Studio creates, debugs, versions and publishes a manifest-driven Workfl
   const agentConfigDetails = await openNodeDetails(page, agent)
   await expect(agentConfigDetails.getByText('节点参数', { exact: true })).toHaveCount(0)
   const prompt = agentConfigDetails.getByTestId('parameter-systemPrompt')
-  await expect(prompt.locator('[contenteditable="true"]')).toHaveCount(0)
+  await expect(prompt.locator('[contenteditable="true"]')).toHaveCount(1)
   await fillNativeText(page, prompt, 'Use the attached resources and return a concise result.')
   const question = agentConfigDetails.getByTestId('parameter-userQuestion')
-  await expect(question.locator('input')).toHaveCount(1)
-  await fillNativeText(page, question, '${{ inputs.question }}')
+  await expect(question.locator('[contenteditable="true"]')).toHaveCount(1)
+  await chooseReference(page, question, /输入|Inputs/, ['question'])
   await expect(agentConfigDetails.getByText('高级配置', { exact: true })).toBeVisible()
   await expect(agentConfigDetails.getByTestId('parameter-maxDurationMs')).toContainText('毫秒')
   await expect(agentConfigDetails.getByTestId('parameter-maxTotalTokens')).toContainText('Token')
@@ -549,7 +556,7 @@ test('M6 Studio creates, debugs, versions and publishes a manifest-driven Workfl
   await choose(page, page.getByTestId('parameter-runner'), /^Python$/)
   await fillMonaco(page, page.getByTestId('parameter-source'), 'print("m6-studio-ok")')
   await choose(page, page.getByTestId('resource-selector-sandbox_profile'), new RegExp(studioSandboxName))
-  const codeKey = await configureProjectionAndContextWrite(page, configuredCodeDetails)
+  await configureProjectionAndContextWrite(page, configuredCodeDetails)
 
   await openNodeDetails(page, approval)
   await page.getByTestId('parameter-title').getByRole('textbox').fill('M6 Studio Approval')
@@ -614,15 +621,15 @@ test('M6 Studio creates, debugs, versions and publishes a manifest-driven Workfl
   await group.getByRole('button', { name: '展开分组' }).click()
 
   const draft = await saveAndReadDraft(page, token, workflowId)
-  expect(draft.definition.schemaVersion).toBe('4.0')
+  expect(draft.definition.schemaVersion).toBe('5.0')
   expect(draft.definition.nodes.map((node) => node.type)).toEqual(expect.arrayContaining(['agent', 'code', 'approval', 'error_handler']))
   expect(draft.definition.nodes.map((node) => node.type)).not.toContain('manual_trigger')
   expect(draft.definition.nodes.find((node) => node.type === 'code')?.name).toBe('M6 Python Code')
-  expect(draft.definition.nodes.find((node) => node.type === 'agent')?.parameters.userQuestion).toBe('${{ inputs.question }}')
+  expect(draft.definition.nodes.find((node) => node.type === 'agent')?.parameters.userQuestion).toMatchObject({ kind: 'reference', selector: { namespace: 'inputs', path: ['question'] } })
   expect(draft.definition.nodes.find((node) => node.type === 'agent')?.resourceReferences.map((item) => item.bindingRole)).toEqual(expect.arrayContaining(['ai_model', 'ai_tool']))
   expect(draft.definition.nodes.find((node) => node.type === 'code')?.settings.onError).toBe('continue_error_output')
-  expect(draft.definition.nodes.find((node) => node.type === 'code')?.outputProjection.main.summary.expression).toBe('${{ item.json.stdout }}')
-  expect(draft.definition.nodes.find((node) => node.type === 'code')?.contextWrites).toContainEqual({ operation: 'set', path: 'session_note', value: `\${{ outputs.${codeKey}.main.current.json.summary }}` })
+  expect(draft.definition.nodes.find((node) => node.type === 'code')?.outputProjection.main.summary.value).toMatchObject({ kind: 'reference', selector: { namespace: 'item', path: ['stdout'] } })
+  expect(draft.definition.nodes.find((node) => node.type === 'code')?.contextWrites).toContainEqual({ operation: 'set', path: 'session_note', value: expect.objectContaining({ kind: 'reference', selector: expect.objectContaining({ namespace: 'outputs', port: 'main', path: ['summary'] }) }) })
   expect(draft.definition.start.contexts).toMatchObject({ session_note: { default: 'initial', mutable: true } })
   const startInputs = draft.definition.start.inputs as { properties: Record<string, Record<string, unknown>> }
   expect(startInputs.properties.attachments).toMatchObject({
@@ -635,8 +642,8 @@ test('M6 Studio creates, debugs, versions and publishes a manifest-driven Workfl
     'x-agentx-max-size-bytes': 1048576,
     'x-agentx-max-total-size-bytes': 2097152,
   })
-  expect(draft.definition.end.outputs.answer.expression).toContain(`outputs.${approvalKey}.approved.current.json`)
-  expect(draft.definition.end.error).toMatchObject({ strategy: 'collect', collectWindowMs: 1200, outputs: { failure_message: { expression: '${{ item.json.message }}' } } })
+  expect(draft.definition.end.outputs.answer.value).toMatchObject({ kind: 'reference', selector: { namespace: 'outputs', port: 'approved', path: ['decision'] } })
+  expect(draft.definition.end.error).toMatchObject({ strategy: 'collect', collectWindowMs: 1200, outputs: { failure_message: { value: { kind: 'reference', selector: { namespace: 'item', path: ['message'] } } } } })
   expect(draft.definition.connections).toContainEqual(expect.objectContaining({ sourceNodeId: draft.definition.nodes.find((node) => node.type === 'code')!.id, sourceHandle: 'error', targetNodeId: '__end__', targetHandle: 'error' }))
   expect(draft.editorDocument.bindingEdges).toHaveLength(2)
 
@@ -695,12 +702,48 @@ test('M6 Studio creates, debugs, versions and publishes a manifest-driven Workfl
   const stableAgent = page.getByTestId(`rf__node-${draft.definition.nodes.find((node) => node.type === 'agent')!.id}`)
   const agentDetails = await openNodeDetails(page, stableAgent)
   await agentDetails.getByRole('tab', { name: '输出' }).click()
-  await agentDetails.getByRole('textbox', { name: '输出' }).fill(JSON.stringify({ main: [{ json: { finalAnswer: 'm6-mock-output' } }] }))
-  const mockResponse = page.waitForResponse((value) => value.url().includes('/debug-overlays/') && value.request().method() === 'PUT')
+  await agentDetails.getByRole('textbox', { name: '输出' }).fill(JSON.stringify({ main: [{ json: { text: 'incomplete-agent-output' } }] }))
+  const invalidMockResponse = page.waitForResponse((value) => value.url().includes('/debug-overlays/') && value.request().method() === 'PUT')
   await agentDetails.getByRole('button', { name: '模拟', exact: true }).click()
+  expect((await invalidMockResponse).ok()).toBeTruthy()
+  const contractFailureId = await startDebug(page, () => studioRun(page).click())
+  const contractFailure = await waitExecution(page, token, contractFailureId, ['failed'], 30_000)
+  expect(contractFailure.errorCode).toBe('NODE_OUTPUT_CONTRACT_VIOLATION')
+  const failedNodes = await api<{ items: Array<{ nodeId: string; status: string; errorCode?: string | null }> }>(page, token, `/executions/${contractFailureId}/nodes`)
+  expect(failedNodes.items.filter((node) => node.nodeId === draft.definition.nodes.find((item) => item.type === 'agent')!.id)).toEqual([
+    expect.objectContaining({ status: 'failed', errorCode: 'NODE_OUTPUT_CONTRACT_VIOLATION' }),
+  ])
+
+  const restoredAgentDetails = await openNodeDetails(page, stableAgent)
+  await restoredAgentDetails.getByRole('tab', { name: '输出' }).click()
+  await restoredAgentDetails.getByRole('textbox', { name: '输出' }).fill(JSON.stringify({
+    main: [{
+      json: {
+        text: 'm6-mock-output',
+        message: { role: 'assistant', content: 'm6-mock-output' },
+        messages: [{ role: 'assistant', content: 'm6-mock-output' }],
+        toolCalls: [], artifacts: [], citations: [],
+        usage: { inputTokens: 0, outputTokens: 0, tokens: 0, costMicros: 0 },
+        finishReason: 'stop', partial: false,
+      },
+    }],
+  }))
+  const mockResponse = page.waitForResponse((value) => value.url().includes('/debug-overlays/') && value.request().method() === 'PUT')
+  await restoredAgentDetails.getByRole('button', { name: '模拟', exact: true }).click()
   expect((await mockResponse).ok()).toBeTruthy()
+
+  const failedCodeDetails = await openNodeDetails(page, code)
+  await failedCodeDetails.getByRole('tab', { name: '输出' }).click()
+  await expect(failedCodeDetails.getByRole('button', { name: '固定', exact: true })).toBeDisabled()
+
+  const restoredExecution = await startDebug(page, () => studioRun(page).click())
+  await approveExecution(approvalPage, token, restoredExecution)
+  await waitExecution(page, token, restoredExecution, ['succeeded'])
+
   const codeDetails = await openNodeDetails(page, code)
   await codeDetails.getByRole('tab', { name: '输出' }).click()
+  await expect(codeDetails.getByRole('textbox', { name: '输出' })).toHaveValue(/m6-studio-ok/, { timeout: 30_000 })
+  await expect(codeDetails.getByRole('button', { name: '固定', exact: true })).toBeEnabled()
   const pinResponse = page.waitForResponse((value) => value.url().includes('/debug-overlays/') && value.request().method() === 'PUT')
   await codeDetails.getByRole('button', { name: '固定', exact: true }).click()
   expect((await pinResponse).ok()).toBeTruthy()
@@ -855,7 +898,7 @@ test('M6 Studio makes dual-Agent output selection explicit across serial, parall
   await connect(page, secondAgent, 'main', page.getByTestId('workflow-end'), 'main')
   const draftBeforeEnd = await saveAndReadDraft(page, token, workflowId)
   const secondAgentKey = draftBeforeEnd.definition.nodes.find((node) => node.name === 'Agent B')!.key
-  await setEndOutput(page, secondAgentKey, 'json.finalAnswer')
+  await setEndOutput(page, secondAgentKey, 'json.text')
   const serialDraft = await saveAndReadDraft(page, token, workflowId)
   expect(serialDraft.definition.nodes.filter((node) => node.type === 'agent')).toHaveLength(2)
   const serialExecution = await startDebug(page, () => studioRun(page).click())
@@ -915,10 +958,10 @@ test('M6 Studio makes dual-Agent output selection explicit across serial, parall
   const messages = await messagesResponse.json() as GatewayMessage[]
   const assistant = messages.find((message) => message.role === 'assistant')
   expect(assistant).toBeTruthy()
-  const nodeRuns = await api<{ items: Array<{ nodeId: string; status: string; output?: { main?: Array<{ json?: { finalAnswer?: string } }> } }> }>(page, token, `/executions/${completed!.executionId}/nodes`)
+  const nodeRuns = await api<{ items: Array<{ nodeId: string; status: string; output?: { main?: Array<{ json?: { text?: string } }> } }> }>(page, token, `/executions/${completed!.executionId}/nodes`)
   const selectedRun = nodeRuns.items.find((item) => item.nodeId === secondAgentId && item.status === 'succeeded')
   const selectedJson = selectedRun?.output?.main?.[0]?.json
-  const selectedText = selectedJson?.finalAnswer
+  const selectedText = selectedJson?.text
   expect(selectedText).toBeTruthy()
   expect(assistant!.parts.some((part) => part.content === selectedText)).toBeTruthy()
 
@@ -933,7 +976,7 @@ test('M6 Studio makes dual-Agent output selection explicit across serial, parall
   await connect(page, merge, 'main', page.getByTestId('workflow-end'), 'main')
   const mergedDraft = await saveAndReadDraft(page, token, workflowId)
   expect(mergedDraft.definition.nodes.some((node) => node.type === 'merge')).toBeTruthy()
-  expect(mergedDraft.definition.end.outputs.answer.expression).toContain(`outputs.${secondAgentKey}.main.current.json`)
+  expect(mergedDraft.definition.end.outputs.answer.value).toMatchObject({ kind: 'reference', selector: { namespace: 'outputs', port: 'main', path: ['text'] } })
   const mergedExecution = await startDebug(page, () => studioRun(page).click())
   await waitExecution(page, token, mergedExecution, ['succeeded'], 180_000)
 

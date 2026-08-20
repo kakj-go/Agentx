@@ -1,21 +1,21 @@
 apiVersion: v1
 kind: ServiceAccount
-metadata: { name: runtime-gateway, namespace: agentx-v2-runtime }
+metadata: { name: runtime-gateway, namespace: agentx-runtime }
 automountServiceAccountToken: false
 ---
 apiVersion: v1
 kind: ServiceAccount
-metadata: { name: workflow-worker, namespace: agentx-v2-runtime }
+metadata: { name: workflow-worker, namespace: agentx-runtime }
 automountServiceAccountToken: false
 ---
 apiVersion: v1
 kind: ServiceAccount
-metadata: { name: sandbox-manager, namespace: agentx-v2-runtime }
+metadata: { name: sandbox-manager, namespace: agentx-runtime }
 automountServiceAccountToken: false
 ---
 apiVersion: apps/v1
 kind: Deployment
-metadata: { name: runtime-gateway, namespace: agentx-v2-runtime }
+metadata: { name: runtime-gateway, namespace: agentx-runtime }
 spec:
   replicas: 1
   strategy: { type: RollingUpdate, rollingUpdate: { maxUnavailable: 1, maxSurge: 1 } }
@@ -46,12 +46,13 @@ spec:
             - { name: AGENTX_RUNTIME_GATEWAY_RATE_LIMIT_BURST, value: "100" }
             - { name: AGENTX_RUNTIME_USER_JWT_ISSUER, value: agentx-platform }
             - { name: AGENTX_RUNTIME_USER_JWT_AUDIENCE, value: agentx-runtime-gateway }
-            - { name: AGENTX_RUNTIME_VAULT_ENDPOINT, value: http://vault.agentx-v2-deps.svc:8200 }
-            - { name: AGENTX_EGRESS_PROXY_URL, value: http://agentx-egress-gateway.agentx-v2-deps.svc:3128 }
-            - { name: AGENTX_EGRESS_JWT_KEY_ID, value: runtime-gateway-current }
+            - { name: AGENTX_RUNTIME_VAULT_ENDPOINT, value: http://vault.agentx-deps.svc:8200 }
+            - { name: AGENTX_EGRESS_PROXY_URL, value: http://agentx-egress-gateway.agentx-deps.svc:3128 }
+            - name: AGENTX_EGRESS_JWT_KEY_ID
+              valueFrom: { secretKeyRef: { name: agentx-runtime-secrets, key: AGENTX_RUNTIME_GATEWAY_EGRESS_JWT_KEY_ID } }
             - name: AGENTX_EGRESS_JWT_PRIVATE_KEY_PEM
               valueFrom: { secretKeyRef: { name: agentx-runtime-secrets, key: AGENTX_RUNTIME_GATEWAY_EGRESS_JWT_PRIVATE_KEY_PEM } }
-            - { name: AGENTX_RUNTIME_S3_ENDPOINT, value: http://object-storage.agentx-v2-deps.svc:9000 }
+            - { name: AGENTX_RUNTIME_S3_ENDPOINT, value: http://object-storage.agentx-deps.svc:9000 }
             - { name: AGENTX_RUNTIME_S3_BUCKET, value: agentx-runtime }
             - { name: AGENTX_RUNTIME_S3_REGION, value: us-east-1 }
             - { name: AGENTX_RUNTIME_S3_ALLOW_HTTP, value: "true" }
@@ -87,21 +88,21 @@ spec:
 ---
 apiVersion: v1
 kind: Service
-metadata: { name: runtime-gateway-public, namespace: agentx-v2-runtime }
+metadata: { name: runtime-gateway-public, namespace: agentx-runtime }
 spec:
   selector: { app.kubernetes.io/name: runtime-gateway }
   ports: [{ name: http, port: 8080, targetPort: http }]
 ---
 apiVersion: v1
 kind: Service
-metadata: { name: runtime-gateway-internal, namespace: agentx-v2-runtime }
+metadata: { name: runtime-gateway-internal, namespace: agentx-runtime }
 spec:
   selector: { app.kubernetes.io/name: runtime-gateway }
   ports: [{ name: http, port: 8080, targetPort: http }]
 ---
 apiVersion: v1
 kind: Service
-metadata: { name: runtime-gateway-metrics, namespace: agentx-v2-runtime }
+metadata: { name: runtime-gateway-metrics, namespace: agentx-runtime }
 spec:
   clusterIP: None
   selector: { app.kubernetes.io/name: runtime-gateway }
@@ -109,7 +110,7 @@ spec:
 ---
 apiVersion: apps/v1
 kind: Deployment
-metadata: { name: workflow-runtime, namespace: agentx-v2-runtime }
+metadata: { name: workflow-runtime, namespace: agentx-runtime }
 spec:
   replicas: 1
   strategy: { type: RollingUpdate, rollingUpdate: { maxUnavailable: 1, maxSurge: 1 } }
@@ -136,13 +137,14 @@ spec:
             - { name: AGENTX_RUNTIME_MYSQL_MAX_CONNECTIONS, value: "10" }
             - { name: AGENTX_RUNTIME_MYSQL_TLS_MODE, value: disabled }
             - { name: AGENTX_RUNTIME_REDIS_URL, value: redis://runtime-redis:6379/ }
-            - { name: AGENTX_RUNTIME_S3_ENDPOINT, value: http://object-storage.agentx-v2-deps.svc:9000 }
+            - { name: AGENTX_RUNTIME_S3_ENDPOINT, value: http://object-storage.agentx-deps.svc:9000 }
             - { name: AGENTX_RUNTIME_S3_BUCKET, value: agentx-runtime }
             - { name: AGENTX_RUNTIME_S3_REGION, value: us-east-1 }
             - { name: AGENTX_RUNTIME_S3_ALLOW_HTTP, value: "true" }
             - { name: AGENTX_RUNTIME_S3_PATH_STYLE, value: "true" }
-            - { name: AGENTX_EGRESS_PROXY_URL, value: http://agentx-egress-gateway.agentx-v2-deps.svc:3128 }
-            - { name: AGENTX_EGRESS_JWT_KEY_ID, value: workflow-runtime-current }
+            - { name: AGENTX_EGRESS_PROXY_URL, value: http://agentx-egress-gateway.agentx-deps.svc:3128 }
+            - name: AGENTX_EGRESS_JWT_KEY_ID
+              valueFrom: { secretKeyRef: { name: agentx-runtime-secrets, key: AGENTX_WORKFLOW_RUNTIME_EGRESS_JWT_KEY_ID } }
             - name: AGENTX_EGRESS_JWT_PRIVATE_KEY_PEM
               valueFrom: { secretKeyRef: { name: agentx-runtime-secrets, key: AGENTX_WORKFLOW_RUNTIME_EGRESS_JWT_PRIVATE_KEY_PEM } }
             - name: AGENTX_RUNTIME_MYSQL_PASSWORD
@@ -172,7 +174,7 @@ spec:
 ---
 apiVersion: v1
 kind: Service
-metadata: { name: workflow-runtime-metrics, namespace: agentx-v2-runtime }
+metadata: { name: workflow-runtime-metrics, namespace: agentx-runtime }
 spec:
   clusterIP: None
   selector: { app.kubernetes.io/name: workflow-runtime }
@@ -180,7 +182,7 @@ spec:
 ---
 apiVersion: apps/v1
 kind: Deployment
-metadata: { name: workflow-worker, namespace: agentx-v2-runtime }
+metadata: { name: workflow-worker, namespace: agentx-runtime }
 spec:
   replicas: 1
   strategy: { type: RollingUpdate, rollingUpdate: { maxUnavailable: 1, maxSurge: 1 } }
@@ -209,14 +211,15 @@ spec:
             - { name: AGENTX_RUNTIME_MYSQL_MAX_CONNECTIONS, value: "6" }
             - { name: AGENTX_RUNTIME_MYSQL_TLS_MODE, value: disabled }
             - { name: AGENTX_RUNTIME_REDIS_URL, value: redis://runtime-redis:6379/ }
-            - { name: AGENTX_RUNTIME_VAULT_ENDPOINT, value: http://vault.agentx-v2-deps.svc:8200 }
+            - { name: AGENTX_RUNTIME_VAULT_ENDPOINT, value: http://vault.agentx-deps.svc:8200 }
             - { name: AGENTX_RUNTIME_VAULT_MOUNT, value: secret }
-            - { name: AGENTX_EGRESS_PROXY_URL, value: http://agentx-egress-gateway.agentx-v2-deps.svc:3128 }
-            - { name: AGENTX_EGRESS_JWT_KEY_ID, value: workflow-worker-current }
+            - { name: AGENTX_EGRESS_PROXY_URL, value: http://agentx-egress-gateway.agentx-deps.svc:3128 }
+            - name: AGENTX_EGRESS_JWT_KEY_ID
+              valueFrom: { secretKeyRef: { name: agentx-runtime-secrets, key: AGENTX_WORKFLOW_WORKER_EGRESS_JWT_KEY_ID } }
             - name: AGENTX_EGRESS_JWT_PRIVATE_KEY_PEM
               valueFrom: { secretKeyRef: { name: agentx-runtime-secrets, key: AGENTX_WORKFLOW_WORKER_EGRESS_JWT_PRIVATE_KEY_PEM } }
             - { name: AGENTX_SANDBOX_MANAGER_ENDPOINT, value: http://sandbox-manager:8080 }
-            - { name: AGENTX_RUNTIME_S3_ENDPOINT, value: http://object-storage.agentx-v2-deps.svc:9000 }
+            - { name: AGENTX_RUNTIME_S3_ENDPOINT, value: http://object-storage.agentx-deps.svc:9000 }
             - { name: AGENTX_RUNTIME_S3_BUCKET, value: agentx-runtime }
             - { name: AGENTX_RUNTIME_S3_REGION, value: us-east-1 }
             - { name: AGENTX_RUNTIME_S3_ALLOW_HTTP, value: "true" }
@@ -244,7 +247,7 @@ spec:
 ---
 apiVersion: v1
 kind: Service
-metadata: { name: workflow-worker-metrics, namespace: agentx-v2-runtime }
+metadata: { name: workflow-worker-metrics, namespace: agentx-runtime }
 spec:
   clusterIP: None
   selector: { app.kubernetes.io/name: workflow-worker }
@@ -252,7 +255,7 @@ spec:
 ---
 apiVersion: apps/v1
 kind: Deployment
-metadata: { name: sandbox-manager, namespace: agentx-v2-runtime }
+metadata: { name: sandbox-manager, namespace: agentx-runtime }
 spec:
   replicas: 1
   strategy: { type: RollingUpdate, rollingUpdate: { maxUnavailable: 1, maxSurge: 1 } }
@@ -277,10 +280,11 @@ spec:
             - { name: AGENTX_RUNTIME_MYSQL_USER, value: runtime_app }
             - { name: AGENTX_RUNTIME_MYSQL_MAX_CONNECTIONS, value: "2" }
             - { name: AGENTX_RUNTIME_MYSQL_TLS_MODE, value: disabled }
-            - { name: AGENTX_OPENSANDBOX_ENDPOINT, value: http://opensandbox.agentx-v2-deps.svc:8080 }
+            - { name: AGENTX_OPENSANDBOX_ENDPOINT, value: http://opensandbox.agentx-deps.svc:8080 }
             - { name: AGENTX_OPENSANDBOX_SECURE_ACCESS, value: "true" }
             - { name: AGENTX_EGRESS_SANDBOX_PROXY_URL, value: https://host.docker.internal:31429 }
-            - { name: AGENTX_EGRESS_JWT_KEY_ID, value: sandbox-current }
+            - name: AGENTX_EGRESS_JWT_KEY_ID
+              valueFrom: { secretKeyRef: { name: agentx-runtime-secrets, key: AGENTX_SANDBOX_EGRESS_JWT_KEY_ID } }
             - { name: AGENTX_EGRESS_SANDBOX_CA_PATH, value: /var/run/agentx-egress-ca/ca.crt }
             - name: AGENTX_EGRESS_JWT_PRIVATE_KEY_PEM
               valueFrom: { secretKeyRef: { name: agentx-runtime-secrets, key: AGENTX_SANDBOX_EGRESS_JWT_PRIVATE_KEY_PEM } }
@@ -306,14 +310,14 @@ spec:
 ---
 apiVersion: v1
 kind: Service
-metadata: { name: sandbox-manager, namespace: agentx-v2-runtime }
+metadata: { name: sandbox-manager, namespace: agentx-runtime }
 spec:
   selector: { app.kubernetes.io/name: sandbox-manager }
   ports: [{ name: http, port: 8080, targetPort: http }]
 ---
 apiVersion: v1
 kind: Service
-metadata: { name: sandbox-manager-metrics, namespace: agentx-v2-runtime }
+metadata: { name: sandbox-manager-metrics, namespace: agentx-runtime }
 spec:
   clusterIP: None
   selector: { app.kubernetes.io/name: sandbox-manager }

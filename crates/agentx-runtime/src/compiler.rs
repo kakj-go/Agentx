@@ -1,8 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use agentx_domain::{
-    ContextDefinition, ContextWriteOperation, WORKFLOW_END_NODE_ID, WORKFLOW_START_NODE_ID,
-    WorkflowDefinition, WorkflowNode, WorkflowOutput, canonical_content_hash, validate_definition,
+    ContextDefinition, ContextWriteOperation, DynamicValue, ExpressionNode, MissingValuePolicy,
+    TemplateSegment, ValueNamespace, ValuePathSegment, ValueSelection, ValueSelector,
+    WORKFLOW_END_NODE_ID, WORKFLOW_START_NODE_ID, WorkflowDefinition, WorkflowNode, WorkflowOutput,
+    canonical_content_hash, validate_definition,
 };
 use agentx_node_protocol::{NodeManifestVersion, OutputCardinality, PortKind};
 use agentx_runtime_contracts::{
@@ -19,7 +21,7 @@ use crate::{ExpressionEngine, NodeRegistry};
 #[path = "compiler_parameter_expressions.rs"]
 mod parameter_expressions;
 
-pub const COMPILER_VERSION: &str = "agentx-workflow-4.0.0";
+pub const COMPILER_VERSION: &str = "agentx-workflow-5.0.0";
 
 #[derive(Clone, Debug, Default)]
 pub struct CompileContext {
@@ -140,9 +142,11 @@ impl<'a> WorkflowCompiler<'a> {
                 &mut issues,
             );
             for (write_index, write) in node.context_writes.iter().enumerate() {
+                let value =
+                    serde_json::to_value(&write.value).expect("dynamic context value serializes");
                 validate_expressions(
                     &self.expressions,
-                    &write.value,
+                    &value,
                     &format!("{path}.contextWrites[{write_index}].value"),
                     &mut issues,
                 );
@@ -304,9 +308,6 @@ impl<'a> WorkflowCompiler<'a> {
                     *definition_index,
                     node,
                     manifest,
-                    definition,
-                    &enabled,
-                    &manifests,
                     &mut issues,
                 );
                 validate_output_projection(*definition_index, node, manifest, &mut issues);
@@ -336,8 +337,10 @@ impl<'a> WorkflowCompiler<'a> {
                 &mut issues,
             );
             for (write_index, write) in node.context_writes.iter().enumerate() {
+                let value =
+                    serde_json::to_value(&write.value).expect("dynamic context value serializes");
                 validate_reference_paths(
-                    &write.value,
+                    &value,
                     &format!("nodes[{definition_index}].contextWrites[{write_index}].value"),
                     Some(target),
                     ReferenceUsage::ContextWrite,
@@ -350,15 +353,16 @@ impl<'a> WorkflowCompiler<'a> {
             }
         }
         for (name, output) in &definition.end.outputs {
+            let value = serde_json::to_value(&output.value).expect("dynamic end value serializes");
             validate_expressions(
                 &self.expressions,
-                &Value::String(output.expression.clone()),
-                &format!("end.outputs.{name}.expression"),
+                &value,
+                &format!("end.outputs.{name}.value"),
                 &mut issues,
             );
             validate_reference_paths(
-                &Value::String(output.expression.clone()),
-                &format!("end.outputs.{name}.expression"),
+                &value,
+                &format!("end.outputs.{name}.value"),
                 None,
                 ReferenceUsage::EndOutput {
                     required: output.required,
@@ -370,7 +374,7 @@ impl<'a> WorkflowCompiler<'a> {
                 &mut issues,
             );
             validate_end_output_contract(
-                &format!("end.outputs.{name}.expression"),
+                &format!("end.outputs.{name}.value"),
                 output,
                 definition,
                 &enabled,
@@ -380,15 +384,17 @@ impl<'a> WorkflowCompiler<'a> {
         }
 
         for (name, output) in &definition.end.error.outputs {
+            let value =
+                serde_json::to_value(&output.value).expect("dynamic end error value serializes");
             validate_expressions(
                 &self.expressions,
-                &Value::String(output.expression.clone()),
-                &format!("end.error.outputs.{name}.expression"),
+                &value,
+                &format!("end.error.outputs.{name}.value"),
                 &mut issues,
             );
             validate_reference_paths(
-                &Value::String(output.expression.clone()),
-                &format!("end.error.outputs.{name}.expression"),
+                &value,
+                &format!("end.error.outputs.{name}.value"),
                 None,
                 ReferenceUsage::EndErrorOutput {
                     required: output.required,
@@ -400,7 +406,7 @@ impl<'a> WorkflowCompiler<'a> {
                 &mut issues,
             );
             validate_end_output_contract(
-                &format!("end.error.outputs.{name}.expression"),
+                &format!("end.error.outputs.{name}.value"),
                 output,
                 definition,
                 &enabled,
@@ -508,6 +514,19 @@ impl<'a> WorkflowCompiler<'a> {
                         .iter()
                         .map(|port| port.name.clone())
                         .collect(),
+                    effective_output_contract:
+                        agentx_runtime_contracts::EffectiveOutputContractV1 {
+                            port_schemas: manifest
+                                .output_ports
+                                .iter()
+                                .map(|port| {
+                                    (
+                                        port.name.clone(),
+                                        merged_output_schema(node, manifest, &port.name),
+                                    )
+                                })
+                                .collect(),
+                        },
                     side_effect_level: manifest.side_effect_level.clone(),
                     incoming_connections: Vec::new(),
                     outgoing_connections: Vec::new(),
@@ -857,9 +876,6 @@ fn validate_parameter_expression_contracts(
     definition_index: usize,
     node: &WorkflowNode,
     manifest: &NodeManifestVersion,
-    definition: &WorkflowDefinition,
-    nodes: &[(usize, &WorkflowNode)],
-    manifests: &[Option<NodeManifestVersion>],
     issues: &mut Vec<CompileIssue>,
 ) {
     let Some(properties) = manifest
@@ -872,11 +888,6 @@ fn validate_parameter_expression_contracts(
     let Some(parameters) = node.parameters.as_object() else {
         return;
     };
-    let context = ParameterExpressionContext {
-        definition,
-        nodes,
-        manifests,
-    };
     for (name, value) in parameters {
         let Some(schema) = properties.get(name) else {
             continue;
@@ -888,8 +899,6 @@ fn validate_parameter_expression_contracts(
             value,
             Some(schema),
             &ParameterExpressionContract::default(),
-            schema_requires(&manifest.parameter_schema, name),
-            &context,
             issues,
         );
     }
@@ -899,12 +908,6 @@ fn validate_parameter_expression_contracts(
 struct ParameterExpressionContract {
     templatable: bool,
     allowed_namespaces: BTreeSet<String>,
-}
-
-struct ParameterExpressionContext<'a> {
-    definition: &'a WorkflowDefinition,
-    nodes: &'a [(usize, &'a WorkflowNode)],
-    manifests: &'a [Option<NodeManifestVersion>],
 }
 
 fn parameter_property_schema<'a>(schema: &'a Value, name: &str) -> Option<&'a Value> {
@@ -942,89 +945,6 @@ fn parameter_items_schema(schema: &Value) -> Option<&Value> {
     })
 }
 
-fn schema_requires(schema: &Value, name: &str) -> bool {
-    schema
-        .get("required")
-        .and_then(Value::as_array)
-        .is_some_and(|required| required.iter().any(|field| field.as_str() == Some(name)))
-        || ["allOf", "anyOf", "oneOf"].into_iter().any(|keyword| {
-            schema
-                .get(keyword)
-                .and_then(Value::as_array)
-                .is_some_and(|variants| {
-                    variants
-                        .iter()
-                        .any(|variant| schema_requires(variant, name))
-                })
-        })
-}
-
-fn schema_accepts_null(schema: &Value) -> bool {
-    schema.get("type").is_some_and(|kind| match kind {
-        Value::String(kind) => kind == "null",
-        Value::Array(kinds) => kinds.iter().any(|kind| kind.as_str() == Some("null")),
-        _ => false,
-    }) || schema
-        .get("anyOf")
-        .or_else(|| schema.get("oneOf"))
-        .and_then(Value::as_array)
-        .is_some_and(|variants| variants.iter().any(schema_accepts_null))
-}
-
-fn output_reference_may_be_empty(
-    reference: &[String],
-    nodes: &[(usize, &WorkflowNode)],
-    manifests: &[Option<NodeManifestVersion>],
-) -> bool {
-    if reference.first().map(String::as_str) != Some("outputs") {
-        return false;
-    }
-    let Some(source) = reference
-        .get(1)
-        .and_then(|key| nodes.iter().position(|(_, node)| node.key == *key))
-    else {
-        return false;
-    };
-    let Some(manifest) = manifests.get(source).and_then(Option::as_ref) else {
-        return false;
-    };
-    if reference.get(2).map(String::as_str) == Some("runs") {
-        return true;
-    }
-    if reference.get(3).map(String::as_str) == Some("all") {
-        return false;
-    }
-    let Some(port) = reference.get(2) else {
-        return false;
-    };
-    matches!(
-        manifest
-            .output_cardinality
-            .get(port)
-            .copied()
-            .unwrap_or_default(),
-        OutputCardinality::ZeroOrOne | OutputCardinality::ZeroOrMany
-    )
-}
-
-fn exact_reference(value: &Value) -> Option<Vec<String>> {
-    let source = value.as_str()?.trim();
-    if !source.starts_with("${{") || !source.ends_with("}}") {
-        return None;
-    }
-    let inner = source[3..source.len() - 2].trim();
-    if !inner.bytes().all(|byte| {
-        byte.is_ascii_alphanumeric()
-            || matches!(byte, b'_' | b'.' | b'[' | b']' | b'\'' | b'"' | b'(' | b')')
-    }) {
-        return None;
-    }
-    let references = expression_reference_paths(source);
-    (references.len() == 1)
-        .then(|| references.into_iter().next())
-        .flatten()
-}
-
 fn json_types_compatible(expected: &str, actual: &str) -> bool {
     expected == actual
         || matches!(
@@ -1060,7 +980,7 @@ fn expression_aware_schema(schema: &Value, root: bool) -> Value {
     if root {
         schema
     } else {
-        serde_json::json!({"anyOf":[schema,{"type":"string","pattern":"(^=|\\$\\{\\{)"}]})
+        serde_json::json!({"anyOf":[schema,{"type":"object","required":["kind"],"properties":{"kind":{"enum":["literal","reference","template","expression"]}}}]})
     }
 }
 
@@ -1072,13 +992,12 @@ fn validate_expressions(
 ) {
     match value {
         Value::String(source) if source.contains("${{") => {
-            if let Err(error) = engine.validate_template(source) {
-                issues.push(CompileIssue {
-                    code: "INVALID_EXPRESSION".into(),
-                    path: path.into(),
-                    message: error.to_string(),
-                });
-            }
+            let _ = engine;
+            issues.push(CompileIssue {
+                code: "LEGACY_EXPRESSION_NOT_SUPPORTED".into(),
+                path: path.into(),
+                message: "Workflow 5.0 requires a structured dynamic value".into(),
+            });
         }
         Value::Array(values) => {
             for (index, value) in values.iter().enumerate() {
@@ -1119,14 +1038,28 @@ fn validate_reference_paths(
     graph: &[Vec<usize>],
     issues: &mut Vec<CompileIssue>,
 ) {
-    match value {
-        Value::String(source) => {
-            for reference in expression_reference_paths(source) {
+    if value.is_object()
+        && let Ok(dynamic) = serde_json::from_value::<DynamicValue>(value.clone())
+    {
+        let mut selectors = Vec::new();
+        collect_dynamic_selectors(&dynamic, &mut selectors);
+        for selector in selectors {
+            if let Some(reference) = structured_selector_reference(selector, nodes) {
                 validate_reference_path(
                     &reference, path, target, usage, definition, nodes, manifests, graph, issues,
                 );
+            } else {
+                issues.push(CompileIssue {
+                    code: "OUTPUT_REFERENCE_NOT_FOUND".into(),
+                    path: path.into(),
+                    message: "Structured selector references an unknown source node".into(),
+                });
             }
         }
+        return;
+    }
+    match value {
+        Value::String(_) => {}
         Value::Array(values) => {
             for (index, value) in values.iter().enumerate() {
                 validate_reference_paths(
@@ -1159,6 +1092,131 @@ fn validate_reference_paths(
         }
         _ => {}
     }
+}
+
+fn collect_dynamic_selectors<'a>(value: &'a DynamicValue, selectors: &mut Vec<&'a ValueSelector>) {
+    match value {
+        DynamicValue::Literal { .. } => {}
+        DynamicValue::Reference {
+            selector,
+            missing_policy,
+        } => {
+            selectors.push(selector);
+            collect_missing_policy_selectors(missing_policy, selectors);
+        }
+        DynamicValue::Template { segments } => {
+            for segment in segments {
+                if let TemplateSegment::Reference {
+                    selector,
+                    missing_policy,
+                } = segment
+                {
+                    selectors.push(selector);
+                    collect_missing_policy_selectors(missing_policy, selectors);
+                }
+            }
+        }
+        DynamicValue::Expression { root } => collect_expression_selectors(root, selectors),
+    }
+}
+
+fn collect_missing_policy_selectors<'a>(
+    policy: &'a MissingValuePolicy,
+    selectors: &mut Vec<&'a ValueSelector>,
+) {
+    if let MissingValuePolicy::Default { value } = policy {
+        collect_dynamic_selectors(value, selectors);
+    }
+}
+
+fn collect_expression_selectors<'a>(
+    node: &'a ExpressionNode,
+    selectors: &mut Vec<&'a ValueSelector>,
+) {
+    match node {
+        ExpressionNode::Literal { .. } => {}
+        ExpressionNode::Reference {
+            selector,
+            missing_policy,
+        } => {
+            selectors.push(selector);
+            collect_missing_policy_selectors(missing_policy, selectors);
+        }
+        ExpressionNode::Unary { operand, .. } => collect_expression_selectors(operand, selectors),
+        ExpressionNode::Binary { left, right, .. } => {
+            collect_expression_selectors(left, selectors);
+            collect_expression_selectors(right, selectors);
+        }
+        ExpressionNode::Conditional {
+            condition,
+            then_value,
+            else_value,
+        } => {
+            collect_expression_selectors(condition, selectors);
+            collect_expression_selectors(then_value, selectors);
+            collect_expression_selectors(else_value, selectors);
+        }
+        ExpressionNode::Call { arguments, .. } | ExpressionNode::Array { items: arguments } => {
+            for argument in arguments {
+                collect_expression_selectors(argument, selectors);
+            }
+        }
+        ExpressionNode::Object { fields } => {
+            for value in fields.values() {
+                collect_expression_selectors(value, selectors);
+            }
+        }
+    }
+}
+
+fn structured_selector_reference(
+    selector: &ValueSelector,
+    nodes: &[(usize, &WorkflowNode)],
+) -> Option<Vec<String>> {
+    let root = match selector.namespace {
+        ValueNamespace::Inputs => "inputs",
+        ValueNamespace::Outputs => "outputs",
+        ValueNamespace::Contexts => "contexts",
+        ValueNamespace::Execution => "execution",
+        ValueNamespace::Item => "item",
+        ValueNamespace::Loop => "loop",
+    };
+    let mut reference = vec![root.to_owned()];
+    if selector.namespace == ValueNamespace::Outputs {
+        let id = selector.source_node_id.as_deref()?;
+        let node = nodes.iter().find(|(_, node)| node.id == id)?.1;
+        reference.push(node.key.clone());
+        if let ValueSelection::Index { index } = selector.run {
+            reference.extend([
+                "runs".into(),
+                index.to_string(),
+                selector.port.clone().unwrap_or_else(|| "main".into()),
+            ]);
+            reference.push(match selector.item {
+                ValueSelection::Index { index } => index.to_string(),
+                _ => "0".into(),
+            });
+            reference.push("json".into());
+        } else {
+            reference.push(selector.port.clone().unwrap_or_else(|| "main".into()));
+            match selector.item {
+                ValueSelection::Current => reference.extend(["current".into(), "json".into()]),
+                ValueSelection::First => reference.extend(["first".into(), "json".into()]),
+                ValueSelection::Last => reference.extend(["last".into(), "json".into()]),
+                ValueSelection::All => reference.push("all".into()),
+                ValueSelection::Index { index } => {
+                    reference.extend(["all".into(), index.to_string(), "json".into()])
+                }
+            }
+        }
+    } else if selector.namespace == ValueNamespace::Item {
+        reference.push("json".into());
+    }
+    reference.extend(selector.path.iter().map(|segment| match segment {
+        ValuePathSegment::Key(key) => key.clone(),
+        ValuePathSegment::Index(index) => index.to_string(),
+    }));
+    Some(reference)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1615,8 +1673,10 @@ fn validate_end_output_contract(
     manifests: &[Option<NodeManifestVersion>],
     issues: &mut Vec<CompileIssue>,
 ) {
-    let value = Value::String(output.expression.clone());
-    let Some(reference) = exact_reference(&value) else {
+    let DynamicValue::Reference { selector, .. } = &output.value else {
+        return;
+    };
+    let Some(reference) = structured_selector_reference(selector, nodes) else {
         return;
     };
     let Some(expected) = output.schema.get("type").and_then(Value::as_str) else {
@@ -1674,110 +1734,7 @@ fn is_reachable(source: usize, target: usize, graph: &[Vec<usize>]) -> bool {
 }
 
 fn reference_issue(issues: &mut Vec<CompileIssue>, code: &str, path: &str, reference: &[String]) {
-    issues.push(CompileIssue { code: code.into(), path: path.into(), message: format!("Invalid expression reference '{}'; references must resolve through the Workflow 4.0 contract", reference.join(".")) });
-}
-
-fn expression_reference_paths(source: &str) -> Vec<Vec<String>> {
-    let mut paths = Vec::new();
-    let mut cursor = 0;
-    while let Some(offset) = source[cursor..].find("${{") {
-        let start = cursor + offset + 3;
-        let Some(end_offset) = source[start..].find("}}") else {
-            break;
-        };
-        let expression = &source[start..start + end_offset];
-        let bytes = expression.as_bytes();
-        let mut index = 0;
-        let mut quote = None;
-        while index < bytes.len() {
-            if let Some(active) = quote {
-                if bytes[index] == b'\\' {
-                    index += 2;
-                    continue;
-                }
-                if bytes[index] == active {
-                    quote = None;
-                }
-                index += 1;
-                continue;
-            }
-            if matches!(bytes[index], b'\'' | b'"') {
-                quote = Some(bytes[index]);
-                index += 1;
-                continue;
-            }
-            if bytes[index].is_ascii_alphabetic() || bytes[index] == b'_' {
-                let mut segments = Vec::new();
-                let begin = index;
-                while index < bytes.len()
-                    && (bytes[index].is_ascii_alphanumeric() || bytes[index] == b'_')
-                {
-                    index += 1;
-                }
-                segments.push(expression[begin..index].to_owned());
-                loop {
-                    if index + 1 < bytes.len() && bytes[index] == b'(' && bytes[index + 1] == b')' {
-                        index += 2;
-                        continue;
-                    }
-                    if index < bytes.len()
-                        && bytes[index] == b'.'
-                        && index + 1 < bytes.len()
-                        && (bytes[index + 1].is_ascii_alphabetic() || bytes[index + 1] == b'_')
-                    {
-                        index += 1;
-                        let begin = index;
-                        while index < bytes.len()
-                            && (bytes[index].is_ascii_alphanumeric() || bytes[index] == b'_')
-                        {
-                            index += 1;
-                        }
-                        segments.push(expression[begin..index].to_owned());
-                        continue;
-                    }
-                    if index + 3 < bytes.len()
-                        && bytes[index] == b'['
-                        && matches!(bytes[index + 1], b'\'' | b'"')
-                    {
-                        let active = bytes[index + 1];
-                        let begin = index + 2;
-                        let mut end = begin;
-                        while end < bytes.len() && bytes[end] != active {
-                            end += 1;
-                        }
-                        if end + 1 < bytes.len() && bytes[end + 1] == b']' {
-                            segments.push(expression[begin..end].to_owned());
-                            index = end + 2;
-                            continue;
-                        }
-                    }
-                    if index + 1 < bytes.len() && bytes[index] == b'[' {
-                        let begin = index + 1;
-                        let mut end = begin;
-                        while end < bytes.len() && bytes[end].is_ascii_digit() {
-                            end += 1;
-                        }
-                        if end > begin && end < bytes.len() && bytes[end] == b']' {
-                            segments.push(expression[begin..end].to_owned());
-                            index = end + 1;
-                            continue;
-                        }
-                    }
-                    break;
-                }
-                if matches!(
-                    segments.first().map(String::as_str),
-                    Some("inputs" | "outputs" | "contexts" | "execution" | "item" | "loop")
-                ) {
-                    paths.push(segments);
-                }
-            } else {
-                index += 1;
-            }
-        }
-        cursor = start + end_offset + 2;
-    }
-    paths
+    issues.push(CompileIssue { code: code.into(), path: path.into(), message: format!("Invalid structured reference '{}'; references must resolve through the Workflow 5.0 contract", reference.join(".")) });
 }
 
 fn port_matches(ports: &[agentx_node_protocol::NodePort], handle: &str) -> bool {

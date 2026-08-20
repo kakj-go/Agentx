@@ -184,13 +184,13 @@ fn openai_tool_call_is_normalized_for_the_agent_loop() {
 }
 
 #[test]
-fn openai_final_answer_and_usage_are_normalized() {
+fn openai_model_output_matches_the_manifest_contract() {
     let execution = openai_execution_output(WorkerExecution::succeeded(
         json!({"choices":[{"message":{"role":"assistant","content":"complete"}}],"usage":{"prompt_tokens":5,"completion_tokens":3,"total_tokens":8}}),
     ));
     assert_eq!(
         execution.outputs["main"][0].json,
-        json!({"done":true,"answer":"complete","finalAnswer":"complete","usage":{"inputTokens":5,"outputTokens":3,"tokens":8,"costMicros":0}})
+        json!({"text":"complete","message":{"role":"assistant","content":"complete"},"reasoningContent":null,"structuredOutput":null,"citations":[],"toolCalls":[],"files":[],"usage":{"inputTokens":5,"outputTokens":3,"tokens":8,"costMicros":0},"finishReason":null,"partial":false})
     );
 }
 

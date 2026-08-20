@@ -1,5 +1,5 @@
 param(
-    [ValidateSet("Validate", "Install", "Upgrade", "Render", "Status", "Rollback", "Uninstall", "Doctor")]
+    [ValidateSet("Validate", "Install", "Upgrade", "Render", "Status", "Rollback", "Uninstall", "Doctor", "SyncSecrets")]
     [string]$Action = "Install",
     [ValidateSet("Control", "Runtime", "Observability", "Dependencies", "All")]
     [string]$Target = "All",
@@ -225,6 +225,191 @@ function Get-OrCreateValue {
     return New-RandomPassword
 }
 
+function Get-CanonicalOrLegacyValue {
+    param([hashtable]$Canonical, [string]$Key, [hashtable]$Legacy, [string]$LegacyKey, [string]$Default)
+    if ($Canonical.ContainsKey($Key) -and $Canonical[$Key]) { return $Canonical[$Key] }
+    return Get-OrCreateValue $Legacy $LegacyKey $Default
+}
+
+function Get-CanonicalOrDeployedKeyId {
+    param([hashtable]$Canonical, [string]$Key, [hashtable]$Legacy, [string]$Deployment, [string]$Namespace, [string]$Default)
+    if ($Canonical.ContainsKey($Key) -and $Canonical[$Key]) { return $Canonical[$Key] }
+    if ($Legacy.ContainsKey($Key) -and $Legacy[$Key]) { return $Legacy[$Key] }
+    $payload = (& kubectl -n $Namespace get deployment $Deployment --ignore-not-found -o json 2>$null) -join "`n"
+    if ($payload) {
+        $entry = @((@(($payload | ConvertFrom-Json).spec.template.spec.containers)[0].env) | Where-Object name -eq "AGENTX_EGRESS_JWT_KEY_ID")
+        if ($entry.Count -eq 1 -and $entry[0].value) { return [string]$entry[0].value }
+    }
+    return $Default
+}
+
+function Merge-DomainSecret {
+    param([string]$Namespace, [string]$Name, [hashtable]$Values)
+    $merged = Get-SecretData $Namespace $Name
+    foreach ($entry in $Values.GetEnumerator()) { $merged[$entry.Key] = [string]$entry.Value }
+    Set-DomainSecret $Namespace $Name $merged
+}
+
+function Get-CanonicalSigningMaterial {
+    param([hashtable]$DependenciesExisting, [hashtable]$ControlExisting, [hashtable]$RuntimeExisting, [hashtable]$ObservabilityExisting, [hashtable]$EgressExisting)
+    $required = @(
+        "AGENTX_CONTROL_PUBLISHER_JWT_PRIVATE_KEY_PEM", "AGENTX_CONTROL_PROJECTOR_JWT_PRIVATE_KEY_PEM", "AGENTX_CONTROL_BFF_JWT_PRIVATE_KEY_PEM",
+        "AGENTX_CONTROL_BUNDLE_ED25519_PRIVATE_KEY_PEM", "AGENTX_CONTROL_WORK_PACKAGE_ED25519_PRIVATE_KEY_PEM", "AGENTX_CONTROL_USER_JWT_PRIVATE_KEY_PEM",
+        "AGENTX_RUNTIME_SERVICE_JWT_PUBLIC_KEYS_JSON", "AGENTX_OBSERVABILITY_BFF_JWT_PUBLIC_KEYS_JSON", "AGENTX_RUNTIME_BUNDLE_PUBLIC_KEYS_JSON",
+        "AGENTX_RUNTIME_WORK_PACKAGE_PUBLIC_KEYS_JSON", "AGENTX_RUNTIME_USER_JWT_PUBLIC_KEYS_JSON",
+        "AGENTX_RUNTIME_GATEWAY_EGRESS_JWT_PRIVATE_KEY_PEM", "AGENTX_WORKFLOW_RUNTIME_EGRESS_JWT_PRIVATE_KEY_PEM",
+        "AGENTX_WORKFLOW_WORKER_EGRESS_JWT_PRIVATE_KEY_PEM", "AGENTX_SANDBOX_EGRESS_JWT_PRIVATE_KEY_PEM",
+        "AGENTX_EGRESS_JWT_PUBLIC_KEYS_JSON", "AGENTX_EGRESS_TLS_CERTIFICATE_PEM", "AGENTX_EGRESS_TLS_PRIVATE_KEY_PEM"
+    )
+    $present = @($required | Where-Object { $DependenciesExisting.ContainsKey($_) -and $DependenciesExisting[$_] })
+    if ($present.Count -eq $required.Count) {
+        return @{
+            servicePrivate = $DependenciesExisting.AGENTX_CONTROL_PUBLISHER_JWT_PRIVATE_KEY_PEM; projectorPrivate = $DependenciesExisting.AGENTX_CONTROL_PROJECTOR_JWT_PRIVATE_KEY_PEM
+            bffPrivate = $DependenciesExisting.AGENTX_CONTROL_BFF_JWT_PRIVATE_KEY_PEM; bundlePrivate = $DependenciesExisting.AGENTX_CONTROL_BUNDLE_ED25519_PRIVATE_KEY_PEM
+            workPackagePrivate = $DependenciesExisting.AGENTX_CONTROL_WORK_PACKAGE_ED25519_PRIVATE_KEY_PEM; userPrivate = $DependenciesExisting.AGENTX_CONTROL_USER_JWT_PRIVATE_KEY_PEM
+            servicePublicJson = $DependenciesExisting.AGENTX_RUNTIME_SERVICE_JWT_PUBLIC_KEYS_JSON; bffPublicJson = $DependenciesExisting.AGENTX_OBSERVABILITY_BFF_JWT_PUBLIC_KEYS_JSON
+            bundlePublicJson = $DependenciesExisting.AGENTX_RUNTIME_BUNDLE_PUBLIC_KEYS_JSON; workPackagePublicJson = $DependenciesExisting.AGENTX_RUNTIME_WORK_PACKAGE_PUBLIC_KEYS_JSON
+            userPublicJson = $DependenciesExisting.AGENTX_RUNTIME_USER_JWT_PUBLIC_KEYS_JSON; runtimeGatewayEgressPrivate = $DependenciesExisting.AGENTX_RUNTIME_GATEWAY_EGRESS_JWT_PRIVATE_KEY_PEM
+            workflowRuntimeEgressPrivate = $DependenciesExisting.AGENTX_WORKFLOW_RUNTIME_EGRESS_JWT_PRIVATE_KEY_PEM; workflowWorkerEgressPrivate = $DependenciesExisting.AGENTX_WORKFLOW_WORKER_EGRESS_JWT_PRIVATE_KEY_PEM
+            sandboxEgressPrivate = $DependenciesExisting.AGENTX_SANDBOX_EGRESS_JWT_PRIVATE_KEY_PEM; egressPublicJson = $DependenciesExisting.AGENTX_EGRESS_JWT_PUBLIC_KEYS_JSON
+            egressTlsCertificate = $DependenciesExisting.AGENTX_EGRESS_TLS_CERTIFICATE_PEM; egressTlsPrivateKey = $DependenciesExisting.AGENTX_EGRESS_TLS_PRIVATE_KEY_PEM
+        }
+    }
+    if ($present.Count -gt 0) {
+        $missing = @($required | Where-Object { -not $DependenciesExisting.ContainsKey($_) -or -not $DependenciesExisting[$_] })
+        throw "Dependencies Secret contains partial canonical signing material; refusing to combine unrelated key pairs. Missing: $($missing -join ', ')."
+    }
+    return Get-SigningMaterial $ControlExisting $RuntimeExisting $ObservabilityExisting $EgressExisting
+}
+
+function Publish-DependencySecretMirrors {
+    param([hashtable]$Namespaces, $Profile)
+    $dependenciesSecretName = [string]$Profile.secrets.dependencies
+    if ([string]::IsNullOrWhiteSpace($dependenciesSecretName)) { throw "Profile secrets.dependencies must name the canonical Dependencies Secret." }
+    $dependencies = Get-SecretData $Namespaces.dependencies $dependenciesSecretName
+    $required = @(
+        "CONTROL_VAULT_TOKEN", "RUNTIME_VAULT_TOKEN", "OBSERVABILITY_REDIS_PASSWORD",
+        "AGENTX_CONTROL_PUBLISHER_JWT_KID", "AGENTX_CONTROL_PROJECTOR_JWT_KID", "AGENTX_CONTROL_BFF_JWT_KID",
+        "AGENTX_CONTROL_BUNDLE_KEY_ID", "AGENTX_CONTROL_WORK_PACKAGE_KEY_ID", "AGENTX_CONTROL_USER_JWT_KID",
+        "AGENTX_CONTROL_PUBLISHER_JWT_PRIVATE_KEY_PEM", "AGENTX_CONTROL_PROJECTOR_JWT_PRIVATE_KEY_PEM", "AGENTX_CONTROL_BFF_JWT_PRIVATE_KEY_PEM",
+        "AGENTX_CONTROL_BUNDLE_ED25519_PRIVATE_KEY_PEM", "AGENTX_CONTROL_WORK_PACKAGE_ED25519_PRIVATE_KEY_PEM",
+        "AGENTX_CONTROL_USER_JWT_PRIVATE_KEY_PEM", "AGENTX_RUNTIME_SERVICE_JWT_PUBLIC_KEYS_JSON", "AGENTX_OBSERVABILITY_BFF_JWT_PUBLIC_KEYS_JSON",
+        "AGENTX_RUNTIME_BUNDLE_PUBLIC_KEYS_JSON", "AGENTX_RUNTIME_WORK_PACKAGE_PUBLIC_KEYS_JSON", "AGENTX_RUNTIME_USER_JWT_PUBLIC_KEYS_JSON",
+        "AGENTX_RUNTIME_GATEWAY_EGRESS_JWT_PRIVATE_KEY_PEM", "AGENTX_WORKFLOW_RUNTIME_EGRESS_JWT_PRIVATE_KEY_PEM",
+        "AGENTX_WORKFLOW_WORKER_EGRESS_JWT_PRIVATE_KEY_PEM", "AGENTX_SANDBOX_EGRESS_JWT_PRIVATE_KEY_PEM",
+        "AGENTX_RUNTIME_GATEWAY_EGRESS_JWT_KEY_ID", "AGENTX_WORKFLOW_RUNTIME_EGRESS_JWT_KEY_ID",
+        "AGENTX_WORKFLOW_WORKER_EGRESS_JWT_KEY_ID", "AGENTX_SANDBOX_EGRESS_JWT_KEY_ID",
+        "AGENTX_EGRESS_JWT_PUBLIC_KEYS_JSON", "AGENTX_EGRESS_TLS_CERTIFICATE_PEM", "AGENTX_EGRESS_TLS_PRIVATE_KEY_PEM"
+    )
+    foreach ($key in $required) {
+        if (-not $dependencies.ContainsKey($key) -or [string]::IsNullOrWhiteSpace([string]$dependencies[$key])) {
+            throw "Dependencies Secret $($Namespaces.dependencies)/$dependenciesSecretName is missing $key."
+        }
+    }
+    $controlValues = @{
+        AGENTX_CONTROL_VAULT_TOKEN = $dependencies.CONTROL_VAULT_TOKEN
+        AGENTX_CONTROL_PUBLISHER_JWT_KID = $dependencies.AGENTX_CONTROL_PUBLISHER_JWT_KID
+        AGENTX_CONTROL_PROJECTOR_JWT_KID = $dependencies.AGENTX_CONTROL_PROJECTOR_JWT_KID
+        AGENTX_CONTROL_BFF_JWT_KID = $dependencies.AGENTX_CONTROL_BFF_JWT_KID
+        AGENTX_CONTROL_BUNDLE_KEY_ID = $dependencies.AGENTX_CONTROL_BUNDLE_KEY_ID
+        AGENTX_CONTROL_WORK_PACKAGE_KEY_ID = $dependencies.AGENTX_CONTROL_WORK_PACKAGE_KEY_ID
+        AGENTX_CONTROL_USER_JWT_KID = $dependencies.AGENTX_CONTROL_USER_JWT_KID
+        AGENTX_CONTROL_PUBLISHER_JWT_PRIVATE_KEY_PEM = $dependencies.AGENTX_CONTROL_PUBLISHER_JWT_PRIVATE_KEY_PEM
+        AGENTX_CONTROL_PROJECTOR_JWT_PRIVATE_KEY_PEM = $dependencies.AGENTX_CONTROL_PROJECTOR_JWT_PRIVATE_KEY_PEM
+        AGENTX_CONTROL_BFF_JWT_PRIVATE_KEY_PEM = $dependencies.AGENTX_CONTROL_BFF_JWT_PRIVATE_KEY_PEM
+        AGENTX_CONTROL_BUNDLE_ED25519_PRIVATE_KEY_PEM = $dependencies.AGENTX_CONTROL_BUNDLE_ED25519_PRIVATE_KEY_PEM
+        AGENTX_CONTROL_WORK_PACKAGE_ED25519_PRIVATE_KEY_PEM = $dependencies.AGENTX_CONTROL_WORK_PACKAGE_ED25519_PRIVATE_KEY_PEM
+        AGENTX_CONTROL_USER_JWT_PRIVATE_KEY_PEM = $dependencies.AGENTX_CONTROL_USER_JWT_PRIVATE_KEY_PEM
+        AGENTX_CONTROL_USER_JWT_PUBLIC_KEYS_JSON = $dependencies.AGENTX_RUNTIME_USER_JWT_PUBLIC_KEYS_JSON
+    }
+    $runtimeCommon = @{
+        AGENTX_RUNTIME_SERVICE_JWT_PUBLIC_KEYS_JSON = $dependencies.AGENTX_RUNTIME_SERVICE_JWT_PUBLIC_KEYS_JSON
+        AGENTX_RUNTIME_BUNDLE_PUBLIC_KEYS_JSON = $dependencies.AGENTX_RUNTIME_BUNDLE_PUBLIC_KEYS_JSON
+        AGENTX_RUNTIME_WORK_PACKAGE_PUBLIC_KEYS_JSON = $dependencies.AGENTX_RUNTIME_WORK_PACKAGE_PUBLIC_KEYS_JSON
+    }
+    if ($Profile.secrets.mode -eq "generated-local") {
+        Merge-DomainSecret $Namespaces.control ([string]$Profile.secrets.control) $controlValues
+        $runtime = Get-SecretData $Namespaces.runtime ([string]$Profile.secrets.runtime)
+        if (-not $runtime.AGENTX_RUNTIME_REDIS_PASSWORD) { throw "Runtime Secret is missing AGENTX_RUNTIME_REDIS_PASSWORD; refusing to rewrite Redis ACL credentials." }
+        foreach ($entry in $runtimeCommon.GetEnumerator()) { $runtime[$entry.Key] = $entry.Value }
+        $runtime.AGENTX_RUNTIME_USER_JWT_PUBLIC_KEYS_JSON = $dependencies.AGENTX_RUNTIME_USER_JWT_PUBLIC_KEYS_JSON
+        $runtime.AGENTX_RUNTIME_VAULT_TOKEN = $dependencies.RUNTIME_VAULT_TOKEN
+        $runtime.AGENTX_RUNTIME_GATEWAY_EGRESS_JWT_PRIVATE_KEY_PEM = $dependencies.AGENTX_RUNTIME_GATEWAY_EGRESS_JWT_PRIVATE_KEY_PEM
+        $runtime.AGENTX_RUNTIME_GATEWAY_EGRESS_JWT_KEY_ID = $dependencies.AGENTX_RUNTIME_GATEWAY_EGRESS_JWT_KEY_ID
+        $runtime.AGENTX_WORKFLOW_RUNTIME_EGRESS_JWT_PRIVATE_KEY_PEM = $dependencies.AGENTX_WORKFLOW_RUNTIME_EGRESS_JWT_PRIVATE_KEY_PEM
+        $runtime.AGENTX_WORKFLOW_RUNTIME_EGRESS_JWT_KEY_ID = $dependencies.AGENTX_WORKFLOW_RUNTIME_EGRESS_JWT_KEY_ID
+        $runtime.AGENTX_WORKFLOW_WORKER_EGRESS_JWT_PRIVATE_KEY_PEM = $dependencies.AGENTX_WORKFLOW_WORKER_EGRESS_JWT_PRIVATE_KEY_PEM
+        $runtime.AGENTX_WORKFLOW_WORKER_EGRESS_JWT_KEY_ID = $dependencies.AGENTX_WORKFLOW_WORKER_EGRESS_JWT_KEY_ID
+        $runtime.AGENTX_SANDBOX_EGRESS_JWT_PRIVATE_KEY_PEM = $dependencies.AGENTX_SANDBOX_EGRESS_JWT_PRIVATE_KEY_PEM
+        $runtime.AGENTX_SANDBOX_EGRESS_JWT_KEY_ID = $dependencies.AGENTX_SANDBOX_EGRESS_JWT_KEY_ID
+        $runtime.AGENTX_RUNTIME_REDIS_ACL_FILE = "user default on >$($runtime.AGENTX_RUNTIME_REDIS_PASSWORD) ~* &agentx:v2:invocation:wakeup:* +@all`nuser observability on >$($dependencies.OBSERVABILITY_REDIS_PASSWORD) ~agentx:v2:trace:v1 ~agentx:v2:observability:jti:* +ping +xgroup +xreadgroup +xpending +xautoclaim +xack +set +get +del +exists"
+        Set-DomainSecret $Namespaces.runtime ([string]$Profile.secrets.runtime) $runtime
+        Merge-DomainSecret $Namespaces.observability ([string]$Profile.secrets.observability) @{ AGENTX_OBSERVABILITY_REDIS_PASSWORD = $dependencies.OBSERVABILITY_REDIS_PASSWORD; AGENTX_OBSERVABILITY_BFF_JWT_PUBLIC_KEYS_JSON = $dependencies.AGENTX_OBSERVABILITY_BFF_JWT_PUBLIC_KEYS_JSON }
+        Merge-DomainSecret $Namespaces.dependencies "agentx-egress-gateway-secrets" @{ AGENTX_EGRESS_JWT_PUBLIC_KEYS_JSON = $dependencies.AGENTX_EGRESS_JWT_PUBLIC_KEYS_JSON }
+    } else {
+        Merge-DomainSecret $Namespaces.control ([string]$Profile.secrets.workloads.platformControl) $controlValues
+        $gatewayValues = @{} + $runtimeCommon
+        $gatewayValues.AGENTX_RUNTIME_USER_JWT_PUBLIC_KEYS_JSON = $dependencies.AGENTX_RUNTIME_USER_JWT_PUBLIC_KEYS_JSON
+        $gatewayValues.AGENTX_RUNTIME_VAULT_TOKEN = $dependencies.RUNTIME_VAULT_TOKEN
+        $gatewayValues.AGENTX_RUNTIME_GATEWAY_EGRESS_JWT_PRIVATE_KEY_PEM = $dependencies.AGENTX_RUNTIME_GATEWAY_EGRESS_JWT_PRIVATE_KEY_PEM
+        $gatewayValues.AGENTX_RUNTIME_GATEWAY_EGRESS_JWT_KEY_ID = $dependencies.AGENTX_RUNTIME_GATEWAY_EGRESS_JWT_KEY_ID
+        Merge-DomainSecret $Namespaces.runtime ([string]$Profile.secrets.workloads.runtimeGateway) $gatewayValues
+        Merge-DomainSecret $Namespaces.runtime ([string]$Profile.secrets.workloads.workflowRuntime) (@{} + $runtimeCommon + @{ AGENTX_WORKFLOW_RUNTIME_EGRESS_JWT_PRIVATE_KEY_PEM = $dependencies.AGENTX_WORKFLOW_RUNTIME_EGRESS_JWT_PRIVATE_KEY_PEM; AGENTX_WORKFLOW_RUNTIME_EGRESS_JWT_KEY_ID = $dependencies.AGENTX_WORKFLOW_RUNTIME_EGRESS_JWT_KEY_ID })
+        Merge-DomainSecret $Namespaces.runtime ([string]$Profile.secrets.workloads.workflowWorker) (@{} + $runtimeCommon + @{ AGENTX_RUNTIME_VAULT_TOKEN = $dependencies.RUNTIME_VAULT_TOKEN; AGENTX_WORKFLOW_WORKER_EGRESS_JWT_PRIVATE_KEY_PEM = $dependencies.AGENTX_WORKFLOW_WORKER_EGRESS_JWT_PRIVATE_KEY_PEM; AGENTX_WORKFLOW_WORKER_EGRESS_JWT_KEY_ID = $dependencies.AGENTX_WORKFLOW_WORKER_EGRESS_JWT_KEY_ID })
+        Merge-DomainSecret $Namespaces.runtime ([string]$Profile.secrets.workloads.sandboxManager) @{ AGENTX_SANDBOX_EGRESS_JWT_PRIVATE_KEY_PEM = $dependencies.AGENTX_SANDBOX_EGRESS_JWT_PRIVATE_KEY_PEM; AGENTX_SANDBOX_EGRESS_JWT_KEY_ID = $dependencies.AGENTX_SANDBOX_EGRESS_JWT_KEY_ID }
+        Merge-DomainSecret $Namespaces.observability ([string]$Profile.secrets.workloads.observability) @{ AGENTX_OBSERVABILITY_REDIS_PASSWORD = $dependencies.OBSERVABILITY_REDIS_PASSWORD; AGENTX_OBSERVABILITY_BFF_JWT_PUBLIC_KEYS_JSON = $dependencies.AGENTX_OBSERVABILITY_BFF_JWT_PUBLIC_KEYS_JSON }
+        Merge-DomainSecret $Namespaces.dependencies ([string]$Profile.secrets.workloads.egressGateway) @{ AGENTX_EGRESS_JWT_PUBLIC_KEYS_JSON = $dependencies.AGENTX_EGRESS_JWT_PUBLIC_KEYS_JSON }
+    }
+    $egressTlsValues = @{ "tls.crt" = $dependencies.AGENTX_EGRESS_TLS_CERTIFICATE_PEM; "tls.key" = $dependencies.AGENTX_EGRESS_TLS_PRIVATE_KEY_PEM; "ca.crt" = $dependencies.AGENTX_EGRESS_TLS_CERTIFICATE_PEM }
+    Set-DomainSecret $Namespaces.dependencies ([string]$Profile.network.egressGateway.sandboxAccess.tlsSecretName) $egressTlsValues
+    if ($Profile.network.egressGateway.sandboxAccess.caSecretName) { Set-DomainSecret $Namespaces.runtime ([string]$Profile.network.egressGateway.sandboxAccess.caSecretName) @{ "ca.crt" = $dependencies.AGENTX_EGRESS_TLS_CERTIFICATE_PEM } }
+}
+
+function Sync-DependencySecrets {
+    param([hashtable]$Namespaces, $Profile, [string[]]$Planes)
+    $dependenciesSecretName = [string]$Profile.secrets.dependencies
+    Publish-DependencySecretMirrors $Namespaces $Profile
+
+    if ((kubectl -n $Namespaces.dependencies get statefulset vault --ignore-not-found -o name) -join "") {
+        $renderedDependencies = Get-RenderedManifest @("dependencies") $Profile $Namespaces
+        $vaultBootstrap = (($renderedDependencies -split '(?m)^---\s*$') | Where-Object { (Get-YamlResourceKind $_) -eq "Job" -and (Get-YamlResourceName $_) -eq "vault-bootstrap" } | Select-Object -First 1)
+        if (-not $vaultBootstrap) { throw "Rendered Dependencies manifest is missing vault-bootstrap." }
+        Invoke-Kubectl -Arguments @("-n", $Namespaces.dependencies, "delete", "job", "vault-bootstrap", "--ignore-not-found", "--wait=true")
+        Invoke-KubectlInput $vaultBootstrap @("apply", "-f", "-")
+        Wait-V2Job $Namespaces.dependencies "vault-bootstrap"
+    }
+
+    $restart = @()
+    if ((kubectl -n $Namespaces.dependencies get deployment agentx-egress-gateway --ignore-not-found -o name) -join "") {
+        Invoke-Kubectl -Arguments @("-n", $Namespaces.dependencies, "rollout", "restart", "deployment/agentx-egress-gateway")
+        Invoke-Kubectl -Arguments @("-n", $Namespaces.dependencies, "rollout", "status", "deployment/agentx-egress-gateway", "--timeout=300s")
+        $restart += @{ namespace = $Namespaces.dependencies; kind = "deployment"; name = "agentx-egress-gateway" }
+    }
+    if ((kubectl -n $Namespaces.runtime get statefulset runtime-redis --ignore-not-found -o name) -join "") {
+        Invoke-Kubectl -Arguments @("-n", $Namespaces.runtime, "rollout", "restart", "statefulset/runtime-redis")
+        Invoke-Kubectl -Arguments @("-n", $Namespaces.runtime, "rollout", "status", "statefulset/runtime-redis", "--timeout=300s")
+        $restart += @{ namespace = $Namespaces.runtime; kind = "statefulset"; name = "runtime-redis" }
+    }
+    foreach ($name in @("runtime-gateway", "workflow-runtime", "workflow-worker", "sandbox-manager")) {
+        if ((kubectl -n $Namespaces.runtime get deployment $name --ignore-not-found -o name) -join "") {
+            Invoke-Kubectl -Arguments @("-n", $Namespaces.runtime, "rollout", "restart", "deployment/$name")
+            Invoke-Kubectl -Arguments @("-n", $Namespaces.runtime, "rollout", "status", "deployment/$name", "--timeout=300s")
+            $restart += @{ namespace = $Namespaces.runtime; kind = "deployment"; name = $name }
+        }
+    }
+    if ((kubectl -n $Namespaces.observability get deployment observability --ignore-not-found -o name) -join "") {
+        Invoke-Kubectl -Arguments @("-n", $Namespaces.observability, "rollout", "restart", "deployment/observability")
+        Invoke-Kubectl -Arguments @("-n", $Namespaces.observability, "rollout", "status", "deployment/observability", "--timeout=300s")
+        $restart += @{ namespace = $Namespaces.observability; kind = "deployment"; name = "observability" }
+    }
+    if ((kubectl -n $Namespaces.control get deployment platform-control --ignore-not-found -o name) -join "") {
+        Invoke-Kubectl -Arguments @("-n", $Namespaces.control, "rollout", "restart", "deployment/platform-control")
+        Invoke-Kubectl -Arguments @("-n", $Namespaces.control, "rollout", "status", "deployment/platform-control", "--timeout=300s")
+        $restart += @{ namespace = $Namespaces.control; kind = "deployment"; name = "platform-control" }
+    }
+    Write-Output (@{ status = "synced"; source = "$($Namespaces.dependencies)/$dependenciesSecretName"; restarted = $restart } | ConvertTo-Json -Depth 6 -Compress)
+}
+
 function Get-SigningMaterial {
     param([hashtable]$ControlExisting, [hashtable]$RuntimeExisting, [hashtable]$ObservabilityExisting, [hashtable]$EgressExisting)
     $requiredControl = @("AGENTX_CONTROL_PUBLISHER_JWT_PRIVATE_KEY_PEM", "AGENTX_CONTROL_PROJECTOR_JWT_PRIVATE_KEY_PEM", "AGENTX_CONTROL_BFF_JWT_PRIVATE_KEY_PEM", "AGENTX_CONTROL_BUNDLE_ED25519_PRIVATE_KEY_PEM", "AGENTX_CONTROL_WORK_PACKAGE_ED25519_PRIVATE_KEY_PEM", "AGENTX_CONTROL_USER_JWT_PRIVATE_KEY_PEM", "AGENTX_CONTROL_USER_JWT_PUBLIC_KEYS_JSON")
@@ -312,10 +497,10 @@ function Resolve-Namespaces {
     $ingressClass = "$($Profile.ingress.className)-$Stage-$Suffix"
     if ($ingressClass.Length -gt 63) { throw "Run-scoped IngressClass exceeds 63 characters: $ingressClass" }
     return @{
-        control = "agentx-v2-$Stage-control-$Suffix"
-        runtime = "agentx-v2-$Stage-runtime-$Suffix"
-        observability = "agentx-v2-$Stage-runtime-$Suffix"
-        dependencies = "agentx-v2-$Stage-deps-$Suffix"
+        control = "agentx-e2e-$Stage-control-$Suffix"
+        runtime = "agentx-e2e-$Stage-runtime-$Suffix"
+        observability = "agentx-e2e-$Stage-runtime-$Suffix"
+        dependencies = "agentx-e2e-$Stage-deps-$Suffix"
         ingressClass = $ingressClass
     }
 }
@@ -333,11 +518,11 @@ function Set-RunScopedSandboxAccess {
 function Assert-SafeNamespaces {
     param([hashtable]$Namespaces)
     $values = @($Namespaces.control, $Namespaces.runtime, $Namespaces.dependencies)
-    if (($values | Select-Object -Unique).Count -ne 3) { throw "V2 physical namespaces must contain distinct control, runtime, and dependencies targets." }
-    if ($Namespaces.observability -ne $Namespaces.runtime) { throw "V2 Observability must share the Runtime namespace." }
+    if (($values | Select-Object -Unique).Count -ne 3) { throw "Physical namespaces must contain distinct control, runtime, and dependencies targets." }
+    if ($Namespaces.observability -ne $Namespaces.runtime) { throw "Observability must share the Runtime namespace." }
     foreach ($name in $values) {
-        if ($name.Length -gt 63 -or $name -notmatch '^agentx-v2-[a-z0-9-]+$') {
-            throw "Refusing unsafe V2 namespace target: $name"
+        if ($name.Length -gt 63 -or $name -notmatch '^agentx-(?!v2-)[a-z0-9-]+$') {
+            throw "Refusing unsafe Namespace target (must use agentx- prefix and no v2 segment): $name"
         }
     }
 }
@@ -669,10 +854,10 @@ function Replace-ProfileValues {
     )
     $result = $Manifest
     $canonicalNamespaces = @{
-        control = "agentx-v2-control"
-        runtime = "agentx-v2-runtime"
-        observability = "agentx-v2-observability"
-        dependencies = "agentx-v2-deps"
+        control = "agentx-control"
+        runtime = "agentx-runtime"
+        observability = "agentx-runtime"
+        dependencies = "agentx-deps"
     }
     foreach ($plane in @("control", "runtime", "observability", "dependencies")) {
         $sourceNamespace = [string]$Profile.namespaces.$plane
@@ -699,9 +884,9 @@ function Replace-ProfileValues {
     $result = $result.Replace("value: redis://runtime-redis:6379/", "value: $(Resolve-Endpoint ([string]$Profile.components.runtimeRedis.url) $Profile $Namespaces)")
     $result = $result.Replace("value: redis://runtime-redis.$($Namespaces.runtime).svc:6379/", "value: $(Resolve-Endpoint ([string]$Profile.components.runtimeRedis.url) $Profile $Namespaces)")
     $result = $result.Replace("value: http://clickhouse:8123", "value: $(Resolve-Endpoint ([string]$clickhouse.url) $Profile $Namespaces)")
-    $result = $result.Replace("value: http://object-storage.agentx-v2-deps.svc:9000", "value: $(Resolve-Endpoint ([string]$Profile.components.objectStorage.endpoint) $Profile $Namespaces)")
-    $result = $result.Replace("value: http://vault.agentx-v2-deps.svc:8200", "value: $(Resolve-Endpoint ([string]$secretProvider.endpoint) $Profile $Namespaces)")
-    $result = $result.Replace("value: http://opensandbox.agentx-v2-deps.svc:8080", "value: $(Resolve-Endpoint ([string]$Profile.components.sandbox.endpoint) $Profile $Namespaces)")
+    $result = $result.Replace("value: http://object-storage.agentx-deps.svc:9000", "value: $(Resolve-Endpoint ([string]$Profile.components.objectStorage.endpoint) $Profile $Namespaces)")
+    $result = $result.Replace("value: http://vault.agentx-deps.svc:8200", "value: $(Resolve-Endpoint ([string]$secretProvider.endpoint) $Profile $Namespaces)")
+    $result = $result.Replace("value: http://opensandbox.agentx-deps.svc:8080", "value: $(Resolve-Endpoint ([string]$Profile.components.sandbox.endpoint) $Profile $Namespaces)")
     $result = $result.Replace("agentx_control", [string]$control.database)
     $result = $result.Replace("control_app", [string]$control.appUser)
     $result = $result.Replace("control_migrate", [string]$control.migrateUser)
@@ -965,10 +1150,10 @@ function Resolve-Endpoint {
     param([string]$Value, $Profile, [hashtable]$Namespaces)
     $result = $Value
     $canonicalNamespaces = @{
-        control = "agentx-v2-control"
-        runtime = "agentx-v2-runtime"
-        observability = "agentx-v2-observability"
-        dependencies = "agentx-v2-deps"
+        control = "agentx-control"
+        runtime = "agentx-runtime"
+        observability = "agentx-runtime"
+        dependencies = "agentx-deps"
     }
     foreach ($plane in @("control", "runtime", "observability", "dependencies")) {
         $sourceNamespace = [string]$Profile.namespaces.$plane
@@ -1365,6 +1550,12 @@ if ($Action -eq "Validate") {
     exit 0
 }
 
+if ($Action -eq "SyncSecrets") {
+    if ($Target -ne "All") { throw "SyncSecrets coordinates shared credentials and requires -Target All." }
+    Sync-DependencySecrets $namespaces $profile $planes
+    exit 0
+}
+
 if ($Action -eq "Uninstall") {
     if ($planes -contains "dependencies" -and $planes -notcontains "runtime") {
         $runtimeDeployments = (& kubectl -n $namespaces.runtime get deployment --ignore-not-found -o json 2>$null | ConvertFrom-Json)
@@ -1504,14 +1695,26 @@ try {
     $controlObjectPassword = Get-OrCreateValue $dependenciesOld "CONTROL_OBJECT_PASSWORD"
     $runtimeObjectPassword = Get-OrCreateValue $dependenciesOld "RUNTIME_OBJECT_PASSWORD"
     $observabilityObjectPassword = Get-OrCreateValue $dependenciesOld "OBSERVABILITY_OBJECT_PASSWORD"
-    $controlVaultToken = Get-OrCreateValue $controlOld "AGENTX_CONTROL_VAULT_TOKEN"
-    $runtimeVaultToken = Get-OrCreateValue $runtimeOld "AGENTX_RUNTIME_VAULT_TOKEN"
+    # Dependencies owns cross-plane Vault identities. Fall back to the old
+    # domain Secret only for one-time migration when the canonical Secret is absent.
+    $controlVaultToken = if ($dependenciesOld.ContainsKey("CONTROL_VAULT_TOKEN") -and $dependenciesOld.CONTROL_VAULT_TOKEN) { $dependenciesOld.CONTROL_VAULT_TOKEN } else { Get-OrCreateValue $controlOld "AGENTX_CONTROL_VAULT_TOKEN" }
+    $runtimeVaultToken = if ($dependenciesOld.ContainsKey("RUNTIME_VAULT_TOKEN") -and $dependenciesOld.RUNTIME_VAULT_TOKEN) { $dependenciesOld.RUNTIME_VAULT_TOKEN } else { Get-OrCreateValue $runtimeOld "AGENTX_RUNTIME_VAULT_TOKEN" }
     $egressOld = Get-SecretData $namespaces.dependencies "agentx-egress-gateway-secrets"
     $egressTlsOld = Get-SecretData $namespaces.dependencies ([string]$profile.network.egressGateway.sandboxAccess.tlsSecretName)
     foreach ($entry in $egressTlsOld.GetEnumerator()) { $egressOld[$entry.Key] = $entry.Value }
-    $signing = Get-SigningMaterial $controlOld $runtimeOld $observabilityOld $egressOld
+    $signing = Get-CanonicalSigningMaterial $dependenciesOld $controlOld $runtimeOld $observabilityOld $egressOld
     $runtimeRedisPassword = Get-OrCreateValue $runtimeOld "AGENTX_RUNTIME_REDIS_PASSWORD"
-    $observabilityRedisPassword = Get-OrCreateValue $observabilityOld "AGENTX_OBSERVABILITY_REDIS_PASSWORD"
+    $observabilityRedisPassword = if ($dependenciesOld.ContainsKey("OBSERVABILITY_REDIS_PASSWORD") -and $dependenciesOld.OBSERVABILITY_REDIS_PASSWORD) { $dependenciesOld.OBSERVABILITY_REDIS_PASSWORD } else { Get-OrCreateValue $observabilityOld "AGENTX_OBSERVABILITY_REDIS_PASSWORD" }
+    $publisherKid = Get-CanonicalOrLegacyValue $dependenciesOld "AGENTX_CONTROL_PUBLISHER_JWT_KID" $controlOld "AGENTX_CONTROL_PUBLISHER_JWT_KID" "publisher-current"
+    $projectorKid = Get-CanonicalOrLegacyValue $dependenciesOld "AGENTX_CONTROL_PROJECTOR_JWT_KID" $controlOld "AGENTX_CONTROL_PROJECTOR_JWT_KID" "projector-current"
+    $bffKid = Get-CanonicalOrLegacyValue $dependenciesOld "AGENTX_CONTROL_BFF_JWT_KID" $controlOld "AGENTX_CONTROL_BFF_JWT_KID" "bff-current"
+    $bundleKid = Get-CanonicalOrLegacyValue $dependenciesOld "AGENTX_CONTROL_BUNDLE_KEY_ID" $controlOld "AGENTX_CONTROL_BUNDLE_KEY_ID" "bundle-current"
+    $workPackageKid = Get-CanonicalOrLegacyValue $dependenciesOld "AGENTX_CONTROL_WORK_PACKAGE_KEY_ID" $controlOld "AGENTX_CONTROL_WORK_PACKAGE_KEY_ID" "work-package-current"
+    $userKid = Get-CanonicalOrLegacyValue $dependenciesOld "AGENTX_CONTROL_USER_JWT_KID" $controlOld "AGENTX_CONTROL_USER_JWT_KID" "user-current"
+    $runtimeGatewayEgressKid = Get-CanonicalOrDeployedKeyId $dependenciesOld "AGENTX_RUNTIME_GATEWAY_EGRESS_JWT_KEY_ID" $runtimeOld "runtime-gateway" $namespaces.runtime "runtime-gateway-current"
+    $workflowRuntimeEgressKid = Get-CanonicalOrDeployedKeyId $dependenciesOld "AGENTX_WORKFLOW_RUNTIME_EGRESS_JWT_KEY_ID" $runtimeOld "workflow-runtime" $namespaces.runtime "workflow-runtime-current"
+    $workflowWorkerEgressKid = Get-CanonicalOrDeployedKeyId $dependenciesOld "AGENTX_WORKFLOW_WORKER_EGRESS_JWT_KEY_ID" $runtimeOld "workflow-worker" $namespaces.runtime "workflow-worker-current"
+    $sandboxEgressKid = Get-CanonicalOrDeployedKeyId $dependenciesOld "AGENTX_SANDBOX_EGRESS_JWT_KEY_ID" $runtimeOld "sandbox-manager" $namespaces.runtime "sandbox-current"
 
     Set-DomainSecret $namespaces.control "agentx-control-secrets" @{
         AGENTX_CONTROL_MYSQL_PASSWORD = Get-OrCreateValue $controlOld "AGENTX_CONTROL_MYSQL_PASSWORD"
@@ -1519,18 +1722,18 @@ try {
         AGENTX_CONTROL_MYSQL_ROOT_PASSWORD = Get-OrCreateValue $controlOld "AGENTX_CONTROL_MYSQL_ROOT_PASSWORD"
         AGENTX_CONTROL_S3_ACCESS_KEY = [string]$profile.components.objectStorage.domains.control.user
         AGENTX_CONTROL_S3_SECRET_KEY = $controlObjectPassword
-        AGENTX_CONTROL_PUBLISHER_JWT_KID = Get-OrCreateValue $controlOld "AGENTX_CONTROL_PUBLISHER_JWT_KID" "publisher-current"
+        AGENTX_CONTROL_PUBLISHER_JWT_KID = $publisherKid
         AGENTX_CONTROL_PUBLISHER_JWT_PRIVATE_KEY_PEM = $signing.servicePrivate
-        AGENTX_CONTROL_PROJECTOR_JWT_KID = Get-OrCreateValue $controlOld "AGENTX_CONTROL_PROJECTOR_JWT_KID" "projector-current"
+        AGENTX_CONTROL_PROJECTOR_JWT_KID = $projectorKid
         AGENTX_CONTROL_PROJECTOR_JWT_PRIVATE_KEY_PEM = $signing.projectorPrivate
-        AGENTX_CONTROL_BFF_JWT_KID = Get-OrCreateValue $controlOld "AGENTX_CONTROL_BFF_JWT_KID" "bff-current"
+        AGENTX_CONTROL_BFF_JWT_KID = $bffKid
         AGENTX_CONTROL_BFF_JWT_PRIVATE_KEY_PEM = $signing.bffPrivate
-        AGENTX_CONTROL_BUNDLE_KEY_ID = Get-OrCreateValue $controlOld "AGENTX_CONTROL_BUNDLE_KEY_ID" "bundle-current"
+        AGENTX_CONTROL_BUNDLE_KEY_ID = $bundleKid
         AGENTX_CONTROL_BUNDLE_ED25519_PRIVATE_KEY_PEM = $signing.bundlePrivate
-        AGENTX_CONTROL_WORK_PACKAGE_KEY_ID = Get-OrCreateValue $controlOld "AGENTX_CONTROL_WORK_PACKAGE_KEY_ID" "work-package-current"
+        AGENTX_CONTROL_WORK_PACKAGE_KEY_ID = $workPackageKid
         AGENTX_CONTROL_WORK_PACKAGE_ED25519_PRIVATE_KEY_PEM = $signing.workPackagePrivate
         AGENTX_CONTROL_API_REFRESH_JWT_SIGNING_SECRET = Get-OrCreateValue $controlOld "AGENTX_CONTROL_API_REFRESH_JWT_SIGNING_SECRET"
-        AGENTX_CONTROL_USER_JWT_KID = Get-OrCreateValue $controlOld "AGENTX_CONTROL_USER_JWT_KID" "user-current"
+        AGENTX_CONTROL_USER_JWT_KID = $userKid
         AGENTX_CONTROL_USER_JWT_PRIVATE_KEY_PEM = $signing.userPrivate
         AGENTX_CONTROL_USER_JWT_PUBLIC_KEYS_JSON = $signing.userPublicJson
         AGENTX_CONTROL_VAULT_TOKEN = $controlVaultToken
@@ -1550,9 +1753,13 @@ try {
         AGENTX_RUNTIME_VAULT_TOKEN = $runtimeVaultToken
         AGENTX_OPENSANDBOX_API_KEY = Get-OrCreateValue $runtimeOld "AGENTX_OPENSANDBOX_API_KEY" "agentx-local-opensandbox-key"
         AGENTX_RUNTIME_GATEWAY_EGRESS_JWT_PRIVATE_KEY_PEM = $signing.runtimeGatewayEgressPrivate
+        AGENTX_RUNTIME_GATEWAY_EGRESS_JWT_KEY_ID = $runtimeGatewayEgressKid
         AGENTX_WORKFLOW_RUNTIME_EGRESS_JWT_PRIVATE_KEY_PEM = $signing.workflowRuntimeEgressPrivate
+        AGENTX_WORKFLOW_RUNTIME_EGRESS_JWT_KEY_ID = $workflowRuntimeEgressKid
         AGENTX_WORKFLOW_WORKER_EGRESS_JWT_PRIVATE_KEY_PEM = $signing.workflowWorkerEgressPrivate
+        AGENTX_WORKFLOW_WORKER_EGRESS_JWT_KEY_ID = $workflowWorkerEgressKid
         AGENTX_SANDBOX_EGRESS_JWT_PRIVATE_KEY_PEM = $signing.sandboxEgressPrivate
+        AGENTX_SANDBOX_EGRESS_JWT_KEY_ID = $sandboxEgressKid
     }
     Set-DomainSecret $namespaces.observability "agentx-observability-secrets" @{
         AGENTX_CLICKHOUSE_QUERY_PASSWORD = Get-OrCreateValue $observabilityOld "AGENTX_CLICKHOUSE_QUERY_PASSWORD"
@@ -1572,6 +1779,35 @@ try {
         VAULT_DEV_ROOT_TOKEN_ID = Get-OrCreateValue $dependenciesOld "VAULT_DEV_ROOT_TOKEN_ID"
         CONTROL_VAULT_TOKEN = $controlVaultToken
         RUNTIME_VAULT_TOKEN = $runtimeVaultToken
+        OBSERVABILITY_REDIS_PASSWORD = $observabilityRedisPassword
+        AGENTX_CONTROL_PUBLISHER_JWT_KID = $publisherKid
+        AGENTX_CONTROL_PROJECTOR_JWT_KID = $projectorKid
+        AGENTX_CONTROL_BFF_JWT_KID = $bffKid
+        AGENTX_CONTROL_BUNDLE_KEY_ID = $bundleKid
+        AGENTX_CONTROL_WORK_PACKAGE_KEY_ID = $workPackageKid
+        AGENTX_CONTROL_USER_JWT_KID = $userKid
+        AGENTX_CONTROL_PUBLISHER_JWT_PRIVATE_KEY_PEM = $signing.servicePrivate
+        AGENTX_CONTROL_PROJECTOR_JWT_PRIVATE_KEY_PEM = $signing.projectorPrivate
+        AGENTX_CONTROL_BFF_JWT_PRIVATE_KEY_PEM = $signing.bffPrivate
+        AGENTX_CONTROL_BUNDLE_ED25519_PRIVATE_KEY_PEM = $signing.bundlePrivate
+        AGENTX_CONTROL_WORK_PACKAGE_ED25519_PRIVATE_KEY_PEM = $signing.workPackagePrivate
+        AGENTX_CONTROL_USER_JWT_PRIVATE_KEY_PEM = $signing.userPrivate
+        AGENTX_RUNTIME_SERVICE_JWT_PUBLIC_KEYS_JSON = $signing.servicePublicJson
+        AGENTX_OBSERVABILITY_BFF_JWT_PUBLIC_KEYS_JSON = $signing.bffPublicJson
+        AGENTX_RUNTIME_BUNDLE_PUBLIC_KEYS_JSON = $signing.bundlePublicJson
+        AGENTX_RUNTIME_WORK_PACKAGE_PUBLIC_KEYS_JSON = $signing.workPackagePublicJson
+        AGENTX_RUNTIME_USER_JWT_PUBLIC_KEYS_JSON = $signing.userPublicJson
+        AGENTX_RUNTIME_GATEWAY_EGRESS_JWT_PRIVATE_KEY_PEM = $signing.runtimeGatewayEgressPrivate
+        AGENTX_RUNTIME_GATEWAY_EGRESS_JWT_KEY_ID = $runtimeGatewayEgressKid
+        AGENTX_WORKFLOW_RUNTIME_EGRESS_JWT_PRIVATE_KEY_PEM = $signing.workflowRuntimeEgressPrivate
+        AGENTX_WORKFLOW_RUNTIME_EGRESS_JWT_KEY_ID = $workflowRuntimeEgressKid
+        AGENTX_WORKFLOW_WORKER_EGRESS_JWT_PRIVATE_KEY_PEM = $signing.workflowWorkerEgressPrivate
+        AGENTX_WORKFLOW_WORKER_EGRESS_JWT_KEY_ID = $workflowWorkerEgressKid
+        AGENTX_SANDBOX_EGRESS_JWT_PRIVATE_KEY_PEM = $signing.sandboxEgressPrivate
+        AGENTX_SANDBOX_EGRESS_JWT_KEY_ID = $sandboxEgressKid
+        AGENTX_EGRESS_JWT_PUBLIC_KEYS_JSON = $signing.egressPublicJson
+        AGENTX_EGRESS_TLS_CERTIFICATE_PEM = $signing.egressTlsCertificate
+        AGENTX_EGRESS_TLS_PRIVATE_KEY_PEM = $signing.egressTlsPrivateKey
     }
     Set-DomainSecret $namespaces.dependencies "agentx-egress-gateway-secrets" @{
         AGENTX_EGRESS_JWT_PUBLIC_KEYS_JSON = $signing.egressPublicJson
@@ -1582,6 +1818,7 @@ try {
         Set-DomainSecret $namespaces.runtime ([string]$profile.network.egressGateway.sandboxAccess.caSecretName) @{ "ca.crt" = $signing.egressTlsCertificate }
     }
     } else {
+        Publish-DependencySecretMirrors $namespaces $profile
         Assert-ExistingSecrets $planes $profile $namespaces
     }
 
@@ -1636,6 +1873,9 @@ try {
         })
         $applicationManifest = $applicationDocuments -join "---`n"
         $gatewayManifest = $gatewayDocuments -join "---`n"
+        if ($planes -contains "dependencies" -and @($foundationDocuments | Where-Object { (Get-YamlResourceKind $_) -eq "Job" -and (Get-YamlResourceName $_) -eq "vault-bootstrap" }).Count -gt 0) {
+            Invoke-Kubectl -Arguments @("-n", $namespaces.dependencies, "delete", "job", "vault-bootstrap", "--ignore-not-found", "--wait=true")
+        }
         Invoke-KubectlInput ($foundationDocuments -join "---`n") @("apply", "-f", "-")
         if ($gatewayManifest) {
             Invoke-KubectlInput $gatewayManifest @("apply", "-f", "-")

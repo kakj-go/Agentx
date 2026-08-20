@@ -694,7 +694,7 @@ mod tests {
         let result = schema::<NodeActionResult>();
         assert_eq!(
             definition["$defs"]["WorkflowSchemaVersion"]["enum"][0],
-            "4.0"
+            "5.0"
         );
         assert!(manifest["properties"].get("readiness").is_some());
         assert!(request["properties"].get("credentialHandles").is_some());

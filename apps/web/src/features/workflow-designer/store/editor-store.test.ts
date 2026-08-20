@@ -15,12 +15,13 @@ describe('editor store node creation', () => {
     expect(state.nodes[0].selected).toBe(true)
   })
 
-  it('rewrites upstream output references when a node key changes', () => {
+  it('keeps stable upstream output selectors when a node key changes', () => {
     const source = useEditorStore.getState().addAction({ editorKind: 'action', nodeType: 'set', typeVersion: 1, label: 'Source', key: 'source', parameters: {}, outputProjection: {}, contextWrites: [], resourceReferences: [], settings: {}, disabled: false })
-    const target = useEditorStore.getState().addAction({ editorKind: 'action', nodeType: 'set', typeVersion: 1, label: 'Target', key: 'target', parameters: { value: '${{ outputs.source.main.first.json.value }}' }, outputProjection: {}, contextWrites: [], resourceReferences: [], settings: {}, disabled: false })
+    const reference = { kind: 'reference', selector: { namespace: 'outputs', sourceNodeId: source, port: 'main', run: { kind: 'current' }, item: { kind: 'first' }, path: ['value'] }, missingPolicy: { kind: 'error' } }
+    const target = useEditorStore.getState().addAction({ editorKind: 'action', nodeType: 'set', typeVersion: 1, label: 'Target', key: 'target', parameters: { value: reference }, outputProjection: {}, contextWrites: [], resourceReferences: [], settings: {}, disabled: false })
     useEditorStore.getState().updateNode(source, { key: 'renamed' })
     const node = useEditorStore.getState().nodes.find((item) => item.id === target)
-    expect(node?.data.editorKind === 'action' && node.data.parameters.value).toBe('${{ outputs.renamed.main.first.json.value }}')
+    expect(node?.data.editorKind === 'action' && node.data.parameters.value).toEqual(reference)
   })
 
   it('selects a newly added AI attachment so its resource can be chosen immediately', () => {

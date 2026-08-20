@@ -34,10 +34,13 @@ use crate::{
     },
     error::{RuntimeError, RuntimeResult},
     execution::RuntimeCommandClaim,
+    output_contract::validate_node_output_contract,
 };
 
 pub(crate) use crate::engine_persistence::persist_checkpoint;
 pub use crate::engine_protocol::worker_result_hash;
+pub use crate::worker_registry::{heartbeat_worker, mark_worker_draining, register_worker};
+
 #[derive(Clone, Debug)]
 pub struct ClaimedWorkerAttempt {
     pub lease: WorkerAttemptLeaseV1,
@@ -768,54 +771,6 @@ pub async fn fork_execution(pool: &MySqlPool, claim: &RuntimeCommandClaim) -> Ru
     Ok(())
 }
 
-pub async fn register_worker(
-    pool: &MySqlPool,
-    worker_id: Uuid,
-    capability: &str,
-    compiler_version: &str,
-) -> RuntimeResult<()> {
-    sqlx::query(
-        "INSERT INTO worker_capabilities(instance_id,capability,node_protocol_version,ir_schema_versions_json,compiler_version_min,compiler_version_max,manifest_hashes_json,status,heartbeat_at) VALUES(?,?,?,JSON_ARRAY(1),?,?,JSON_ARRAY(?),'ready',UTC_TIMESTAMP(6)) ON DUPLICATE KEY UPDATE node_protocol_version=VALUES(node_protocol_version),ir_schema_versions_json=VALUES(ir_schema_versions_json),compiler_version_min=VALUES(compiler_version_min),compiler_version_max=VALUES(compiler_version_max),manifest_hashes_json=VALUES(manifest_hashes_json),status='ready',heartbeat_at=UTC_TIMESTAMP(6)",
-    )
-    .bind(worker_id.to_string())
-    .bind(capability)
-    .bind(agentx_node_protocol::NODE_PROTOCOL_VERSION)
-    .bind(compiler_version)
-    .bind(compiler_version)
-    .bind(agentx_node_protocol::NODE_PROTOCOL_VERSION)
-    .execute(pool)
-    .await?;
-    Ok(())
-}
-
-pub async fn heartbeat_worker(
-    pool: &MySqlPool,
-    worker_id: Uuid,
-    capability: &str,
-) -> RuntimeResult<()> {
-    let changed = sqlx::query(
-        "UPDATE worker_capabilities SET heartbeat_at=UTC_TIMESTAMP(6) WHERE instance_id=? AND capability=? AND status='ready'",
-    )
-    .bind(worker_id.to_string())
-    .bind(capability)
-    .execute(pool)
-    .await?;
-    if changed.rows_affected() != 1 {
-        return Err(lease_conflict("Worker registration was lost"));
-    }
-    Ok(())
-}
-
-pub async fn mark_worker_draining(pool: &MySqlPool, worker_id: Uuid) -> RuntimeResult<()> {
-    sqlx::query(
-        "UPDATE worker_capabilities SET status='draining',heartbeat_at=UTC_TIMESTAMP(6) WHERE instance_id=? AND status='ready'",
-    )
-    .bind(worker_id.to_string())
-    .execute(pool)
-    .await?;
-    Ok(())
-}
-
 pub async fn claim_worker_attempt(
     pool: &MySqlPool,
     worker_id: Uuid,
@@ -837,7 +792,7 @@ pub async fn claim_worker_attempt(
         ));
     }
     let row = sqlx::query(
-        "SELECT a.id,a.tenant_id,a.execution_id,a.node_execution_id,a.capability,a.worker_protocol_version,a.input_json,a.fencing_token,a.deadline_at,n.node_id,n.node_type,n.node_version,n.run_index,n.iteration_index,e.input_json execution_input_json,s.compiled_ir_json,s.resource_snapshot_json,r.context_json FROM node_attempts a JOIN node_executions n ON n.id=a.node_execution_id JOIN workflow_executions e ON e.id=a.execution_id JOIN execution_snapshots s ON s.execution_id=a.execution_id JOIN execution_runtime_state r ON r.execution_id=a.execution_id WHERE a.id=? AND a.status='queued' AND (a.locked_until IS NULL OR a.locked_until<=UTC_TIMESTAMP(6)) FOR UPDATE",
+        "SELECT a.id,a.tenant_id,a.execution_id,a.node_execution_id,a.capability,a.worker_protocol_version,a.input_json,a.fencing_token,a.deadline_at,n.node_id,n.node_type,n.node_version,n.run_index,n.iteration_index,e.input_json execution_input_json,s.compiled_ir_json,s.resource_snapshot_json,r.context_json FROM node_attempts a JOIN node_executions n ON n.id=a.node_execution_id JOIN workflow_executions e ON e.id=a.execution_id JOIN execution_snapshots s ON s.execution_id=a.execution_id JOIN execution_runtime_state r ON r.execution_id=a.execution_id WHERE a.id=? AND a.status='queued' AND (a.locked_until IS NULL OR a.locked_until<=UTC_TIMESTAMP(6)) AND (a.deadline_at IS NULL OR a.deadline_at>UTC_TIMESTAMP(6)) FOR UPDATE",
     )
     .bind(task.attempt_id)
     .fetch_optional(&mut *tx)
@@ -919,6 +874,11 @@ pub async fn claim_worker_attempt(
                 outputs: load_output_namespace(&mut tx, task.tenant_id, task.execution_id).await?,
                 contexts: row.try_get("context_json")?,
                 execution: json!({"id":task.execution_id}),
+                output_node_keys: compiled
+                    .nodes
+                    .iter()
+                    .map(|node| (node.id.clone(), node.key.clone()))
+                    .collect(),
                 ..ExpressionContext::default()
             },
         )
@@ -1069,13 +1029,20 @@ async fn submit_worker_result_resolved(
             .activation(node_execution_id)
             .ok_or_else(|| RuntimeError::Internal(anyhow::anyhow!("activation disappeared")))?;
         let node = &machine.workflow().nodes[activation.node_index];
-        if node
-            .output_projection
-            .as_object()
-            .is_some_and(|projection| !projection.is_empty())
+        if let Err(message) = validate_node_output_contract(node, &effective_outputs) {
+            effective_status = WorkerResultStatusV1::Failed;
+            effective_error_code = Some(crate::output_contract::violation_code(node).into());
+            effective_error_message = Some(message);
+            effective_outputs.clear();
+        }
+        if effective_status == WorkerResultStatusV1::Succeeded
+            && node
+                .output_projection
+                .as_object()
+                .is_some_and(|projection| !projection.is_empty())
         {
             let upstream = load_output_namespace(&mut tx, tenant_id, execution_id).await?;
-            crate::output_projection::apply(
+            if let Err(error) = crate::output_projection::apply(
                 &mut effective_outputs,
                 &node.output_projection,
                 &ExpressionContext {
@@ -1088,14 +1055,25 @@ async fn submit_worker_result_resolved(
                         "executionId":execution_id,
                         "nodeExecutionId":node_execution_id.as_uuid(),
                     }),
+                    output_node_keys: machine
+                        .workflow()
+                        .nodes
+                        .iter()
+                        .map(|node| (node.id.clone(), node.key.clone()))
+                        .collect(),
                     ..ExpressionContext::default()
                 },
-            )?;
+            ) {
+                effective_status = WorkerResultStatusV1::Failed;
+                effective_error_code = Some("DYNAMIC_VALUE_EVALUATION_FAILED".into());
+                effective_error_message = Some(error.to_string());
+                effective_outputs.clear();
+            }
         }
     }
-    match result.status {
+    match effective_status {
         WorkerResultStatusV1::Succeeded => {
-            match apply_context_writes(
+            let context_write = apply_context_writes(
                 &mut tx,
                 ContextWriteRequest {
                     tenant_id,
@@ -1112,19 +1090,19 @@ async fn submit_worker_result_resolved(
                     resolved_outputs: &effective_outputs,
                 },
             )
-            .await?
-            {
-                ContextWriteOutcome::Applied {
+            .await;
+            match context_write {
+                Ok(ContextWriteOutcome::Applied {
                     context: updated,
                     version,
-                } => {
+                }) => {
                     context = updated;
                     context_version = version;
                     machine
                         .complete(node_execution_id, effective_outputs.clone())
                         .map_err(machine_error)?;
                 }
-                ContextWriteOutcome::SessionConflict => {
+                Ok(ContextWriteOutcome::SessionConflict) => {
                     effective_status = WorkerResultStatusV1::Failed;
                     effective_error_code = Some("SESSION_CONTEXT_VERSION_CONFLICT".into());
                     effective_error_message =
@@ -1138,6 +1116,27 @@ async fn submit_worker_result_resolved(
                         )
                         .map_err(machine_error)?;
                 }
+                Err(RuntimeError::Deterministic { code, message }) => {
+                    effective_status = WorkerResultStatusV1::Failed;
+                    effective_error_code = Some(code.into());
+                    effective_error_message = Some(message.clone());
+                    effective_outputs.clear();
+                    machine
+                        .fail(node_execution_id, code, &message, false)
+                        .map_err(machine_error)?;
+                }
+                Err(
+                    RuntimeError::BadRequest(_, message) | RuntimeError::InvalidRequest(_, message),
+                ) => {
+                    effective_status = WorkerResultStatusV1::Failed;
+                    effective_error_code = Some("CONTEXT_WRITE_FAILED".into());
+                    effective_error_message = Some(message.clone());
+                    effective_outputs.clear();
+                    machine
+                        .fail(node_execution_id, "CONTEXT_WRITE_FAILED", &message, false)
+                        .map_err(machine_error)?;
+                }
+                Err(error) => return Err(error),
             }
         }
         WorkerResultStatusV1::Suspended => {
@@ -1146,12 +1145,10 @@ async fn submit_worker_result_resolved(
         WorkerResultStatusV1::Failed | WorkerResultStatusV1::OutcomeUnknown => machine
             .fail(
                 node_execution_id,
-                result
-                    .error_code
+                effective_error_code
                     .as_deref()
                     .unwrap_or("WORKER_EXECUTION_FAILED"),
-                result
-                    .error_message
+                effective_error_message
                     .as_deref()
                     .unwrap_or("Worker execution failed"),
                 result.status == WorkerResultStatusV1::Failed,
@@ -1438,15 +1435,27 @@ async fn apply_context_writes(
         outputs,
         contexts: current_context.clone(),
         execution: json!({"id":execution_id}),
+        output_node_keys: machine
+            .workflow()
+            .nodes
+            .iter()
+            .map(|node| (node.id.clone(), node.key.clone()))
+            .collect(),
         ..ExpressionContext::default()
     };
     let mut updated = current_context.clone();
     let mut patches = Vec::with_capacity(node.context_writes.len());
     let mut session_writes = 0_u64;
     for write in &node.context_writes {
-        let value = ExpressionEngine
-            .resolve_parameters(&write.value, &expression_context)
-            .map_err(|error| RuntimeError::Internal(error.into()))?;
+        let Some(value) = ExpressionEngine
+            .resolve_dynamic_optional(&write.value, &expression_context)
+            .map_err(|error| RuntimeError::Deterministic {
+                code: "DYNAMIC_VALUE_EVALUATION_FAILED",
+                message: error.to_string(),
+            })?
+        else {
+            continue;
+        };
         let before = context_value(&updated, &write.path).cloned();
         apply_context_write(&mut updated, &write.path, write.operation, value.clone())?;
         let root = write.path.split('.').next().unwrap_or_default();
@@ -1595,7 +1604,10 @@ async fn schedule_ready(
         let manifest_version = agentx_node_protocol::NODE_PROTOCOL_VERSION;
         let overlay_completes = overlay
             .as_ref()
-            .is_some_and(|overlay| crate::debug_overlay::completes_node(&overlay.kind));
+            .and_then(|overlay| crate::debug_overlay::completion(overlay, &node));
+        let overlay_succeeds = overlay_completes
+            .as_ref()
+            .is_some_and(crate::debug_overlay::DebugCompletion::succeeded);
         sqlx::query(
             "INSERT INTO node_attempts(id,tenant_id,execution_id,node_execution_id,attempt_number,capability,worker_protocol_version,ir_schema_version,compiler_version,manifest_version,status,idempotency_key,deadline_at,input_json) VALUES(?,?,?,?,?,?,1,1,?,? ,?,?,?,?)",
         )
@@ -1607,7 +1619,7 @@ async fn schedule_ready(
         .bind(node.capability.as_str())
         .bind(&ready.machine.workflow().compiler_version)
         .bind(manifest_version)
-        .bind(if overlay_completes { "succeeded" } else if matches!(node.execution_style, ExecutionStyle::Suspend | ExecutionStyle::SubWorkflow) { "suspended" } else { "queued" })
+        .bind(if overlay_succeeds { "succeeded" } else if overlay_completes.is_some() { "failed" } else if matches!(node.execution_style, ExecutionStyle::Suspend | ExecutionStyle::SubWorkflow) { "suspended" } else { "queued" })
         .bind(format!("{}:{node_execution_id}:{attempt_number}", ready.execution_id))
         .bind(deadline_at)
         .bind(&input_json)
@@ -1622,53 +1634,41 @@ async fn schedule_ready(
             &node.name,
             &input_json,
             attempt_number,
-            overlay_completes,
+            overlay_succeeds,
         )
         .await;
-        if let Some(overlay) = overlay.as_ref().filter(|_| overlay_completes) {
-            let outputs = crate::debug_overlay::items(&overlay.payload);
-            ready
-                .machine
-                .complete(node_execution_id, outputs.clone())
-                .map_err(machine_error)?;
-            sqlx::query(
-                "UPDATE node_attempts SET output_json=?,ended_at=UTC_TIMESTAMP(6) WHERE tenant_id=? AND id=? AND status='succeeded'",
+        if let Some(completion) = overlay_completes {
+            crate::debug_overlay::apply_completion(
+                tx,
+                crate::debug_overlay::ApplyDebugCompletion {
+                    tenant_id: ready.tenant_id,
+                    execution_id: ready.execution_id,
+                    node_execution_id,
+                    attempt_id: attempt_id.as_uuid(),
+                    node: &node,
+                    machine: ready.machine,
+                },
+                completion,
             )
-            .bind(serde_json::to_value(&outputs).map_err(|error| RuntimeError::Internal(error.into()))?)
-            .bind(ready.tenant_id)
-            .bind(attempt_id.as_uuid())
-            .execute(&mut **tx)
             .await?;
-            let completed = ready
-                .machine
-                .activation(node_execution_id)
-                .cloned()
-                .ok_or_else(|| RuntimeError::Internal(anyhow::anyhow!("activation disappeared")))?;
-            upsert_activation(tx, ready.tenant_id, ready.execution_id, &completed, &node).await?;
-            let mut trace = crate::trace_delivery::TraceDraft::execution(
-                ready.tenant_id,
-                ready.execution_id,
-                "node.debug_overlay_applied",
-                "succeeded",
-            );
-            trace.node_execution_id = Some(node_execution_id.as_uuid());
-            trace.attempt_id = Some(attempt_id.as_uuid());
-            trace.attributes = json!({"nodeId":node.id,"overlayKind":overlay.kind});
-            crate::trace_delivery::enqueue_best_effort(tx, trace).await;
             continue;
         }
         if node.execution_style == ExecutionStyle::Suspend {
-            crate::suspension::create(
+            crate::suspension::resolve_and_create(
                 tx,
-                ready.tenant_id,
-                ready.execution_id,
-                ready.bundle_id,
-                ready.work_package_id,
-                node_execution_id,
-                ready.state_version,
-                &node,
-                ready.machine,
-                ready.context,
+                crate::suspension::SuspendRequest {
+                    tenant_id: ready.tenant_id,
+                    execution_id: ready.execution_id,
+                    bundle_id: ready.bundle_id,
+                    work_package_id: ready.work_package_id,
+                    node_execution_id,
+                    attempt_id: attempt_id.as_uuid(),
+                    state_version: ready.state_version,
+                    node: &node,
+                    activation: &activation,
+                    machine: ready.machine,
+                    context: ready.context,
+                },
             )
             .await?;
             continue;

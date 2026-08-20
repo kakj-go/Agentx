@@ -1,6 +1,6 @@
 apiVersion: apps/v1
 kind: Deployment
-metadata: { name: observability, namespace: agentx-v2-runtime }
+metadata: { name: observability, namespace: agentx-runtime }
 spec:
   replicas: 1
   strategy: { type: RollingUpdate, rollingUpdate: { maxUnavailable: 1, maxSurge: 1 } }
@@ -25,7 +25,7 @@ spec:
             - { name: AGENTX_CLICKHOUSE_DATABASE, value: agentx_observability }
             - { name: AGENTX_CLICKHOUSE_QUERY_USER, value: observability_query }
             - { name: AGENTX_CLICKHOUSE_CONSUMER_USER, value: observability_consumer }
-            - { name: AGENTX_OBSERVABILITY_REDIS_URL, value: redis://runtime-redis.agentx-v2-runtime.svc:6379/ }
+            - { name: AGENTX_OBSERVABILITY_REDIS_URL, value: redis://runtime-redis.agentx-runtime.svc:6379/ }
             - { name: AGENTX_OBSERVABILITY_REDIS_USERNAME, value: observability }
             - { name: AGENTX_OBSERVABILITY_JWT_ISSUER, value: agentx-control }
             - name: AGENTX_CLICKHOUSE_QUERY_PASSWORD
@@ -53,7 +53,7 @@ spec:
 ---
 apiVersion: v1
 kind: Service
-metadata: { name: observability, namespace: agentx-v2-runtime }
+metadata: { name: observability, namespace: agentx-runtime }
 spec:
   type: ClusterIP
   selector: { app.kubernetes.io/name: observability }
@@ -61,7 +61,7 @@ spec:
 ---
 apiVersion: v1
 kind: Service
-metadata: { name: observability-metrics, namespace: agentx-v2-runtime }
+metadata: { name: observability-metrics, namespace: agentx-runtime }
 spec:
   clusterIP: None
   selector: { app.kubernetes.io/name: observability }

@@ -210,7 +210,7 @@ async fn api_first_control_closure_uses_empty_schema_and_public_routes() {
     .await;
     assert_eq!(status, 200, "workflow draft response: {draft}");
     let definition = json!({
-        "schemaVersion":"4.0",
+        "schemaVersion":"5.0",
         "start":{"inputs":{"type":"object","additionalProperties":true},"contexts":{}},
         "nodes":[{
             "id":"root","key":"root","type":"no_op","typeVersion":1,"name":"Root",
@@ -504,7 +504,7 @@ async fn api_first_control_closure_uses_empty_schema_and_public_routes() {
     .await;
     assert_eq!(status, 200, "resource draft response: {resource_draft}");
     let resource_definition = json!({
-        "schemaVersion":"4.0",
+        "schemaVersion":"5.0",
         "start":{"inputs":{"type":"object","additionalProperties":true},"contexts":{}},
         "nodes":[{
             "id":"credential-node","key":"credential_node","type":"no_op","typeVersion":1,

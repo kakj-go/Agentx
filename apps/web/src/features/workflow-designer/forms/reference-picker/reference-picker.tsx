@@ -7,6 +7,7 @@ import { useTranslation } from 'react-i18next'
 import { Button } from '../../../../shared/ui/button'
 import { useDialogLayer } from '../../../../shared/ui/dialog'
 import type { ReferenceCatalog, ReferenceEntry, ReferenceNamespace } from './reference-types'
+import type { ValueSelector } from '../../model/types'
 import { ReferenceTree } from './reference-tree'
 
 const ROOTS: ReferenceNamespace[] = ['inputs', 'outputs', 'contexts', 'item', 'execution', 'loop']
@@ -15,7 +16,7 @@ const PICKER_HEIGHT = 300
 const PICKER_MAX_WIDTH = 440
 const VIEWPORT_PADDING = 16
 
-export function ReferencePicker({ catalog, allowedNamespaces = ['inputs', 'outputs', 'contexts'], expectedType, open, onOpenChange, onInsert, anchorRef }: { catalog: ReferenceCatalog; allowedNamespaces?: ReferenceNamespace[]; expectedType?: string; open: boolean; onOpenChange: (open: boolean) => void; onInsert: (expression: string) => void; anchorRef?: RefObject<HTMLElement | null> }) {
+export function ReferencePicker({ catalog, allowedNamespaces = ['inputs', 'outputs', 'contexts'], expectedType, open, onOpenChange, onInsert, anchorRef }: { catalog: ReferenceCatalog; allowedNamespaces?: ReferenceNamespace[]; expectedType?: string; open: boolean; onOpenChange: (open: boolean) => void; onInsert: (selector: ValueSelector, entry: ReferenceEntry) => void; anchorRef?: RefObject<HTMLElement | null> }) {
   const { t } = useTranslation()
   const dialogLayer = useDialogLayer()
   const root = useRef<HTMLDivElement>(null)
@@ -67,7 +68,7 @@ export function ReferencePicker({ catalog, allowedNamespaces = ['inputs', 'outpu
     }
   }, [anchorRef, dialogLayer, open])
   if (!open) return null
-  const choose = (entry: ReferenceEntry) => { if (entry.expression && !entry.sensitive) { onInsert(entry.expression); onOpenChange(false) } }
+  const choose = (entry: ReferenceEntry) => { if (entry.selector && !entry.sensitive) { onInsert(entry.selector, entry); onOpenChange(false) } }
   const picker = <div className={`${dialogLayer ? 'absolute' : 'fixed'} pointer-events-auto z-[100] grid grid-cols-[148px_minmax(0,1fr)] overflow-hidden rounded-md border border-border bg-surface shadow-xl`} data-testid="reference-picker" ref={root} style={position}>
     <div className="min-h-0 border-r border-border"><div className="flex h-10 items-center border-b border-border px-2 text-xs font-semibold"><Braces className="mr-2 size-3.5 text-primary" />{t('studio.references.title')}</div><ReferenceTree entries={ROOTS.filter((item) => allowedNamespaces.includes(item) && (catalog[item]?.length ?? 0) > 0).map((item) => ({ id: item, label: t(`studio.references.${item}`, item), path: item, children: catalog[item] ?? [] }))} selected={namespace} onSelect={(entry) => setNamespace(entry.id as ReferenceNamespace)} /></div>
     <div className="min-h-0 min-w-0"><div className="flex h-10 items-center gap-1 border-b border-border px-1"><span className="min-w-0 flex-1 truncate px-1 text-[11px] text-muted-foreground">{namespace ?? t('studio.references.selectNamespace')}</span><Button aria-label={t('common.close')} onClick={() => onOpenChange(false)} size="icon" variant="ghost"><X className="size-3.5" /></Button></div><ReferenceTree entries={entries} expandable key={namespace} onSelect={choose} /></div>
@@ -78,7 +79,7 @@ export function ReferencePicker({ catalog, allowedNamespaces = ['inputs', 'outpu
 function markCompatibility(entries: ReferenceEntry[], expectedType: string | undefined, t: TFunction): ReferenceEntry[] {
   return entries.map((entry) => {
     const children = markCompatibility(entry.children, expectedType, t)
-    const incompatible = Boolean(expectedType && entry.expression && entry.type && !compatible(entry.type, expectedType))
+    const incompatible = Boolean(expectedType && entry.selector && entry.type && children.length === 0 && !compatible(entry.type, expectedType))
     return { ...entry, children, disabledReason: entry.sensitive ? t('studio.references.sensitiveDisabled') : incompatible ? t('studio.references.typeMismatch', { expected: expectedType, actual: entry.type }) : entry.disabledReason }
   })
 }

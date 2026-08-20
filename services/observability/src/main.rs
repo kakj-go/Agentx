@@ -739,21 +739,21 @@ async fn execution_trace(
     let rows = if span_keys.is_empty() {
         Vec::new()
     } else {
-        let span_ids = span_keys
-            .iter()
-            .map(|row| format!("toUUID('{}')", row.span_id))
-            .collect::<Vec<_>>()
-            .join(",");
-        let event_query = format!(
-            "SELECT event_id,tenant_id,execution_id,execution_sequence,trace_id,span_id,parent_span_id,event_kind,span_kind,span_name,node_execution_id,attempt_id,agent_run_id,agent_iteration_id,runtime_call_id,sandbox_lease_id,wait_id,workflow_id,application_id,resource_type,resource_id,resource_version,event_type,status,error_code,error_message,duration_ms,input_tokens,output_tokens,cost_micros,attributes_json,content_ref,content_role,content_preview_json,content_hash,occurred_at FROM workflow_trace_events FINAL WHERE tenant_id=? AND execution_id=? AND span_id IN ({span_ids}) AND event_id NOT IN (SELECT event_id FROM trace_ingest_conflicts WHERE tenant_id=?) ORDER BY execution_sequence,event_id"
-        );
+        let span_ids = serde_json::to_string(
+            &span_keys
+                .iter()
+                .map(|row| row.span_id.to_string())
+                .collect::<Vec<_>>(),
+        )
+        .map_err(|error| ApiError::budget(error.to_string()))?;
         state
             .clickhouse_query
-            .query(&event_query)
+            .query("SELECT event_id,tenant_id,execution_id,execution_sequence,trace_id,span_id,parent_span_id,event_kind,span_kind,span_name,node_execution_id,attempt_id,agent_run_id,agent_iteration_id,runtime_call_id,sandbox_lease_id,wait_id,workflow_id,application_id,resource_type,resource_id,resource_version,event_type,status,error_code,error_message,duration_ms,input_tokens,output_tokens,cost_micros,attributes_json,content_ref,content_role,content_preview_json,content_hash,occurred_at FROM workflow_trace_events FINAL WHERE tenant_id=? AND execution_id=? AND has(JSONExtract(?, 'Array(String)'),toString(span_id)) AND event_id NOT IN (SELECT event_id FROM trace_ingest_conflicts WHERE tenant_id=?) ORDER BY execution_sequence,event_id")
             .with_option("query_id", format!("{query_id_text}-events"))
             .with_option("max_execution_time", "5")
             .bind(claims.tenant_id)
             .bind(execution_id)
+            .bind(span_ids)
             .bind(claims.tenant_id)
             .fetch_all::<TraceRow>()
             .await

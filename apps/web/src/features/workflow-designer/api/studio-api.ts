@@ -15,7 +15,6 @@ export async function loadNodeCatalog() {
 
 export const saveDraft = (workflowId: string, expectedRevision: number, definition: unknown, editorDocument: unknown) => apiRequest<components['schemas']['DraftResponse']>(`/workflows/${workflowId}/draft`, { method: 'PUT', headers: { 'Idempotency-Key': crypto.randomUUID() }, body: jsonBody({ expectedRevision, definition, editorDocument }) })
 export const validateDraft = (workflowId: string, definition: unknown, editorDocument: unknown) => apiRequest<components['schemas']['ValidateDraftResponse']>(`/workflows/${workflowId}/draft/validate`, { method: 'POST', body: jsonBody({ definition, editorDocument }) })
-export const previewExpression = (workflowId: string, expression: string, json: unknown) => apiRequest<{ value: unknown; redacted: boolean }>(`/workflows/${workflowId}/expressions/preview`, { method: 'POST', body: jsonBody({ expression, json, input: [{ json }], linkedNodes: {}, itemIndex: 0, runIndex: 0 }) })
 export const startDebugExecution = (workflowId: string, request: components['schemas']['DebugExecutionRequest']) => apiRequest<ExecutionCommand>(`/workflows/${workflowId}/debug-executions`, { method: 'POST', body: jsonBody(request) })
 export const loadExecutionEvents = (executionId: string, after = 0) => apiRequest<components['schemas']['ExecutionEventListResponse']>(`/executions/${executionId}/events?after=${after}&limit=200`)
 export const cancelExecution = (executionId: string) => apiRequest<void>(`/executions/${executionId}/cancel`, { method: 'POST' })

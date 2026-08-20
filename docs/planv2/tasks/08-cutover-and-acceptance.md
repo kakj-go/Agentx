@@ -30,7 +30,7 @@ C-1 公共 API 逐路径处置与替代链路补齐
 | V2C-003 | done（[证据](../evidence/v2-08.md)） | V2C-002 | 停止 Web、Platform Control 并验证已发布 Runtime 入口；完整专项语义复验阶段 E2E | 控制面离线故障 Suite | 已发布调用继续完成；恢复后按 Cursor/Receipt 收敛 |
 | V2C-004 | done（[证据](../evidence/v2-08.md)） | V2C-002 | 最终拓扑注入 Runtime MySQL、Redis、ClickHouse 故障，并复验 V2-04/06 的 OSS、Vault、OpenSandbox、Worker/Coordinator 专项矩阵 | Runtime 故障矩阵 | DB 故障无伪成功；Redis 可重建；CH 不影响终态；敏感依赖无明文回退 |
 | V2C-005 | planned（08B） | V2S-001～006、V2K-006 | 08A 只执行本地混合代、模糊提交和中等性能门禁；正式容量、SSE 风暴和两小时稳定性留在最终拓扑执行 | 容量/稳定性/滚动兼容报告 | 08A 不产生生产容量结论；08B 达到冻结阈值并通过两小时残留门禁 |
-| V2C-007 | done（08A 本地产品等价，[证据](../evidence/v2-08.md)） | V2C-002～004；容量部分延期 | 按 V2 产品矩阵执行 Workflow 4.0、资源、Gateway、Evaluation、Approval、Fork、Agent、Sandbox、Studio、国际化和安全删除回归 | 产品能力回归报告 | 本地功能行均有自动化路径和边界断言；生产安全/容量行明确指向 08B |
+| V2C-007 | done（08A 本地产品等价，[证据](../evidence/v2-08.md)） | V2C-002～004；容量部分延期 | 按 V2 产品矩阵执行 Workflow 5.0、资源、Gateway、Evaluation、Approval、Fork、Agent、Sandbox、Studio、国际化和安全删除回归 | 产品能力回归报告 | 本地功能行均有自动化路径和边界断言；生产安全/容量行明确指向 08B |
 | V2C-006 | planned（延期到 08B） | V2C-001～005、007 | 完成生产容量、安全、恢复认证后生成最终发布架构、Runbook 和审查记录 | 最终文档和发布审查记录 | 生产矩阵无非 done 项；RPO/RTO、容量、供应链和强隔离证据可复现 |
 
 ## 4. E2E 执行清单

@@ -43,13 +43,16 @@ export type JsonSchemaProperty = {
   additionalProperties?: boolean | JsonSchemaProperty;
   required?: string[];
   format?: string;
+  "x-agentx-dynamicValue"?: {
+    modes: Array<"literal" | "reference" | "template" | "expression">;
+    allowedNamespaces: ValueNamespace[];
+    acceptedCardinality: Array<"single" | "many">;
+    missingPolicies: Array<"error" | "null" | "default" | "omit">;
+    recursive: boolean;
+  };
+  /** @deprecated Internal tests only; manifests use x-agentx-dynamicValue. */
   templatable?: boolean;
-  allowedNamespaces?: Array<
-    "inputs" | "outputs" | "contexts" | "execution" | "item" | "loop"
-  >;
-  expectedType?: string;
   multiline?: boolean;
-  richText?: boolean;
 };
 export type ParameterSchema = {
   type?: string;
@@ -183,8 +186,40 @@ export type DefinitionNode = {
   resourceReferences: ResourceReference[];
   settings: Record<string, unknown>;
 };
+export type ValueNamespace = "inputs" | "outputs" | "contexts" | "execution" | "item" | "loop";
+export type ValueSelection = { kind: "current" | "first" | "last" | "all" } | { kind: "index"; index: number };
+export type ValueSelector = {
+  namespace: ValueNamespace;
+  sourceNodeId?: string;
+  port?: string;
+  run: ValueSelection;
+  item: ValueSelection;
+  path: Array<string | number>;
+};
+export type MissingValuePolicy =
+  | { kind: "error" }
+  | { kind: "null" }
+  | { kind: "omit" }
+  | { kind: "default"; value: DynamicValue };
+export type TemplateSegment =
+  | { kind: "text"; text: string }
+  | { kind: "reference"; selector: ValueSelector; missingPolicy: MissingValuePolicy };
+export type ExpressionNode =
+  | { kind: "literal"; value: unknown }
+  | { kind: "reference"; selector: ValueSelector; missingPolicy: MissingValuePolicy }
+  | { kind: "unary"; operator: "not" | "negate"; operand: ExpressionNode }
+  | { kind: "binary"; operator: "eq" | "ne" | "gt" | "gte" | "lt" | "lte" | "add" | "subtract" | "multiply" | "divide" | "modulo" | "and" | "or" | "in"; left: ExpressionNode; right: ExpressionNode }
+  | { kind: "conditional"; condition: ExpressionNode; thenValue: ExpressionNode; elseValue: ExpressionNode }
+  | { kind: "call"; function: string; arguments: ExpressionNode[] }
+  | { kind: "array"; items: ExpressionNode[] }
+  | { kind: "object"; fields: Record<string, ExpressionNode> };
+export type DynamicValue =
+  | { kind: "literal"; value: unknown }
+  | { kind: "reference"; selector: ValueSelector; missingPolicy: MissingValuePolicy }
+  | { kind: "template"; segments: TemplateSegment[] }
+  | { kind: "expression"; root: ExpressionNode };
 export type OutputProjectionField = {
-  expression: string;
+  value: DynamicValue;
   schema: unknown;
   sensitive: boolean;
 };
@@ -227,10 +262,10 @@ export type ContextWrite = {
     | "max"
     | "compare_and_set";
   path: string;
-  value: unknown;
+  value: DynamicValue;
 };
 export type WorkflowOutput = {
-  expression: string;
+  value: DynamicValue;
   schema: unknown;
   required: boolean;
   sensitive: boolean;
@@ -247,7 +282,7 @@ export type WorkflowStart = {
 };
 export type WorkflowEnd = { outputs: Record<string, WorkflowOutput>; error: WorkflowErrorEnd };
 export type WorkflowDefinition = {
-  schemaVersion: "4.0";
+  schemaVersion: "5.0";
   start: WorkflowStart;
   nodes: DefinitionNode[];
   connections: DefinitionConnection[];
@@ -412,7 +447,7 @@ export type ReferenceEntry = {
   id: string;
   label: string;
   path: string;
-  expression?: string;
+  selector?: ValueSelector;
   type?: string;
   cardinality?: "zero_or_one" | "exactly_one" | "many" | "zero_or_many";
   nullable?: boolean;

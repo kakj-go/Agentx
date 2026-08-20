@@ -76,22 +76,35 @@ describe('NodeInspector details view', () => {
   it('configures custom outputs and context writes through dialogs', () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     const onChange = vi.fn()
-    const referenceCatalog = { inputs: [], outputs: [], contexts: [{ id: 'contexts.session', label: 'session', path: 'contexts.session', type: 'object', children: [{ id: 'contexts.session.answer', label: 'answer', path: 'contexts.session.answer', expression: '${{ contexts.session.answer }}', type: 'string', children: [] }] }] }
+    const referenceCatalog = { inputs: [], outputs: [], contexts: [{ id: 'contexts.session', label: 'session', path: 'contexts.session', type: 'object', children: [{ id: 'contexts.session.answer', label: 'answer', path: 'contexts.session.answer', selector: { namespace: 'contexts' as const, run: { kind: 'current' as const }, item: { kind: 'current' as const }, path: ['session', 'answer'] }, type: 'string', children: [] }] }] }
     render(<QueryClientProvider client={client}><NodeInspector data={{ editorKind: 'action', nodeType: 'model', typeVersion: 1, label: 'Model', key: 'model', parameters: {}, outputProjection: {}, contextWrites: [], resourceReferences: [], settings: {}, disabled: false }} manifest={modelManifest} nodeId="model-1" onChange={onChange} onDelete={vi.fn()} referenceCatalog={referenceCatalog} resources={{}} /></QueryClientProvider>)
 
     fireEvent.click(screen.getByRole('button', { name: /Add custom output|添加自定义输出/ }))
     expect(screen.getByRole('dialog')).toBeInTheDocument()
     fireEvent.change(screen.getByLabelText(/Output name|输出名称/), { target: { value: 'answer' } })
-    fireEvent.change(screen.getByLabelText(/Expression|表达式/), { target: { value: '${{ item.json.text }}' } })
     fireEvent.click(screen.getByRole('button', { name: /Save|保存/ }))
-    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ outputProjection: expect.objectContaining({ main: expect.objectContaining({ answer: expect.objectContaining({ expression: '${{ item.json.text }}' }) }) }) }))
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ outputProjection: expect.objectContaining({ main: expect.objectContaining({ answer: expect.objectContaining({ value: { kind: 'literal', value: '' } }) }) }) }))
 
     fireEvent.click(screen.getByRole('button', { name: /Add global variable write|添加全局变量写入/ }))
     expect(screen.getByRole('dialog')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('combobox', { name: /Global variable|全局变量/ }))
     fireEvent.click(screen.getByRole('option', { name: 'session.answer' }))
     fireEvent.click(screen.getByRole('button', { name: /Save|保存/ }))
-    expect(onChange).toHaveBeenCalledWith({ contextWrites: [{ operation: 'set', path: 'session.answer', value: '' }] })
+    expect(onChange).toHaveBeenCalledWith({ contextWrites: [{ operation: 'set', path: 'session.answer', value: { kind: 'literal', value: '' } }] })
+  })
+
+  it('rejects duplicate projection field names before overwriting an existing field', () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const onChange = vi.fn()
+    const outputProjection = { main: { answer: { value: { kind: 'literal' as const, value: '' }, schema: { type: 'string' }, sensitive: false } } }
+    render(<QueryClientProvider client={client}><NodeInspector data={{ editorKind: 'action', nodeType: 'model', typeVersion: 1, label: 'Model', key: 'model', parameters: {}, outputProjection, contextWrites: [], resourceReferences: [], settings: {}, disabled: false }} manifest={modelManifest} nodeId="model-1" onChange={onChange} onDelete={vi.fn()} resources={{}} /></QueryClientProvider>)
+
+    fireEvent.click(screen.getByRole('button', { name: /Add custom output|添加自定义输出/ }))
+    fireEvent.change(screen.getByLabelText(/Output name|输出名称/), { target: { value: 'answer' } })
+
+    expect(screen.getByRole('alert')).toHaveTextContent(/already in use|已被使用/i)
+    expect(screen.getByRole('button', { name: /Save|保存/ })).toBeDisabled()
+    expect(onChange).not.toHaveBeenCalled()
   })
 
   it('uses the shared Span query to show the selected node Trace detail', async () => {
@@ -116,6 +129,71 @@ describe('NodeInspector details view', () => {
     fireEvent.keyDown(traceTab, { key: 'Enter' })
     await waitFor(() => expect(traceTab).toHaveAttribute('data-state', 'active'))
     expect(await screen.findByTestId('trace-detail')).toHaveTextContent('Selected Set node')
+    vi.unstubAllGlobals()
+  })
+
+  it('does not pin the previous node output while the selected node is loading', async () => {
+    let resolveCodeRuns: ((response: Response) => void) | undefined
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input)
+      if (!url.endsWith('/nodes')) return new Response(JSON.stringify({}), { headers: { 'Content-Type': 'application/json' } })
+      if (fetchMock.mock.calls.length === 1) {
+        return new Response(JSON.stringify({ items: [{ id: 'agent-run', nodeId: 'agent-1', output: { main: [{ json: { text: 'agent-output' } }] } }] }), { headers: { 'Content-Type': 'application/json' } })
+      }
+      return new Promise<Response>((resolve) => {
+        resolveCodeRuns = resolve
+      })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const agentData = { editorKind: 'action' as const, nodeType: 'agent', typeVersion: 1, label: 'Agent', key: 'agent', parameters: {}, outputProjection: {}, contextWrites: [], resourceReferences: [], settings: {}, disabled: false }
+    const codeData = { ...agentData, nodeType: 'set', label: 'Code', key: 'code' }
+    const view = render(<QueryClientProvider client={client}><NodeInspector data={agentData} executionId="execution-1" manifest={agentManifest} nodeId="agent-1" onChange={vi.fn()} onDelete={vi.fn()} resources={{}} workflowId="workflow-1" /></QueryClientProvider>)
+
+    await waitFor(() => expect(client.getQueryData(['studio-node-inspector', 'execution-1', 'agent-1'])).toBeTruthy())
+    let outputTab = screen.getByRole('tab', { name: /Output|输出/ })
+    outputTab.focus()
+    fireEvent.keyDown(outputTab, { key: 'Enter' })
+    await waitFor(() => expect((screen.getByRole('textbox', { name: /Output|输出/ }) as HTMLTextAreaElement).value).toContain('agent-output'))
+    view.rerender(<QueryClientProvider client={client}><NodeInspector data={codeData} executionId="execution-1" manifest={manifest} nodeId="code-1" onChange={vi.fn()} onDelete={vi.fn()} resources={{}} workflowId="workflow-1" /></QueryClientProvider>)
+
+    await waitFor(() => expect(screen.getByRole('tab', { name: /Output|输出/ })).toHaveAttribute('data-state', 'inactive'))
+    outputTab = screen.getByRole('tab', { name: /Output|输出/ })
+    outputTab.focus()
+    fireEvent.keyDown(outputTab, { key: 'Enter' })
+    await waitFor(() => expect(screen.getByRole('textbox', { name: /Output|输出/ })).toHaveValue('{}'))
+    expect(screen.getByRole('button', { name: /Pin|固定/ })).toBeDisabled()
+
+    resolveCodeRuns?.(new Response(JSON.stringify({ items: [{ id: 'code-run', nodeId: 'code-1', output: { main: [{ json: { stdout: 'code-output' } }] } }] }), { headers: { 'Content-Type': 'application/json' } }))
+    await waitFor(() => expect((screen.getByRole('textbox', { name: /Output|输出/ }) as HTMLTextAreaElement).value).toContain('code-output'))
+    expect(screen.getByRole('button', { name: /Pin|固定/ })).toBeEnabled()
+    vi.unstubAllGlobals()
+  })
+
+  it('refreshes the selected node until its output is available to pin', async () => {
+    let nodePolls = 0
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input)
+      if (!url.endsWith('/nodes')) return new Response(JSON.stringify({}), { headers: { 'Content-Type': 'application/json' } })
+      nodePolls += 1
+      const output = nodePolls > 1 ? { main: [{ json: { stdout: 'completed-code-output' } }] } : undefined
+      return new Response(JSON.stringify({ items: [{ id: 'code-run', nodeId: 'code-1', output }] }), { headers: { 'Content-Type': 'application/json' } })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const codeData = { editorKind: 'action' as const, nodeType: 'set', typeVersion: 1, label: 'Code', key: 'code', parameters: {}, outputProjection: {}, contextWrites: [], resourceReferences: [], settings: {}, disabled: false }
+    const view = render(<QueryClientProvider client={client}><NodeInspector data={codeData} executionId="execution-1" manifest={manifest} nodeId="code-1" onChange={vi.fn()} onDelete={vi.fn()} resources={{}} workflowId="workflow-1" /></QueryClientProvider>)
+
+    const outputTab = screen.getByRole('tab', { name: /Output|输出/ })
+    outputTab.focus()
+    fireEvent.keyDown(outputTab, { key: 'Enter' })
+    await waitFor(() => expect(screen.getByRole('button', { name: /Pin|固定/ })).toBeDisabled())
+    await waitFor(() => expect((screen.getByRole('textbox', { name: /Output|输出/ }) as HTMLTextAreaElement).value).toContain('completed-code-output'), { timeout: 3_000 })
+    expect(nodePolls).toBeGreaterThanOrEqual(2)
+    expect(screen.getByRole('button', { name: /Pin|固定/ })).toBeEnabled()
+
+    view.unmount()
+    client.clear()
     vi.unstubAllGlobals()
   })
 })

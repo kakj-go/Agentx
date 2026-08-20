@@ -6,6 +6,8 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum RuntimeError {
+    #[error("{message}")]
+    Deterministic { code: &'static str, message: String },
     #[error("{1}")]
     InvalidRequest(&'static str, String),
     #[error("{1}")]
@@ -44,6 +46,9 @@ struct ErrorBody {
 impl IntoResponse for RuntimeError {
     fn into_response(self) -> axum::response::Response {
         let (status, code, message) = match self {
+            Self::Deterministic { code, message } => {
+                (StatusCode::UNPROCESSABLE_ENTITY, json!(code), message)
+            }
             Self::InvalidRequest(code, message) => (StatusCode::BAD_REQUEST, json!(code), message),
             Self::BadRequest(code, message) => {
                 (StatusCode::UNPROCESSABLE_ENTITY, json!(code), message)

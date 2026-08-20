@@ -9,6 +9,12 @@ type Environment = { id: string; code: string }
 type Deployment = { id: string; status: string; publishAttemptId?: string }
 type Invocation = { id: string; executionId?: string; status: string; outputs?: Record<string, unknown> }
 
+const reference = (namespace: 'inputs' | 'outputs', path: string[], sourceNodeId?: string) => ({
+  kind: 'reference',
+  selector: { namespace, sourceNodeId, port: sourceNodeId ? 'main' : undefined, run: { kind: 'current' }, item: { kind: 'current' }, path },
+  missingPolicy: { kind: 'error' },
+})
+
 async function expectResponse(response: APIResponse, label: string) {
   if (!response.ok()) throw new Error(`${label}: ${response.status()} ${await response.text()}`)
 }
@@ -59,12 +65,12 @@ test('V2-08 API-first empty-domain closure creates product facts without SQL fix
   })
   const draft = await request<Draft>(page, token, `/workflows/${workflow.id}/draft`)
   const definition = {
-    schemaVersion: '4.0',
+    schemaVersion: '5.0',
     start: { inputs: { type: 'object', properties: { message: { type: 'string' } }, required: ['message'], additionalProperties: true }, contexts: {} },
     nodes: Array.from({ length: 4 }, (_, index) => ({
       id: `step-${index + 1}`, key: `step_${index + 1}`, type: 'set', typeVersion: 1,
       name: `Step ${index + 1}`, disabled: false,
-      parameters: { values: { message: index === 0 ? '${{ inputs.message }}' : `\${{ outputs.step_${index}.main.current.json.message }}` }, keepOnlySet: true },
+      parameters: { values: { message: index === 0 ? reference('inputs', ['message']) : reference('outputs', ['message'], `step-${index}`) }, keepOnlySet: true },
       outputProjection: {}, contextWrites: [], resourceReferences: [], settings: {},
     })),
     connections: [
@@ -74,7 +80,7 @@ test('V2-08 API-first empty-domain closure creates product facts without SQL fix
       { id: 'step-3-step-4', sourceNodeId: 'step-3', sourceHandle: 'main', targetNodeId: 'step-4', targetHandle: 'main', order: 0 },
       { id: 'step-4-end', sourceNodeId: 'step-4', sourceHandle: 'main', targetNodeId: '__end__', targetHandle: 'main', order: 0 },
     ],
-    end: { outputs: { message: { expression: '${{ outputs.step_4.main.current.json.message }}', schema: { type: 'string' }, required: true, sensitive: false } } },
+    end: { outputs: { message: { value: reference('outputs', ['message'], 'step-4'), schema: { type: 'string' }, required: true, sensitive: false } } },
     settings: { activationBudget: 8, executionOrder: 'deterministic' },
   }
   const saved = await request<{ revision: number }>(page, token, `/workflows/${workflow.id}/draft`, 'PUT', {

@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
 import type { NodeManifest, StudioDocument, StudioNode } from '../../model/types'
-import { insertAtSelection } from './reference-insertion'
 import { buildReferenceCatalog } from './reference-path'
 
 const action = (id: string, key: string): StudioNode => ({
@@ -33,11 +32,11 @@ const document = {
   edges: [{ id: 'edge', source: 'first', target: 'target', sourceHandle: 'true', targetHandle: 'main', data: { edgeKind: 'execution' } }],
 } as Pick<StudioDocument, 'start' | 'nodes' | 'edges'>
 
-describe('Workflow 4.0 reference paths', () => {
+describe('Workflow 5.0 reference selectors', () => {
   it('builds the three namespaces and filters outputs to reachable predecessors', () => {
     const catalog = buildReferenceCatalog(document, new Map([['if@1', manifest]]), 'target')
 
-    expect(catalog.inputs[0].expression).toBe('${{ inputs.question }}')
+    expect(catalog.inputs[0].selector).toEqual({ namespace: 'inputs', run: { kind: 'current' }, item: { kind: 'current' }, path: ['question'] })
     expect(catalog.outputs.map((entry) => entry.label)).toEqual(['condition'])
     expect(catalog.contexts[0].children[0].sensitive).toBe(true)
   })
@@ -48,17 +47,10 @@ describe('Workflow 4.0 reference paths', () => {
     const currentField = port.children.find((entry) => entry.label === 'current')!.children[0]
     const all = port.children.find((entry) => entry.label === 'all()')!
 
-    expect(currentField.expression).toBe('${{ outputs.condition["true"].current.json["customer-name"] }}')
-    expect(all.expression).toBe('${{ outputs.condition["true"].all() }}')
+    expect(currentField.selector).toEqual({ namespace: 'outputs', sourceNodeId: 'first', port: 'true', run: { kind: 'current' }, item: { kind: 'current' }, path: ['customer-name'] })
+    expect(all.selector).toEqual({ namespace: 'outputs', sourceNodeId: 'first', port: 'true', run: { kind: 'current' }, item: { kind: 'all' }, path: [] })
     expect(port.nullable).toBe(true)
     expect(all.nullable).toBe(false)
-  })
-
-  it('inserts at the active selection and returns the next cursor position', () => {
-    expect(insertAtSelection('ask: old text', '${{ inputs.question }}', 5, 8)).toEqual({
-      value: 'ask: ${{ inputs.question }} text',
-      cursor: 27,
-    })
   })
 
   it('uses a port-specific schema for composite error outputs', () => {
@@ -81,6 +73,33 @@ describe('Workflow 4.0 reference paths', () => {
     const errorPort = catalog.outputs[0].children.find((entry) => entry.label === 'error')!
     const code = errorPort.children.find((entry) => entry.label === 'current')!.children[0]
 
-    expect(code.expression).toBe('${{ outputs.child.error.current.json.code }}')
+    expect(code.selector).toEqual({ namespace: 'outputs', sourceNodeId: 'first', port: 'error', run: { kind: 'current' }, item: { kind: 'current' }, path: ['code'] })
+  })
+
+  it('expands the decision field from an approval port schema', () => {
+    const approval = {
+      ...manifest,
+      nodeType: 'approval',
+      outputPorts: [{ name: 'approved', kind: 'main', required: false, variadic: false }],
+      outputPortSchemas: {
+        approved: {
+          type: 'object',
+          properties: { decision: { type: 'string', enum: ['approved'] } },
+          required: ['decision'],
+        },
+      },
+      outputCardinality: { approved: 'zero_or_one' },
+    } as NodeManifest
+    const source = { ...action('first', 'approval'), data: { ...action('first', 'approval').data, nodeType: 'approval' } } as StudioNode
+    const catalog = buildReferenceCatalog(
+      { ...document, nodes: [source, action('target', 'target')], edges: [{ id: 'edge', source: 'first', target: 'target', sourceHandle: 'approved', targetHandle: 'main', data: { edgeKind: 'execution' } }] },
+      new Map([['approval@1', approval]]),
+      'target',
+    )
+    const approved = catalog.outputs[0].children[0]
+    const decision = approved.children.find((entry) => entry.label === 'current')!.children.find((entry) => entry.label === 'decision')
+
+    expect(decision?.type).toBe('string')
+    expect(decision?.selector).toEqual({ namespace: 'outputs', sourceNodeId: 'first', port: 'approved', run: { kind: 'current' }, item: { kind: 'current' }, path: ['decision'] })
   })
 })

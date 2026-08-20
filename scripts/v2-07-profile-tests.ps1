@@ -54,9 +54,9 @@ foreach ($imageLine in @($production -split "`n" | Where-Object { $_ -match '^\s
 $control = (& $deploy -Action Render -Target Control -ConfigFile $productionPath) -join "`n"
 $runtime = (& $deploy -Action Render -Target Runtime -ConfigFile $productionPath) -join "`n"
 $observability = (& $deploy -Action Render -Target Observability -ConfigFile $productionPath) -join "`n"
-if ($control -match 'namespace: agentx-v2-runtime') { throw "Control Target leaked another plane." }
-if ($runtime -match 'namespace: agentx-v2-control') { throw "Runtime Target leaked another plane." }
-if ($observability -match 'namespace: agentx-v2-control' -or $observability -notmatch 'namespace: agentx-v2-runtime') { throw "Observability Target must stay isolated inside the Runtime Namespace." }
+if ($control -match 'namespace: agentx-runtime') { throw "Control Target leaked another plane." }
+if ($runtime -match 'namespace: agentx-control') { throw "Runtime Target leaked another plane." }
+if ($observability -match 'namespace: agentx-control' -or $observability -notmatch 'namespace: agentx-runtime') { throw "Observability Target must stay isolated inside the Runtime Namespace." }
 
 $profile = Get-Content -Raw -LiteralPath $productionPath | ConvertFrom-Json
 $releasePath = [IO.Path]::GetTempFileName()

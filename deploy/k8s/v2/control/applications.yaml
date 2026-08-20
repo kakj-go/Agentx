@@ -1,6 +1,6 @@
 apiVersion: apps/v1
 kind: Deployment
-metadata: { name: platform-control, namespace: agentx-v2-control }
+metadata: { name: platform-control, namespace: agentx-control }
 spec:
   replicas: 1
   strategy: { type: RollingUpdate, rollingUpdate: { maxUnavailable: 1, maxSurge: 1 } }
@@ -30,14 +30,14 @@ spec:
             - { name: AGENTX_CONTROL_MYSQL_USER, value: control_app }
             - { name: AGENTX_CONTROL_MYSQL_MAX_CONNECTIONS, value: "10" }
             - { name: AGENTX_CONTROL_MYSQL_TLS_MODE, value: disabled }
-            - { name: AGENTX_CONTROL_S3_ENDPOINT, value: http://object-storage.agentx-v2-deps.svc:9000 }
+            - { name: AGENTX_CONTROL_S3_ENDPOINT, value: http://object-storage.agentx-deps.svc:9000 }
             - { name: AGENTX_CONTROL_S3_BUCKET, value: agentx-control }
             - { name: AGENTX_CONTROL_S3_REGION, value: us-east-1 }
             - { name: AGENTX_CONTROL_S3_ALLOW_HTTP, value: "true" }
             - { name: AGENTX_CONTROL_S3_PATH_STYLE, value: "true" }
-            - { name: AGENTX_RUNTIME_INTERNAL_URL, value: http://runtime-gateway-internal.agentx-v2-runtime.svc:8080 }
-            - { name: AGENTX_OBSERVABILITY_INTERNAL_URL, value: http://observability.agentx-v2-runtime.svc:8080 }
-            - { name: AGENTX_CONTROL_VAULT_ENDPOINT, value: http://vault.agentx-v2-deps.svc:8200 }
+            - { name: AGENTX_RUNTIME_INTERNAL_URL, value: http://runtime-gateway-internal.agentx-runtime.svc:8080 }
+            - { name: AGENTX_OBSERVABILITY_INTERNAL_URL, value: http://observability.agentx-runtime.svc:8080 }
+            - { name: AGENTX_CONTROL_VAULT_ENDPOINT, value: http://vault.agentx-deps.svc:8200 }
             - { name: AGENTX_CONTROL_VAULT_MOUNT, value: secret }
             - name: AGENTX_CONTROL_MYSQL_PASSWORD
               valueFrom: { secretKeyRef: { name: agentx-control-secrets, key: AGENTX_CONTROL_MYSQL_PASSWORD } }
@@ -88,14 +88,14 @@ spec:
 ---
 apiVersion: v1
 kind: Service
-metadata: { name: platform-control, namespace: agentx-v2-control }
+metadata: { name: platform-control, namespace: agentx-control }
 spec:
   selector: { app.kubernetes.io/name: platform-control }
   ports: [{ name: http, port: 8080, targetPort: http }]
 ---
 apiVersion: v1
 kind: Service
-metadata: { name: platform-control-metrics, namespace: agentx-v2-control }
+metadata: { name: platform-control-metrics, namespace: agentx-control }
 spec:
   clusterIP: None
   selector: { app.kubernetes.io/name: platform-control }
@@ -103,7 +103,7 @@ spec:
 ---
 apiVersion: apps/v1
 kind: Deployment
-metadata: { name: web-console, namespace: agentx-v2-control }
+metadata: { name: web-console, namespace: agentx-control }
 spec:
   replicas: 1
   strategy: { type: RollingUpdate, rollingUpdate: { maxUnavailable: 1, maxSurge: 1 } }
@@ -149,7 +149,7 @@ spec:
 ---
 apiVersion: v1
 kind: Service
-metadata: { name: web-console, namespace: agentx-v2-control }
+metadata: { name: web-console, namespace: agentx-control }
 spec:
   selector: { app.kubernetes.io/name: web-console }
   ports: [{ name: http, port: 8080, targetPort: http }]

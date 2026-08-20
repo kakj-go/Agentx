@@ -329,6 +329,23 @@ async fn apply_admission_inner(
     let mut tx = state.pool.begin().await?;
     sqlx::query("INSERT INTO tenant_admission(tenant_id,status,admission_epoch,policy_version) VALUES(?,'active',?,1) ON DUPLICATE KEY UPDATE admission_epoch=GREATEST(admission_epoch,VALUES(admission_epoch))")
         .bind(tenant_id).bind(request.admission_epoch).execute(&mut *tx).await?;
+    // The tenant row serializes synchronous publish barriers with the outbox
+    // publisher. Recheck after taking that lock so concurrent delivery of the
+    // same command converges to the committed receipt instead of a duplicate-key
+    // database error.
+    if let Some(mut receipt) = replay_tx::<_, ApplyReceiptV1>(
+        &mut tx,
+        tenant_id,
+        "admission",
+        &request.command.idempotency_key,
+        request,
+    )
+    .await?
+    {
+        receipt.replayed = true;
+        tx.commit().await?;
+        return Ok(receipt);
+    }
     match &request.target {
         AdmissionTargetV1::Tenant { enabled } => {
             sqlx::query("UPDATE tenant_admission SET status=?,admission_epoch=? WHERE tenant_id=? AND admission_epoch<=?")
@@ -1206,6 +1223,36 @@ async fn replay<T: Serialize, R: serde::de::DeserializeOwned>(
         .map_err(|error| RuntimeError::Internal(error.into()))?;
     let row = sqlx::query("SELECT request_hash,response_json FROM publish_receipts WHERE tenant_id=? AND operation=? AND idempotency_key=?")
         .bind(tenant_id).bind(operation).bind(idempotency_key).fetch_optional(&state.pool).await?;
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    if row.try_get::<String, _>("request_hash")? != request_hash.as_str() {
+        return Err(RuntimeError::Conflict(
+            RuntimePublishErrorCodeV1::IdempotencyConflict,
+            "idempotency key was reused for a different request".into(),
+        ));
+    }
+    Ok(Some(
+        serde_json::from_value(row.try_get("response_json")?)
+            .map_err(|error| RuntimeError::Internal(error.into()))?,
+    ))
+}
+
+async fn replay_tx<T: Serialize, R: serde::de::DeserializeOwned>(
+    tx: &mut Transaction<'_, MySql>,
+    tenant_id: Uuid,
+    operation: &str,
+    idempotency_key: &str,
+    request: &T,
+) -> RuntimeResult<Option<R>> {
+    let request_hash = agentx_runtime_contracts::content_hash(request)
+        .map_err(|error| RuntimeError::Internal(error.into()))?;
+    let row = sqlx::query("SELECT request_hash,response_json FROM publish_receipts WHERE tenant_id=? AND operation=? AND idempotency_key=?")
+        .bind(tenant_id)
+        .bind(operation)
+        .bind(idempotency_key)
+        .fetch_optional(&mut **tx)
+        .await?;
     let Some(row) = row else {
         return Ok(None);
     };

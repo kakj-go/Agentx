@@ -51,7 +51,7 @@ export function serializeStudio(document: StudioDocument): { definition: Workflo
   for (const values of grouped.values()) values.sort((a, b) => a.order - b.order || a.id.localeCompare(b.id)).forEach((value, index) => { value.order = index })
   return {
     definition: {
-      schemaVersion: '4.0',
+      schemaVersion: '5.0',
     start: document.start,
     settings: document.settings,
       nodes: actionNodes.map((node) => ({ id: node.id, key: node.data.key, type: node.data.nodeType, typeVersion: node.data.typeVersion, name: node.data.label, disabled: node.data.disabled, parameters: node.data.parameters, outputProjection: node.data.outputProjection, contextWrites: node.data.contextWrites, resourceReferences: [...node.data.resourceReferences.filter((reference) => !reference.bindingId), ...(bindingByTarget.get(node.id) ?? [])], settings: node.data.settings })),

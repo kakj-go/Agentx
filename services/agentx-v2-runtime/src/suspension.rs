@@ -1,5 +1,5 @@
 use agentx_domain::NodeExecutionId;
-use agentx_runtime::ExecutionMachine;
+use agentx_runtime::{ExecutionMachine, ExpressionContext, ExpressionEngine, NodeActivation};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use rand::{RngCore, rngs::OsRng};
 use serde_json::{Value, json};
@@ -8,7 +8,135 @@ use sqlx::{MySql, Transaction};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use uuid::Uuid;
 
-use crate::error::RuntimeResult;
+use crate::{
+    engine_persistence::{load_output_namespace, upsert_failed_activation},
+    engine_protocol::machine_error,
+    error::{RuntimeError, RuntimeResult},
+};
+
+pub(crate) struct SuspendRequest<'a> {
+    pub tenant_id: Uuid,
+    pub execution_id: Uuid,
+    pub bundle_id: Uuid,
+    pub work_package_id: Option<Uuid>,
+    pub node_execution_id: NodeExecutionId,
+    pub attempt_id: Uuid,
+    pub state_version: u64,
+    pub node: &'a agentx_runtime::CompiledNode,
+    pub activation: &'a NodeActivation,
+    pub machine: &'a mut ExecutionMachine,
+    pub context: &'a Value,
+}
+
+pub(crate) async fn resolve_and_create(
+    tx: &mut Transaction<'_, MySql>,
+    mut request: SuspendRequest<'_>,
+) -> RuntimeResult<()> {
+    let current = request
+        .activation
+        .inputs
+        .values()
+        .flat_map(|items| items.iter())
+        .next()
+        .map(|item| item.json.clone())
+        .unwrap_or(Value::Null);
+    let execution_input: Value =
+        sqlx::query_scalar("SELECT input_json FROM workflow_executions WHERE tenant_id=? AND id=?")
+            .bind(request.tenant_id)
+            .bind(request.execution_id)
+            .fetch_one(&mut **tx)
+            .await?;
+    let resolved_parameters = ExpressionEngine.resolve_parameters(
+        &request.node.parameters,
+        &ExpressionContext {
+            json: current.clone(),
+            input: current,
+            inputs: execution_input,
+            outputs: load_output_namespace(tx, request.tenant_id, request.execution_id).await?,
+            contexts: request.context.clone(),
+            execution: json!({"id":request.execution_id}),
+            run_index: request.activation.run_index,
+            output_node_keys: request
+                .machine
+                .workflow()
+                .nodes
+                .iter()
+                .map(|node| (node.id.clone(), node.key.clone()))
+                .collect(),
+            ..ExpressionContext::default()
+        },
+    );
+    let resolved_parameters = match resolved_parameters {
+        Ok(parameters) => parameters,
+        Err(error) => {
+            fail_parameter_resolution(tx, &mut request, error.to_string()).await?;
+            return Ok(());
+        }
+    };
+    create(
+        tx,
+        request.tenant_id,
+        request.execution_id,
+        request.bundle_id,
+        request.work_package_id,
+        request.node_execution_id,
+        request.state_version,
+        request.node,
+        &resolved_parameters,
+        request.machine,
+        request.context,
+    )
+    .await
+}
+
+async fn fail_parameter_resolution(
+    tx: &mut Transaction<'_, MySql>,
+    request: &mut SuspendRequest<'_>,
+    message: String,
+) -> RuntimeResult<()> {
+    request
+        .machine
+        .fail(
+            request.node_execution_id,
+            "DYNAMIC_VALUE_EVALUATION_FAILED",
+            &message,
+            false,
+        )
+        .map_err(machine_error)?;
+    let failed = request
+        .machine
+        .activation(request.node_execution_id)
+        .cloned()
+        .ok_or_else(|| RuntimeError::Internal(anyhow::anyhow!("activation disappeared")))?;
+    upsert_failed_activation(
+        tx,
+        request.tenant_id,
+        request.execution_id,
+        &failed,
+        request.node,
+        "DYNAMIC_VALUE_EVALUATION_FAILED",
+        &message,
+    )
+    .await?;
+    sqlx::query("UPDATE node_attempts SET status='failed',error_code='DYNAMIC_VALUE_EVALUATION_FAILED',error_message=?,ended_at=UTC_TIMESTAMP(6) WHERE tenant_id=? AND id=? AND status='suspended'")
+        .bind(&message)
+        .bind(request.tenant_id)
+        .bind(request.attempt_id)
+        .execute(&mut **tx)
+        .await?;
+    let mut trace = crate::trace_delivery::TraceDraft::execution(
+        request.tenant_id,
+        request.execution_id,
+        "node.failed",
+        "failed",
+    );
+    trace.node_execution_id = Some(request.node_execution_id.as_uuid());
+    trace.attempt_id = Some(request.attempt_id);
+    trace.error_code = Some("DYNAMIC_VALUE_EVALUATION_FAILED".into());
+    trace.error_message = Some(message);
+    crate::trace_delivery::enqueue_best_effort(tx, trace).await;
+    Ok(())
+}
 
 pub async fn enqueue_due(pool: &sqlx::MySqlPool, owner: Uuid, limit: u32) -> RuntimeResult<u64> {
     let mut tx = pool.begin().await?;
@@ -62,6 +190,7 @@ pub(crate) async fn create(
     node_execution_id: NodeExecutionId,
     state_version: u64,
     node: &agentx_runtime::CompiledNode,
+    parameters: &Value,
     machine: &ExecutionMachine,
     context: &Value,
 ) -> RuntimeResult<()> {
@@ -87,20 +216,17 @@ pub(crate) async fn create(
         .bind(execution_id)
         .fetch_one(&mut **tx)
         .await?;
-        let title = node
-            .parameters
+        let title = parameters
             .get("title")
             .and_then(Value::as_str)
             .unwrap_or(&node.name)
             .to_owned();
-        let description = node
-            .parameters
+        let description = parameters
             .get("description")
             .and_then(Value::as_str)
             .map(str::to_owned);
-        let request = node.parameters.get("request").cloned();
-        let timeout_seconds = node
-            .parameters
+        let request = parameters.get("request").cloned();
+        let timeout_seconds = parameters
             .get("timeoutSeconds")
             .and_then(Value::as_u64)
             .unwrap_or(86_400);
@@ -121,8 +247,7 @@ pub(crate) async fn create(
         .bind(timeout_seconds)
         .execute(&mut **tx)
         .await?;
-        if let Some(candidate_id) = node
-            .parameters
+        if let Some(candidate_id) = parameters
             .get("candidateUserId")
             .and_then(Value::as_str)
             .and_then(|value| Uuid::parse_str(value).ok())
@@ -153,8 +278,7 @@ pub(crate) async fn create(
         let token_hash = format!("{:x}", Sha256::digest(token.as_bytes()));
         let token_id = Uuid::now_v7();
         let wait_id = Uuid::now_v7();
-        let kind = node
-            .parameters
+        let kind = parameters
             .get("kind")
             .and_then(Value::as_str)
             .unwrap_or("duration");
@@ -165,14 +289,12 @@ pub(crate) async fn create(
         } else {
             "webhook"
         };
-        let duration_micros = node
-            .parameters
+        let duration_micros = parameters
             .get("durationMs")
             .and_then(Value::as_u64)
             .unwrap_or(1_000)
             .saturating_mul(1_000);
-        let resume_at = node
-            .parameters
+        let resume_at = parameters
             .get("resumeAt")
             .and_then(Value::as_str)
             .map(|value| OffsetDateTime::parse(value, &Rfc3339))
@@ -180,8 +302,7 @@ pub(crate) async fn create(
             .map_err(|error| {
                 crate::error::RuntimeError::InvalidRequest("INVALID_WAIT_TIME", error.to_string())
             })?;
-        let timeout_at = node
-            .parameters
+        let timeout_at = parameters
             .get("timeoutAt")
             .and_then(Value::as_str)
             .map(|value| OffsetDateTime::parse(value, &Rfc3339))
@@ -214,7 +335,7 @@ pub(crate) async fn create(
             sqlx::query("INSERT INTO wait_subscriptions(id,tenant_id,execution_id,node_execution_id,bundle_id,checkpoint_id,state_version,resume_token_id,wait_kind,status,wake_at,timeout_at,authentication_mode,response_mode) VALUES(?,?,?,?,?,?,?,?,?,'waiting',?,?,?,'accepted')")
                 .bind(wait_id).bind(tenant_id).bind(execution_id).bind(node_execution_id.as_uuid())
                 .bind(bundle_id).bind(checkpoint_id).bind(state_version).bind(token_id).bind(kind)
-                .bind(resume_at).bind(timeout_at).bind(node.parameters.get("authenticationMode").and_then(Value::as_str).unwrap_or("signed"))
+                .bind(resume_at).bind(timeout_at).bind(parameters.get("authenticationMode").and_then(Value::as_str).unwrap_or("signed"))
         };
         query.execute(&mut **tx).await?;
         emit_wait_started(

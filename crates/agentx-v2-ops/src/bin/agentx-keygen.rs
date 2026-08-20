@@ -52,8 +52,8 @@ fn main() -> Result<()> {
     let sandbox_egress = RsaPrivateKey::new(&mut OsRng, 2048)?;
     let egress_tls = rcgen::generate_simple_self_signed(vec![
         "agentx-egress-sandbox".into(),
-        "agentx-egress-sandbox.agentx-v2-deps.svc".into(),
-        "agentx-egress-sandbox.agentx-v2-deps.svc.cluster.local".into(),
+        "agentx-egress-sandbox.agentx-deps.svc".into(),
+        "agentx-egress-sandbox.agentx-deps.svc.cluster.local".into(),
         "host.docker.internal".into(),
     ])?;
     println!(

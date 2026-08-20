@@ -601,57 +601,18 @@ export const useEditorStore = create<EditorState>((set) => ({
         "bindingRole" in data ||
         "resourceName" in data ||
         "label" in data;
-      const previous = state.nodes.find((node) => node.id === id);
-      const oldKey =
-        previous?.data.editorKind === "action" ? previous.data.key : undefined;
-      const nextKey =
-        "key" in data && typeof data.key === "string" ? data.key : oldKey;
-      const renamed = oldKey && nextKey && oldKey !== nextKey;
-      const rewrite = (value: unknown): unknown => {
-        if (!renamed) return value;
-        if (typeof value === "string")
-          return rewriteExpressionReferences(value, oldKey, nextKey);
-        if (Array.isArray(value)) return value.map(rewrite);
-        if (value && typeof value === "object")
-          return Object.fromEntries(
-            Object.entries(value).map(([key, item]) => [key, rewrite(item)]),
-          );
-        return value;
-      };
       const nextNodes = state.nodes.map((node) => {
         if (node.id === id)
           return {
             ...node,
             data: { ...node.data, ...data } as typeof node.data,
           };
-        if (!renamed || node.data.editorKind !== "action") return node;
-        return {
-          ...node,
-          data: {
-            ...node.data,
-            parameters: rewrite(node.data.parameters) as Record<
-              string,
-              unknown
-            >,
-            outputProjection: rewrite(node.data.outputProjection) as typeof node.data.outputProjection,
-            contextWrites: rewrite(
-              node.data.contextWrites,
-            ) as typeof node.data.contextWrites,
-          },
-        };
+        return node;
       });
       return {
         ...commit(state, {
-          graphRevision: state.graphRevision + Number(graphChanged || renamed),
+          graphRevision: state.graphRevision + Number(graphChanged),
           nodes: nextNodes,
-          end: renamed
-            ? {
-                outputs: rewrite(
-                  state.end.outputs,
-                ) as StudioDocument["end"]["outputs"],
-                error: state.end.error,
-              }
-            : state.end,
         }),
       };
     }),
@@ -837,20 +798,3 @@ export const useEditorStore = create<EditorState>((set) => ({
       };
     }),
 }));
-
-function rewriteExpressionReferences(
-  source: string,
-  oldKey: string,
-  nextKey: string,
-) {
-  const escaped = oldKey.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return source
-    .replace(
-      new RegExp(`outputs\\.${escaped}(?=\\.|\\[|\\s|$)`, "g"),
-      `outputs.${nextKey}`,
-    )
-    .replace(
-      new RegExp(`outputs\\[(["'])${escaped}\\1\\]`, "g"),
-      `outputs.${nextKey}`,
-    );
-}

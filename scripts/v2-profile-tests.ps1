@@ -6,12 +6,19 @@ $json = Get-Content -Raw -LiteralPath $profilePath
 if (Get-Command Test-Json -ErrorAction SilentlyContinue) {
     if (-not ($json | Test-Json -SchemaFile $schemaPath)) { throw "V2 profile does not match its schema." }
 }
+$productionProfile = Get-Content -Raw -LiteralPath (Join-Path $root "deploy/profiles/v2-production.example.json") | ConvertFrom-Json
+if ($productionProfile.secrets.dependencies -ne "agentx-dependencies-secrets") { throw "Production must use the canonical Dependencies Secret." }
 
 function Assert-V2Isolation {
     param($Profile)
     if ($Profile.apiVersion -ne "agentx.io/deployment/v2alpha3") { throw "V2 apiVersion is required." }
     $namespaces = @($Profile.namespaces.control, $Profile.namespaces.runtime, $Profile.namespaces.dependencies)
     if (($namespaces | Select-Object -Unique).Count -ne 3) { throw "V2 physical namespaces must be distinct." }
+    foreach ($namespace in $namespaces) {
+        if ([string]$namespace -notmatch '^agentx-(?!v2-)[a-z0-9-]+$' -or $namespace.Length -gt 63) {
+            throw "Physical namespaces must use the agentx- prefix without a v2 segment."
+        }
+    }
     $control = $Profile.components.controlMysql
     $runtime = $Profile.components.runtimeMysql
     if ($control.host -eq $runtime.host) { throw "Control and Runtime MySQL must use independent endpoints." }
@@ -124,6 +131,7 @@ for ($mask = 0; $mask -lt 32; $mask++) {
     }
 }
 Assert-Rejected "shared namespace" { param($value) $value.namespaces.runtime = $value.namespaces.control }
+Assert-Rejected "versioned namespace prefix" { param($value) $value.namespaces.control = "agentx-v2-control" }
 Assert-Rejected "shared MySQL endpoint" { param($value) $value.components.runtimeMysql.host = $value.components.controlMysql.host }
 Assert-Rejected "shared MySQL application user" { param($value) $value.components.runtimeMysql.appUser = $value.components.controlMysql.appUser }
 Assert-Rejected "application user is migration user" { param($value) $value.components.controlMysql.migrateUser = $value.components.controlMysql.appUser }
@@ -178,6 +186,22 @@ foreach ($required in @("AGENTX_CLICKHOUSE_QUERY_USER", "AGENTX_CLICKHOUSE_CONSU
     if (-not $observabilityDocument.Contains($required)) { throw "Observability application is missing $required." }
 }
 $deployScript = Get-Content -Raw -LiteralPath (Join-Path $root "scripts/deploy-v2.ps1")
+foreach ($required in @('SyncSecrets coordinates shared credentials and requires -Target All','Get-CanonicalSigningMaterial','Publish-DependencySecretMirrors','CONTROL_VAULT_TOKEN','RUNTIME_VAULT_TOKEN','OBSERVABILITY_REDIS_PASSWORD','AGENTX_EGRESS_TLS_PRIVATE_KEY_PEM','partial canonical signing material')) {
+    if (-not $deployScript.Contains($required)) { throw "Deployment canonical Secret synchronization is missing: $required" }
+}
+$canonicalExample = Get-Content -Raw -LiteralPath (Join-Path $root "deploy/k8s/v2/dependencies/secret.example.yaml")
+foreach ($required in @('AGENTX_CONTROL_PUBLISHER_JWT_PRIVATE_KEY_PEM','AGENTX_RUNTIME_SERVICE_JWT_PUBLIC_KEYS_JSON','AGENTX_RUNTIME_USER_JWT_PUBLIC_KEYS_JSON','AGENTX_RUNTIME_GATEWAY_EGRESS_JWT_PRIVATE_KEY_PEM','AGENTX_RUNTIME_GATEWAY_EGRESS_JWT_KEY_ID','AGENTX_EGRESS_JWT_PUBLIC_KEYS_JSON','AGENTX_EGRESS_TLS_CERTIFICATE_PEM')) {
+    if (-not $canonicalExample.Contains($required)) { throw "Dependencies Secret example is missing canonical key $required." }
+}
+foreach ($binding in @(
+    @{ deployment = 'runtime-gateway'; key = 'AGENTX_RUNTIME_GATEWAY_EGRESS_JWT_KEY_ID' },
+    @{ deployment = 'workflow-runtime'; key = 'AGENTX_WORKFLOW_RUNTIME_EGRESS_JWT_KEY_ID' },
+    @{ deployment = 'workflow-worker'; key = 'AGENTX_WORKFLOW_WORKER_EGRESS_JWT_KEY_ID' },
+    @{ deployment = 'sandbox-manager'; key = 'AGENTX_SANDBOX_EGRESS_JWT_KEY_ID' }
+)) {
+    $document = ($runtimeApplications -split "(?m)^---\s*$" | Where-Object { $_ -match "(?m)^metadata:\s*\{\s*name:\s*$($binding.deployment)," -and $_ -match "(?m)^kind: Deployment\s*$" } | Select-Object -First 1)
+    if ($document -notmatch "(?s)name: AGENTX_EGRESS_JWT_KEY_ID.*secretKeyRef:.*key: $($binding.key)") { throw "$($binding.deployment) Egress KID must come from the mirrored canonical Secret." }
+}
 if ($deployScript -notmatch '(?s)user observability.*\+xpending') {
     throw 'Observability Redis ACL must allow XPENDING for the low-cardinality Trace backlog metric.'
 }
@@ -191,6 +215,7 @@ if ($vaultDocument -notmatch 'agentx-control-webhook-writer' -or $vaultDocument 
 if ($vaultDocument -notmatch 'secret/data/tenants/\+/credentials/\+" \{ capabilities = \["create", "update", "read"\]' -or $vaultDocument -notmatch 'secret/destroy/tenants/\+/credentials/\+" \{ capabilities = \["update"\]') { throw "Control credential Vault lifecycle permissions are incomplete." }
 if ($vaultDocument -notmatch 'agentx-runtime-secret-reader' -or $vaultDocument -notmatch 'secret/data/tenants/\+/credentials/\+" \{ capabilities = \["read"\]') { throw "Runtime credential Vault read-only policy is missing." }
 if ($vaultDocument -notmatch 'secret/data/tenants/\+/webhooks/\+') { throw "Vault policy must use one-segment wildcards for Tenant and Webhook IDs." }
+if (([regex]::Matches($vaultDocument, 'vault token lookup "\$(?:CONTROL|RUNTIME)_VAULT_TOKEN"')).Count -lt 4) { throw "Vault Bootstrap must create idempotently and verify both canonical tokens." }
 if ($vaultDocument -notmatch 'secret/data/tenants/\+/runtime-credentials/\+') { throw "Vault policy must isolate versioned Runtime credentials per Tenant and credential ID." }
 $controlPolicy = [regex]::Match($vaultDocument, 'printf ''path "secret/data/tenants/\+/webhooks/\+" \{ capabilities = \[(.*?)\] \}').Groups[1].Value
 if ($controlPolicy -match 'read') { throw "Control Vault policy must not read Webhook secrets." }
@@ -289,29 +314,29 @@ finally {
     Remove-Item -LiteralPath $renderProfilePath -Force -ErrorAction SilentlyContinue
 }
 $runScopedProfile = Copy-Profile
-$runScopedProfile.namespaces.control = "agentx-v2-custom-control"
-$runScopedProfile.namespaces.runtime = "agentx-v2-custom-runtime"
-$runScopedProfile.namespaces.dependencies = "agentx-v2-custom-deps"
+$runScopedProfile.namespaces.control = "agentx-custom-control"
+$runScopedProfile.namespaces.runtime = "agentx-custom-runtime"
+$runScopedProfile.namespaces.dependencies = "agentx-custom-deps"
 $runScopedProfilePath = [IO.Path]::GetTempFileName()
 try {
     $runScopedProfile | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $runScopedProfilePath
     $runScopedRender = (& (Join-Path $root "scripts/deploy-v2.ps1") -Action Render -Target All -ConfigFile $runScopedProfilePath -RunId "08-profile-render") -join "`n"
     if ($LASTEXITCODE -ne 0) { throw "V2-08 run-scoped Profile render failed." }
     foreach ($plane in @("control", "runtime", "deps")) {
-        if (-not $runScopedRender.Contains("agentx-v2-08-$plane-profile-render")) { throw "V2-08 run-scoped render omitted the $plane Namespace." }
+        if (-not $runScopedRender.Contains("agentx-e2e-08-$plane-profile-render")) { throw "V2-08 run-scoped render omitted the $plane Namespace." }
     }
     foreach ($endpoint in @(
-        "control-mysql.agentx-v2-08-control-profile-render.svc",
-        "runtime-mysql.agentx-v2-08-runtime-profile-render.svc",
-        "clickhouse.agentx-v2-08-runtime-profile-render.svc",
-        "object-storage.agentx-v2-08-deps-profile-render.svc"
+        "control-mysql.agentx-e2e-08-control-profile-render.svc",
+        "runtime-mysql.agentx-e2e-08-runtime-profile-render.svc",
+        "clickhouse.agentx-e2e-08-runtime-profile-render.svc",
+        "object-storage.agentx-e2e-08-deps-profile-render.svc"
     )) {
         if (-not $runScopedRender.Contains($endpoint)) { throw "V2-08 run-scoped render omitted the scoped endpoint $endpoint." }
     }
-    if ($runScopedRender -match '(?m)^\s*namespace: agentx-v2-(?:custom-)?(?:control|runtime|deps)\s*$') {
+    if ($runScopedRender -match '(?m)^\s*namespace: agentx-(?:custom-)?(?:control|runtime|deps)\s*$') {
         throw "V2-08 run-scoped render leaked a base or Profile Namespace."
     }
-    if ($runScopedRender -match 'agentx-v2-(?:custom-)?(?:control|runtime|deps)\.svc') {
+    if ($runScopedRender -match 'agentx-(?:custom-)?(?:control|runtime|deps)\.svc') {
         throw "V2-08 run-scoped render leaked a base or Profile service endpoint."
     }
     $runScopedNodePortMatch = [regex]::Match($runScopedRender, '"nodePort"\s*:\s*(\d+)')
@@ -334,8 +359,8 @@ if ($LASTEXITCODE -ne 0 -or $localProfileRender -notmatch '(?ms)name: AGENTX_OPE
 $hpaCount = ([regex]::Matches($localProfileRender, '(?m)^kind: HorizontalPodAutoscaler\s*$')).Count
 $pdbCount = ([regex]::Matches($localProfileRender, '(?m)^kind: PodDisruptionBudget\s*$')).Count
 if ($hpaCount -ne 0 -or $pdbCount -ne 8) { throw "Agentx must render zero HPA and eight PDB resources." }
-$physicalNamespaces = @([regex]::Matches($localProfileRender, '(?m)^\s*namespace:\s*(agentx-v2-[a-z0-9-]+)\s*$') | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique)
-if (($physicalNamespaces -join ',') -ne 'agentx-v2-control,agentx-v2-deps,agentx-v2-runtime') { throw "V2 must render exactly the control/runtime/dependencies physical Namespaces." }
+$physicalNamespaces = @([regex]::Matches($localProfileRender, '(?m)^\s*namespace:\s*(agentx-(?:control|runtime|deps))\s*$') | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique)
+if (($physicalNamespaces -join ',') -ne 'agentx-control,agentx-deps,agentx-runtime') { throw "V2 must render exactly the control/runtime/dependencies physical Namespaces." }
 if ($localProfileRender -match '(?m)^\s*namespace:\s*(?:agentx-ingress|agentx-v2-observability)\s*$') { throw "V2 render leaked a retired physical Namespace." }
 foreach ($workload in @('platform-control','web-console','runtime-gateway','workflow-runtime','workflow-worker','sandbox-manager','agentx-egress-gateway','observability')) {
     $expectedReplicas = switch ($workload) {
@@ -441,6 +466,19 @@ foreach ($required in @('control-$safeRunId.agentx.localhost', 'runtime-$safeRun
 }
 $deployV2Source = Get-Content -Raw -LiteralPath (Join-Path $root 'scripts/deploy-v2.ps1')
 if ($deployV2Source -match 'return\s+if\s*\(') { throw 'V2 deploy uses an invalid return-if expression.' }
+$rotateEgressSource = Get-Content -Raw -LiteralPath (Join-Path $root 'scripts/rotate-egress-keys.ps1')
+foreach ($required in @('canonicalSecret','kidSecretKey','run SyncSecrets before rotation','Set-SecretValues $dependenciesNamespace $canonicalSecret')) {
+    if (-not $rotateEgressSource.Contains($required)) { throw "Egress rotation does not preserve canonical key material: $required" }
+}
+$secretSyncE2ePath = Join-Path $root 'scripts/v2-secret-sync-e2e.ps1'
+$secretSyncTokens = $null
+$secretSyncErrors = $null
+[Management.Automation.Language.Parser]::ParseFile($secretSyncE2ePath, [ref]$secretSyncTokens, [ref]$secretSyncErrors) | Out-Null
+if ($secretSyncErrors.Count -ne 0) { throw "Secret synchronization E2E has PowerShell parse errors: $($secretSyncErrors[0].Message)" }
+$secretSyncE2eSource = Get-Content -Raw -LiteralPath $secretSyncE2ePath
+foreach ($required in @('-Action SyncSecrets','CONTROL_VAULT_TOKEN','AGENTX_RUNTIME_GATEWAY_EGRESS_JWT_KEY_ID','LOCAL_RUNTIME_VALUE','delete namespace')) {
+    if (-not $secretSyncE2eSource.Contains($required)) { throw "Secret synchronization E2E is missing coverage: $required" }
+}
 $gatewaySource = Get-Content -Raw -LiteralPath (Join-Path $root "services/agentx-v2-runtime/src/gateway.rs")
 $nonSseSource = $gatewaySource -replace '(?s)async fn invocation_events\(.*?\n\}', ''
 if ($nonSseSource -match 'redis::|\.redis') { throw "Runtime Gateway Redis usage escaped the SSE wakeup module." }

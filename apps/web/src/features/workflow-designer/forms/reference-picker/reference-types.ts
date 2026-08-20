@@ -1,6 +1,6 @@
 export type { ReferenceCatalog, ReferenceEntry, ReferenceNamespace } from '../../model/types'
 
 export type ReferenceSelection = {
-  expression: string
+  selector: import('../../model/types').ValueSelector
   entry: import('../../model/types').ReferenceEntry
 }

@@ -1,6 +1,6 @@
 import * as Tooltip from '@radix-ui/react-tooltip'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -13,8 +13,8 @@ import { WorkflowCanvas } from './workflow-canvas'
 
 const editorDocument = { nodeLayouts: [{ nodeId: 'trigger', x: 100, y: 100 }], boundaryLayouts: [], bindingLayouts: [], edges: [], bindingEdges: [], annotations: [], groups: [], viewport: { x: 0, y: 0, zoom: 1 } }
 const draft = {
-  id: 'draft-1', workflowId: 'workflow-1', revision: 1, schemaVersion: '4.0', definitionHash: 'sha256:def', editorHash: 'sha256:editor', updatedAt: '2026-08-02T10:00:00Z', editorDocument,
-  definition: { schemaVersion: '4.0', start: { inputs: {}, contexts: {} }, settings: { executionOrder: 'deterministic', activationBudget: 10000 }, nodes: [{ id: 'trigger', key: 'source', type: 'set', typeVersion: 1, name: 'Set', disabled: false, parameters: {}, outputProjection: {}, contextWrites: [], resourceReferences: [], settings: {} }], connections: [], end: { outputs: {}, error: { strategy: 'fail_fast', collectWindowMs: 5000, outputs: {} } } },
+  id: 'draft-1', workflowId: 'workflow-1', revision: 1, schemaVersion: '5.0', definitionHash: 'sha256:def', editorHash: 'sha256:editor', updatedAt: '2026-08-02T10:00:00Z', editorDocument,
+  definition: { schemaVersion: '5.0', start: { inputs: {}, contexts: {} }, settings: { executionOrder: 'deterministic', activationBudget: 10000 }, nodes: [{ id: 'trigger', key: 'source', type: 'set', typeVersion: 1, name: 'Set', disabled: false, parameters: {}, outputProjection: {}, contextWrites: [], resourceReferences: [], settings: {} }], connections: [], end: { outputs: {}, error: { strategy: 'fail_fast', collectWindowMs: 5000, outputs: {} } } },
 }
 
 let requiredAgentBinding = false
@@ -78,6 +78,28 @@ describe('workflow studio shell', () => {
     expect(screen.queryByRole('dialog', { name: 'Validation failed' })).not.toBeInTheDocument()
   })
 
+  it('does not submit or autosave a structurally invalid definition', async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
+    render(<QueryClientProvider client={queryClient}><Tooltip.Provider><ToastProvider><MemoryRouter initialEntries={['/workflows/workflow-1/editor']}><Routes><Route element={<WorkflowCanvas />} path="/workflows/:workflowId/editor" /></Routes></MemoryRouter></ToastProvider></Tooltip.Provider></QueryClientProvider>)
+
+    await waitFor(() => expect(useEditorStore.getState().nodes).toHaveLength(1))
+    vi.mocked(fetch).mockClear()
+    act(() => {
+      useEditorStore.getState().setEnd({
+        outputs: { 'Invalid-name': { value: { kind: 'literal', value: '' }, schema: { type: 'string' }, required: false, sensitive: false } },
+        error: { strategy: 'fail_fast', collectWindowMs: 5000, outputs: {} },
+      })
+    })
+    const save = screen.getByRole('button', { name: 'Save' })
+    await waitFor(() => expect(save).toBeEnabled())
+    fireEvent.click(save)
+
+    expect(await screen.findByText('INVALID_END_OUTPUT_KEY')).toBeInTheDocument()
+    await new Promise((resolve) => window.setTimeout(resolve, 1600))
+    const draftWrites = vi.mocked(fetch).mock.calls.filter(([input, init]) => new URL(String(input), 'http://agentx.test').pathname.endsWith('/draft') && init?.method === 'PUT')
+    expect(draftWrites).toHaveLength(0)
+  })
+
   it('locates a validation issue in the selected node details', async () => {
     requiredAgentBinding = true
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
@@ -107,13 +129,13 @@ describe('workflow studio shell', () => {
 describe('workflow studio serializer', () => {
   it('keeps layouts outside Definition 4.0 and compiles AI attachments into agent references', () => {
     const definition: WorkflowDefinition = {
-      schemaVersion: '4.0', start: { inputs: {}, contexts: {} }, settings: { executionOrder: 'deterministic', activationBudget: 10000 }, connections: [], end: { outputs: {}, error: { strategy: 'fail_fast', collectWindowMs: 5000, outputs: {} } },
+      schemaVersion: '5.0', start: { inputs: {}, contexts: {} }, settings: { executionOrder: 'deterministic', activationBudget: 10000 }, connections: [], end: { outputs: {}, error: { strategy: 'fail_fast', collectWindowMs: 5000, outputs: {} } },
       nodes: [{ id: 'agent-1', key: 'agent', type: 'agent', typeVersion: 1, name: 'Agent', disabled: false, parameters: {}, outputProjection: {}, contextWrites: [], settings: {}, resourceReferences: [{ bindingId: 'binding-1', bindingRole: 'ai_model', resourceType: 'model', resourceId: 'model-1', resourceVersionId: 'model-version-1', operation: 'use' }] }],
     }
     const source = { ...draft, definition, editorDocument: { ...editorDocument, nodeLayouts: [{ nodeId: 'agent-1', x: 410, y: 230 }], bindingLayouts: [{ bindingId: 'binding-1', x: 390, y: 410 }], bindingEdges: [{ edgeId: 'binding-edge-1', sourceBindingId: 'binding-1', targetNodeId: 'agent-1', targetSlot: 'ai_model' }] } }
     const serialized = serializeStudio(deserializeDraft(source))
 
-    expect(serialized.definition.schemaVersion).toBe('4.0')
+    expect(serialized.definition.schemaVersion).toBe('5.0')
     expect(serialized.definition.nodes).toHaveLength(1)
     expect(serialized.definition.nodes[0]).not.toHaveProperty('position')
     expect(serialized.definition.nodes[0].resourceReferences[0]).toMatchObject({ bindingId: 'binding-1', bindingRole: 'ai_model', resourceId: 'model-1' })

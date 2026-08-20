@@ -1,16 +1,16 @@
 apiVersion: policy/v1
 kind: PodDisruptionBudget
-metadata: { name: platform-control, namespace: agentx-v2-control }
+metadata: { name: platform-control, namespace: agentx-control }
 spec: { minAvailable: 1, selector: { matchLabels: { app.kubernetes.io/name: platform-control } } }
 ---
 apiVersion: policy/v1
 kind: PodDisruptionBudget
-metadata: { name: web-console, namespace: agentx-v2-control }
+metadata: { name: web-console, namespace: agentx-control }
 spec: { minAvailable: 1, selector: { matchLabels: { app.kubernetes.io/name: web-console } } }
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
-metadata: { name: control-metrics-ingress, namespace: agentx-v2-control }
+metadata: { name: control-metrics-ingress, namespace: agentx-control }
 spec:
   podSelector: { matchLabels: { agentx.io/metrics: enabled } }
   policyTypes: [Ingress]

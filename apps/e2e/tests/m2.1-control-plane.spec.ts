@@ -251,8 +251,13 @@ async function createAndExerciseMcp(page: Page) {
   await unavailable.getByRole('button', { name: '保存', exact: true }).click()
   await expect(unavailable).toBeHidden()
   await page.getByRole('row', { name: /Unavailable MCP/ }).getByRole('link', { name: '详情' }).click()
+  const connectionCheck = page.waitForResponse(
+    (response) => response.request().method() === 'POST' && new URL(response.url()).pathname.endsWith('/test-connection'),
+    { timeout: 25_000 },
+  )
   await page.getByRole('button', { name: '测试连接' }).click()
-  await expect(page.getByText(/could not be reached|无法连接|MCP_CONNECTION_FAILED|request timed out/i).first()).toBeVisible()
+  expect((await connectionCheck).status()).toBe(200)
+  await expect(page.getByText(/could not be reached|无法连接|MCP_CONNECTION_FAILED|request timed out/i).first()).toBeVisible({ timeout: 5_000 })
 }
 
 async function createSkillWorkspace(page: Page) {
@@ -363,7 +368,6 @@ async function configureAndPublishWorkflow(page: Page) {
   const agentNode = await selectedNode(page)
   await expect(page.getByTestId('node-details-view')).toBeVisible()
   await page.getByTestId('parameter-systemPrompt').getByRole('textbox').fill('Use the attached MCP tool to answer the question.')
-  await page.getByTestId('parameter-userQuestion').getByRole('textbox').fill('${{ inputs.question }}')
   await page.getByTestId('node-details-view').getByRole('button', { name: /关闭|Close/ }).click()
 
   await page.getByTestId('node-creator-trigger').click()
@@ -414,17 +418,25 @@ async function configureAndPublishWorkflow(page: Page) {
   await inputDialog.getByLabel(/文件总大小上限|Maximum total file size/).fill('2097152')
   await inputDialog.getByRole('button', { name: /保存|Save/ }).click()
   await startPanel.getByRole('button', { name: /关闭|Close/ }).click()
+  await agentNode.dispatchEvent('click')
+  const questionEditor = page.getByTestId('parameter-userQuestion').getByRole('textbox', { name: 'Value' })
+  await questionEditor.click()
+  let picker = page.getByTestId('reference-picker')
+  await picker.getByRole('button', { name: /输入|Inputs/ }).click()
+  await picker.getByRole('button', { name: /question/i }).click()
+  await expect(page.getByTestId('parameter-userQuestion').locator('[data-agentx-variable]')).toBeVisible()
+  await page.getByTestId('node-details-view').getByRole('button', { name: /关闭|Close/ }).click()
   await page.getByTestId('workflow-end').click()
   const endPanel = page.getByTestId('workflow-interface-panel')
   await expect(endPanel).toBeVisible()
   await endPanel.getByRole('button', { name: /添加字段|Add field/ }).first().click()
   const outputDialog = page.getByRole('dialog', { name: /输出字段|Output field/ })
   await outputDialog.getByLabel(/输出名称|Output name/).fill('answer')
-  const endExpression = outputDialog.getByLabel(/表达式|Expression/)
-  await endExpression.fill('${{ outputs.agent.main.current.json.finalAnswer }}')
-  await expect(endExpression).toHaveValue('${{ outputs.agent.main.current.json.finalAnswer }}')
-  await outputDialog.dispatchEvent('mousedown')
-  await expect(page.getByTestId('reference-picker')).toBeHidden()
+  await outputDialog.getByRole('textbox', { name: 'Value' }).click()
+  picker = page.getByTestId('reference-picker')
+  await picker.getByRole('button', { name: /输出|Outputs/ }).click()
+  for (const label of ['agent', 'main', 'current', 'text']) await picker.getByRole('button', { name: new RegExp(label, 'i') }).first().click()
+  await expect(outputDialog.locator('[data-agentx-variable]')).toBeVisible()
   await outputDialog.getByLabel(/必填|Required/).check()
   await outputDialog.getByRole('button', { name: /保存|Save/ }).click()
   await endPanel.getByRole('button', { name: /关闭|Close/ }).click()
@@ -432,11 +444,11 @@ async function configureAndPublishWorkflow(page: Page) {
   const draftRequest = page.waitForRequest((request) => request.method() === 'PUT' && /\/workflows\/[^/]+\/draft$/.test(request.url()))
   const savedResponsePromise = page.waitForResponse((response) => response.request().method() === 'PUT' && /\/workflows\/[^/]+\/draft$/.test(response.url()))
   await save.click()
-  const payload = (await draftRequest).postDataJSON() as { definition: { nodes: Array<{ type: string; parameters: Record<string, unknown>; resourceReferences: Array<{ bindingRole?: string }> }>; end: { outputs: Record<string, { expression: string }> } } }
+  const payload = (await draftRequest).postDataJSON() as { definition: { nodes: Array<{ type: string; parameters: Record<string, unknown>; resourceReferences: Array<{ bindingRole?: string }> }>; end: { outputs: Record<string, { value: { kind: string; selector?: { namespace: string; port?: string; path: string[] } } }> } } }
   const agent = payload.definition.nodes.find((node) => node.type === 'agent')
-  expect(agent?.parameters.userQuestion).toBe('${{ inputs.question }}')
+  expect(agent?.parameters.userQuestion).toMatchObject({ kind: 'reference', selector: { namespace: 'inputs', path: ['question'] } })
   expect(agent?.resourceReferences.map((resource) => resource.bindingRole)).toEqual(expect.arrayContaining(['ai_model', 'ai_tool']))
-  expect(payload.definition.end.outputs.answer?.expression).toBe('${{ outputs.agent.main.current.json.finalAnswer }}')
+  expect(payload.definition.end.outputs.answer?.value).toMatchObject({ kind: 'reference', selector: { namespace: 'outputs', port: 'main', path: ['text'] } })
   const savedResponse = await savedResponsePromise
   expect(savedResponse.status(), await savedResponse.text()).toBe(200)
   await page.getByRole('link', { name: '返回', exact: true }).click()

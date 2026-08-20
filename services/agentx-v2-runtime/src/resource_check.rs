@@ -452,7 +452,7 @@ mod tests {
         }
         assert!(
             validate_endpoint_and_credential(
-                "http://echo-mcp.agentx-v2-deps.svc.cluster.local:8090/mcp",
+                "http://echo-mcp.agentx-deps.svc.cluster.local:8090/mcp",
                 Uuid::now_v7(),
                 None,
             )

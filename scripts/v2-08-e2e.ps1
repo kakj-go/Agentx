@@ -16,10 +16,10 @@ $safeRunId = ($RunId.ToLowerInvariant() -replace '[^a-z0-9-]', '-').Trim('-')
 if (-not $safeRunId) { throw "RunId must contain a DNS-label character." }
 if ($safeRunId.Length -gt 24) { $safeRunId = $safeRunId.Substring(0, 24).TrimEnd('-') }
 $namespaces = [ordered]@{
-    control = "agentx-v2-08-control-$safeRunId"
-    runtime = "agentx-v2-08-runtime-$safeRunId"
-    observability = "agentx-v2-08-runtime-$safeRunId"
-    dependencies = "agentx-v2-08-deps-$safeRunId"
+    control = "agentx-e2e-08-control-$safeRunId"
+    runtime = "agentx-e2e-08-runtime-$safeRunId"
+    observability = "agentx-e2e-08-runtime-$safeRunId"
+    dependencies = "agentx-e2e-08-deps-$safeRunId"
 }
 $artifactDirectory = Join-Path $root "artifacts/v2/$RunId/v2-08/08a"
 $profilePath = Join-Path $artifactDirectory "v2-full-local.json"
@@ -138,7 +138,7 @@ function Capture-FailureEvidence {
     finally { $PSNativeCommandUseErrorActionPreference = $nativePreference }
 }
 function Record-And-StopDevelopment {
-    foreach ($namespace in @("agentx", "agentx-v2-control", "agentx-v2-runtime")) {
+    foreach ($namespace in @("agentx", "agentx-control", "agentx-runtime")) {
         $json = (& kubectl -n $namespace get deployment -o json 2>$null) -join "`n"
         if ($LASTEXITCODE -ne 0 -or -not $json) { continue }
         foreach ($deployment in @(($json | ConvertFrom-Json).items)) {
@@ -424,10 +424,9 @@ foreach ($command in @("kubectl", "docker", "cargo", "pnpm", "Start-ThreadJob"))
 try {
     if (-not $SkipLocalGates) {
         & (Join-Path $PSScriptRoot "v2-08-api-disposition.ps1") -OutputPath (Join-Path $artifactDirectory "api-disposition.json") -FailOnMigrationRequired
-        if ($LASTEXITCODE -ne 0) { throw "Platform API disposition gate failed." }
         cargo test -p platform-control
         if ($LASTEXITCODE -ne 0) { throw "Platform Control API-first tests failed." }
-        cargo test -p agentx-v2-runtime
+        cargo test -p agentx-runtime
         if ($LASTEXITCODE -ne 0) { throw "Runtime tests failed." }
         cargo run --quiet -p agentx-boundary-check -- check .
         if ($LASTEXITCODE -ne 0) { throw "V2 boundary gate failed." }

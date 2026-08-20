@@ -152,9 +152,13 @@ pub fn node_registry_with_composites(
                 },
                 "inputs": {
                     "allOf": [definition.start.inputs],
-                    "templatable": true,
-                    "allowedNamespaces": ["inputs", "outputs", "contexts"],
-                    "expectedType": "object"
+                    "x-agentx-dynamicValue": {
+                        "modes": ["literal", "reference"],
+                        "allowedNamespaces": ["inputs", "outputs", "contexts"],
+                        "acceptedCardinality": ["single"],
+                        "missingPolicies": ["error", "null", "default", "omit"],
+                        "recursive": true
+                    }
                 }
             },
             "additionalProperties": false
@@ -454,7 +458,7 @@ fn build_model_evaluators(
         })
         .map(|(evaluator_id, resource_id, prompt_object_id)| {
             let definition: WorkflowDefinition = serde_json::from_value(serde_json::json!({
-                "schemaVersion":"4.0",
+                "schemaVersion":"5.0",
                 "start":{"inputs":{},"contexts":{}},
                 "nodes":[{
                     "id":"evaluate",
@@ -475,7 +479,7 @@ fn build_model_evaluators(
                     {"id":"start-evaluate","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"evaluate","targetHandle":"main","order":0},
                     {"id":"evaluate-end","sourceNodeId":"evaluate","sourceHandle":"main","targetNodeId":"__end__","targetHandle":"main","order":0}
                 ],
-                "end":{"outputs":{"evaluation":{"expression":"${{ outputs.evaluate.main.current.json }}","schema":{},"required":true}}},
+                "end":{"outputs":{"evaluation":{"value":{"kind":"reference","selector":{"namespace":"outputs","sourceNodeId":"evaluate","port":"main","run":{"kind":"current"},"item":{"kind":"current"},"path":["structuredOutput"]},"missingPolicy":{"kind":"error"}},"schema":{"type":"object"},"required":true}}},
                 "settings":{"activationBudget":4,"executionOrder":"deterministic"}
             }))
             .map_err(|error| BuildError::Compilation(error.to_string()))?;
@@ -777,14 +781,14 @@ mod tests {
 
     fn definition() -> WorkflowDefinition {
         serde_json::from_value(json!({
-            "schemaVersion":"4.0",
+            "schemaVersion":"5.0",
             "start":{"inputs":{"type":"object","properties":{"message":{"type":"string"}},"required":["message"],"additionalProperties":false},"contexts":{}},
             "nodes":[{"id":"pass","key":"pass","type":"no_op","typeVersion":1,"name":"Pass","parameters":{},"outputProjection":{},"contextWrites":[]}],
             "connections":[
                 {"id":"start-pass","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"pass","targetHandle":"main","order":0},
                 {"id":"pass-end","sourceNodeId":"pass","sourceHandle":"main","targetNodeId":"__end__","targetHandle":"main","order":0}
             ],
-            "end":{"outputs":{"message":{"expression":"${{ outputs.pass.main.current.json.message }}","schema":{"type":"string"},"required":true}}},
+            "end":{"outputs":{"message":{"value":{"kind":"reference","selector":{"namespace":"outputs","sourceNodeId":"pass","port":"main","run":{"kind":"current"},"item":{"kind":"current"},"path":["message"]},"missingPolicy":{"kind":"error"}},"schema":{"type":"string"},"required":true}}},
             "settings":{}
         })).unwrap()
     }
@@ -1115,14 +1119,14 @@ mod tests {
     fn immutable_composite_registry_pins_version_io_and_context_contracts() {
         let child_id = Uuid::from_u128(42);
         let child: WorkflowDefinition = serde_json::from_value(json!({
-            "schemaVersion":"4.0",
+            "schemaVersion":"5.0",
             "start":{
                 "inputs":{"type":"object","required":["question"],"properties":{"question":{"type":"string"}},"additionalProperties":false},
                 "contexts":{"counter":{"schema":{"type":"number"},"default":0,"mutable":true,"sensitive":false,"clientWritable":false,"scope":"execution_tree","mergePolicy":"increment"}}
             },
             "nodes":[],
             "connections":[{"id":"direct","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"__end__","targetHandle":"main","order":0}],
-            "end":{"outputs":{"answer":{"expression":"${{ inputs.question }}","schema":{"type":"string"},"required":true,"sensitive":false}}},
+            "end":{"outputs":{"answer":{"value":{"kind":"reference","selector":{"namespace":"inputs","run":{"kind":"current"},"item":{"kind":"current"},"path":["question"]},"missingPolicy":{"kind":"error"}},"schema":{"type":"string"},"required":true,"sensitive":false}}},
             "settings":{}
         }))
         .unwrap();
@@ -1138,6 +1142,10 @@ mod tests {
             manifest.parameter_schema["properties"]["inputs"]["allOf"][0]["required"],
             json!(["question"])
         );
+        assert_eq!(
+            manifest.parameter_schema["properties"]["inputs"]["x-agentx-dynamicValue"]["allowedNamespaces"],
+            json!(["inputs", "outputs", "contexts"])
+        );
         assert_eq!(manifest.output_schema["required"], json!(["answer"]));
         assert_eq!(
             manifest.parameter_schema["x-agentx-contextContract"]["counter"]["mergePolicy"],
@@ -1145,17 +1153,17 @@ mod tests {
         );
 
         let parent: WorkflowDefinition = serde_json::from_value(json!({
-            "schemaVersion":"4.0",
+            "schemaVersion":"5.0",
             "start":{
                 "inputs":{"type":"object","required":["question"],"properties":{"question":{"type":"string"}},"additionalProperties":false},
                 "contexts":{"counter":{"schema":{"type":"number"},"default":0,"mutable":true,"sensitive":false,"clientWritable":false,"scope":"execution_tree","mergePolicy":"increment"}}
             },
-            "nodes":[{"id":"child","key":"child","type":node_type,"typeVersion":1,"name":"Child","parameters":{"workflowVersionId":child_id,"inputs":{"question":"${{ inputs.question }}"}},"outputProjection":{},"contextWrites":[],"resourceReferences":[]}],
+            "nodes":[{"id":"child","key":"child","type":node_type,"typeVersion":1,"name":"Child","parameters":{"workflowVersionId":child_id,"inputs":{"question":{"kind":"reference","selector":{"namespace":"inputs","run":{"kind":"current"},"item":{"kind":"current"},"path":["question"]},"missingPolicy":{"kind":"error"}}}},"outputProjection":{},"contextWrites":[],"resourceReferences":[]}],
             "connections":[
                 {"id":"start-child","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"child","targetHandle":"main","order":0},
                 {"id":"child-end","sourceNodeId":"child","sourceHandle":"main","targetNodeId":"__end__","targetHandle":"main","order":0}
             ],
-            "end":{"outputs":{"answer":{"expression":"${{ outputs.child.main.current.json.answer }}","schema":{"type":"string"},"required":true,"sensitive":false}}},
+            "end":{"outputs":{"answer":{"value":{"kind":"reference","selector":{"namespace":"outputs","sourceNodeId":"child","port":"main","run":{"kind":"current"},"item":{"kind":"current"},"path":["answer"]},"missingPolicy":{"kind":"error"}},"schema":{"type":"string"},"required":true,"sensitive":false}}},
             "settings":{}
         }))
         .unwrap();
@@ -1169,7 +1177,7 @@ mod tests {
         let node_type = format!("workflow.{}", child_id.simple());
         let mut parent = composite_definition(&[child_id]);
         parent.nodes[0].node_type = node_type;
-        parent.nodes[0].parameters["inputs"] = json!({"message":"${{ inputs.message }}"});
+        parent.nodes[0].parameters["inputs"] = json!({"message":{"kind":"reference","selector":{"namespace":"inputs","run":{"kind":"current"},"item":{"kind":"current"},"path":["message"]},"missingPolicy":{"kind":"error"}}});
 
         let missing = compile_workflow_version_with_dependencies(
             &parent,

@@ -76,7 +76,7 @@ pub(super) fn openai_execution_output(execution: WorkerExecution) -> WorkerExecu
         "inputTokens":usage.get("prompt_tokens").and_then(Value::as_u64).unwrap_or(0),
         "outputTokens":usage.get("completion_tokens").and_then(Value::as_u64).unwrap_or(0),
         "tokens":usage.get("total_tokens").and_then(Value::as_u64).unwrap_or(0),
-        "costMicros":0,
+        "costMicros":usage.get("costMicros").and_then(Value::as_u64).unwrap_or(0),
     });
     if let Some(arguments) = message
         .pointer("/tool_calls/0/function/arguments")
@@ -93,11 +93,26 @@ pub(super) fn openai_execution_output(execution: WorkerExecution) -> WorkerExecu
         }));
     }
     let content = message.get("content").cloned().unwrap_or(Value::Null);
+    let structured_output = content
+        .as_str()
+        .and_then(|value| serde_json::from_str::<Value>(value).ok())
+        .filter(|value| value.is_object() || value.is_array())
+        .unwrap_or(Value::Null);
+    // Keep the adapter payload identical to the Model manifest.  Downstream
+    // selectors are validated against that contract, so aliases such as
+    // `answer` and `finalAnswer` turn a successful provider call into an
+    // unresolvable End value.
     WorkerExecution::succeeded(json!({
-        "done":true,
-        "answer":content,
-        "finalAnswer":content,
+        "text":content,
+        "message":message,
+        "reasoningContent":Value::Null,
+        "structuredOutput":structured_output,
+        "citations":[],
+        "toolCalls":[],
+        "files":[],
         "usage":normalized_usage,
+        "finishReason":response.get("choices").and_then(|choices| choices.get(0)).and_then(|choice| choice.get("finish_reason")).cloned().unwrap_or(Value::Null),
+        "partial":false,
     }))
 }
 

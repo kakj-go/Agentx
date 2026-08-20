@@ -50,18 +50,9 @@ function Set-SecretValues {
     Invoke-Kubectl @("-n", $Namespace, "patch", "secret", $Name, "--type", "merge", "-p", $patch) | Out-Null
 }
 
-function Get-DeploymentKeyId {
+function Restart-Caller {
     param([string]$Deployment)
-    $deploymentObject = (& kubectl -n $runtimeNamespace get deployment $Deployment -o json | ConvertFrom-Json)
-    if ($LASTEXITCODE -ne 0 -or -not $deploymentObject) { throw "Deployment $runtimeNamespace/$Deployment is unavailable." }
-    $entry = @((@($deploymentObject.spec.template.spec.containers)[0].env) | Where-Object name -eq "AGENTX_EGRESS_JWT_KEY_ID")
-    if ($entry.Count -ne 1 -or -not $entry[0].value) { throw "Deployment $Deployment has no literal AGENTX_EGRESS_JWT_KEY_ID." }
-    return [string]$entry[0].value
-}
-
-function Set-DeploymentKeyId {
-    param([string]$Deployment, [string]$KeyId)
-    Invoke-Kubectl -n $runtimeNamespace set env "deployment/$Deployment" "AGENTX_EGRESS_JWT_KEY_ID=$KeyId" | Out-Null
+    Invoke-Kubectl -n $runtimeNamespace rollout restart "deployment/$Deployment" | Out-Null
     Invoke-Kubectl -n $runtimeNamespace rollout status "deployment/$Deployment" --timeout=300s | Out-Null
 }
 
@@ -71,22 +62,28 @@ function Restart-Gateway {
 }
 
 $gatewaySecret = Get-SecretName "egressGateway" "agentx-egress-gateway-secrets"
+$canonicalSecret = [string]$profile.secrets.dependencies
+if ([string]::IsNullOrWhiteSpace($canonicalSecret)) { throw "Profile secrets.dependencies must name agentx-dependencies-secrets." }
 $roles = @(
-    [ordered]@{ name = "runtime-gateway"; deployment = "runtime-gateway"; secret = Get-SecretName "runtimeGateway" ([string]$profile.secrets.runtime); secretKey = "AGENTX_RUNTIME_GATEWAY_EGRESS_JWT_PRIVATE_KEY_PEM"; privateProperty = "runtimeGatewayEgressPrivateKeyPem"; publicProperty = "runtimeGatewayEgressPublicKeyPem" },
-    [ordered]@{ name = "workflow-runtime"; deployment = "workflow-runtime"; secret = Get-SecretName "workflowRuntime" ([string]$profile.secrets.runtime); secretKey = "AGENTX_WORKFLOW_RUNTIME_EGRESS_JWT_PRIVATE_KEY_PEM"; privateProperty = "workflowRuntimeEgressPrivateKeyPem"; publicProperty = "workflowRuntimeEgressPublicKeyPem" },
-    [ordered]@{ name = "workflow-worker"; deployment = "workflow-worker"; secret = Get-SecretName "workflowWorker" ([string]$profile.secrets.runtime); secretKey = "AGENTX_WORKFLOW_WORKER_EGRESS_JWT_PRIVATE_KEY_PEM"; privateProperty = "workflowWorkerEgressPrivateKeyPem"; publicProperty = "workflowWorkerEgressPublicKeyPem" },
-    [ordered]@{ name = "sandbox"; deployment = "sandbox-manager"; secret = Get-SecretName "sandboxManager" ([string]$profile.secrets.runtime); secretKey = "AGENTX_SANDBOX_EGRESS_JWT_PRIVATE_KEY_PEM"; privateProperty = "sandboxEgressPrivateKeyPem"; publicProperty = "sandboxEgressPublicKeyPem" }
+    [ordered]@{ name = "runtime-gateway"; deployment = "runtime-gateway"; secret = Get-SecretName "runtimeGateway" ([string]$profile.secrets.runtime); secretKey = "AGENTX_RUNTIME_GATEWAY_EGRESS_JWT_PRIVATE_KEY_PEM"; kidSecretKey = "AGENTX_RUNTIME_GATEWAY_EGRESS_JWT_KEY_ID"; privateProperty = "runtimeGatewayEgressPrivateKeyPem"; publicProperty = "runtimeGatewayEgressPublicKeyPem" },
+    [ordered]@{ name = "workflow-runtime"; deployment = "workflow-runtime"; secret = Get-SecretName "workflowRuntime" ([string]$profile.secrets.runtime); secretKey = "AGENTX_WORKFLOW_RUNTIME_EGRESS_JWT_PRIVATE_KEY_PEM"; kidSecretKey = "AGENTX_WORKFLOW_RUNTIME_EGRESS_JWT_KEY_ID"; privateProperty = "workflowRuntimeEgressPrivateKeyPem"; publicProperty = "workflowRuntimeEgressPublicKeyPem" },
+    [ordered]@{ name = "workflow-worker"; deployment = "workflow-worker"; secret = Get-SecretName "workflowWorker" ([string]$profile.secrets.runtime); secretKey = "AGENTX_WORKFLOW_WORKER_EGRESS_JWT_PRIVATE_KEY_PEM"; kidSecretKey = "AGENTX_WORKFLOW_WORKER_EGRESS_JWT_KEY_ID"; privateProperty = "workflowWorkerEgressPrivateKeyPem"; publicProperty = "workflowWorkerEgressPublicKeyPem" },
+    [ordered]@{ name = "sandbox"; deployment = "sandbox-manager"; secret = Get-SecretName "sandboxManager" ([string]$profile.secrets.runtime); secretKey = "AGENTX_SANDBOX_EGRESS_JWT_PRIVATE_KEY_PEM"; kidSecretKey = "AGENTX_SANDBOX_EGRESS_JWT_KEY_ID"; privateProperty = "sandboxEgressPrivateKeyPem"; publicProperty = "sandboxEgressPublicKeyPem" }
 )
+$canonicalData = Get-SecretData $dependenciesNamespace $canonicalSecret
 $gatewayData = Get-SecretData $dependenciesNamespace $gatewaySecret
-if (-not $gatewayData.ContainsKey("AGENTX_EGRESS_JWT_PUBLIC_KEYS_JSON")) { throw "Gateway public-key Secret entry is missing." }
-$originalPublicJson = [Text.Encoding]::UTF8.GetString($gatewayData.AGENTX_EGRESS_JWT_PUBLIC_KEYS_JSON)
+if (-not $canonicalData.ContainsKey("AGENTX_EGRESS_JWT_PUBLIC_KEYS_JSON")) { throw "Canonical Egress public-key entry is missing." }
+$originalPublicJson = [Text.Encoding]::UTF8.GetString($canonicalData.AGENTX_EGRESS_JWT_PUBLIC_KEYS_JSON)
+if (-not $gatewayData.ContainsKey("AGENTX_EGRESS_JWT_PUBLIC_KEYS_JSON") -or [Text.Encoding]::UTF8.GetString($gatewayData.AGENTX_EGRESS_JWT_PUBLIC_KEYS_JSON) -ne $originalPublicJson) { throw "Gateway public keys differ from $dependenciesNamespace/$canonicalSecret; run SyncSecrets before rotation." }
 $originalPublicKeys = $originalPublicJson | ConvertFrom-Json -AsHashtable
 foreach ($role in $roles) {
-    $role["oldKid"] = Get-DeploymentKeyId $role.deployment
+    if (-not $canonicalData.ContainsKey($role.kidSecretKey) -or -not $canonicalData.ContainsKey($role.secretKey)) { throw "Canonical Secret lacks $($role.kidSecretKey) or $($role.secretKey)." }
+    $role["oldKid"] = [Text.Encoding]::UTF8.GetString($canonicalData[$role.kidSecretKey])
     if (-not $originalPublicKeys.ContainsKey($role.oldKid)) { throw "Gateway does not trust active key $($role.oldKid)." }
     $secretData = Get-SecretData $runtimeNamespace $role.secret
-    if (-not $secretData.ContainsKey($role.secretKey)) { throw "Secret $runtimeNamespace/$($role.secret) lacks $($role.secretKey)." }
+    if (-not $secretData.ContainsKey($role.secretKey) -or -not $secretData.ContainsKey($role.kidSecretKey)) { throw "Secret $runtimeNamespace/$($role.secret) lacks canonical Egress key material." }
     $role["oldPrivate"] = $secretData[$role.secretKey]
+    if ([Convert]::ToBase64String($role.oldPrivate) -ne [Convert]::ToBase64String($canonicalData[$role.secretKey]) -or [Text.Encoding]::UTF8.GetString($secretData[$role.kidSecretKey]) -ne $role.oldKid) { throw "Caller $($role.deployment) differs from $dependenciesNamespace/$canonicalSecret; run SyncSecrets before rotation." }
 }
 
 if ($Action -eq "Plan") {
@@ -97,7 +94,7 @@ if ($Action -eq "Plan") {
         dependenciesNamespace = $dependenciesNamespace
         gatewaySecret = $gatewaySecret
         callers = @($roles | ForEach-Object { @{ deployment = $_.deployment; secret = $_.secret; activeKid = $_.oldKid } })
-        phases = @("publish-overlap", "restart-gateway", "roll-callers", "remove-previous")
+        phases = @("publish-overlap", "restart-gateway", "roll-callers", "remove-previous", "commit-canonical")
     } | ConvertTo-Json -Depth 8)
     exit 0
 }
@@ -124,9 +121,10 @@ try {
     foreach ($role in $roles) {
         Set-SecretValues $runtimeNamespace $role.secret @{
             $role.secretKey = $role.newPrivate
+            $role.kidSecretKey = $role.newKid
             "$($role.secretKey)_PREVIOUS" = $role.oldPrivate
         }
-        Set-DeploymentKeyId $role.deployment $role.newKid
+        Restart-Caller $role.deployment
     }
 
     $finalKeys = @{}
@@ -138,14 +136,20 @@ try {
     foreach ($role in $roles) {
         Set-SecretValues $runtimeNamespace $role.secret @{} @("$($role.secretKey)_PREVIOUS")
     }
+    $canonicalValues = @{ AGENTX_EGRESS_JWT_PUBLIC_KEYS_JSON = ($finalKeys | ConvertTo-Json -Compress) }
+    foreach ($role in $roles) {
+        $canonicalValues[$role.secretKey] = $role.newPrivate
+        $canonicalValues[$role.kidSecretKey] = $role.newKid
+    }
+    Set-SecretValues $dependenciesNamespace $canonicalSecret $canonicalValues
     Write-Output (@{ status = "rotated"; rotationId = $rotationId; activeKids = @($roles.newKid) } | ConvertTo-Json -Depth 5 -Compress)
 } catch {
     $rotationError = $_
     if ($overlapPublished) {
         foreach ($role in $roles) {
             try {
-                Set-SecretValues $runtimeNamespace $role.secret @{ $role.secretKey = $role.oldPrivate } @("$($role.secretKey)_PREVIOUS")
-                Set-DeploymentKeyId $role.deployment $role.oldKid
+                Set-SecretValues $runtimeNamespace $role.secret @{ $role.secretKey = $role.oldPrivate; $role.kidSecretKey = $role.oldKid } @("$($role.secretKey)_PREVIOUS")
+                Restart-Caller $role.deployment
             } catch { Write-Warning "Rollback failed for $($role.deployment): $($_.Exception.Message)" }
         }
         try {

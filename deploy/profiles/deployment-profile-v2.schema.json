@@ -181,7 +181,7 @@
         "control": { "const": "agentx-control-secrets" },
         "runtime": { "const": "agentx-runtime-secrets" },
         "observability": { "const": "agentx-observability-secrets" },
-        "dependencies": { "type": ["string", "null"] },
+        "dependencies": { "const": "agentx-dependencies-secrets" },
         "workloads": {
           "type": "object",
           "additionalProperties": false,

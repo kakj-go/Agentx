@@ -1,18 +1,18 @@
 apiVersion: v1
 kind: ServiceAccount
-metadata: { name: observability, namespace: agentx-v2-runtime }
+metadata: { name: observability, namespace: agentx-runtime }
 automountServiceAccountToken: false
 ---
 apiVersion: v1
 kind: Service
-metadata: { name: clickhouse, namespace: agentx-v2-runtime }
+metadata: { name: clickhouse, namespace: agentx-runtime }
 spec:
   selector: { app.kubernetes.io/name: clickhouse }
   ports: [{ name: http, port: 8123 }, { name: native, port: 9000 }]
 ---
 apiVersion: apps/v1
 kind: StatefulSet
-metadata: { name: clickhouse, namespace: agentx-v2-runtime }
+metadata: { name: clickhouse, namespace: agentx-runtime }
 spec:
   serviceName: clickhouse
   replicas: 1
@@ -60,7 +60,7 @@ spec:
 ---
 apiVersion: batch/v1
 kind: Job
-metadata: { name: clickhouse-migrate, namespace: agentx-v2-runtime }
+metadata: { name: clickhouse-migrate, namespace: agentx-runtime }
 spec:
   backoffLimit: 2
   template:
@@ -96,12 +96,12 @@ spec:
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
-metadata: { name: observability-default-deny, namespace: agentx-v2-runtime }
+metadata: { name: observability-default-deny, namespace: agentx-runtime }
 spec: { podSelector: {}, policyTypes: [Ingress, Egress] }
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
-metadata: { name: observability-data-access, namespace: agentx-v2-runtime }
+metadata: { name: observability-data-access, namespace: agentx-runtime }
 spec:
   podSelector: { matchLabels: { app.kubernetes.io/name: observability } }
   policyTypes: [Egress]
@@ -115,7 +115,7 @@ spec:
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
-metadata: { name: observability-migration-data-access, namespace: agentx-v2-runtime }
+metadata: { name: observability-migration-data-access, namespace: agentx-runtime }
 spec:
   podSelector: { matchLabels: { app.kubernetes.io/name: clickhouse-migrate } }
   policyTypes: [Egress]
@@ -127,7 +127,7 @@ spec:
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
-metadata: { name: observability-ops-data-access, namespace: agentx-v2-runtime }
+metadata: { name: observability-ops-data-access, namespace: agentx-runtime }
 spec:
   podSelector: { matchLabels: { agentx.io/ops-job: "true" } }
   policyTypes: [Egress]
@@ -143,7 +143,7 @@ spec:
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
-metadata: { name: clickhouse-ingress, namespace: agentx-v2-runtime }
+metadata: { name: clickhouse-ingress, namespace: agentx-runtime }
 spec:
   podSelector: { matchLabels: { app.kubernetes.io/name: clickhouse } }
   policyTypes: [Ingress]
@@ -157,7 +157,7 @@ spec:
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
-metadata: { name: observability-internal-api-ingress, namespace: agentx-v2-runtime }
+metadata: { name: observability-internal-api-ingress, namespace: agentx-runtime }
 spec:
   podSelector: { matchLabels: { agentx.io/internal-api: observability-v1 } }
   policyTypes: [Ingress]

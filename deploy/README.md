@@ -6,9 +6,9 @@
 
 | 物理 Namespace | 逻辑 Plane / 组件 |
 |---|---|
-| `agentx-v2-control` | Control：`web-console`、`platform-control`、Control MySQL、Migration、Ingress |
-| `agentx-v2-runtime` | Runtime + Observability：四个 Runtime Deployment、Runtime MySQL/Redis、`observability`、ClickHouse、各自 Migration/Doctor/Bootstrap |
-| `agentx-v2-deps` | Dependencies：`agentx-egress-gateway`、专用 ingress-nginx、Vault、MinIO、共享 Bootstrap；集群内部署的 OpenSandbox/LightRAG/Mem0 也属于此域 |
+| `agentx-control` | Control：`web-console`、`platform-control`、Control MySQL、Migration、Ingress |
+| `agentx-runtime` | Runtime + Observability：四个 Runtime Deployment、Runtime MySQL/Redis、`observability`、ClickHouse、各自 Migration/Doctor/Bootstrap |
+| `agentx-deps` | Dependencies：`agentx-egress-gateway`、专用 ingress-nginx、Vault、MinIO、共享 Bootstrap；集群内部署的 OpenSandbox/LightRAG/Mem0 也属于此域 |
 
 Observability 与 Runtime 共用 Namespace，但仍使用独立的 ServiceAccount、Secret、Redis ACL、ClickHouse账号、NetworkPolicy、Release State 和 `agentx.io/plane=observability` Pod 标签。Observability 不持有 Runtime MySQL 凭据。
 
@@ -28,7 +28,7 @@ Profile 的 `namespaces` 只能包含不同且非空的 `control`、`runtime`、
 .\scripts\deploy-v2.ps1 -Action Render -Target All -ConfigFile deploy/profiles/v2-full-local.json
 ```
 
-Profile 只保存非敏感配置和 Secret 引用。`generated-local` 在三个 Namespace 中生成分域 Secret；生产使用 `existing-kubernetes`，必须预先创建 Profile 引用的工作负载 Secret。
+Profile 只保存非敏感配置和 Secret 引用。`agentx-deps/agentx-dependencies-secrets` 是跨组件 Vault、JWT/签名、Egress TLS/KID 和 Observability Redis ACL 凭据的唯一权威源；`generated-local` 自动生成权威值及三个 Namespace 的最小镜像，生产 `existing-kubernetes` 必须预先创建权威 Secret、Profile 引用的工作负载 Secret和外部基础设施凭据。
 
 ## 3. 安装与独立逻辑 Target
 
@@ -72,7 +72,13 @@ RunId E2E 为每次运行生成三个临时 Namespace、独立 IngressClass 和�
 
 Runtime 仍存在带 `agentx.io/egress-client=managed` 的 Deployment 时，单独执行 `Uninstall -Target Dependencies` 会被拒绝；完整卸载应先移除 Runtime 再移除 Gateway。
 
-Egress 四个调用身份使用独立私钥/KID。轮换先以 `Plan` 检查当前调用方，再执行 `Rotate`；脚本先发布新旧双公钥并滚动 Gateway，再逐个替换调用方私钥/KID，全部 Ready 后才删除旧公钥。中途失败会把调用方和 Gateway 恢复到旧 KID，且使用 Namespace 内互斥锁拒绝并发轮换。
+管理员更新共享凭据时只修改 `agentx-dependencies-secrets`，然后执行以下命令。该 Action 必须使用 `Target All`，会同步本地/工作负载镜像、重新签发并校验 bundled Vault Token、重启 Runtime Redis 和全部凭据消费者并等待 Ready。组件普通 Upgrade 不会轮换这些权威值。
+
+```powershell
+.\scripts\deploy-v2.ps1 -Action SyncSecrets -Target All -ConfigFile deploy/profiles/v2-full-local.json
+```
+
+Egress 四个调用身份使用独立私钥/KID。轮换先以 `Plan` 检查权威 Secret 与所有镜像一致，再执行 `Rotate`；脚本先发布新旧双公钥并滚动 Gateway，再逐个替换调用方私钥/KID，全部 Ready 后才删除旧公钥并原子提交到 `agentx-dependencies-secrets`。中途失败会把调用方和 Gateway 恢复到旧 KID，且使用 Namespace 内互斥锁拒绝并发轮换。
 
 ```powershell
 .\scripts\rotate-egress-keys.ps1 -Action Plan -ConfigFile deploy/profiles/v2-full-local.json
@@ -85,6 +91,7 @@ Egress 四个调用身份使用独立私钥/KID。轮换先以 `Plan` 检查当�
 
 ```powershell
 .\scripts\v2-profile-tests.ps1
+.\scripts\v2-secret-sync-e2e.ps1
 .\scripts\v2-07-profile-tests.ps1 -SkipWebSourceBaseline
 ```
 

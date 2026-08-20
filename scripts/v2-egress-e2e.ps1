@@ -132,9 +132,6 @@ try {
     $tunnelProvider = "cloudflare-quick-tunnel"
     }
 
-    $deployment = (& kubectl -n $RuntimeNamespace get deployment workflow-worker -o json | ConvertFrom-Json)
-    $keyEntry = @((@($deployment.spec.template.spec.containers)[0].env) | Where-Object name -eq "AGENTX_EGRESS_JWT_KEY_ID")
-    if ($keyEntry.Count -ne 1 -or -not $keyEntry[0].value) { throw "Workflow Worker Egress KID is unavailable." }
     $workerSecret = Get-WorkloadSecret "workflowWorker" ([string]$profile.secrets.runtime)
     $stabilitySeconds = $StabilityMinutes * 60
     $activeDeadline = [Math]::Max(600, $stabilitySeconds + 600)
@@ -162,7 +159,8 @@ spec:
           imagePullPolicy: IfNotPresent
           env:
             - { name: AGENTX_EGRESS_PROXY_URL, value: "http://agentx-egress-gateway.$DependenciesNamespace.svc:3128" }
-            - { name: AGENTX_EGRESS_JWT_KEY_ID, value: "$($keyEntry[0].value)" }
+            - name: AGENTX_EGRESS_JWT_KEY_ID
+              valueFrom: { secretKeyRef: { name: $workerSecret, key: AGENTX_WORKFLOW_WORKER_EGRESS_JWT_KEY_ID } }
             - name: AGENTX_EGRESS_JWT_PRIVATE_KEY_PEM
               valueFrom: { secretKeyRef: { name: $workerSecret, key: AGENTX_WORKFLOW_WORKER_EGRESS_JWT_PRIVATE_KEY_PEM } }
             - { name: AGENTX_EGRESS_SMOKE_ENDPOINT, value: "$publicEndpoint" }

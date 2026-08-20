@@ -55,6 +55,7 @@ import { useEditorStore } from "./store/editor-store";
 import { autoLayout } from "./utils/layout";
 import { useStudioShortcuts } from "./utils/use-studio-shortcuts";
 import { configurationIssues } from "./utils/configuration";
+import { definitionIssues } from "./utils/definition-validation";
 import { includedActionNodeIds } from "./utils/debug-plan";
 
 type DebugMode = "full" | "single_node" | "to_node" | "from_node";
@@ -404,9 +405,14 @@ export function WorkflowCanvas() {
     },
   });
   const saveDocument = useCallback(
-    () => {
+    (showValidation = true) => {
       if (saveMutation.isPending) return;
       const document = studioDocument(useEditorStore.getState());
+      const structuralIssues = definitionIssues(document);
+      if (structuralIssues.length) {
+        if (showValidation) setIssues(structuralIssues);
+        return;
+      }
       saveMutation.mutate({ expectedRevision: revision, document });
     },
     [revision, saveMutation],
@@ -424,7 +430,7 @@ export function WorkflowCanvas() {
         recovery
       )
         return;
-      timer = window.setTimeout(() => saveDocument(), 1400);
+      timer = window.setTimeout(() => saveDocument(false), 1400);
     };
     const unsubscribe = useEditorStore.subscribe((state, previous) => {
       if (

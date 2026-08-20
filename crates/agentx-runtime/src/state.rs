@@ -555,6 +555,33 @@ impl ExecutionMachine {
         }
     }
 
+    pub fn timeout(&mut self) {
+        if is_terminal(self.status) {
+            return;
+        }
+        self.status = RuntimeExecutionStatus::TimedOut;
+        self.ready.clear();
+        for activation in self.activations.values_mut() {
+            if matches!(
+                activation.status,
+                ActivationStatus::Ready | ActivationStatus::Running | ActivationStatus::Waiting
+            ) {
+                activation.status = ActivationStatus::Failed;
+                if let Some(attempt) = activation.attempts.last_mut()
+                    && matches!(
+                        attempt.status,
+                        AttemptStatus::Running | AttemptStatus::Suspended
+                    )
+                {
+                    attempt.status = AttemptStatus::Failed;
+                    attempt.error_code = Some("NODE_EXECUTION_TIMED_OUT".into());
+                    attempt.error_message =
+                        Some("Node execution exceeded its operation deadline".into());
+                }
+            }
+        }
+    }
+
     fn transition_running(
         &mut self,
         id: NodeExecutionId,
@@ -884,6 +911,18 @@ impl ExecutionMachine {
         if is_terminal(self.status) || self.status == RuntimeExecutionStatus::Waiting {
             return;
         }
+        if self.error_collecting {
+            let has_in_flight = self.activations.values().any(|activation| {
+                matches!(
+                    activation.status,
+                    ActivationStatus::Running | ActivationStatus::Waiting
+                )
+            });
+            if !has_in_flight {
+                self.finish_error_collection();
+            }
+            return;
+        }
         let open = self.activations.values().any(|activation| {
             matches!(
                 activation.status,
@@ -1182,6 +1221,7 @@ mod tests {
                 "wait" => "resumed",
                 "approval" => "approved",
                 "loop_over_items" => "done",
+                "error_handler" => "recovered",
                 _ => "main",
             })
             .unwrap_or("main");
@@ -1205,7 +1245,7 @@ mod tests {
     #[test]
     fn closes_unselected_branch_without_blocking_merge() {
         let workflow = compile(json!({
-            "schemaVersion":"4.0",
+            "schemaVersion":"5.0",
             "nodes":[
                 {"id":"trigger","type":"no_op","typeVersion":1,"name":"Root",},
                 {"id":"if","type":"if","typeVersion":1,"name":"IF","parameters":{"condition":true}},
@@ -1235,7 +1275,7 @@ mod tests {
     #[test]
     fn retry_adds_attempt_to_same_activation_and_late_transitions_fail() {
         let workflow = compile(json!({
-            "schemaVersion":"4.0",
+            "schemaVersion":"5.0",
             "nodes":[{"id":"trigger","type":"no_op","typeVersion":1,"name":"Root","settings":{"retryOnFail":true,"maxTries":2}}],
             "connections":[]
         }));
@@ -1254,6 +1294,40 @@ mod tests {
             machine.start_attempt(activation),
             Err(MachineError::ExecutionTerminal)
         );
+    }
+
+    #[test]
+    fn timeout_is_terminal_and_marks_the_active_attempt_failed() {
+        let workflow = compile(json!({
+            "schemaVersion":"5.0",
+            "nodes":[{"id":"model","type":"model","typeVersion":1,"name":"Model"}],
+            "connections":[]
+        }));
+        let mut machine = ExecutionMachine::new(workflow, vec![item(1)]).unwrap();
+        let activation = machine.next_ready().unwrap();
+        machine.start_attempt(activation).unwrap();
+
+        machine.timeout();
+
+        assert_eq!(machine.status(), RuntimeExecutionStatus::TimedOut);
+        assert_eq!(
+            machine.activation(activation).unwrap().status,
+            ActivationStatus::Failed
+        );
+        let attempt = machine
+            .activation(activation)
+            .unwrap()
+            .attempts
+            .last()
+            .unwrap();
+        assert_eq!(attempt.status, AttemptStatus::Failed);
+        assert_eq!(
+            attempt.error_code.as_deref(),
+            Some("NODE_EXECUTION_TIMED_OUT")
+        );
+        assert_eq!(machine.next_ready(), None);
+        machine.timeout();
+        assert_eq!(machine.status(), RuntimeExecutionStatus::TimedOut);
     }
 
     #[test]
@@ -1313,9 +1387,43 @@ mod tests {
         );
     }
 
+    #[test]
+    fn end_error_collect_finishes_when_only_unscheduled_error_handlers_remain() {
+        let workflow = compile(json!({
+            "schemaVersion":"5.0",
+            "end":{"outputs":{},"error":{"strategy":"collect","collectWindowMs":100,"outputs":{}}},
+            "nodes":[
+                {"id":"source","type":"set","typeVersion":1,"name":"Source","settings":{"onError":"continue_error_output"}},
+                {"id":"handler","type":"error_handler","typeVersion":1,"name":"Error Handler"},
+                {"id":"normal","type":"no_op","typeVersion":1,"name":"Normal"}
+            ],
+            "connections":[
+                {"id":"start-source","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"source","targetHandle":"main","order":0},
+                {"id":"source-normal","sourceNodeId":"source","sourceHandle":"main","targetNodeId":"normal","targetHandle":"main","order":0},
+                {"id":"normal-end","sourceNodeId":"normal","sourceHandle":"main","targetNodeId":"__end__","targetHandle":"main","order":0},
+                {"id":"source-handler","sourceNodeId":"source","sourceHandle":"error","targetNodeId":"handler","targetHandle":"error","order":0},
+                {"id":"source-error","sourceNodeId":"source","sourceHandle":"error","targetNodeId":"__end__","targetHandle":"error","order":1},
+                {"id":"handler-end","sourceNodeId":"handler","sourceHandle":"recovered","targetNodeId":"__end__","targetHandle":"main","order":0}
+            ]
+        }));
+        let mut machine = ExecutionMachine::new(workflow, vec![item(1)]).unwrap();
+        let source = machine.next_ready().unwrap();
+        machine.start_attempt(source).unwrap();
+
+        machine.fail(source, "FAILED", "failed", false).unwrap();
+
+        let handler = machine
+            .activations()
+            .find(|activation| machine.workflow().nodes[activation.node_index].id == "handler")
+            .expect("error handler activation exists");
+        assert_eq!(machine.status(), RuntimeExecutionStatus::Failed);
+        assert_eq!(handler.status, ActivationStatus::Cancelled);
+        assert_eq!(machine.next_ready(), None);
+    }
+
     fn error_terminal_fixture(strategy: &str) -> Value {
         json!({
-            "schemaVersion":"4.0",
+            "schemaVersion":"5.0",
             "end":{"outputs":{},"error":{"strategy":strategy,"collectWindowMs":100,"outputs":{}}},
             "nodes":[
                 {"id":"first","type":"set","typeVersion":1,"name":"First","settings":{"onError":"continue_error_output"}},
@@ -1335,7 +1443,7 @@ mod tests {
     #[test]
     fn wait_releases_execution_and_resumes_once() {
         let workflow = compile(json!({
-            "schemaVersion":"4.0",
+            "schemaVersion":"5.0",
             "nodes":[
                 {"id":"trigger","type":"no_op","typeVersion":1,"name":"Root",},
                 {"id":"wait","type":"wait","typeVersion":1,"name":"Wait",}
@@ -1363,7 +1471,7 @@ mod tests {
     #[test]
     fn suspended_composite_can_converge_to_a_failed_terminal() {
         let workflow = compile(json!({
-            "schemaVersion":"4.0",
+            "schemaVersion":"5.0",
             "nodes":[
                 {"id":"child","type":"wait","typeVersion":1,"name":"Child","settings":{"onError":"continue_error_output"}}
             ],
@@ -1392,7 +1500,7 @@ mod tests {
     #[test]
     fn partial_forks_select_the_expected_subgraph_and_inputs() {
         let workflow = compile(json!({
-            "schemaVersion":"4.0",
+            "schemaVersion":"5.0",
             "nodes":[
                 {"id":"trigger","type":"no_op","typeVersion":1,"name":"Root",},
                 {"id":"first","type":"set","typeVersion":1,"name":"First",},
@@ -1484,7 +1592,7 @@ mod tests {
     #[test]
     fn checkpoint_state_round_trips_through_json() {
         let workflow = compile(json!({
-            "schemaVersion":"4.0",
+            "schemaVersion":"5.0",
             "nodes":[{"id":"trigger","type":"no_op","typeVersion":1,"name":"Root"}],
             "connections":[]
         }));
@@ -1498,7 +1606,7 @@ mod tests {
     #[test]
     fn confirmation_wait_is_visible_and_resumes_the_same_activation() {
         let workflow = compile(json!({
-            "schemaVersion":"4.0",
+            "schemaVersion":"5.0",
             "nodes":[
                 {"id":"trigger","type":"no_op","typeVersion":1,"name":"Root",},
                 {"id":"remote","type":"remote_action","typeVersion":1,"name":"Remote","parameters":{"endpoint":"http://node"}}
@@ -1530,7 +1638,7 @@ mod tests {
     #[test]
     fn ordinary_cycle_stops_at_the_activation_budget() {
         let workflow = compile(json!({
-            "schemaVersion":"4.0",
+            "schemaVersion":"5.0",
             "settings":{"activationBudget":7},
             "nodes":[
                 {"id":"trigger","type":"no_op","typeVersion":1,"name":"Root",},

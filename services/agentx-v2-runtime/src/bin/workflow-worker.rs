@@ -3,7 +3,7 @@ use agentx_runtime_infrastructure::{
     connect_runtime_mysql, connect_runtime_redis, runtime_object_store,
 };
 use anyhow::{Context, Result};
-use std::{env, sync::Arc, time::Duration};
+use std::{env, future::Future, sync::Arc, time::Duration};
 use uuid::Uuid;
 
 #[path = "support/runtime_task_queue.rs"]
@@ -256,7 +256,12 @@ async fn process_worker_batch(
                 }),
                 () = &mut drain_deadline => return Ok(()),
                 _ = heartbeat.tick() => {
-                    lease = agentx_v2_runtime::engine::heartbeat_attempt(pool, &lease).await?;
+                    lease = heartbeat_attempt_with_retry(
+                        pool,
+                        &lease,
+                        capability,
+                        "execution",
+                    ).await?;
                 }
             }
         };
@@ -269,7 +274,7 @@ async fn process_worker_batch(
         // Provider work may consume almost the entire 30-second Attempt Lease.
         // Refresh it before Artifact/result finalization so a valid result is
         // not reclaimed while it is being made durable.
-        lease = agentx_v2_runtime::engine::heartbeat_attempt(pool, &lease).await?;
+        lease = heartbeat_attempt_with_retry(pool, &lease, capability, "finalization").await?;
         let mut result = worker.build_result(&claim, outcome).await?;
         result.fencing_token = lease.fencing_token;
         tracing::info!(
@@ -293,6 +298,7 @@ async fn submit_result_with_retry(
 ) -> Result<()> {
     const MAX_ATTEMPTS: u32 = 3;
     const SUBMIT_TIMEOUT: Duration = Duration::from_secs(20);
+    let mut repeated_error: Option<(String, u32)> = None;
     for attempt in 1..=MAX_ATTEMPTS {
         let submitted = tokio::time::timeout(
             SUBMIT_TIMEOUT,
@@ -323,6 +329,33 @@ async fn submit_result_with_retry(
                     "Worker result submission hit a transient database failure; retrying"
                 );
             }
+            Ok(Err(agentx_v2_runtime::error::RuntimeError::Conflict(_, message))) => {
+                tracing::info!(
+                    attempt_id = %result.attempt_id,
+                    %capability,
+                    %message,
+                    "Worker result lost its Lease race; acknowledging the stale task"
+                );
+                return Ok(());
+            }
+            Ok(Err(error)) if non_infrastructure_submission_error(&error) => {
+                let signature = format!("{error:?}");
+                let count = repeated_error
+                    .as_ref()
+                    .filter(|(previous, _)| previous == &signature)
+                    .map_or(1, |(_, count)| count + 1);
+                repeated_error = Some((signature, count));
+                if count >= MAX_ATTEMPTS {
+                    return submit_poisoned_result(pool, lease, result, &error.to_string()).await;
+                }
+                tracing::warn!(
+                    attempt_id = %result.attempt_id,
+                    %capability,
+                    submit_attempt = attempt,
+                    %error,
+                    "Worker result submission was deterministically rejected; retrying before poisoning"
+                );
+            }
             Ok(Err(error)) => return Err(error.into()),
             Err(_) if attempt < MAX_ATTEMPTS => {
                 tracing::warn!(
@@ -337,10 +370,111 @@ async fn submit_result_with_retry(
                 anyhow::bail!("Worker result submission timed out after {MAX_ATTEMPTS} attempts");
             }
         }
-        *lease = agentx_v2_runtime::engine::heartbeat_attempt(pool, lease).await?;
+        *lease = heartbeat_attempt_with_retry(pool, lease, capability, "result_submission").await?;
         tokio::time::sleep(Duration::from_millis(100 * u64::from(attempt))).await;
     }
     unreachable!("bounded Worker result retry loop always returns")
+}
+
+async fn heartbeat_attempt_with_retry(
+    pool: &sqlx::MySqlPool,
+    lease: &agentx_runtime_contracts::WorkerAttemptLeaseV1,
+    capability: &str,
+    phase: &str,
+) -> agentx_v2_runtime::error::RuntimeResult<agentx_runtime_contracts::WorkerAttemptLeaseV1> {
+    heartbeat_attempt_with_retry_using(lease, capability, phase, || {
+        agentx_v2_runtime::engine::heartbeat_attempt(pool, lease)
+    })
+    .await
+}
+
+async fn heartbeat_attempt_with_retry_using<F, Fut>(
+    lease: &agentx_runtime_contracts::WorkerAttemptLeaseV1,
+    capability: &str,
+    phase: &str,
+    mut heartbeat: F,
+) -> agentx_v2_runtime::error::RuntimeResult<agentx_runtime_contracts::WorkerAttemptLeaseV1>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<
+        Output = agentx_v2_runtime::error::RuntimeResult<
+            agentx_runtime_contracts::WorkerAttemptLeaseV1,
+        >,
+    >,
+{
+    const MAX_RETRIES: u32 = 3;
+    for retry in 0..=MAX_RETRIES {
+        match heartbeat().await {
+            Ok(refreshed) => return Ok(refreshed),
+            Err(agentx_v2_runtime::error::RuntimeError::DatabaseUnavailable)
+                if retry < MAX_RETRIES =>
+            {
+                let backoff = Duration::from_millis(50 * u64::from(retry + 1));
+                tracing::warn!(
+                    attempt_id = %lease.attempt_id,
+                    %capability,
+                    %phase,
+                    heartbeat_retry = retry + 1,
+                    backoff_milliseconds = backoff.as_millis(),
+                    "Worker Attempt heartbeat hit a transient database failure; retrying"
+                );
+                tokio::time::sleep(backoff).await;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    unreachable!("bounded Worker heartbeat retry loop always returns")
+}
+
+fn non_infrastructure_submission_error(error: &agentx_v2_runtime::error::RuntimeError) -> bool {
+    use agentx_v2_runtime::error::RuntimeError;
+    matches!(
+        error,
+        RuntimeError::Deterministic { .. }
+            | RuntimeError::InvalidRequest(..)
+            | RuntimeError::BadRequest(..)
+            | RuntimeError::Unauthorized
+            | RuntimeError::NotFound
+            | RuntimeError::ProviderRejected
+            | RuntimeError::Internal(_)
+    )
+}
+
+async fn submit_poisoned_result(
+    pool: &sqlx::MySqlPool,
+    lease: &agentx_runtime_contracts::WorkerAttemptLeaseV1,
+    result: &agentx_runtime_contracts::WorkerResultV1,
+    rejection: &str,
+) -> Result<()> {
+    let outputs = std::collections::BTreeMap::new();
+    let message = format!("Worker Result was rejected three times: {rejection}");
+    let result_hash = agentx_v2_runtime::engine::worker_result_hash(
+        agentx_runtime_contracts::WorkerResultStatusV1::Failed,
+        &outputs,
+        None,
+        Some("WORKER_RESULT_POISONED"),
+        Some(&message),
+        None,
+    )?;
+    let poisoned = agentx_runtime_contracts::WorkerResultV1 {
+        protocol_version: result.protocol_version,
+        attempt_id: result.attempt_id,
+        worker_id: result.worker_id,
+        fencing_token: lease.fencing_token,
+        status: agentx_runtime_contracts::WorkerResultStatusV1::Failed,
+        result_hash,
+        outputs,
+        output_object: None,
+        error_code: Some("WORKER_RESULT_POISONED".into()),
+        error_message: Some(message),
+        partial_output_object: None,
+    };
+    agentx_v2_runtime::engine::submit_worker_result(pool, &poisoned).await?;
+    tracing::error!(
+        attempt_id = %result.attempt_id,
+        "Worker result was poisoned after three deterministic submission failures"
+    );
+    Ok(())
 }
 
 async fn collect_worker_metrics(
@@ -396,4 +530,76 @@ async fn collect_worker_metrics(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::heartbeat_attempt_with_retry_using;
+    use agentx_runtime_contracts::{RuntimePublishErrorCodeV1, WorkerAttemptLeaseV1};
+    use agentx_v2_runtime::error::RuntimeError;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicU32, Ordering},
+    };
+    use time::OffsetDateTime;
+    use uuid::Uuid;
+
+    fn lease() -> WorkerAttemptLeaseV1 {
+        WorkerAttemptLeaseV1 {
+            protocol_version: 1,
+            attempt_id: Uuid::now_v7(),
+            worker_id: Uuid::now_v7(),
+            fencing_token: 7,
+            locked_until: OffsetDateTime::now_utc(),
+        }
+    }
+
+    #[tokio::test]
+    async fn completed_result_finalization_retries_a_transient_heartbeat_failure() {
+        let original = lease();
+        let expected = original.clone();
+        let attempts = Arc::new(AtomicU32::new(0));
+        let observed_attempts = attempts.clone();
+
+        let refreshed =
+            heartbeat_attempt_with_retry_using(&original, "code", "finalization", move || {
+                let attempt = observed_attempts.fetch_add(1, Ordering::SeqCst);
+                let expected = expected.clone();
+                async move {
+                    if attempt == 0 {
+                        Err(RuntimeError::DatabaseUnavailable)
+                    } else {
+                        Ok(expected)
+                    }
+                }
+            })
+            .await
+            .expect("a transient heartbeat failure must not discard a completed result");
+
+        assert_eq!(refreshed.attempt_id, original.attempt_id);
+        assert_eq!(attempts.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn heartbeat_lease_errors_are_not_retried() {
+        let original = lease();
+        let attempts = Arc::new(AtomicU32::new(0));
+        let observed_attempts = attempts.clone();
+
+        let error =
+            heartbeat_attempt_with_retry_using(&original, "code", "finalization", move || {
+                observed_attempts.fetch_add(1, Ordering::SeqCst);
+                async {
+                    Err(RuntimeError::Conflict(
+                        RuntimePublishErrorCodeV1::IdempotencyConflict,
+                        "Attempt Lease was lost".into(),
+                    ))
+                }
+            })
+            .await
+            .expect_err("non-database heartbeat failures must remain fail-fast");
+
+        assert!(matches!(error, RuntimeError::Conflict(_, _)));
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
+    }
 }

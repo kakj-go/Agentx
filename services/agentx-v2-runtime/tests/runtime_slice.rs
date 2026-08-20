@@ -35,7 +35,7 @@ use agentx_v2_runtime::{
     execution::{
         InvocationRequestV1, authenticate_api_key, claim_commands, claim_dispatch,
         complete_dispatch, create_invocation, process_command, process_command_with_state,
-        recover_dispatches,
+        recover_dispatches, release_dispatch,
     },
     gc::{cleanup_expired_temporary_objects, mark_collectable, sweep_one},
     internal_engine::{
@@ -127,10 +127,16 @@ impl WorkerProvider for StubWorkerProvider {
                 ));
             }
             StubWorkerMode::Evaluator => json!({
-                "passed":true,
-                "score":0.95,
-                "reason":"fixture accepted the target output",
-                "usage":{"tokens":7,"costMicros":23}
+                "text":"{\"passed\":true,\"score\":0.95,\"reason\":\"fixture accepted the target output\",\"usage\":{\"tokens\":7,\"costMicros\":23}}",
+                "message":{"role":"assistant","content":"{\"passed\":true,\"score\":0.95,\"reason\":\"fixture accepted the target output\",\"usage\":{\"tokens\":7,\"costMicros\":23}}"},
+                "reasoningContent":null,
+                "structuredOutput":{"passed":true,"score":0.95,"reason":"fixture accepted the target output","usage":{"tokens":7,"costMicros":23}},
+                "citations":[],
+                "toolCalls":[],
+                "files":[],
+                "usage":{"inputTokens":0,"outputTokens":7,"tokens":7,"costMicros":23},
+                "finishReason":"stop",
+                "partial":false
             }),
             StubWorkerMode::Agent(calls) if endpoint.ends_with("/model") => {
                 if calls.fetch_add(1, Ordering::SeqCst) == 0 {
@@ -218,6 +224,7 @@ async fn v2_publish_execution_query_recovery_and_gc_are_fenced_and_idempotent() 
     object_upload_is_immutable_and_replayable(&fixture, &first).await;
     prepare_is_idempotent_and_does_not_route_traffic(&fixture, &first).await;
     apply_initial_admission(&fixture, 1).await;
+    concurrent_admission_delivery_converges_to_one_receipt(&fixture).await;
     activate(&fixture, &first, None, 1, 1).await;
     authentication_requires_active_route_tenant_and_head(&fixture).await;
     let before_invalid: i64 =
@@ -276,6 +283,7 @@ async fn v2_publish_execution_query_recovery_and_gc_are_fenced_and_idempotent() 
     query_is_tenant_application_and_execution_scoped(&fixture, accepted.execution_id).await;
     deterministic_start_rejection_is_terminal(&fixture).await;
     revoked_grant_rejection_is_terminal_and_monotonic(&fixture).await;
+    expired_attempt_deadline_is_terminal_and_not_requeued(&fixture).await;
 
     let second = fixture.bundle(2).await;
     fixture
@@ -1117,6 +1125,44 @@ async fn wait_and_approval_resume_exactly_once(fixture: &Fixture) {
     // authoritative transitions and therefore advance the task version twice.
     assert_eq!(approval_state.3, 3);
 
+    let invalid_approval_execution = start_suspending_work_package_with_parameters(
+        fixture,
+        "approval",
+        json!({
+            "title":"Invalid approval",
+            "candidateUserId":{
+                "kind":"reference",
+                "selector":{
+                    "namespace":"inputs",
+                    "run":{"kind":"current"},
+                    "item":{"kind":"current"},
+                    "path":["missingCandidate"]
+                },
+                "missingPolicy":{"kind":"error"}
+            }
+        }),
+    )
+    .await;
+    let invalid_state: (String, String, String, String, String, i64) = sqlx::query_as(
+        "SELECT e.status,e.error_code,n.status,n.error_code,a.error_code,(SELECT COUNT(*) FROM approval_tasks t WHERE t.tenant_id=e.tenant_id AND t.execution_id=e.id) FROM workflow_executions e JOIN node_executions n ON n.tenant_id=e.tenant_id AND n.execution_id=e.id JOIN node_attempts a ON a.tenant_id=n.tenant_id AND a.node_execution_id=n.id WHERE e.tenant_id=? AND e.id=?",
+    )
+    .bind(fixture.tenant_id)
+    .bind(invalid_approval_execution)
+    .fetch_one(&fixture.state.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        invalid_state,
+        (
+            "failed".into(),
+            "DYNAMIC_VALUE_EVALUATION_FAILED".into(),
+            "failed".into(),
+            "DYNAMIC_VALUE_EVALUATION_FAILED".into(),
+            "DYNAMIC_VALUE_EVALUATION_FAILED".into(),
+            0,
+        )
+    );
+
     let duration_execution = start_suspending_work_package_with_parameters(
         fixture,
         "wait",
@@ -1144,7 +1190,11 @@ async fn wait_and_approval_resume_exactly_once(fixture: &Fixture) {
 
 async fn start_suspending_work_package(fixture: &Fixture, node_type: &str) -> Uuid {
     let parameters = if node_type == "approval" {
-        json!({"title":"Runtime approval","timeoutMs":300000,"candidateUserId":fixture.identity_id})
+        json!({
+            "title":"Runtime approval",
+            "timeoutMs":300000,
+            "candidateUserId":{"kind":"literal","value":fixture.identity_id}
+        })
     } else {
         json!({"kind":"webhook","authenticationMode":"signed"})
     };
@@ -1233,8 +1283,8 @@ fn suspension_definition(node_type: &str, parameters: Value) -> WorkflowDefiniti
         connections.push(json!({"id":"resumed-end","sourceNodeId":"suspend","sourceHandle":"resumed","targetNodeId":"__end__","targetHandle":"main","order":0}));
     }
     serde_json::from_value(json!({
-        "schemaVersion":"4.0",
-        "start":{"inputs":{"type":"object","additionalProperties":true},"contexts":{}},
+        "schemaVersion":"5.0",
+        "start":{"inputs":{"type":"object","properties":{"missingCandidate":{"type":"string"}},"additionalProperties":true},"contexts":{}},
         "nodes":[{
             "id":"suspend",
             "key":"suspend",
@@ -3712,7 +3762,18 @@ async fn evaluation_work_package_creates_cases_converges_and_cancels_atomically(
     .fetch_one(&fixture.state.pool)
     .await
     .unwrap();
-    assert_eq!(model_results.0, 2);
+    let model_debug: Vec<(String, String, Option<Value>, Option<Value>, Value)> = sqlx::query_as(
+        "SELECT rr.status,e.status,e.output_json,e.error_json,rr.detail_json FROM evaluation_rule_results rr JOIN evaluation_run_cases c ON c.id=rr.evaluation_run_case_id AND c.tenant_id=rr.tenant_id JOIN evaluation_runs r ON r.id=c.evaluation_run_id AND r.tenant_id=c.tenant_id LEFT JOIN workflow_executions e ON e.id=rr.evaluator_execution_id AND e.tenant_id=rr.tenant_id WHERE r.tenant_id=? AND r.work_package_id=? AND JSON_UNQUOTE(JSON_EXTRACT(rr.detail_json,'$.kind'))='model' ORDER BY rr.created_at,rr.id",
+    )
+    .bind(fixture.tenant_id)
+    .bind(model_package_id)
+    .fetch_all(&fixture.state.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        model_results.0, 2,
+        "model evaluator state: {model_debug:#?}"
+    );
     assert_eq!(model_results.1, 2);
     assert_eq!(model_results.2, 46);
     let model_package_status: String =
@@ -4122,6 +4183,58 @@ fn admission_request(
     }
 }
 
+async fn concurrent_admission_delivery_converges_to_one_receipt(fixture: &Fixture) {
+    const CONCURRENCY: usize = 16;
+    let request = admission_request(
+        fixture,
+        1,
+        AdmissionTargetV1::Tenant { enabled: true },
+        "admission:concurrent-delivery",
+    );
+    let barrier = Arc::new(tokio::sync::Barrier::new(CONCURRENCY));
+    let mut deliveries = Vec::with_capacity(CONCURRENCY);
+    for _ in 0..CONCURRENCY {
+        let state = fixture.state.clone();
+        let request = request.clone();
+        let barrier = barrier.clone();
+        deliveries.push(tokio::spawn(async move {
+            barrier.wait().await;
+            apply_admission(
+                State(state),
+                publisher_headers("runtime.admission.apply"),
+                Json(request),
+            )
+            .await
+            .map(|receipt| receipt.0)
+        }));
+    }
+    let mut fresh = 0;
+    let mut replayed = 0;
+    for delivery in deliveries {
+        let receipt = delivery
+            .await
+            .expect("concurrent Admission task should join")
+            .expect("concurrent Admission delivery should converge");
+        assert!(receipt.applied);
+        if receipt.replayed {
+            replayed += 1;
+        } else {
+            fresh += 1;
+        }
+    }
+    assert_eq!(fresh, 1);
+    assert_eq!(replayed, CONCURRENCY - 1);
+    let receipt_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM publish_receipts WHERE tenant_id=? AND operation='admission' AND idempotency_key=?",
+    )
+    .bind(fixture.tenant_id)
+    .bind(&request.command.idempotency_key)
+    .fetch_one(&fixture.state.pool)
+    .await
+    .unwrap();
+    assert_eq!(receipt_count, 1);
+}
+
 async fn activate(
     fixture: &Fixture,
     bundle: &agentx_runtime_contracts::ExecutionSpecBundleV1,
@@ -4397,11 +4510,30 @@ async fn invocation_and_dispatch_recovery_are_fenced(
     process_command(&fixture.state.pool, &command)
         .await
         .unwrap();
+    let failed_dispatch = claim_dispatch(&fixture.state.pool, owner)
+        .await
+        .unwrap()
+        .unwrap();
+    release_dispatch(
+        &fixture.state.pool,
+        &failed_dispatch,
+        "Redis connection was rebuilt",
+    )
+    .await
+    .unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
     let dispatch = claim_dispatch(&fixture.state.pool, owner)
         .await
         .unwrap()
         .unwrap();
     let task = dispatch.task().unwrap();
+    assert_eq!(dispatch.id, failed_dispatch.id);
+    assert_eq!(task.attempt_id, failed_dispatch.task().unwrap().attempt_id);
+    assert!(dispatch.fencing_token > failed_dispatch.fencing_token);
+    assert!(matches!(
+        complete_dispatch(&fixture.state.pool, &failed_dispatch).await,
+        Err(RuntimeError::Conflict(_, _))
+    ));
     let attempt_id = task.attempt_id;
     complete_dispatch(&fixture.state.pool, &dispatch)
         .await
@@ -4488,6 +4620,112 @@ async fn invocation_and_dispatch_recovery_are_fenced(
         .await
         .unwrap();
     replacement_result
+}
+
+async fn expired_attempt_deadline_is_terminal_and_not_requeued(fixture: &Fixture) {
+    let accepted = create_invocation(
+        &fixture.state.pool,
+        fixture.tenant_id,
+        fixture.application_id,
+        fixture.key_id,
+        &InvocationRequestV1 {
+            input: json!({"message":"deadline"}),
+            idempotency_key: "runtime-slice-expired-deadline".into(),
+        },
+    )
+    .await
+    .unwrap();
+    let owner = Uuid::now_v7();
+    let command = claim_commands(&fixture.state.pool, owner, 100)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|claim| claim.execution_id == accepted.execution_id)
+        .unwrap();
+    process_command(&fixture.state.pool, &command)
+        .await
+        .unwrap();
+    let dispatch = claim_dispatch(&fixture.state.pool, owner)
+        .await
+        .unwrap()
+        .unwrap();
+    let task = dispatch.task().unwrap();
+    complete_dispatch(&fixture.state.pool, &dispatch)
+        .await
+        .unwrap();
+    let worker_id = Uuid::now_v7();
+    agentx_v2_runtime::engine::register_worker(
+        &fixture.state.pool,
+        worker_id,
+        task.capability.as_str(),
+        env!("CARGO_PKG_VERSION"),
+    )
+    .await
+    .unwrap();
+    let claim = agentx_v2_runtime::engine::claim_worker_attempt(
+        &fixture.state.pool,
+        worker_id,
+        task.capability.as_str(),
+        &task,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    sqlx::query(
+        "UPDATE node_attempts SET deadline_at=DATE_SUB(UTC_TIMESTAMP(6),INTERVAL 1 SECOND) WHERE tenant_id=? AND id=?",
+    )
+    .bind(fixture.tenant_id)
+    .bind(claim.task.attempt_id)
+    .execute(&fixture.state.pool)
+    .await
+    .unwrap();
+
+    let recovered = recover_dispatches(&fixture.state.pool, 100).await.unwrap();
+    assert!(
+        !recovered
+            .iter()
+            .any(|message| message.attempt_id == task.attempt_id)
+    );
+    let state: (String, String, String, bool) = sqlx::query_as(
+        "SELECT e.status,a.status,n.status,l.released_at IS NOT NULL FROM workflow_executions e JOIN node_attempts a ON a.execution_id=e.id AND a.tenant_id=e.tenant_id JOIN node_executions n ON n.id=a.node_execution_id AND n.tenant_id=a.tenant_id JOIN worker_leases l ON l.node_attempt_id=a.id AND l.tenant_id=a.tenant_id WHERE e.tenant_id=? AND e.id=? AND a.id=?",
+    )
+    .bind(fixture.tenant_id)
+    .bind(accepted.execution_id)
+    .bind(task.attempt_id)
+    .fetch_one(&fixture.state.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        state,
+        (
+            "timed_out".into(),
+            "timed_out".into(),
+            "timed_out".into(),
+            true
+        )
+    );
+
+    let stale_worker = Uuid::now_v7();
+    agentx_v2_runtime::engine::register_worker(
+        &fixture.state.pool,
+        stale_worker,
+        task.capability.as_str(),
+        env!("CARGO_PKG_VERSION"),
+    )
+    .await
+    .unwrap();
+    assert!(
+        agentx_v2_runtime::engine::claim_worker_attempt(
+            &fixture.state.pool,
+            stale_worker,
+            task.capability.as_str(),
+            &task,
+        )
+        .await
+        .unwrap()
+        .is_none(),
+        "a stale dispatch message must be ACK-safe after the deadline becomes terminal"
+    );
 }
 
 async fn retry_policy_creates_a_second_attempt_and_trace(fixture: &Fixture) {
@@ -5401,14 +5639,14 @@ fn bearer_headers(token: String) -> HeaderMap {
 
 fn definition() -> WorkflowDefinition {
     serde_json::from_value(json!({
-        "schemaVersion":"4.0",
+        "schemaVersion":"5.0",
         "start":{"inputs":{"type":"object","properties":{"message":{"type":"string"}},"required":["message"],"additionalProperties":false},"contexts":{}},
         "nodes":[{"id":"pass","key":"pass","type":"no_op","typeVersion":1,"name":"Pass","parameters":{},"settings":{"retryOnFail":true,"maxTries":2,"waitBetweenTriesMs":5},"outputProjection":{},"contextWrites":[],"resourceReferences":[]}],
         "connections":[
             {"id":"start-pass","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"pass","targetHandle":"main","order":0},
             {"id":"pass-end","sourceNodeId":"pass","sourceHandle":"main","targetNodeId":"__end__","targetHandle":"main","order":0}
         ],
-        "end":{"outputs":{"message":{"expression":"${{ outputs.pass.main.current.json.message }}","schema":{"type":"string"},"required":true}}},
+        "end":{"outputs":{"message":{"value":{"kind":"reference","selector":{"namespace":"outputs","sourceNodeId":"pass","port":"main","run":{"kind":"current"},"item":{"kind":"current"},"path":["message"]},"missingPolicy":{"kind":"error"}},"schema":{"type":"string"},"required":true}}},
         "settings":{"activationBudget":20,"executionOrder":"deterministic"}
     }))
     .unwrap()
@@ -5416,7 +5654,7 @@ fn definition() -> WorkflowDefinition {
 
 fn composite_definition(child_version_id: Uuid) -> WorkflowDefinition {
     serde_json::from_value(json!({
-        "schemaVersion":"4.0",
+        "schemaVersion":"5.0",
         "start":{"inputs":{"type":"object","properties":{"message":{"type":"string"}},"required":["message"],"additionalProperties":false},"contexts":{}},
         "nodes":[{
             "id":"child",
@@ -5433,7 +5671,7 @@ fn composite_definition(child_version_id: Uuid) -> WorkflowDefinition {
             {"id":"start-child","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"child","targetHandle":"main","order":0},
             {"id":"child-end","sourceNodeId":"child","sourceHandle":"main","targetNodeId":"__end__","targetHandle":"main","order":0}
         ],
-        "end":{"outputs":{"message":{"expression":"${{ outputs.child.main.current.json.message }}","schema":{"type":"string"},"required":true}}},
+        "end":{"outputs":{"message":{"value":{"kind":"reference","selector":{"namespace":"outputs","sourceNodeId":"child","port":"main","run":{"kind":"current"},"item":{"kind":"current"},"path":["message"]},"missingPolicy":{"kind":"error"}},"schema":{"type":"string"},"required":true}}},
         "settings":{"activationBudget":20,"executionOrder":"deterministic"}
     }))
     .unwrap()

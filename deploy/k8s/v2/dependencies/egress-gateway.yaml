@@ -1,11 +1,11 @@
 apiVersion: v1
 kind: ServiceAccount
-metadata: { name: agentx-egress-gateway, namespace: agentx-v2-deps }
+metadata: { name: agentx-egress-gateway, namespace: agentx-deps }
 automountServiceAccountToken: false
 ---
 apiVersion: apps/v1
 kind: Deployment
-metadata: { name: agentx-egress-gateway, namespace: agentx-v2-deps }
+metadata: { name: agentx-egress-gateway, namespace: agentx-deps }
 spec:
   replicas: 1
   strategy: { type: RollingUpdate, rollingUpdate: { maxUnavailable: 1, maxSurge: 1 } }
@@ -54,7 +54,7 @@ spec:
 ---
 apiVersion: v1
 kind: Service
-metadata: { name: agentx-egress-gateway, namespace: agentx-v2-deps }
+metadata: { name: agentx-egress-gateway, namespace: agentx-deps }
 spec:
   selector: { app.kubernetes.io/name: agentx-egress-gateway }
   ports:
@@ -63,7 +63,7 @@ spec:
 ---
 apiVersion: v1
 kind: Service
-metadata: { name: agentx-egress-sandbox, namespace: agentx-v2-deps }
+metadata: { name: agentx-egress-sandbox, namespace: agentx-deps }
 spec:
   type: NodePort
   selector: { app.kubernetes.io/name: agentx-egress-gateway }
@@ -72,7 +72,7 @@ spec:
 ---
 apiVersion: v1
 kind: Service
-metadata: { name: agentx-egress-gateway-metrics, namespace: agentx-v2-deps }
+metadata: { name: agentx-egress-gateway-metrics, namespace: agentx-deps }
 spec:
   clusterIP: None
   selector: { app.kubernetes.io/name: agentx-egress-gateway }
@@ -80,7 +80,7 @@ spec:
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
-metadata: { name: agentx-egress-gateway-ingress, namespace: agentx-v2-deps }
+metadata: { name: agentx-egress-gateway-ingress, namespace: agentx-deps }
 spec:
   podSelector: { matchLabels: { app.kubernetes.io/name: agentx-egress-gateway } }
   policyTypes: [Ingress]
@@ -94,7 +94,7 @@ spec:
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
-metadata: { name: agentx-egress-gateway-public-egress, namespace: agentx-v2-deps }
+metadata: { name: agentx-egress-gateway-public-egress, namespace: agentx-deps }
 spec:
   podSelector: { matchLabels: { app.kubernetes.io/name: agentx-egress-gateway } }
   policyTypes: [Egress]

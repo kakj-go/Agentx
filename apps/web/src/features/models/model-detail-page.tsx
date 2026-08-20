@@ -25,6 +25,7 @@ export function ModelDetailPage() {
   const { showToast } = useToast()
   const [priceOpen, setPriceOpen] = useState(false)
   const [editOpen, setEditOpen] = useState(false)
+  const [health, setHealth] = useState<HealthCheck>()
   const model = useQuery({ queryKey: ['model', id], queryFn: () => apiRequest<Model>(`/models/aliases/${id}`) })
   const prices = useQuery({ queryKey: ['model-prices', model.data?.deploymentId], enabled: Boolean(model.data), queryFn: () => apiRequest<ModelPrice[]>(`/models/deployments/${model.data?.deploymentId}/prices`) })
   const history = useQuery({ queryKey: ['model-history', id], queryFn: () => apiRequest<ModelDeploymentHistory[]>(`/models/aliases/${id}/deployment-history`) })
@@ -32,7 +33,7 @@ export function ModelDetailPage() {
   const credentials = useQuery({ queryKey: ['credentials', 'model-options'], queryFn: () => apiRequest<PageResponse<Credential>>('/credentials?pageSize=100&status=active') })
   const test = useMutation({
     mutationFn: () => apiRequest<HealthCheck>(`/models/aliases/${id}/test-connection`, { method: 'POST' }),
-    onSuccess: async (result) => { await invalidate(); showToast(localizedValue(t, 'models', result.status)) },
+    onSuccess: async (result) => { setHealth(result); await invalidate(); showToast(localizedValue(t, 'models', result.status)) },
     onError: (error: Error) => showToast(error.message),
   })
 
@@ -111,7 +112,7 @@ export function ModelDetailPage() {
       { label: t('models.maxOutputTokens'), value: value.maxOutputTokens }, { label: t('models.deploymentRevision'), value: `r${value.revisionNumber}` },
       { label: t('models.department'), value: value.ownerDepartmentId },
     ] : []} error={model.error} loading={model.isLoading} name={value?.alias} status={value?.status}>
-      {value && <Card className="flex items-center gap-3 p-4 text-xs"><Activity className="size-4 text-primary" /><span className="font-medium">{t('models.connectionStatus')}</span><StatusBadge label={localizedValue(t, 'models', value.connectionStatus)} status={connectionStatus(value.connectionStatus)} />{value.connectionCheckedAt && <span className="text-muted-foreground">{t('models.checkedAt', { time: formatDateTime(value.connectionCheckedAt) })}</span>}</Card>}
+      {value && <Card className="p-4 text-xs"><div className="flex flex-wrap items-center gap-3"><Activity className="size-4 text-primary" /><span className="font-medium">{t('models.connectionStatus')}</span><StatusBadge label={localizedValue(t, 'models', health?.status ?? value.connectionStatus)} status={connectionStatus(health?.status ?? value.connectionStatus)} />{health?.latencyMs != null && <span className="text-muted-foreground">{health.latencyMs} ms</span>}{(health?.checkedAt ?? value.connectionCheckedAt) && <span className="text-muted-foreground">{t('models.checkedAt', { time: formatDateTime(health?.checkedAt ?? value.connectionCheckedAt ?? '') })}</span>}</div>{health?.errorMessage && <p className="mt-3 break-words rounded-md border border-danger/25 bg-danger/5 px-3 py-2 text-danger" role="alert">{health.errorCode && <strong className="mr-2">{health.errorCode}</strong>}{health.errorMessage}</p>}</Card>}
       <Card className="p-5"><div className="flex items-center"><h2 className="text-sm font-semibold">{t('models.priceVersions')}</h2><div className="flex-1" />{auth.hasPermission('model:manage') && <Button onClick={() => setPriceOpen(true)} size="sm" variant="secondary"><Plus className="size-3.5" />{t('models.addPrice')}</Button>}</div><div className="mt-3 divide-y divide-border">{prices.data?.map((price) => <div className="grid grid-cols-3 gap-3 py-3 text-xs" key={price.id}><span>v{price.versionNumber} · {price.currency}</span><span>{t('models.inputPrice')}: {price.inputPerMillion}</span><span>{t('models.outputPrice')}: {price.outputPerMillion}</span></div>)}{prices.data?.length === 0 && <p className="py-3 text-xs text-muted-foreground">{t('models.noData')}</p>}</div></Card>
       <Card className="p-5"><div className="flex items-center gap-2"><History className="size-4 text-primary" /><h2 className="text-sm font-semibold">{t('models.deploymentHistory')}</h2></div><div className="mt-3 divide-y divide-border">{history.data?.map((item) => <div className="grid grid-cols-[90px_1fr_auto] gap-3 py-3 text-xs" key={item.id}><span>r{item.revisionNumber}</span><span>{item.connectionName} · {item.modelName}</span><span className="text-muted-foreground">{formatDateTime(item.changedAt)}</span></div>)}{history.data?.length === 0 && <p className="py-3 text-xs text-muted-foreground">{t('models.noData')}</p>}</div></Card>
     </ResourceDetailLayout>

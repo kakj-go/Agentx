@@ -4,6 +4,7 @@ import type {
   ReferenceCatalog,
   ReferenceEntry,
   StudioDocument,
+  ValueSelector,
 } from "../../model/types";
 
 const EMPTY_CATALOG: ReferenceCatalog = {
@@ -19,7 +20,13 @@ export function buildReferenceCatalog(
 ): ReferenceCatalog {
   const catalog = structuredClone(EMPTY_CATALOG);
   const inputSchema = asSchema(document.start.inputs);
-  catalog.inputs = schemaEntries(inputSchema, "inputs", "inputs");
+  catalog.inputs = schemaEntries(
+    inputSchema,
+    "inputs",
+    "inputs",
+    false,
+    baseSelector("inputs"),
+  );
   catalog.contexts = Object.entries(document.start.contexts).map(
     ([name, definition]) => {
       const path = appendSegment("contexts", name);
@@ -28,13 +35,21 @@ export function buildReferenceCatalog(
         id: path,
         label: name,
         path,
-        expression: schema.properties ? undefined : expression(path),
+        selector: schema.properties
+          ? undefined
+          : baseSelector("contexts", [name]),
         type: schema.type,
         nullable: false,
         sensitive: definition.sensitive,
         scope: definition.scope,
         example: definition.default,
-        children: schemaEntries(schema, path, path, definition.sensitive),
+        children: schemaEntries(
+          schema,
+          path,
+          path,
+          definition.sensitive,
+          baseSelector("contexts", [name]),
+        ),
       };
     },
   );
@@ -77,14 +92,16 @@ export function buildReferenceCatalog(
         projectedSchema,
         `${path}.current.json`,
         `${path}.current.json`,
+        false,
+        outputSelector(node.id, port.name, { kind: "current" }),
       );
       const selectors: ReferenceEntry[] = [];
       if (manifest.expressionCapabilities?.supportsCurrent !== false)
-        selectors.push(selector("current", path, itemFields, cardinality));
+        selectors.push(selector("current", path, itemFields, cardinality, node.id, port.name));
       if (manifest.expressionCapabilities?.supportsFirstLast !== false) {
         selectors.push(
-          selector("first", path, itemFields, cardinality),
-          selector("last", path, itemFields, cardinality),
+          selector("first", path, itemFields, cardinality, node.id, port.name),
+          selector("last", path, itemFields, cardinality, node.id, port.name),
         );
       }
       if (manifest.expressionCapabilities?.supportsAll !== false)
@@ -92,7 +109,7 @@ export function buildReferenceCatalog(
           id: `${path}.all()`,
           label: "all()",
           path: `${path}.all()`,
-          expression: expression(`${path}.all()`),
+          selector: outputSelector(node.id, port.name, { kind: "all" }),
           type: "array",
           cardinality,
           nullable: false,
@@ -126,12 +143,26 @@ export function buildReferenceCatalog(
                       projectedSchemaForPort(port.name),
                       path,
                       path,
+                      false,
+                      outputSelector(
+                        node.id,
+                        port.name,
+                        { kind: "index", index: 0 },
+                        { kind: "index", index: 0 },
+                      ),
                     );
                     return {
                       id: path,
                       label: port.name,
                       path,
-                      expression: fields.length ? undefined : expression(path),
+                      selector: fields.length
+                        ? undefined
+                        : outputSelector(
+                            node.id,
+                            port.name,
+                            { kind: "index", index: 0 },
+                            { kind: "index", index: 0 },
+                          ),
                       type: "object",
                       cardinality:
                         manifest.outputCardinality?.[port.name] ?? "many",
@@ -182,17 +213,23 @@ function selector(
   portPath: string,
   fields: ReferenceEntry[],
   cardinality: ReferenceEntry["cardinality"],
+  sourceNodeId: string,
+  port: string,
 ): ReferenceEntry {
   const path = `${portPath}.${name}`;
   return {
     id: path,
     label: name,
     path,
-    expression: fields.length ? undefined : expression(path),
+    selector: fields.length
+      ? undefined
+      : outputSelector(sourceNodeId, port, { kind: name }),
     type: "object",
     cardinality,
     nullable: cardinality === "zero_or_one" || cardinality === "zero_or_many",
-    children: fields.map((field) => rebase(field, `${portPath}.current`, path)),
+    children: fields.map((field) =>
+      rebase(field, `${portPath}.current`, path, { kind: name }),
+    ),
   };
 }
 
@@ -200,14 +237,15 @@ function rebase(
   entry: ReferenceEntry,
   from: string,
   to: string,
+  item: ValueSelector["item"],
 ): ReferenceEntry {
   const path = entry.path.replace(from, to);
   return {
     ...entry,
     id: path,
     path,
-    expression: entry.expression ? expression(path) : undefined,
-    children: entry.children.map((child) => rebase(child, from, to)),
+    selector: entry.selector ? { ...entry.selector, item } : undefined,
+    children: entry.children.map((child) => rebase(child, from, to, item)),
   };
 }
 
@@ -216,16 +254,20 @@ function schemaEntries(
   parentPath: string,
   idPrefix: string,
   sensitive = false,
+  parentSelector?: ValueSelector,
 ): ReferenceEntry[] {
   return Object.entries(schema.properties ?? {}).map(([name, child]) => {
     const path = appendSegment(parentPath, name);
     const id = appendSegment(idPrefix, name);
-    const children = schemaEntries(child, path, id, sensitive);
+    const selector = parentSelector
+      ? { ...parentSelector, path: [...parentSelector.path, name] }
+      : undefined;
+    const children = schemaEntries(child, path, id, sensitive, selector);
     return {
       id,
       label: name,
       path,
-      expression: children.length ? undefined : expression(path),
+      selector: children.length ? undefined : selector,
       type: child.type,
       nullable: !(schema.required ?? []).includes(name),
       sensitive,
@@ -240,7 +282,33 @@ function asSchema(value: unknown): JsonSchemaProperty {
     : {};
 }
 
-const expression = (path: string) => `\${{ ${path} }}`;
+function baseSelector(
+  namespace: ValueSelector["namespace"],
+  path: Array<string | number> = [],
+): ValueSelector {
+  return {
+    namespace,
+    run: { kind: "current" },
+    item: { kind: "current" },
+    path,
+  };
+}
+
+function outputSelector(
+  sourceNodeId: string,
+  port: string,
+  item: ValueSelector["item"],
+  run: ValueSelector["run"] = { kind: "current" },
+): ValueSelector {
+  return {
+    namespace: "outputs",
+    sourceNodeId,
+    port,
+    run,
+    item,
+    path: [],
+  };
+}
 
 const CEL_RESERVED = new Set([
   "as",

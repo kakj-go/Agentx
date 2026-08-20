@@ -17,10 +17,10 @@ $safeRunId = ($RunId.ToLowerInvariant() -replace '[^a-z0-9-]', '-').Trim('-')
 if (-not $safeRunId) { throw "RunId must contain a DNS-label character." }
 if ($safeRunId.Length -gt 24) { $safeRunId = $safeRunId.Substring(0, 24).TrimEnd('-') }
 $namespaces = [ordered]@{
-    control = "agentx-v2-07-control-$safeRunId"
-    runtime = "agentx-v2-07-runtime-$safeRunId"
-    observability = "agentx-v2-07-runtime-$safeRunId"
-    dependencies = "agentx-v2-07-deps-$safeRunId"
+    control = "agentx-e2e-07-control-$safeRunId"
+    runtime = "agentx-e2e-07-runtime-$safeRunId"
+    observability = "agentx-e2e-07-runtime-$safeRunId"
+    dependencies = "agentx-e2e-07-deps-$safeRunId"
 }
 $artifactDirectory = Join-Path (if ([IO.Path]::IsPathRooted($ArtifactRoot)) { $ArtifactRoot } else { Join-Path $root $ArtifactRoot }) "$RunId/v2-07/07a"
 $profilePath = Join-Path $artifactDirectory "production-profile.json"
@@ -45,7 +45,7 @@ function Invoke-Kubectl {
 }
 
 function Record-DevelopmentReplicas {
-    foreach ($namespace in @("agentx-v2-control", "agentx-v2-runtime")) {
+    foreach ($namespace in @("agentx-control", "agentx-runtime")) {
         $json = (& kubectl -n $namespace get deployment -o json 2>$null) -join "`n"
         if ($LASTEXITCODE -ne 0 -or -not $json) { continue }
         foreach ($deployment in @((($json | ConvertFrom-Json).items))) {

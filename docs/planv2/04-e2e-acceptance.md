@@ -125,7 +125,7 @@ V2-06A Run `20260816-v206a-final6` 已使七类紧凑 Profile 工作负载完成
 
 以 [V2 产品能力等价矩阵](99-traceability.md#2-产品能力等价矩阵) 为唯一清单，至少覆盖：
 
-- Workflow 4.0 Start/End、Expression、Context CAS、IF/Switch/Merge/Loop 和固定版本 Composite。
+- Workflow 5.0 Start/End、Expression、Context CAS、IF/Switch/Merge/Loop 和固定版本 Composite。
 - Model、MCP、Skill 递归依赖、RAG、Memory、Agent Budget 和 Sandbox。
 - Session 固定 Bundle、显式升级、Message、正式 End Output 和 SSE 重连。
 - Wait、Approval Decision、Resume、Checkpoint、Fork 和副作用确认。

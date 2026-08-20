@@ -129,7 +129,7 @@ crates/
 | V2R-002 | done | 改造运行授权 | Runtime 授权投影、Policy Epoch、Staleness | 撤权、过期和 Last Known Good 测试 |
 | V2R-003 | done | 改造 Resource/Credential Resolver | Runtime Binding + Vault Reference | 无控制库 Secret 回退 |
 | V2R-004 | done | 提取可独立启动的 Runtime 后台 Role | command/outbox/recovery/artifact/quota；默认紧凑 Profile 合并运行 | 每个 Role 多副本竞争测试；不要求默认创建独立 Deployment |
-| V2R-005 | done | 迁移基础状态机 | Item、Expression、Attempt、Delivery、分支、循环和 Context | M4/Workflow 4.0 基础语义回归 |
+| V2R-005 | done | 迁移基础状态机 | Item、Expression、Attempt、Delivery、分支、循环和 Context | M4/Workflow 5.0 基础语义回归 |
 | V2R-006 | done | Worker capability 领取边界 | 通用池标签、兼容矩阵、可选拆分 Deployment/外部扩缩容/连接预算 | 不兼容 Worker 不领取任务；默认紧凑 Profile 无强制拆池 |
 | V2R-007 | done | Runtime Redis 重建 | Outbox 重投、Pending Recovery、Quota 校准 | 清空 Redis 后执行可收敛 |
 | V2R-008 | done | 迁移资源 Runtime | Model、MCP、RAG、Memory、Skill 和 Credential Handle | 精确版本、递归依赖、撤权和无 Control 回退 |

@@ -15,10 +15,10 @@ New-Item -ItemType Directory -Force -Path $artifactDirectory | Out-Null
 $profilePath = if ([IO.Path]::IsPathRooted($ConfigFile)) { $ConfigFile } else { Join-Path $root $ConfigFile }
 $profile = Get-Content -Raw -LiteralPath $profilePath | ConvertFrom-Json
 $namespaces = @{
-    control = "agentx-v2-01-control-$RunId"
-    runtime = "agentx-v2-01-runtime-$RunId"
-    observability = "agentx-v2-01-runtime-$RunId"
-    dependencies = "agentx-v2-01-deps-$RunId"
+    control = "agentx-e2e-01-control-$RunId"
+    runtime = "agentx-e2e-01-runtime-$RunId"
+    observability = "agentx-e2e-01-runtime-$RunId"
+    dependencies = "agentx-e2e-01-deps-$RunId"
 }
 $timeline = [Collections.Generic.List[string]]::new()
 $developmentReplicas = @()

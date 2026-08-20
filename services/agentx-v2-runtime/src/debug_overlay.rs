@@ -1,9 +1,11 @@
 use std::collections::BTreeMap;
 
+use agentx_domain::NodeExecutionId;
 use agentx_node_protocol::Item;
+use agentx_runtime::{CompiledNode, ExecutionMachine};
 use agentx_runtime_contracts::{RuntimeDebugInputSourceV1, RuntimeDebugPlanV1};
-use serde_json::Value;
-use sqlx::{MySqlPool, Row};
+use serde_json::{Value, json};
+use sqlx::{MySql, MySqlPool, Row, Transaction};
 use uuid::Uuid;
 
 use crate::error::{RuntimeError, RuntimeResult};
@@ -12,6 +14,33 @@ use crate::error::{RuntimeError, RuntimeResult};
 pub(crate) struct DebugOverlay {
     pub kind: String,
     pub payload: Value,
+}
+
+pub(crate) enum DebugCompletion {
+    Valid {
+        kind: String,
+        outputs: BTreeMap<String, Vec<Item>>,
+    },
+    ContractViolation {
+        kind: String,
+        code: &'static str,
+        message: String,
+    },
+}
+
+impl DebugCompletion {
+    pub(crate) fn succeeded(&self) -> bool {
+        matches!(self, Self::Valid { .. })
+    }
+}
+
+pub(crate) struct ApplyDebugCompletion<'a> {
+    pub tenant_id: Uuid,
+    pub execution_id: Uuid,
+    pub node_execution_id: NodeExecutionId,
+    pub attempt_id: Uuid,
+    pub node: &'a CompiledNode,
+    pub machine: &'a mut ExecutionMachine,
 }
 
 pub(crate) fn for_node(runtime_settings: &Value, node_id: &str) -> Option<DebugOverlay> {
@@ -43,6 +72,114 @@ pub(crate) fn completes_node(kind: &str) -> bool {
         kind,
         "pin_data" | "mock_output" | "history_output" | "artifact"
     )
+}
+
+pub(crate) fn completion(overlay: &DebugOverlay, node: &CompiledNode) -> Option<DebugCompletion> {
+    if !completes_node(&overlay.kind) {
+        return None;
+    }
+    let outputs = items(&overlay.payload);
+    Some(
+        match crate::output_contract::validate_node_output_contract(node, &outputs) {
+            Ok(()) => DebugCompletion::Valid {
+                kind: overlay.kind.clone(),
+                outputs,
+            },
+            Err(message) => DebugCompletion::ContractViolation {
+                kind: overlay.kind.clone(),
+                code: crate::output_contract::violation_code(node),
+                message,
+            },
+        },
+    )
+}
+
+pub(crate) async fn apply_completion(
+    tx: &mut Transaction<'_, MySql>,
+    request: ApplyDebugCompletion<'_>,
+    completion: DebugCompletion,
+) -> RuntimeResult<()> {
+    let (mut trace, failure) = match completion {
+        DebugCompletion::Valid { kind, outputs } => {
+            request
+                .machine
+                .complete(request.node_execution_id, outputs.clone())
+                .map_err(crate::engine_protocol::machine_error)?;
+            sqlx::query(
+                "UPDATE node_attempts SET output_json=?,ended_at=UTC_TIMESTAMP(6) WHERE tenant_id=? AND id=? AND status='succeeded'",
+            )
+            .bind(serde_json::to_value(&outputs).map_err(|error| RuntimeError::Internal(error.into()))?)
+            .bind(request.tenant_id)
+            .bind(request.attempt_id)
+            .execute(&mut **tx)
+            .await?;
+            let mut trace = crate::trace_delivery::TraceDraft::execution(
+                request.tenant_id,
+                request.execution_id,
+                "node.debug_overlay_applied",
+                "succeeded",
+            );
+            trace.attributes = json!({"nodeId":request.node.id,"overlayKind":kind});
+            (trace, None)
+        }
+        DebugCompletion::ContractViolation {
+            kind,
+            code,
+            message,
+        } => {
+            request
+                .machine
+                .fail(request.node_execution_id, code, &message, false)
+                .map_err(crate::engine_protocol::machine_error)?;
+            sqlx::query("UPDATE node_attempts SET error_code=?,error_message=?,ended_at=UTC_TIMESTAMP(6) WHERE tenant_id=? AND id=? AND status='failed'")
+                .bind(code)
+                .bind(&message)
+                .bind(request.tenant_id)
+                .bind(request.attempt_id)
+                .execute(&mut **tx)
+                .await?;
+            let mut trace = crate::trace_delivery::TraceDraft::execution(
+                request.tenant_id,
+                request.execution_id,
+                "node.failed",
+                "failed",
+            );
+            trace.error_code = Some(code.into());
+            trace.error_message = Some(message.clone());
+            trace.attributes = json!({"nodeId":request.node.id,"overlayKind":kind});
+            (trace, Some((code, message)))
+        }
+    };
+    let activation = request
+        .machine
+        .activation(request.node_execution_id)
+        .cloned()
+        .ok_or_else(|| RuntimeError::Internal(anyhow::anyhow!("activation disappeared")))?;
+    if let Some((code, message)) = failure {
+        crate::engine_persistence::upsert_failed_activation(
+            tx,
+            request.tenant_id,
+            request.execution_id,
+            &activation,
+            request.node,
+            code,
+            &message,
+        )
+        .await?;
+    } else {
+        crate::engine_persistence::upsert_activation(
+            tx,
+            request.tenant_id,
+            request.execution_id,
+            &activation,
+            request.node,
+        )
+        .await?;
+    }
+    trace.node_execution_id = Some(request.node_execution_id.as_uuid());
+    trace.attempt_id = Some(request.attempt_id);
+    crate::trace_delivery::enqueue_best_effort(tx, trace).await;
+    Ok(())
 }
 
 pub(crate) fn plan(runtime_settings: &Value) -> RuntimeResult<Option<RuntimeDebugPlanV1>> {

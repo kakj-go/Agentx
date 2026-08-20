@@ -2,10 +2,11 @@ import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 
 import { Dialog, DialogContent } from '../../../../shared/ui/dialog'
+import type { ReferenceCatalog } from '../../model/types'
 import { ReferencePicker } from './reference-picker'
 
-const catalog = {
-  inputs: [{ id: 'inputs.question', label: 'question', path: 'inputs.question', expression: '${{ inputs.question }}', type: 'string', children: [] }],
+const catalog: ReferenceCatalog = {
+  inputs: [{ id: 'inputs.question', label: 'question', path: 'inputs.question', selector: { namespace: 'inputs', run: { kind: 'current' }, item: { kind: 'current' }, path: ['question'] }, type: 'string', children: [] }],
   outputs: [],
   contexts: [],
 }
@@ -21,16 +22,16 @@ describe('ReferencePicker', () => {
     expect(screen.queryByText('Details')).not.toBeInTheDocument()
     fireEvent.click(screen.getByText('question'))
 
-    expect(insert).toHaveBeenCalledWith('${{ inputs.question }}')
+    expect(insert).toHaveBeenCalledWith(catalog.inputs[0].selector, catalog.inputs[0])
     expect(open).toHaveBeenCalledWith(false)
   })
 
   it('expands output branches inline as a tree', () => {
     const insert = vi.fn()
     const open = vi.fn()
-    const treeCatalog = {
+    const treeCatalog: ReferenceCatalog = {
       ...catalog,
-      outputs: [{ id: 'outputs.model', label: 'model', path: 'outputs.model', children: [{ id: 'outputs.model.main', label: 'main', path: 'outputs.model.main', children: [{ id: 'outputs.model.main.first', label: 'first', path: 'outputs.model.main.first', children: [{ id: 'outputs.model.main.first.json.text', label: 'text', path: 'outputs.model.main.first.json.text', expression: '${{ outputs.model.main.first.json.text }}', type: 'string', children: [] }] }] }] }],
+      outputs: [{ id: 'outputs.model', label: 'model', path: 'outputs.model', children: [{ id: 'outputs.model.main', label: 'main', path: 'outputs.model.main', children: [{ id: 'outputs.model.main.first', label: 'first', path: 'outputs.model.main.first', children: [{ id: 'outputs.model.main.first.json.text', label: 'text', path: 'outputs.model.main.first.json.text', selector: { namespace: 'outputs', sourceNodeId: 'model', port: 'main', run: { kind: 'current' }, item: { kind: 'first' }, path: ['text'] }, type: 'string', children: [] }] }] }] }],
     }
     render(<ReferencePicker catalog={treeCatalog} onInsert={insert} onOpenChange={open} open />)
 
@@ -44,7 +45,8 @@ describe('ReferencePicker', () => {
     fireEvent.click(screen.getByRole('button', { name: /text/ }))
 
     expect(screen.queryByRole('button', { name: /Back|返回/ })).not.toBeInTheDocument()
-    expect(insert).toHaveBeenCalledWith('${{ outputs.model.main.first.json.text }}')
+    const field = treeCatalog.outputs[0].children[0].children[0].children[0]
+    expect(insert).toHaveBeenCalledWith(field.selector, field)
     expect(open).toHaveBeenCalledWith(false)
   })
 

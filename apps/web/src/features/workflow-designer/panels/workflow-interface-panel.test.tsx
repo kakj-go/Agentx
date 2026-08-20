@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { useState } from 'react'
 import { afterEach, describe, expect, it } from 'vitest'
 
@@ -18,7 +18,7 @@ const end: WorkflowEnd = {
     collectWindowMs: 5000,
     outputs: {
       failure_message: {
-        expression: '',
+        value: { kind: 'literal', value: '' },
         schema: { type: 'string' },
         required: true,
         sensitive: false,
@@ -168,17 +168,21 @@ describe('Workflow boundary forms', () => {
     })
   })
 
-  it('inserts a fixed current-error field from the End picker', () => {
+  it('inserts a fixed current-error field from the End picker', async () => {
     render(<Harness boundary="end" />)
 
     fireEvent.click(screen.getByRole('button', { name: /Edit field|编辑字段/ }))
-    fireEvent.focus(screen.getByLabelText(/Expression|表达式/))
+    fireEvent.focus(screen.getByLabelText('Value'))
     fireEvent.click(screen.getByRole('button', { name: /Current data|当前数据/ }))
     fireEvent.click(screen.getByRole('button', { name: /Current error|当前错误/ }))
     fireEvent.click(screen.getByRole('button', { name: /Error message|错误消息/ }))
+    await waitFor(() => expect(screen.getByTestId('variable-token-editor').querySelector('[data-agentx-variable]')).not.toBeNull())
+    fireEvent.click(screen.getByRole('button', { name: /Save|保存/ }))
 
-    const state = JSON.parse(screen.getByTestId('definition-state').textContent ?? '{}')
-    expect(state.end.error.outputs.failure_message.expression).toBe('${{ item.json.message }}')
+    await waitFor(() => {
+      const state = JSON.parse(screen.getByTestId('definition-state').textContent ?? '{}')
+      expect(state.end.error.outputs.failure_message.value).toMatchObject({ kind: 'reference', selector: { namespace: 'item', path: ['message'] } })
+    })
   })
 
   it('preserves a success expression when a field rename blurs immediately before typing', async () => {
@@ -186,19 +190,44 @@ describe('Workflow boundary forms', () => {
 
     fireEvent.click(screen.getAllByRole('button', { name: /Add field|添加字段/ })[0])
     const name = screen.getAllByLabelText(/Output name|输出名称/)[0]
-    const expression = screen.getAllByLabelText(/Expression|表达式/)[0]
+    const expression = screen.getAllByLabelText('Value')[0]
     fireEvent.focus(name)
     fireEvent.change(name, { target: { value: 'answer' } })
     fireEvent.blur(name)
     fireEvent.focus(expression)
-    fireEvent.change(expression, { target: { value: '${{ outputs.mcp_tool.main.current.json }}' } })
     fireEvent.click(screen.getAllByLabelText(/Required|必填/)[0])
+    fireEvent.click(screen.getByRole('button', { name: /Save|保存/ }))
 
     const state = JSON.parse(screen.getByTestId('definition-state').textContent ?? '{}')
     expect(state.end.outputs.answer).toMatchObject({
-      expression: '${{ outputs.mcp_tool.main.current.json }}',
+      value: { kind: 'literal', value: '' },
       required: true,
     })
+  })
+
+  it('rejects invalid and duplicate End output names before changing the definition', () => {
+    render(<Harness boundary="end" />)
+
+    fireEvent.click(screen.getAllByRole('button', { name: /Add field|添加字段/ })[0])
+    const name = screen.getByLabelText(/Output name|输出名称/)
+    fireEvent.change(name, { target: { value: '中文输出' } })
+
+    expect(screen.getByRole('alert')).toHaveTextContent(/lowercase letters|小写字母/i)
+    expect(screen.getByRole('button', { name: /Save|保存/ })).toBeDisabled()
+    const state = JSON.parse(screen.getByTestId('definition-state').textContent ?? '{}')
+    expect(state.end.outputs).toEqual({})
+  })
+
+  it('rejects invalid global variable names and marks protocol-required labels', () => {
+    render(<Harness boundary="start" />)
+
+    fireEvent.click(screen.getByRole('button', { name: /Add global variable|添加全局变量/ }))
+    const name = screen.getByText(/Global variable name|全局变量名称/).closest('label')!.querySelector('input')!
+    fireEvent.change(name, { target: { value: '2bad-name' } })
+
+    expect(screen.getByRole('alert')).toHaveTextContent(/first character|不能以数字开头/i)
+    expect(screen.getByRole('button', { name: /Save|保存/ })).toBeDisabled()
+    expect(screen.getByText(/Global variable name|全局变量名称/).parentElement).toHaveTextContent('*')
   })
 
   it('configures an End output through the field dialog', () => {
@@ -210,13 +239,12 @@ describe('Workflow boundary forms', () => {
     fireEvent.change(screen.getByLabelText(/Output name|输出名称/), { target: { value: 'answer' } })
     fireEvent.change(screen.getByLabelText(/Title|标题/), { target: { value: 'Answer' } })
     fireEvent.change(screen.getByLabelText(/Description|说明/), { target: { value: 'Final answer' } })
-    fireEvent.change(screen.getByLabelText(/Expression|表达式/), { target: { value: '${{ outputs.node.main.current.json.answer }}' } })
     fireEvent.click(screen.getByLabelText(/Sensitive|敏感/))
     fireEvent.click(screen.getByRole('button', { name: /Save|保存/ }))
 
     const state = JSON.parse(screen.getByTestId('definition-state').textContent ?? '{}')
     expect(state.end.outputs.answer).toMatchObject({
-      expression: '${{ outputs.node.main.current.json.answer }}',
+      value: { kind: 'literal', value: '' },
       schema: { type: 'number', title: 'Answer', description: 'Final answer' },
       sensitive: true,
     })
@@ -226,7 +254,7 @@ describe('Workflow boundary forms', () => {
     render(<Harness boundary="end" />)
 
     fireEvent.click(screen.getAllByRole('button', { name: /Add field|添加字段/ })[0])
-    const expression = screen.getByLabelText(/Expression|表达式/)
+    const expression = screen.getByLabelText('Value')
     const required = screen.getByLabelText(/Required|必填/)
     const sensitive = screen.getByLabelText(/Sensitive|敏感/)
     const description = screen.getByLabelText(/Description|说明/)

@@ -174,6 +174,35 @@ pub(super) async fn upsert_activation(
 }
 
 #[allow(clippy::too_many_arguments)]
+pub(super) async fn upsert_failed_activation(
+    tx: &mut Transaction<'_, MySql>,
+    tenant_id: Uuid,
+    execution_id: Uuid,
+    activation: &agentx_runtime::NodeActivation,
+    node: &agentx_runtime::CompiledNode,
+    error_code: &str,
+    error_message: &str,
+) -> RuntimeResult<()> {
+    upsert_activation(tx, tenant_id, execution_id, activation, node).await?;
+    let updated = sqlx::query(
+        "UPDATE node_executions SET error_code=?,error_message=?,ended_at=UTC_TIMESTAMP(6) WHERE tenant_id=? AND execution_id=? AND id=? AND status='failed'",
+    )
+    .bind(error_code)
+    .bind(error_message)
+    .bind(tenant_id)
+    .bind(execution_id)
+    .bind(activation.id.as_uuid())
+    .execute(&mut **tx)
+    .await?;
+    if updated.rows_affected() != 1 {
+        return Err(RuntimeError::Internal(anyhow::anyhow!(
+            "failed activation was not persisted"
+        )));
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn finish_execution(
     tx: &mut Transaction<'_, MySql>,
     tenant_id: Uuid,
@@ -184,16 +213,46 @@ pub(super) async fn finish_execution(
     machine: &ExecutionMachine,
     context: &Value,
 ) -> RuntimeResult<()> {
-    let status = machine_status(machine.status());
-    let (output, error) = materialize_result(tx, tenant_id, execution_id, machine, context).await?;
+    let (status, output, error) =
+        match materialize_result(tx, tenant_id, execution_id, machine, context).await {
+            Ok((output, error)) => (machine_status(machine.status()), output, error),
+            // Definition/value errors are terminal workflow data. Storage errors
+            // must still abort the transaction so recovery can retry them.
+            Err(RuntimeError::Deterministic { code, message }) => (
+                "failed",
+                json!({}),
+                Some(json!({"code":code,"message":message})),
+            ),
+            Err(
+                RuntimeError::BadRequest(_, message) | RuntimeError::InvalidRequest(_, message),
+            ) => (
+                "failed",
+                json!({}),
+                Some(json!({
+                    "code":"END_OUTPUT_EVALUATION_FAILED",
+                    "message":message,
+                })),
+            ),
+            Err(error) => return Err(error),
+        };
+    let error_code = error
+        .as_ref()
+        .and_then(|value| value.get("code"))
+        .and_then(Value::as_str);
+    let error_message = error
+        .as_ref()
+        .and_then(|value| value.get("message"))
+        .and_then(Value::as_str);
     let result_hash = agentx_runtime_contracts::content_hash(&output)
         .map_err(|error| RuntimeError::Internal(error.into()))?;
     sqlx::query(
-        "UPDATE workflow_executions SET status=?,state_version=?,output_json=?,error_json=?,terminal_result_json=?,terminal_result_hash=?,ended_at=UTC_TIMESTAMP(6),duration_ms=TIMESTAMPDIFF(MICROSECOND,started_at,UTC_TIMESTAMP(6))/1000 WHERE tenant_id=? AND id=?",
+        "UPDATE workflow_executions SET status=?,state_version=?,output_json=?,error_code=?,error_message=?,error_json=?,terminal_result_json=?,terminal_result_hash=?,ended_at=UTC_TIMESTAMP(6),duration_ms=TIMESTAMPDIFF(MICROSECOND,started_at,UTC_TIMESTAMP(6))/1000 WHERE tenant_id=? AND id=?",
     )
     .bind(status)
     .bind(state_version)
     .bind(&output)
+    .bind(error_code)
+    .bind(error_message)
     .bind(&error)
     .bind(&output)
     .bind(result_hash.as_str())
@@ -201,7 +260,7 @@ pub(super) async fn finish_execution(
     .bind(execution_id)
     .execute(&mut **tx)
     .await?;
-    let invocation_status = if machine.status() == RuntimeExecutionStatus::Succeeded {
+    let invocation_status = if status == "succeeded" {
         "completed"
     } else if machine.status() == RuntimeExecutionStatus::Cancelled {
         "cancelled"
@@ -401,6 +460,12 @@ async fn materialize_result(
         outputs,
         contexts: context.clone(),
         execution: json!({"id":execution_id}),
+        output_node_keys: machine
+            .workflow()
+            .nodes
+            .iter()
+            .map(|node| (node.id.clone(), node.key.clone()))
+            .collect(),
         ..ExpressionContext::default()
     };
     let engine = ExpressionEngine;
@@ -432,8 +497,20 @@ async fn materialize_result(
         let mut error_outputs = Map::new();
         for (name, output) in &machine.workflow().end.error.outputs {
             let value = engine
-                .resolve_parameters(&Value::String(output.expression.clone()), &error_context)
-                .map_err(|error| RuntimeError::Internal(error.into()))?;
+                .resolve_dynamic_optional(&output.value, &error_context)
+                .map_err(|error| RuntimeError::Deterministic {
+                    code: "END_OUTPUT_EVALUATION_FAILED",
+                    message: error.to_string(),
+                })?;
+            let Some(value) = value else {
+                if output.required {
+                    return Err(RuntimeError::Deterministic {
+                        code: "REQUIRED_END_ERROR_OUTPUT_OMITTED",
+                        message: format!("required End error output {name} was omitted"),
+                    });
+                }
+                continue;
+            };
             if output.required && value.is_null() {
                 return Err(runtime_bad_request(
                     "REQUIRED_END_ERROR_OUTPUT_NULL",
@@ -441,9 +518,15 @@ async fn materialize_result(
                 ));
             }
             jsonschema::validator_for(&output.schema)
-                .map_err(|error| RuntimeError::Internal(error.into()))?
+                .map_err(|error| RuntimeError::Deterministic {
+                    code: "END_OUTPUT_SCHEMA_INVALID",
+                    message: error.to_string(),
+                })?
                 .validate(&value)
-                .map_err(|error| RuntimeError::Internal(anyhow::anyhow!(error.to_string())))?;
+                .map_err(|error| RuntimeError::Deterministic {
+                    code: "END_OUTPUT_SCHEMA_VALIDATION_FAILED",
+                    message: error.to_string(),
+                })?;
             error_outputs.insert(name.clone(), value);
         }
         let code = primary
@@ -468,11 +551,20 @@ async fn materialize_result(
     let mut result = Map::new();
     for (name, output) in &machine.workflow().end.outputs {
         let value = engine
-            .resolve_parameters(
-                &Value::String(output.expression.clone()),
-                &expression_context,
-            )
-            .map_err(|error| RuntimeError::Internal(error.into()))?;
+            .resolve_dynamic_optional(&output.value, &expression_context)
+            .map_err(|error| RuntimeError::Deterministic {
+                code: "END_OUTPUT_EVALUATION_FAILED",
+                message: error.to_string(),
+            })?;
+        let Some(value) = value else {
+            if output.required {
+                return Err(RuntimeError::Deterministic {
+                    code: "REQUIRED_END_OUTPUT_OMITTED",
+                    message: format!("required End output {name} was omitted"),
+                });
+            }
+            continue;
+        };
         if output.required && value.is_null() {
             return Err(runtime_bad_request(
                 "REQUIRED_END_OUTPUT_NULL",
@@ -480,9 +572,15 @@ async fn materialize_result(
             ));
         }
         jsonschema::validator_for(&output.schema)
-            .map_err(|error| RuntimeError::Internal(error.into()))?
+            .map_err(|error| RuntimeError::Deterministic {
+                code: "END_OUTPUT_SCHEMA_INVALID",
+                message: error.to_string(),
+            })?
             .validate(&value)
-            .map_err(|error| RuntimeError::Internal(anyhow::anyhow!(error.to_string())))?;
+            .map_err(|error| RuntimeError::Deterministic {
+                code: "END_OUTPUT_SCHEMA_VALIDATION_FAILED",
+                message: error.to_string(),
+            })?;
         result.insert(name.clone(), value);
     }
     if result.is_empty()

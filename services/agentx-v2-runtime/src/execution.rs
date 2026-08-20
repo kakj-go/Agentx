@@ -1,3 +1,4 @@
+use agentx_runtime::ExecutionMachine;
 use agentx_runtime_contracts::{ExecutionSpecPayloadV1, RuntimePublishErrorCodeV1, WorkerTaskV1};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -137,6 +138,27 @@ pub async fn complete_dispatch(pool: &sqlx::MySqlPool, claim: &DispatchClaim) ->
     Ok(())
 }
 
+pub async fn release_dispatch(
+    pool: &sqlx::MySqlPool,
+    claim: &DispatchClaim,
+    error: &str,
+) -> RuntimeResult<()> {
+    let changed = sqlx::query("UPDATE execution_outbox SET locked_by=NULL,locked_until=NULL,available_at=DATE_ADD(UTC_TIMESTAMP(6),INTERVAL 250000 MICROSECOND),last_error=? WHERE id=? AND locked_by=? AND fencing_token=? AND locked_until>UTC_TIMESTAMP(6) AND status='pending'")
+        .bind(error.chars().take(1000).collect::<String>())
+        .bind(claim.id)
+        .bind(claim.owner)
+        .bind(claim.fencing_token)
+        .execute(pool)
+        .await?;
+    if changed.rows_affected() != 1 {
+        return Err(RuntimeError::Conflict(
+            RuntimePublishErrorCodeV1::IdempotencyConflict,
+            "Outbox Lease was lost".into(),
+        ));
+    }
+    Ok(())
+}
+
 pub async fn claim_runtime_event(
     pool: &sqlx::MySqlPool,
     owner: Uuid,
@@ -185,6 +207,7 @@ pub async fn recover_dispatches(
     limit: u32,
 ) -> RuntimeResult<Vec<WorkerTaskV1>> {
     let mut tx = pool.begin().await?;
+    timeout_expired_attempts(&mut tx, limit).await?;
     sqlx::query("UPDATE runtime_commands SET status='pending',locked_by=NULL,locked_until=NULL WHERE status='processing' AND locked_until<=UTC_TIMESTAMP(6)")
         .execute(&mut *tx).await?;
     sqlx::query("UPDATE worker_leases l JOIN node_attempts a ON a.id=l.node_attempt_id SET l.released_at=COALESCE(l.released_at,UTC_TIMESTAMP(6)) WHERE a.status='running' AND a.locked_until<=UTC_TIMESTAMP(6)")
@@ -207,6 +230,50 @@ pub async fn recover_dispatches(
     }
     tx.commit().await?;
     Ok(messages)
+}
+
+async fn timeout_expired_attempts(
+    tx: &mut sqlx::Transaction<'_, sqlx::MySql>,
+    limit: u32,
+) -> RuntimeResult<()> {
+    let rows = sqlx::query(
+        "SELECT e.tenant_id,e.id execution_id,e.work_package_id,e.invocation_id,r.state_version,r.context_json,r.machine_state_json FROM workflow_executions e JOIN execution_runtime_state r ON r.tenant_id=e.tenant_id AND r.execution_id=e.id WHERE e.status IN ('queued','running','waiting','suspended') AND EXISTS(SELECT 1 FROM node_attempts a WHERE a.tenant_id=e.tenant_id AND a.execution_id=e.id AND a.status IN ('queued','running') AND a.deadline_at IS NOT NULL AND a.deadline_at<=UTC_TIMESTAMP(6)) ORDER BY e.started_at,e.id LIMIT ? FOR UPDATE SKIP LOCKED",
+    )
+    .bind(limit.clamp(1, 100))
+    .fetch_all(&mut **tx)
+    .await?;
+    for row in rows {
+        let tenant_id: Uuid = row.try_get("tenant_id")?;
+        let execution_id: Uuid = row.try_get("execution_id")?;
+        let state_version: u64 = row.try_get("state_version")?;
+        let context: Value = row.try_get("context_json")?;
+        let mut machine: ExecutionMachine =
+            serde_json::from_value(row.try_get("machine_state_json")?)
+                .map_err(|error| RuntimeError::Internal(error.into()))?;
+        machine.timeout();
+        sqlx::query("UPDATE node_attempts SET status='timed_out',error_code='NODE_EXECUTION_TIMED_OUT',error_message='Node execution exceeded its operation deadline',locked_until=NULL,heartbeat_at=NULL,ended_at=UTC_TIMESTAMP(6) WHERE tenant_id=? AND execution_id=? AND status IN ('queued','running')")
+            .bind(tenant_id).bind(execution_id).execute(&mut **tx).await?;
+        sqlx::query("UPDATE node_executions SET status='timed_out',error_code='NODE_EXECUTION_TIMED_OUT',error_message='Node execution exceeded its operation deadline',ended_at=UTC_TIMESTAMP(6) WHERE tenant_id=? AND execution_id=? AND status IN ('ready','queued','running','waiting')")
+            .bind(tenant_id).bind(execution_id).execute(&mut **tx).await?;
+        sqlx::query("UPDATE worker_leases SET released_at=COALESCE(released_at,UTC_TIMESTAMP(6)) WHERE tenant_id=? AND node_attempt_id IN (SELECT id FROM node_attempts WHERE tenant_id=? AND execution_id=?)")
+            .bind(tenant_id).bind(tenant_id).bind(execution_id).execute(&mut **tx).await?;
+        sqlx::query("UPDATE execution_runtime_state SET state_version=?,machine_state_json=? WHERE tenant_id=? AND execution_id=?")
+            .bind(state_version + 1)
+            .bind(serde_json::to_value(&machine).map_err(|error| RuntimeError::Internal(error.into()))?)
+            .bind(tenant_id).bind(execution_id).execute(&mut **tx).await?;
+        crate::engine_persistence::finish_execution(
+            tx,
+            tenant_id,
+            execution_id,
+            row.try_get("work_package_id")?,
+            row.try_get("invocation_id")?,
+            state_version + 1,
+            &machine,
+            &context,
+        )
+        .await?;
+    }
+    Ok(())
 }
 
 pub async fn create_invocation(

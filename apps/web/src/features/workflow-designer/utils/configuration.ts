@@ -1,10 +1,11 @@
 import { SUPPORTED_CONTROLS } from '../forms/parameter-field'
 import type { NodeManifest, StudioDocument } from '../model/types'
+import { definitionIssues } from './definition-validation'
 
 export type StudioIssue = { code: string; message: string; nodeId?: string; fieldPath?: string; values?: Record<string, string> }
 
 export function configurationIssues(document: StudioDocument, manifests: Map<string, NodeManifest>): StudioIssue[] {
-  const issues: StudioIssue[] = []
+  const issues: StudioIssue[] = definitionIssues(document)
   for (const node of document.nodes) {
     if (node.data.editorKind === 'binding') {
       if (!node.data.resourceId) issues.push({ code: 'ATTACHMENT_RESOURCE_REQUIRED', nodeId: node.id, fieldPath: 'resourceId', message: 'Select a resource for this AI attachment.' })

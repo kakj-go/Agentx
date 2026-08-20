@@ -354,10 +354,10 @@ pub async fn get_execution_runtime_details(
     Path(id): Path<Uuid>,
 ) -> RuntimeResult<Json<ExecutionRuntimeDetailsV1>> {
     let claims = authorize_execution(&state, &headers, id, "execution_runtime_details").await?;
-    let attempts = sqlx::query("SELECT id,node_execution_id,attempt_number,status,fencing_token,result_hash,error_code,error_message FROM node_attempts WHERE tenant_id=? AND execution_id=? ORDER BY node_execution_id,attempt_number")
+    let attempts = sqlx::query("SELECT a.id,a.node_execution_id,a.attempt_number,a.status,a.fencing_token,a.result_hash,a.error_code,a.error_message,COALESCE(a.worker_instance_id,(SELECT l.worker_id FROM worker_leases l WHERE l.tenant_id=a.tenant_id AND l.node_attempt_id=a.id ORDER BY l.fencing_token DESC LIMIT 1)) worker_id FROM node_attempts a WHERE a.tenant_id=? AND a.execution_id=? ORDER BY a.node_execution_id,a.attempt_number")
         .bind(claims.tenant_id).bind(id).fetch_all(&state.pool).await?.into_iter().map(|row| -> RuntimeResult<_> { Ok(NodeAttemptV1 {
             attempt_id: row.try_get("id")?, node_execution_id: row.try_get("node_execution_id")?,
-            attempt_number: row.try_get("attempt_number")?, status: row.try_get("status")?, worker_id: None,
+            attempt_number: row.try_get("attempt_number")?, status: row.try_get("status")?, worker_id: row.try_get("worker_id")?,
             fencing_token: row.try_get("fencing_token")?, result_hash: row.try_get::<Option<String>,_>("result_hash")?.map(parse_hash).transpose()?,
             error_code: row.try_get("error_code")?, error_message: row.try_get("error_message")?,
         })}).collect::<RuntimeResult<Vec<_>>>()?;

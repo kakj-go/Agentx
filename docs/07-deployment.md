@@ -16,6 +16,18 @@ Agentx V2 通过 `scripts/deploy-v2.ps1` 和破坏性的 `agentx.io/deployment/v
 
 Profile 只保存非敏感配置和固定 Secret 引用。密码、API Key、Session Token 和加密 Key 只进入 Kubernetes Secret；CA、客户端证书和私钥由部署主机的绝对路径复制到只读 Trust Bundle。
 
+所有跨组件凭据都以 Dependencies Namespace 的 `agentx-dependencies-secrets` 为唯一权威来源，包括 Vault Token、Control 与 Runtime/Observability 的 JWT/Bundle/Work Package/User 签名材料、Runtime 与 Egress Gateway 的私钥/公钥/KID、Egress TLS/CA，以及 Observability Redis ACL 密码。Kubernetes 不允许 Pod 直接引用其他 Namespace 的 Secret，因此部署器按最小权限把这些值同步到 Control、Runtime、Observability 和 Gateway 的本地镜像 Secret；组件不直接读取跨 Namespace Secret，也不放宽 RBAC。生产 `existing-kubernetes` Profile 同样必须提供 `agentx-dependencies-secrets`，各工作负载 Secret 只保存本地凭据和所需共享值的镜像。
+
+管理员只修改权威 Secret，随后必须执行全量协调同步：
+
+```powershell
+.\scripts\deploy-v2.ps1 -Action SyncSecrets -Target All -ConfigFile deploy/profiles/v2-full-local.json
+```
+
+`SyncSecrets` 只允许 `-Target All`。它先拒绝缺项或不完整的共享密钥集合，再更新所有镜像，重跑 bundled Vault Bootstrap 并验证两个 Token，随后滚动 Runtime Redis、Egress Gateway 及所有消费共享凭据的应用并等待 Ready。普通 Install/Upgrade 会复用 Dependencies Secret 中已有权威值，单独重建 Control、Runtime 或 Observability 不会再生成不同的 Token/密钥；删除整个 Dependencies Secret 后才会执行一次旧分域 Secret 迁移或生成新材料。
+
+共享签名密钥轮换不是单值更新：私钥、公钥集合和 KID 必须作为同一批次更新。Egress 应使用 `scripts/rotate-egress-keys.ps1`，它在新旧公钥重叠发布成功后才提交新的权威值；其他签名材料手工轮换时也应先在公钥 JSON 中保留新旧 KID，再分两次执行 `SyncSecrets`，最后移除旧公钥。只更新密钥对的一半会被部署器拒绝。
+
 本地 Full 将 Control MySQL 放在 Control，Runtime MySQL/Redis/ClickHouse 放在 Runtime，Vault/MinIO/Ingress 放在 Dependencies。生产使用相同三个 Namespace，但状态型中间件可以全部位于集群外，只要 Agentx Pod 能解析地址、完成 TLS 验证并通过 Doctor。
 
 ## 2. 目录边界
@@ -69,7 +81,7 @@ Sandbox Manager 只解析 Runtime MySQL 和 OpenSandbox Settings；Runtime Gatew
 
 ## 5. 专用 Ingress
 
-脚本管理固定 ingress-nginx Chart `4.15.1`、Controller `1.15.1`、Release `agentx-ingress-nginx` 和 Profile 指定的 IngressClass。它安装在 `agentx-v2-deps`（或 RunId 对应 Dependencies Namespace），不是默认 IngressClass，不接管未带 V2 所有权标记的 Controller。
+脚本管理固定 ingress-nginx Chart `4.15.1`、Controller `1.15.1`、Release `agentx-ingress-nginx` 和 Profile 指定的 IngressClass。它安装在 `agentx-deps`（或 RunId 对应 Dependencies Namespace），不是默认 IngressClass，不接管未带 V2 所有权标记的 Controller。
 
 Profile 必须提供 Host，可选择已有 TLS Secret。默认环境使用 `LoadBalancer`；RunId 临时环境使用独立 IngressClass、独立 Helm资源名和 `ClusterIP`，避免并发环境争用 80/443。卸载前会扫描全集群；仍有 Ingress 使用该 IngressClass 时保留 Controller。
 

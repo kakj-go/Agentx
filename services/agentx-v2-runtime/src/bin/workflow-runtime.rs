@@ -522,7 +522,19 @@ async fn dispatch_loop(
             progress.processed_since(started).await;
             continue;
         };
-        runtime_task_queue::publish(&mut redis, &claim.task()?).await?;
+        if let Err(error) = runtime_task_queue::publish(&mut redis, &claim.task()?).await {
+            if let Err(release_error) =
+                agentx_v2_runtime::execution::release_dispatch(&pool, &claim, &error.to_string())
+                    .await
+            {
+                tracing::warn!(
+                    %release_error,
+                    outbox_id = %claim.id,
+                    "Failed to release Runtime dispatch after Redis publish failure"
+                );
+            }
+            return Err(error);
+        }
         agentx_v2_runtime::execution::complete_dispatch(&pool, &claim).await?;
         progress.processed_since(started).await;
     }
@@ -584,10 +596,10 @@ async fn recovery_loop(
         let started = std::time::Instant::now();
         agentx_v2_runtime::enqueue_due_waits(&pool, owner, 100).await?;
         agentx_v2_runtime::composite_execution::enqueue_overdue(&pool, 100).await?;
+        runtime_task_queue::ensure_groups(&mut redis).await?;
         for message in agentx_v2_runtime::execution::recover_dispatches(&pool, 100).await? {
             runtime_task_queue::publish(&mut redis, &message).await?;
         }
-        runtime_task_queue::ensure_groups(&mut redis).await?;
         progress.processed_since(started).await;
         tokio::time::sleep(Duration::from_secs(1)).await;
     }

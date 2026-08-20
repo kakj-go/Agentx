@@ -13,7 +13,7 @@ V2 已在 08A 将原“服务进程分离、共享 MySQL”的架构重构为相
 
 本计划以当前工作树为分析基线，但不要求兼容当前开发数据、数据库 Schema、内部代码 API、HTTP API、gRPC、Runtime Event 或部署 Profile。实现时允许删除旧表、旧 Migration、旧 DTO、旧查询和过渡 Adapter，直接建立 V2 空库。
 
-“不兼容”只针对数据和技术契约，不代表默认删除已有产品能力。除本计划明确排除的内容外，Workflow 4.0、Studio、Application、Session、Evaluation、Approval、Checkpoint/Fork、Agent、资源 Runtime、Trace 和 OpenSandbox 等现有用户能力必须在 V2 主链上重新闭环；允许以新的 API、表和内部实现完成。
+“不兼容”只针对数据和技术契约，不代表默认删除已有产品能力。除本计划明确排除的内容外，Workflow 5.0、Studio、Application、Session、Evaluation、Approval、Checkpoint/Fork、Agent、资源 Runtime、Trace 和 OpenSandbox 等现有用户能力必须在 V2 主链上重新闭环；允许以新的 API、表和内部实现完成。
 
 ## 2. 固定基础设施拓扑
 

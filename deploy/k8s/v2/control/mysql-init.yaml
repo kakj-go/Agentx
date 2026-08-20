@@ -2,7 +2,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: control-mysql-init
-  namespace: agentx-v2-control
+  namespace: agentx-control
 data:
   01-users.sh: |
     #!/bin/sh

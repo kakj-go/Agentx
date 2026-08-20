@@ -18,7 +18,7 @@
 
 ## 2. Workflow Definition
 
-当前运行定义为不兼容旧版本的 `WorkflowDefinition 4.0`。项目尚未发布，不保留 2.0/3.0 双读；开发数据、Fixture、Schema 和编译测试一次性迁移。完整契约见 [Workflow 4.0](12-workflow-4.md)。
+当前运行定义为不兼容旧版本的 `WorkflowDefinition 5.0`。项目尚未发布，不保留旧版本双读或迁移；开发数据、Fixture、Schema 和编译测试一次性切换。完整契约见 [Workflow 5.0](12-workflow-5.md)。
 
 Workflow Definition 包含：
 
@@ -126,7 +126,7 @@ branchIndex/outputIndex 属于 Item 来源和 Edge Delivery，不属于 Node Exe
 
 ## 5. 表达式系统
 
-Expression 2.0 只能读取以下命名空间：
+Structured Value 1.0 只能读取以下命名空间：
 
 - `inputs`：Start 校验后的不可变输入。
 - `outputs`：按 Node Key、端口和显式 Item/run 选择器读取可达前置节点输出。
@@ -145,7 +145,9 @@ Expression 2.0 只能读取以下命名空间：
 
 表达式解析错误属于节点配置错误，应明确区分于节点业务错误。
 
-表达式使用 `${{ ... }}`，完整表达式保留 JSON 类型，嵌入普通字符串时才转成文本。旧 `$json`、`$input`、`node()` 和前导 `=` 不被接受。表达式由平台按 Item 和运行上下文求值，远程节点不直接读取 Execution 历史。
+Definition 不保存字符串占位符。所有可绑定值使用带 `kind` 的 `DynamicValue`：固定值为 `literal`，单变量为 `reference`，文本与变量混排为 `template.segments`，条件、比较、算术、函数、数组和对象使用 `expression.root` AST。`ValueSelector` 以稳定 Node ID、端口、run/item 选择和结构化路径定位来源；节点改名不改变引用。缺失值必须声明 `error`、`null`、`default` 或 `omit`，其中 `omit` 会真正删除字段而非写入 `null`。
+
+编译器拒绝旧占位符和未声明引用；运行时引用、投影、Context Write 或 End Schema 的确定性错误必须进入不可重试终态并 ACK Worker 消息。数据库和对象存储错误仍回滚并由 Recovery 重试，不能混入业务配置错误。
 
 ## 6. Node Definition
 
@@ -218,6 +220,7 @@ IR 应预先计算：
 - 分支关闭传播规则
 - Join 策略
 - Agent 资源依赖
+- 每个节点实例按端口冻结的 Effective Output Contract；它由 Manifest Schema、实例化结构化输出配置和 Output Projection 合成，Worker 提交结果时直接校验该契约
 - Error Branch
 - 可用的 Checkpoint 边界
 

@@ -1,6 +1,6 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { ChevronDown, ChevronUp, MoreHorizontal, Play, Plus, Power, Settings2, Trash2, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { apiRequest } from "../../../shared/api/client";
@@ -33,10 +33,12 @@ import type {
   NodeManifest,
   ReferenceCatalog,
   ReferenceEntry,
+  ValueSelector,
   ResourceOption,
   ResourceRequestContext,
   ResourceType,
   UiField,
+  DynamicValue,
 } from "../model/types";
 import {
   localizeManifest,
@@ -44,11 +46,12 @@ import {
 } from "../model/manifest-localization";
 import {
   ParameterField,
-  ReferenceControl,
+  DynamicValueControl,
   SUPPORTED_CONTROLS,
 } from "../forms/parameter-field";
-import { insertAtSelection } from "../forms/reference-picker/reference-insertion";
 import { ResourcePicker } from "../forms/resource-picker";
+import { RequiredLabel } from "../forms/required-label";
+import { isReferenceKey } from "../utils/definition-validation";
 import { NodeIcon } from "../nodes/node-icon";
 import { Badge } from "../../../shared/ui/badge";
 
@@ -122,9 +125,9 @@ export function NodeInspector({
   const currentNodeCatalog = useMemo(
     () =>
       data?.editorKind === "action" && manifest && referenceCatalog
-        ? addCurrentNodeReferences(referenceCatalog, data, manifest, t("studio.references.currentRawOutput"))
+        ? addCurrentNodeReferences(referenceCatalog, data, manifest, t("studio.references.currentRawOutput"), nodeId)
         : referenceCatalog,
-    [data, manifest, referenceCatalog, t],
+    [data, manifest, nodeId, referenceCatalog, t],
   );
   const translate = (key: string, fallback?: string) =>
     fallback ? t(key, { defaultValue: fallback }) : t(key);
@@ -135,6 +138,7 @@ export function NodeInspector({
         `/executions/${executionId}/nodes`,
       ),
     enabled: Boolean(executionId && nodeId),
+    refetchInterval: executionId ? 2_000 : false,
   });
   const trace = useExecutionTrace(executionId, tab === "trace");
   const selectedRuns = useMemo(
@@ -161,6 +165,9 @@ export function NodeInspector({
     () => onValidityChange?.(!unsupported),
     [onValidityChange, unsupported],
   );
+  useEffect(() => {
+    setOverlayText("{}");
+  }, [nodeId]);
   useEffect(() => {
     if (selectedRun?.output !== undefined)
       setOverlayText(JSON.stringify(selectedRun.output, null, 2));
@@ -311,7 +318,7 @@ export function NodeInspector({
         >
           <div className="mb-3 flex items-center gap-1">
             <Button
-              disabled={overlay.isPending || data.editorKind !== "action"}
+              disabled={overlay.isPending || data.editorKind !== "action" || selectedRun?.output === undefined}
               onClick={() => overlay.mutate("pin_data")}
               size="sm"
               variant="secondary"
@@ -392,7 +399,7 @@ function Parameters({
   if (data.editorKind === "binding")
     return (
       <div className="space-y-4">
-        <Field label={t("studio.inspector.attachment")}>
+        <Field label={t("studio.inspector.attachment")} required>
           <Input disabled value={t(`resourceGrants.resourceTypes.${data.resourceType}`)} />
         </Field>
         <ResourceSelect
@@ -406,19 +413,22 @@ function Parameters({
           onRequest={onResourceRequest}
           sourceNodeId={sourceNodeId}
           testId="attachment-resource"
+          required
           value={data.resourceId}
         />
       </div>
     );
+  const nameError = !data.label.trim() || data.label.length > 160 ? t("studio.validation.issues.INVALID_NODE_NAME") : undefined;
+  const keyError = !isReferenceKey(data.key) ? t("studio.validation.issues.INVALID_NODE_KEY") : undefined;
   return (
     <div className="space-y-5">
-      <Field fieldPath="name" label={t("studio.inspector.name")}>
+      <Field error={fieldErrors.name ?? nameError} fieldPath="name" label={t("studio.inspector.name")} required>
         <Input
           onChange={(event) => onChange({ label: event.target.value })}
           value={data.label}
         />
       </Field>
-      <Field fieldPath="key" label={t("studio.inspector.key")}>
+      <Field error={fieldErrors.key ?? keyError} fieldPath="key" label={t("studio.inspector.key")} required>
         <Input
           className="font-mono"
           onChange={(event) =>
@@ -559,6 +569,7 @@ function Parameters({
       <Field
         fieldPath="settings.onError"
         label={t("studio.inspector.errorPolicy")}
+        required
       >
         <Select
           className="w-full"
@@ -595,7 +606,7 @@ function Parameters({
               data-field-path={`resourceReferences.${slot.name}`}
               key={slot.name}
             >
-              <span>{localized?.bindingSlotLabel(slot.name) ?? slot.name}</span>
+              <span><RequiredLabel required={slot.required}>{localized?.bindingSlotLabel(slot.name) ?? slot.name}</RequiredLabel></span>
               <span
                 className={
                   slot.required ? "text-warning" : "text-muted-foreground"
@@ -752,7 +763,7 @@ function ProjectionConfiguration({
     const fields = projection[port] ?? {};
     let index = Object.keys(fields).length + 1;
     while (fields[`custom_${index}`]) index += 1;
-    setDraft({ port, name: `custom_${index}`, field: { expression: "", schema: { type: "string" }, sensitive: false } });
+    setDraft({ port, name: `custom_${index}`, field: { value: { kind: "literal", value: "" }, schema: { type: "string" }, sensitive: false } });
     setDialogOpen(true);
   };
   const edit = (port: string, name: string) => {
@@ -762,6 +773,9 @@ function ProjectionConfiguration({
   const save = () => {
     if (!draft?.name.trim()) return;
     const clean = draft.name.trim();
+    const duplicate = Boolean(projection[draft.port]?.[clean])
+      && !(draft.originalPort === draft.port && draft.originalName === clean);
+    if (!isReferenceKey(clean) || duplicate) return;
     const next = { ...projection };
     if (draft.originalName && draft.originalPort) {
       const originalFields = { ...next[draft.originalPort] };
@@ -779,7 +793,7 @@ function ProjectionConfiguration({
     onChange(next);
   };
   const nativeFields = Object.entries((manifest.outputSchema as { properties?: Record<string, { type?: string }> } | undefined)?.properties ?? {});
-  return <section><div className="mb-2 flex items-center justify-between gap-3"><span className="text-xs text-muted-foreground">{label}</span><Button onClick={add} size="sm" variant="secondary"><Plus className="size-3.5" />{t("studio.inspector.addProjection")}</Button></div><div className="space-y-2">{nativeFields.length > 0 && <div className="rounded-md bg-muted/40 p-2"><div className="mb-1 text-[10px] font-medium text-muted-foreground">{t("studio.inspector.nativeOutputs")}</div>{nativeFields.map(([name, schema]) => <div className="flex justify-between py-1 text-[11px]" key={name}><code>{name}</code><span className="text-muted-foreground">{schema.type ?? "unknown"}</span></div>)}</div>}{Object.entries(projection).flatMap(([port, fields]) => Object.entries(fields).map(([name, field]) => <div className="flex items-center gap-3 rounded-md border border-border px-3 py-2.5" key={`${port}:${name}`}><div className="min-w-0 flex-1"><div className="flex items-center gap-2"><code className="truncate text-xs font-medium">{name}</code><span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">{projectionType(field.schema)}</span>{field.sensitive && <span className="text-[10px] text-warning">{t("studio.interface.sensitive")}</span>}</div><div className="truncate text-[10px] text-muted-foreground">{port} · {field.expression || t("studio.inspector.noExpression")}</div></div><Button aria-label={t("studio.editField")} onClick={() => edit(port, name)} size="icon" variant="ghost"><Settings2 className="size-3.5" /></Button><Button aria-label={t("studio.removeField")} onClick={() => remove(port, name)} size="icon" variant="ghost"><Trash2 className="size-3.5" /></Button></div>))}</div><ProjectionDialog draft={draft} onChange={setDraft} onClose={() => { setDialogOpen(false); setDraft(null); }} onSave={save} open={dialogOpen} ports={ports} referenceCatalog={referenceCatalog} /></section>;
+  return <section><div className="mb-2 flex items-center justify-between gap-3"><span className="text-xs text-muted-foreground">{label}</span><Button onClick={add} size="sm" variant="secondary"><Plus className="size-3.5" />{t("studio.inspector.addProjection")}</Button></div><div className="space-y-2">{nativeFields.length > 0 && <div className="rounded-md bg-muted/40 p-2"><div className="mb-1 text-[10px] font-medium text-muted-foreground">{t("studio.inspector.nativeOutputs")}</div>{nativeFields.map(([name, schema]) => <div className="flex justify-between py-1 text-[11px]" key={name}><code>{name}</code><span className="text-muted-foreground">{schema.type ?? "unknown"}</span></div>)}</div>}{Object.entries(projection).flatMap(([port, fields]) => Object.entries(fields).map(([name, field]) => <div className="flex items-center gap-3 rounded-md border border-border px-3 py-2.5" key={`${port}:${name}`}><div className="min-w-0 flex-1"><div className="flex items-center gap-2"><code className="truncate text-xs font-medium">{name}</code><span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">{projectionType(field.schema)}</span>{field.sensitive && <span className="text-[10px] text-warning">{t("studio.interface.sensitive")}</span>}</div><div className="truncate text-[10px] text-muted-foreground">{port} · {dynamicValueSummary(field.value)}</div></div><Button aria-label={t("studio.editField")} onClick={() => edit(port, name)} size="icon" variant="ghost"><Settings2 className="size-3.5" /></Button><Button aria-label={t("studio.removeField")} onClick={() => remove(port, name)} size="icon" variant="ghost"><Trash2 className="size-3.5" /></Button></div>))}</div><ProjectionDialog draft={draft} onChange={setDraft} onClose={() => { setDialogOpen(false); setDraft(null); }} onSave={save} open={dialogOpen} ports={ports} projection={projection} referenceCatalog={referenceCatalog} /></section>;
 }
 
 type ProjectionDraft = {
@@ -790,11 +804,15 @@ type ProjectionDraft = {
   field: ActionNodeData["outputProjection"][string][string];
 };
 
-function ProjectionDialog({ open, draft, ports, referenceCatalog, onChange, onClose, onSave }: { open: boolean; draft: ProjectionDraft | null; ports: string[]; referenceCatalog?: ReferenceCatalog; onChange: (value: ProjectionDraft | null) => void; onClose: () => void; onSave: () => void }) {
+function ProjectionDialog({ open, draft, ports, projection, referenceCatalog, onChange, onClose, onSave }: { open: boolean; draft: ProjectionDraft | null; ports: string[]; projection: ActionNodeData["outputProjection"]; referenceCatalog?: ReferenceCatalog; onChange: (value: ProjectionDraft | null) => void; onClose: () => void; onSave: () => void }) {
   const { t } = useTranslation();
   if (!draft) return null;
   const setField = (patch: Partial<ProjectionDraft["field"]>) => onChange({ ...draft, field: { ...draft.field, ...patch } });
-  return <Dialog onOpenChange={(value) => !value && onClose()} open={open}><DialogContent description={t("studio.inspector.projectionDialogDescription")} title={draft.originalName ? t("studio.inspector.editProjection") : t("studio.inspector.addProjection")}><div className="space-y-4 p-5"><div><h2 className="text-sm font-semibold">{draft.originalName ? t("studio.inspector.editProjection") : t("studio.inspector.addProjection")}</h2><p className="mt-1 text-[11px] text-muted-foreground">{t("studio.inspector.projectionDialogDescription")}</p></div><div className="grid gap-3">{ports.length > 1 && <label className="text-xs"><span className="mb-1 block text-muted-foreground">{t("studio.inspector.outputPort")}</span><Select onValueChange={(port) => onChange({ ...draft, port })} options={ports.map((port) => ({ value: port, label: port }))} value={draft.port} /></label>}<label className="text-xs"><span className="mb-1 block text-muted-foreground">{t("studio.interface.fieldType")}</span><Select aria-label={t("studio.interface.fieldType")} onValueChange={(type) => setField({ schema: { type } })} options={schemaTypeOptions(t)} value={projectionType(draft.field.schema)} /></label><label className="text-xs"><span className="mb-1 block text-muted-foreground">{t("studio.interface.outputName")}</span><Input aria-label={t("studio.interface.outputName")} onChange={(event) => onChange({ ...draft, name: event.target.value })} value={draft.name} /></label><label className="text-xs"><span className="mb-1 block text-muted-foreground">{t("studio.interface.content")}</span><ReferenceTextInput allowed={["inputs", "outputs", "contexts", "item"]} catalog={referenceCatalog} expectedType={projectionType(draft.field.schema)} onChange={(expression) => setField({ expression })} placeholder="${{ item.json.value }}" value={draft.field.expression} /></label><label className="flex items-center gap-2 text-xs"><input checked={draft.field.sensitive} className="size-4 accent-primary" onChange={(event) => setField({ sensitive: event.target.checked })} type="checkbox" />{t("studio.interface.sensitive")}</label></div><div className="flex justify-end gap-2 border-t border-border pt-4"><Button onClick={onClose} variant="ghost">{t("common.cancel")}</Button><Button disabled={!draft.name.trim()} onClick={onSave}>{t("common.save")}</Button></div></div></DialogContent></Dialog>;
+  const cleanName = draft.name.trim();
+  const duplicate = Boolean(projection[draft.port]?.[cleanName])
+    && !(draft.originalPort === draft.port && draft.originalName === cleanName);
+  const nameError = !cleanName ? t("studio.interface.nameRequired") : !isReferenceKey(cleanName) ? t("studio.interface.invalidInternalName") : duplicate ? t("studio.interface.duplicateName") : undefined;
+  return <Dialog onOpenChange={(value) => !value && onClose()} open={open}><DialogContent description={t("studio.inspector.projectionDialogDescription")} title={draft.originalName ? t("studio.inspector.editProjection") : t("studio.inspector.addProjection")}><div className="space-y-4 p-5"><div><h2 className="text-sm font-semibold">{draft.originalName ? t("studio.inspector.editProjection") : t("studio.inspector.addProjection")}</h2><p className="mt-1 text-[11px] text-muted-foreground">{t("studio.inspector.projectionDialogDescription")}</p></div><div className="grid gap-3">{ports.length > 1 && <label className="text-xs"><span className="mb-1 block text-muted-foreground"><RequiredLabel required>{t("studio.inspector.outputPort")}</RequiredLabel></span><Select onValueChange={(port) => onChange({ ...draft, port })} options={ports.map((port) => ({ value: port, label: port }))} value={draft.port} /></label>}<label className="text-xs"><span className="mb-1 block text-muted-foreground"><RequiredLabel required>{t("studio.interface.fieldType")}</RequiredLabel></span><Select aria-label={t("studio.interface.fieldType")} onValueChange={(type) => setField({ schema: { type } })} options={schemaTypeOptions(t)} value={projectionType(draft.field.schema)} /></label><label className="text-xs"><span className="mb-1 block text-muted-foreground"><RequiredLabel required>{t("studio.interface.outputName")}</RequiredLabel></span><Input aria-invalid={Boolean(nameError)} aria-label={t("studio.interface.outputName")} onChange={(event) => onChange({ ...draft, name: event.target.value })} value={draft.name} />{nameError && <span className="mt-1 block text-[10px] text-danger" role="alert">{nameError}</span>}</label><label className="text-xs"><span className="mb-1 block text-muted-foreground"><RequiredLabel required>{t("studio.interface.content")}</RequiredLabel></span><DynamicValueControl allowed={["inputs", "outputs", "contexts", "item"]} catalog={referenceCatalog} expectedType={projectionType(draft.field.schema)} onChange={(value) => setField({ value })} value={draft.field.value} /></label><label className="flex items-center gap-2 text-xs"><input checked={draft.field.sensitive} className="size-4 accent-primary" onChange={(event) => setField({ sensitive: event.target.checked })} type="checkbox" />{t("studio.interface.sensitive")}</label></div><div className="flex justify-end gap-2 border-t border-border pt-4"><Button onClick={onClose} variant="ghost">{t("common.cancel")}</Button><Button disabled={Boolean(nameError)} onClick={onSave}>{t("common.save")}</Button></div></div></DialogContent></Dialog>;
 }
 
 function schemaTypeOptions(t: ReturnType<typeof useTranslation>["t"]) {
@@ -810,26 +828,19 @@ function projectionType(schema: unknown) {
     : "string";
 }
 
-function ReferenceTextInput({ allowed, catalog, expectedType, value, placeholder, onChange }: { allowed: Array<"inputs" | "outputs" | "contexts" | "item">; catalog?: ReferenceCatalog; expectedType?: string; value: string; placeholder: string; onChange: (value: string) => void }) {
-  const { t } = useTranslation();
-  const input = useRef<HTMLInputElement>(null);
-  const insert = (reference: string) => {
-    const result = insertAtSelection(value, reference, input.current?.selectionStart, input.current?.selectionEnd);
-    onChange(result.value);
-    requestAnimationFrame(() => { input.current?.focus(); input.current?.setSelectionRange(result.cursor, result.cursor); });
-  };
-  return <ReferenceControl allowed={allowed} catalog={catalog} enabled={Boolean(catalog)} expectedType={expectedType} onInsert={insert}><Input aria-label={t("studio.expression")} className="font-mono text-[11px]" onChange={(event) => onChange(event.target.value)} placeholder={placeholder} ref={input} value={value} /></ReferenceControl>;
-}
+function dynamicValueSummary(value: DynamicValue) { if (value.kind === "literal") return String(value.value ?? ""); if (value.kind === "reference") return [value.selector.namespace, value.selector.port, ...value.selector.path].filter(Boolean).join(" / "); if (value.kind === "template") return value.segments.map((segment) => segment.kind === "text" ? segment.text : `[${segment.selector.namespace}]`).join(""); return "Expression"; }
 
 function addCurrentNodeReferences(
   catalog: ReferenceCatalog,
   data: ActionNodeData,
   manifest: NodeManifest,
   currentRawOutputLabel: string,
+  nodeId?: string,
 ): ReferenceCatalog {
   const nativeSchema = asReferenceSchema(manifest.outputSchema);
   const itemPath = "item.json";
-  const itemFields = referenceFields(nativeSchema, itemPath);
+  const itemSelector = valueSelector("item");
+  const itemFields = referenceFields(nativeSchema, itemPath, itemSelector);
   const nodePath = `outputs.${data.key}`;
   const ports = manifest.outputPorts.map((port) => {
     const portNativeSchema = asReferenceSchema(
@@ -846,12 +857,15 @@ function addCurrentNodeReferences(
       properties: { ...portNativeSchema.properties, ...projected },
     };
     const jsonPath = `${nodePath}.${port.name}.current.json`;
-    const fields = referenceFields(schema, jsonPath);
+    const currentSelector = nodeId
+      ? valueSelector("outputs", nodeId, port.name)
+      : undefined;
+    const fields = referenceFields(schema, jsonPath, currentSelector);
     const current: ReferenceEntry = {
       id: jsonPath,
       label: "current",
       path: jsonPath,
-      expression: fields.length ? undefined : `\${{ ${jsonPath} }}`,
+      selector: fields.length ? undefined : currentSelector,
       type: "object",
       nullable: true,
       children: fields,
@@ -874,7 +888,7 @@ function addCurrentNodeReferences(
         id: itemPath,
         label: currentRawOutputLabel,
         path: itemPath,
-        expression: itemFields.length ? undefined : `\${{ ${itemPath} }}`,
+        selector: itemFields.length ? undefined : itemSelector,
         type: "object",
         children: itemFields,
       },
@@ -894,15 +908,22 @@ function asReferenceSchema(value: unknown): ReferenceSchema {
     : {};
 }
 
-function referenceFields(schema: ReferenceSchema, parent: string): ReferenceEntry[] {
+function referenceFields(
+  schema: ReferenceSchema,
+  parent: string,
+  parentSelector?: ValueSelector,
+): ReferenceEntry[] {
   return Object.entries(schema.properties ?? {}).map(([name, child]) => {
     const path = `${parent}.${name}`;
-    const children = referenceFields(child, path);
+    const selector = parentSelector
+      ? { ...parentSelector, path: [...parentSelector.path, name] }
+      : undefined;
+    const children = referenceFields(child, path, selector);
     return {
       id: path,
       label: name,
       path,
-      expression: children.length ? undefined : `\${{ ${path} }}`,
+      selector: children.length ? undefined : selector,
       type: child.type,
       nullable: !(schema.required ?? []).includes(name),
       children,
@@ -910,32 +931,46 @@ function referenceFields(schema: ReferenceSchema, parent: string): ReferenceEntr
   });
 }
 
+function valueSelector(
+  namespace: ValueSelector["namespace"],
+  sourceNodeId?: string,
+  port?: string,
+): ValueSelector {
+  return {
+    namespace,
+    sourceNodeId,
+    port,
+    run: { kind: "current" },
+    item: { kind: "current" },
+    path: [],
+  };
+}
+
 function ContextWritesConfiguration({ label, value, onChange, referenceCatalog }: { label: string; value: unknown; onChange: (value: unknown) => void; referenceCatalog?: ReferenceCatalog }) {
   const { t } = useTranslation();
-  const writes = Array.isArray(value) ? value as Array<{ operation?: string; path?: string; value?: unknown }> : [];
+  const writes = Array.isArray(value) ? value as Array<{ operation?: string; path?: string; value?: DynamicValue }> : [];
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
-  const [draft, setDraft] = useState<ContextWriteDraft>({ operation: "set", path: "", value: "" });
-  const add = () => { setEditingIndex(null); setDraft({ operation: "set", path: "", value: "" }); setDialogOpen(true); };
-  const edit = (index: number) => { setEditingIndex(index); setDraft({ operation: writes[index].operation ?? "set", path: writes[index].path ?? "", value: writes[index].value ?? "" }); setDialogOpen(true); };
+  const [draft, setDraft] = useState<ContextWriteDraft>({ operation: "set", path: "", value: { kind: "literal", value: "" } });
+  const add = () => { setEditingIndex(null); setDraft({ operation: "set", path: "", value: { kind: "literal", value: "" } }); setDialogOpen(true); };
+  const edit = (index: number) => { setEditingIndex(index); setDraft({ operation: writes[index].operation ?? "set", path: writes[index].path ?? "", value: writes[index].value ?? { kind: "literal", value: "" } }); setDialogOpen(true); };
   const save = () => {
     onChange(editingIndex === null ? [...writes, draft] : writes.map((write, index) => index === editingIndex ? draft : write));
     setDialogOpen(false);
   };
-  return <section><div className="mb-2 flex items-center justify-between gap-3"><span className="text-xs text-muted-foreground">{label}</span><Button onClick={add} size="sm" variant="secondary"><Plus className="size-3.5" />{t("studio.inspector.addContextWrite")}</Button></div><div className="space-y-2">{writes.map((write, index) => <div className="flex items-center gap-3 rounded-md border border-border px-3 py-2.5" key={`${write.path ?? "context"}-${index}`}><div className="min-w-0 flex-1"><div className="flex items-center gap-2"><code className="truncate text-xs font-medium">{write.path || t("studio.inspector.contextPath")}</code><span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">{t(`studio.contextOperations.${write.operation ?? "set"}`, write.operation ?? "set")}</span></div>{write.operation !== "delete" && <div className="truncate text-[10px] text-muted-foreground">{typeof write.value === "string" ? write.value : JSON.stringify(write.value ?? "")}</div>}</div><Button aria-label={t("studio.inspector.editContextWrite")} onClick={() => edit(index)} size="icon" variant="ghost"><Settings2 className="size-3.5" /></Button><Button aria-label={t("studio.removeField")} onClick={() => onChange(writes.filter((_, current) => current !== index))} size="icon" variant="ghost"><Trash2 className="size-3.5" /></Button></div>)}</div><ContextWriteDialog draft={draft} onChange={setDraft} onClose={() => setDialogOpen(false)} onSave={save} open={dialogOpen} referenceCatalog={referenceCatalog} editing={editingIndex !== null} /></section>;
+  return <section><div className="mb-2 flex items-center justify-between gap-3"><span className="text-xs text-muted-foreground">{label}</span><Button onClick={add} size="sm" variant="secondary"><Plus className="size-3.5" />{t("studio.inspector.addContextWrite")}</Button></div><div className="space-y-2">{writes.map((write, index) => <div className="flex items-center gap-3 rounded-md border border-border px-3 py-2.5" key={`${write.path ?? "context"}-${index}`}><div className="min-w-0 flex-1"><div className="flex items-center gap-2"><code className="truncate text-xs font-medium">{write.path || t("studio.inspector.contextPath")}</code><span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">{t(`studio.contextOperations.${write.operation ?? "set"}`, write.operation ?? "set")}</span></div>{write.operation !== "delete" && write.value && <div className="truncate text-[10px] text-muted-foreground">{dynamicValueSummary(write.value)}</div>}</div><Button aria-label={t("studio.inspector.editContextWrite")} onClick={() => edit(index)} size="icon" variant="ghost"><Settings2 className="size-3.5" /></Button><Button aria-label={t("studio.removeField")} onClick={() => onChange(writes.filter((_, current) => current !== index))} size="icon" variant="ghost"><Trash2 className="size-3.5" /></Button></div>)}</div><ContextWriteDialog draft={draft} onChange={setDraft} onClose={() => setDialogOpen(false)} onSave={save} open={dialogOpen} referenceCatalog={referenceCatalog} editing={editingIndex !== null} /></section>;
 }
 
-type ContextWriteDraft = { operation: string; path: string; value: unknown };
+type ContextWriteDraft = { operation: string; path: string; value: DynamicValue };
 
 function ContextWriteDialog({ open, editing, draft, referenceCatalog, onChange, onClose, onSave }: { open: boolean; editing: boolean; draft: ContextWriteDraft; referenceCatalog?: ReferenceCatalog; onChange: (value: ContextWriteDraft) => void; onClose: () => void; onSave: () => void }) {
   const { t } = useTranslation();
-  const value = typeof draft.value === "string" ? draft.value : JSON.stringify(draft.value ?? "");
   const variableOptions = globalVariableOptions(referenceCatalog?.contexts ?? []);
   const selectVariable = (path: string) => {
     const operations = contextOperationsFor(referenceCatalog, path);
     onChange({ ...draft, path, operation: operations.includes(draft.operation) ? draft.operation : "set" });
   };
-  return <Dialog onOpenChange={(next) => !next && onClose()} open={open}><DialogContent description={t("studio.inspector.contextWriteDialogDescription")} title={editing ? t("studio.inspector.editContextWrite") : t("studio.inspector.addContextWrite")}><div className="space-y-4 p-5"><div><h2 className="text-sm font-semibold">{editing ? t("studio.inspector.editContextWrite") : t("studio.inspector.addContextWrite")}</h2><p className="mt-1 text-[11px] text-muted-foreground">{t("studio.inspector.contextWriteDialogDescription")}</p></div><div className="grid gap-3"><label className="text-xs"><span className="mb-1 block text-muted-foreground">{t("studio.inspector.contextPath")}</span><Select aria-label={t("studio.inspector.contextPath")} disabled={variableOptions.length === 0} onValueChange={selectVariable} options={variableOptions} placeholder={t("studio.inspector.selectContext")} value={draft.path} /></label><label className="text-xs"><span className="mb-1 block text-muted-foreground">{t("studio.inspector.contextOperation")}</span><Select aria-label={t("studio.inspector.contextOperation")} disabled={!draft.path} onValueChange={(operation) => onChange({ ...draft, operation })} options={contextOperationsFor(referenceCatalog, draft.path).map((operation) => ({ value: operation, label: t(`studio.contextOperations.${operation}`, operation) }))} value={draft.operation} /></label><label className="text-xs"><span className="mb-1 block text-muted-foreground">{t("studio.inspector.contextValue")}</span>{draft.operation === "delete" ? <Input aria-label={t("studio.inspector.contextValue")} disabled value="" /> : <ReferenceTextInput allowed={["inputs", "outputs", "contexts"]} catalog={referenceCatalog} onChange={(next) => onChange({ ...draft, value: next })} placeholder="${{ outputs.node.main.current.json }}" value={value} />}</label></div><div className="flex justify-end gap-2 border-t border-border pt-4"><Button onClick={onClose} variant="ghost">{t("common.cancel")}</Button><Button disabled={!draft.path.trim()} onClick={onSave}>{t("common.save")}</Button></div></div></DialogContent></Dialog>;
+  return <Dialog onOpenChange={(next) => !next && onClose()} open={open}><DialogContent description={t("studio.inspector.contextWriteDialogDescription")} title={editing ? t("studio.inspector.editContextWrite") : t("studio.inspector.addContextWrite")}><div className="space-y-4 p-5"><div><h2 className="text-sm font-semibold">{editing ? t("studio.inspector.editContextWrite") : t("studio.inspector.addContextWrite")}</h2><p className="mt-1 text-[11px] text-muted-foreground">{t("studio.inspector.contextWriteDialogDescription")}</p></div><div className="grid gap-3"><label className="text-xs"><span className="mb-1 block text-muted-foreground"><RequiredLabel required>{t("studio.inspector.contextPath")}</RequiredLabel></span><Select aria-label={t("studio.inspector.contextPath")} disabled={variableOptions.length === 0} onValueChange={selectVariable} options={variableOptions} placeholder={t("studio.inspector.selectContext")} value={draft.path} /></label><label className="text-xs"><span className="mb-1 block text-muted-foreground"><RequiredLabel required>{t("studio.inspector.contextOperation")}</RequiredLabel></span><Select aria-label={t("studio.inspector.contextOperation")} disabled={!draft.path} onValueChange={(operation) => onChange({ ...draft, operation })} options={contextOperationsFor(referenceCatalog, draft.path).map((operation) => ({ value: operation, label: t(`studio.contextOperations.${operation}`, operation) }))} value={draft.operation} /></label><label className="text-xs"><span className="mb-1 block text-muted-foreground"><RequiredLabel required={draft.operation !== "delete"}>{t("studio.inspector.contextValue")}</RequiredLabel></span>{draft.operation === "delete" ? <Input aria-label={t("studio.inspector.contextValue")} disabled value="" /> : <DynamicValueControl allowed={["inputs", "outputs", "contexts"]} catalog={referenceCatalog} onChange={(value) => onChange({ ...draft, value })} value={draft.value} />}</label></div><div className="flex justify-end gap-2 border-t border-border pt-4"><Button onClick={onClose} variant="ghost">{t("common.cancel")}</Button><Button disabled={!draft.path.trim()} onClick={onSave}>{t("common.save")}</Button></div></div></DialogContent></Dialog>;
 }
 
 function globalVariableOptions(entries: ReferenceEntry[]): Array<{ value: string; label: string }> {
@@ -1009,12 +1044,14 @@ function Field({
   children,
   label,
   required,
+  error,
   testId,
   fieldPath,
 }: {
   children: React.ReactNode;
   label: string;
   required?: boolean;
+  error?: string;
   testId?: string;
   fieldPath?: string;
 }) {
@@ -1025,10 +1062,10 @@ function Field({
       data-testid={testId}
     >
       <span className="mb-1.5 block text-muted-foreground">
-        {label}
-        {required && <span className="ml-1 text-danger">*</span>}
+        <RequiredLabel required={required}>{label}</RequiredLabel>
       </span>
       {children}
+      {error && <span className="mt-1 block text-[10px] text-danger">{error}</span>}
     </label>
   );
 }

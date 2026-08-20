@@ -617,18 +617,6 @@ export interface components {
             workflowVersionId?: string | null;
             workflowVersionNumber?: number | null;
         };
-        ExpressionPreviewRequest: {
-            expression: string;
-            input?: unknown;
-            itemIndex?: number;
-            json?: unknown;
-            linkedNodes?: unknown;
-            runIndex?: number;
-        };
-        ExpressionPreviewResponse: {
-            redacted: boolean;
-            value: unknown;
-        };
         FieldError: {
             code: string;
             field: string;

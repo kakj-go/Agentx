@@ -21,9 +21,9 @@ Migration 使用三个独立一次性目标：`control-migrate`、`runtime-migra
 
 | 物理 Namespace | 逻辑归属与组件 |
 |---|---|
-| `agentx-v2-control` | Control：`web-console`、`platform-control`、Control MySQL 与 Migration |
-| `agentx-v2-runtime` | Runtime + Observability：四类 Runtime 服务、`observability`、Runtime MySQL、Runtime Redis、ClickHouse 与两域 Migration |
-| `agentx-v2-deps` | Dependencies + Ingress：`agentx-egress-gateway`、Vault、MinIO、专用 ingress-nginx，以及可选 OpenSandbox/Addon |
+| `agentx-control` | Control：`web-console`、`platform-control`、Control MySQL 与 Migration |
+| `agentx-runtime` | Runtime + Observability：四类 Runtime 服务、`observability`、Runtime MySQL、Runtime Redis、ClickHouse 与两域 Migration |
+| `agentx-deps` | Dependencies + Ingress：`agentx-egress-gateway`、Vault、MinIO、专用 ingress-nginx，以及可选 OpenSandbox/Addon |
 
 Observability 与 Runtime 只共享 Namespace，不共享数据权限：Observability 仍使用独立 ServiceAccount、Secret、Redis ACL 和 ClickHouse 账号，NetworkPolicy 只允许它访问 Runtime Redis Trace/JTI 通道和 ClickHouse，禁止 Runtime MySQL。Profile 契约为 `agentx.io/deployment/v2alpha3`，`v2alpha2` 及更早版本不做兼容转换。
 

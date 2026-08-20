@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use agentx_domain::DynamicValue;
 use agentx_node_protocol::Item;
 use agentx_runtime::{ExpressionContext, ExpressionEngine};
 use serde_json::Value;
@@ -36,17 +37,19 @@ pub(crate) fn apply(
                 .as_object_mut()
                 .ok_or_else(|| invalid_projection("OUTPUT_PROJECTION_ITEM_MUST_BE_OBJECT"))?;
             for (name, definition) in fields {
-                let expression = definition
-                    .get("expression")
-                    .and_then(Value::as_str)
+                let dynamic = definition
+                    .get("value")
+                    .cloned()
+                    .and_then(|value| serde_json::from_value::<DynamicValue>(value).ok())
                     .ok_or_else(|| {
-                        invalid_projection(format!(
-                            "OUTPUT_PROJECTION_EXPRESSION_MISSING:{port}.{name}"
-                        ))
+                        invalid_projection(format!("OUTPUT_PROJECTION_VALUE_MISSING:{port}.{name}"))
                     })?;
-                let value = engine
-                    .resolve_parameters(&Value::String(expression.to_owned()), &context)
-                    .map_err(|error| invalid_projection(error.to_string()))?;
+                let Some(value) = engine
+                    .resolve_dynamic_optional(&dynamic, &context)
+                    .map_err(|error| invalid_projection(error.to_string()))?
+                else {
+                    continue;
+                };
                 if target.contains_key(name) {
                     return Err(invalid_projection(format!(
                         "OUTPUT_PROJECTION_FIELD_CONFLICT:{name}"
@@ -126,7 +129,7 @@ mod tests {
             &json!({
                 "main": {
                     "summary": {
-                        "expression":"${{ item.json.stdout }}",
+                        "value":{"kind":"reference","selector":{"namespace":"item","run":{"kind":"current"},"item":{"kind":"current"},"path":["stdout"]},"missingPolicy":{"kind":"error"}},
                         "schema":{"type":"string"},
                         "sensitive":false
                     }
@@ -152,7 +155,7 @@ mod tests {
         )]);
         let error = apply(
             &mut outputs,
-            &json!({"main":{"summary":{"expression":"replacement"}}}),
+            &json!({"main":{"summary":{"value":{"kind":"literal","value":"replacement"}}}}),
             &ExpressionContext::default(),
         )
         .unwrap_err();

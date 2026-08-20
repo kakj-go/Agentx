@@ -15,7 +15,7 @@ type Invocation = { id: string; executionId?: string; status: string; outputs?: 
 type Execution = { id: string; status: string; parentExecutionId?: string; errorCode?: string }
 type ExecutionPage = { items: Execution[] }
 type Definition = {
-  schemaVersion: '4.0'
+  schemaVersion: '5.0'
   start: { inputs: Record<string, unknown>; contexts: Record<string, unknown> }
   nodes: Array<Record<string, unknown> & { id: string; key: string; type: string }>
   connections: Array<{ id: string; sourceNodeId: string; sourceHandle: string; targetNodeId: string; targetHandle: string; order: number }>
@@ -78,10 +78,20 @@ function node(id: string, type: string, parameters: Record<string, unknown>, ext
   }
 }
 
+const reference = (namespace: 'inputs' | 'outputs' | 'contexts' | 'item', path: string[], sourceNodeId?: string) => ({
+  kind: 'reference',
+  selector: { namespace, sourceNodeId, port: sourceNodeId ? 'main' : undefined, run: { kind: 'current' }, item: { kind: 'current' }, path },
+  missingPolicy: { kind: 'error' },
+})
+const template = (prefix: string, value: ReturnType<typeof reference>) => ({
+  kind: 'template',
+  segments: [{ kind: 'text', text: prefix }, { kind: 'reference', selector: value.selector, missingPolicy: value.missingPolicy }],
+})
+
 async function createWorkflow(page: Page, token: string, name: string, definition: Definition) {
   const workflow = await request<Workflow>(page, token, '/workflows', 'POST', {
     name,
-    description: 'Workflow 4.0 Kubernetes closure',
+    description: 'Workflow 5.0 Kubernetes closure',
     visibility: 'company',
   })
   const draft = await request<Draft>(page, token, `/workflows/${workflow.id}/draft`)
@@ -118,11 +128,11 @@ async function deployApplication(page: Page, token: string, workflow: Workflow, 
     workflowId: workflow.id,
     name: `${workflow.name} Application`,
     slug,
-    description: 'Workflow 4.0 E2E application',
+    description: 'Workflow 5.0 E2E application',
     visibility: 'company',
   })
   const apiKey = await request<{ secret: string }>(page, token, `/applications/${application.id}/api-keys`, 'POST', {
-    name: 'Workflow 4.0 E2E',
+    name: 'Workflow 5.0 E2E',
   })
   const deployment = await request<Deployment>(page, token, `/applications/${application.id}/deployments`, 'POST', {
     workflowVersionId: version.id,
@@ -168,33 +178,33 @@ const counterContext = {
   },
 }
 
-test('Workflow 4.0 closes Composite, Context, Package, Multipart and cancellation contracts', async ({ page }) => {
+test('Workflow 5.0 closes Composite, Context, Package, Multipart and cancellation contracts', async ({ page }) => {
   const token = await login(page)
   const suffix = Date.now()
   const environment = (await request<Environment[]>(page, token, '/environments')).find((value) => value.code === 'development')
   expect(environment).toBeTruthy()
 
   const childDefinition: Definition = {
-    schemaVersion: '4.0',
+    schemaVersion: '5.0',
     start: {
       inputs: { type: 'object', required: ['question'], properties: { question: { type: 'string' } }, additionalProperties: false },
       contexts: counterContext,
     },
-    nodes: [node('answer', 'set', { values: { answer: 'v1:${{ inputs.question }}' }, keepOnlySet: true }, {
-      contextWrites: [{ operation: 'increment', path: 'counter', value: 1 }],
+    nodes: [node('answer', 'set', { values: { answer: template('v1:', reference('inputs', ['question'])) }, keepOnlySet: true }, {
+      contextWrites: [{ operation: 'increment', path: 'counter', value: { kind: 'literal', value: 1 } }],
     })],
     connections: [
       { id: 'start-answer', sourceNodeId: '__start__', sourceHandle: 'main', targetNodeId: 'answer', targetHandle: 'main', order: 0 },
       { id: 'answer-end', sourceNodeId: 'answer', sourceHandle: 'main', targetNodeId: '__end__', targetHandle: 'main', order: 0 },
     ],
-    end: { outputs: { answer: { expression: '${{ outputs.answer.main.current.json.answer }}', schema: { type: 'string' }, required: true, sensitive: false } } },
+    end: { outputs: { answer: { value: reference('outputs', ['answer'], 'answer'), schema: { type: 'string' }, required: true, sensitive: false } } },
     settings: { executionOrder: 'deterministic' },
   }
   const child = await createWorkflow(page, token, `W4 Child ${suffix}`, childDefinition)
   const childType = `workflow.${child.version.id.replaceAll('-', '')}`
 
   const parentDefinition: Definition = {
-    schemaVersion: '4.0',
+    schemaVersion: '5.0',
     start: {
       inputs: {
         type: 'object',
@@ -219,8 +229,8 @@ test('Workflow 4.0 closes Composite, Context, Package, Multipart and cancellatio
       contexts: counterContext,
     },
     nodes: [
-      node('child', childType, { workflowVersionId: child.version.id, inputs: { question: '${{ inputs.question }}' } }),
-      node('summary', 'set', { values: { answer: '${{ outputs.child.main.current.json.answer }}', counter: '${{ contexts.counter }}' }, keepOnlySet: true }),
+      node('child', childType, { workflowVersionId: child.version.id, inputs: { question: reference('inputs', ['question']) } }),
+      node('summary', 'set', { values: { answer: reference('outputs', ['answer'], 'child'), counter: reference('contexts', ['counter']) }, keepOnlySet: true }),
     ],
     connections: [
       { id: 'start-child', sourceNodeId: '__start__', sourceHandle: 'main', targetNodeId: 'child', targetHandle: 'main', order: 0 },
@@ -229,10 +239,10 @@ test('Workflow 4.0 closes Composite, Context, Package, Multipart and cancellatio
     ],
     end: {
       outputs: {
-        answer: { expression: '${{ outputs.summary.main.current.json.answer }}', schema: { type: 'string' }, required: true, sensitive: false },
-        counter: { expression: '${{ outputs.summary.main.current.json.counter }}', schema: { type: 'number' }, required: true, sensitive: false },
-        attachments: { expression: '${{ inputs.attachments }}', schema: { type: 'array' }, required: true, sensitive: false },
-        prefix: { expression: '${{ inputs.prefix }}', schema: { type: 'string' }, required: true, sensitive: false },
+        answer: { value: reference('outputs', ['answer'], 'summary'), schema: { type: 'string' }, required: true, sensitive: false },
+        counter: { value: reference('outputs', ['counter'], 'summary'), schema: { type: 'number' }, required: true, sensitive: false },
+        attachments: { value: reference('inputs', ['attachments']), schema: { type: 'array' }, required: true, sensitive: false },
+        prefix: { value: reference('inputs', ['prefix']), schema: { type: 'string' }, required: true, sensitive: false },
       },
     },
     settings: { executionOrder: 'deterministic' },
@@ -240,7 +250,7 @@ test('Workflow 4.0 closes Composite, Context, Package, Multipart and cancellatio
   const parent = await createWorkflow(page, token, `W4 Parent ${suffix}`, parentDefinition)
 
   const childV2 = structuredClone(childDefinition)
-  ;(childV2.nodes[0].parameters as Record<string, unknown>).values = { answer: 'v2:${{ inputs.question }}' }
+  ;(childV2.nodes[0].parameters as Record<string, unknown>).values = { answer: template('v2:', reference('inputs', ['question'])) }
   const secondChildVersion = await reviseWorkflow(page, token, child.workflow.id, childV2)
   expect(secondChildVersion.versionNumber).toBe(2)
 
@@ -302,13 +312,13 @@ test('Workflow 4.0 closes Composite, Context, Package, Multipart and cancellatio
     resourceBindings: {},
   })
   const importedDraft = await request<Draft>(page, token, `/workflows/${imported.workflowId}/draft`)
-  expect(importedDraft.definition.schemaVersion).toBe('4.0')
+  expect(importedDraft.definition.schemaVersion).toBe('5.0')
   expect(importedDraft.definition.nodes[0].type).toBe(childType)
 
   const recursiveDefinition = structuredClone(childV2)
   recursiveDefinition.nodes = [node('parent', `workflow.${parent.version.id.replaceAll('-', '')}`, {
     workflowVersionId: parent.version.id,
-    inputs: { question: '${{ inputs.question }}', attachments: [] },
+    inputs: { question: reference('inputs', ['question']), attachments: [] },
   })]
   recursiveDefinition.connections = [
     { id: 'start-parent', sourceNodeId: '__start__', sourceHandle: 'main', targetNodeId: 'parent', targetHandle: 'main', order: 0 },
@@ -329,7 +339,7 @@ test('Workflow 4.0 closes Composite, Context, Package, Multipart and cancellatio
   expect(await recursiveVersion.json()).toMatchObject({ code: 'RECURSIVE_SUBWORKFLOW' })
 
   const slowChildDefinition: Definition = {
-    schemaVersion: '4.0',
+    schemaVersion: '5.0',
     start: { inputs: { type: 'object', properties: {}, additionalProperties: false }, contexts: {} },
     nodes: [node('wait', 'wait', { kind: 'duration', durationMs: 60_000 })],
     connections: [
@@ -342,7 +352,7 @@ test('Workflow 4.0 closes Composite, Context, Package, Multipart and cancellatio
   }
   const slowChild = await createWorkflow(page, token, `W4 Slow Child ${suffix}`, slowChildDefinition)
   const slowParentDefinition: Definition = {
-    schemaVersion: '4.0',
+    schemaVersion: '5.0',
     start: { inputs: { type: 'object', properties: {}, additionalProperties: false }, contexts: {} },
     nodes: [node('slow_child', `workflow.${slowChild.version.id.replaceAll('-', '')}`, { workflowVersionId: slowChild.version.id, inputs: {} }, {
       settings: { timeoutMs: 1_500, retryOnFail: false, maxTries: 1 },
@@ -353,7 +363,7 @@ test('Workflow 4.0 closes Composite, Context, Package, Multipart and cancellatio
     ],
     end: {
       outputs: {
-        status: { expression: 'timeout-test', schema: { type: 'string' }, required: true, sensitive: false },
+        status: { value: { kind: 'literal', value: 'timeout-test' }, schema: { type: 'string' }, required: true, sensitive: false },
       },
     },
     settings: { executionOrder: 'deterministic' },
@@ -375,12 +385,12 @@ test('Workflow 4.0 closes Composite, Context, Package, Multipart and cancellatio
   }, { timeout: 60_000 }).toBe('cancelled')
 })
 
-test('Workflow 4.0 turns concurrent Session Context CAS conflicts into a terminal failure', async ({ page }) => {
+test('Workflow 5.0 turns concurrent Session Context CAS conflicts into a terminal failure', async ({ page }) => {
   const token = await login(page)
   const suffix = Date.now()
   const environment = (await request<Environment[]>(page, token, '/environments')).find((value) => value.code === 'development')!
   const definition: Definition = {
-    schemaVersion: '4.0',
+    schemaVersion: '5.0',
     start: {
       inputs: { type: 'object', properties: {}, additionalProperties: false },
       contexts: {
@@ -392,8 +402,8 @@ test('Workflow 4.0 turns concurrent Session Context CAS conflicts into a termina
     },
     nodes: [
       node('wait', 'wait', { kind: 'duration', durationMs: 1_500 }),
-      node('write', 'set', { values: { counter: '${{ contexts.session_counter }}' }, keepOnlySet: true }, {
-        contextWrites: [{ operation: 'increment', path: 'session_counter', value: 1 }],
+      node('write', 'set', { values: { counter: reference('contexts', ['session_counter']) }, keepOnlySet: true }, {
+        contextWrites: [{ operation: 'increment', path: 'session_counter', value: { kind: 'literal', value: 1 } }],
       }),
     ],
     connections: [
@@ -401,7 +411,7 @@ test('Workflow 4.0 turns concurrent Session Context CAS conflicts into a termina
       { id: 'wait-write', sourceNodeId: 'wait', sourceHandle: 'resumed', targetNodeId: 'write', targetHandle: 'main', order: 0 },
       { id: 'write-end', sourceNodeId: 'write', sourceHandle: 'main', targetNodeId: '__end__', targetHandle: 'main', order: 0 },
     ],
-    end: { outputs: { counter: { expression: '${{ contexts.session_counter }}', schema: { type: 'number' }, required: true, sensitive: false } } },
+    end: { outputs: { counter: { value: reference('contexts', ['session_counter']), schema: { type: 'number' }, required: true, sensitive: false } } },
     settings: { executionOrder: 'parallel' },
   }
   const workflow = await createWorkflow(page, token, `W4 Session CAS ${suffix}`, definition)
@@ -419,18 +429,18 @@ test('Workflow 4.0 turns concurrent Session Context CAS conflicts into a termina
   expect(terminals.find((value) => value.status === 'failed')?.error?.primaryError?.code).toBe('SESSION_CONTEXT_VERSION_CONFLICT')
 })
 
-test('Workflow 4.0 propagates fail-fast, collected and Composite End errors', async ({ page }) => {
+test('Workflow 5.0 propagates fail-fast, collected and Composite End errors', async ({ page }) => {
   const token = await login(page)
   const suffix = Date.now()
   const environment = (await request<Environment[]>(page, token, '/environments')).find((value) => value.code === 'development')!
   const terminalOutput = {
-    reported_code: { expression: '${{ item.json.code }}', schema: { type: 'string' }, required: true, sensitive: false },
+    reported_code: { value: reference('item', ['code']), schema: { type: 'string' }, required: true, sensitive: false },
   }
   const normalOutput = {
-    success: { expression: '${{ outputs.normal.main.current.json }}', schema: { type: 'object' }, required: true, sensitive: false },
+    success: { value: reference('outputs', [], 'normal'), schema: { type: 'object' }, required: true, sensitive: false },
   }
   const errorDefinition = (strategy: 'fail_fast' | 'collect', codes: string[]): Definition => ({
-    schemaVersion: '4.0',
+    schemaVersion: '5.0',
     start: { inputs: { type: 'object', properties: {}, additionalProperties: false }, contexts: {} },
     nodes: [
       node('normal', 'no_op', {}),
@@ -475,7 +485,7 @@ test('Workflow 4.0 propagates fail-fast, collected and Composite End errors', as
   const child = await createWorkflow(page, token, `W4 Error Child ${suffix}`, errorDefinition('fail_fast', ['CHILD_FAILED']))
   const childType = `workflow.${child.version.id.replaceAll('-', '')}`
   const parentDefinition: Definition = {
-    schemaVersion: '4.0',
+    schemaVersion: '5.0',
     start: { inputs: { type: 'object', properties: {}, additionalProperties: false }, contexts: {} },
     nodes: [node('child', childType, { workflowVersionId: child.version.id, inputs: {} }, {
       settings: { onError: 'continue_error_output' },
@@ -487,7 +497,7 @@ test('Workflow 4.0 propagates fail-fast, collected and Composite End errors', as
     ],
     end: {
       outputs: {
-        success: { expression: '${{ outputs.child.main.current.json.success }}', schema: { type: 'object' }, required: true, sensitive: false },
+        success: { value: reference('outputs', ['success'], 'child'), schema: { type: 'object' }, required: true, sensitive: false },
       },
       error: { strategy: 'fail_fast', collectWindowMs: 5_000, outputs: terminalOutput },
     },

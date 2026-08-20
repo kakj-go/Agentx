@@ -1,26 +1,26 @@
 apiVersion: policy/v1
 kind: PodDisruptionBudget
-metadata: { name: runtime-gateway, namespace: agentx-v2-runtime }
+metadata: { name: runtime-gateway, namespace: agentx-runtime }
 spec: { minAvailable: 1, selector: { matchLabels: { app.kubernetes.io/name: runtime-gateway } } }
 ---
 apiVersion: policy/v1
 kind: PodDisruptionBudget
-metadata: { name: workflow-runtime, namespace: agentx-v2-runtime }
+metadata: { name: workflow-runtime, namespace: agentx-runtime }
 spec: { minAvailable: 1, selector: { matchLabels: { app.kubernetes.io/name: workflow-runtime } } }
 ---
 apiVersion: policy/v1
 kind: PodDisruptionBudget
-metadata: { name: workflow-worker, namespace: agentx-v2-runtime }
+metadata: { name: workflow-worker, namespace: agentx-runtime }
 spec: { minAvailable: 1, selector: { matchLabels: { app.kubernetes.io/name: workflow-worker } } }
 ---
 apiVersion: policy/v1
 kind: PodDisruptionBudget
-metadata: { name: sandbox-manager, namespace: agentx-v2-runtime }
+metadata: { name: sandbox-manager, namespace: agentx-runtime }
 spec: { minAvailable: 1, selector: { matchLabels: { app.kubernetes.io/name: sandbox-manager } } }
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
-metadata: { name: runtime-metrics-ingress, namespace: agentx-v2-runtime }
+metadata: { name: runtime-metrics-ingress, namespace: agentx-runtime }
 spec:
   podSelector: { matchLabels: { agentx.io/metrics: enabled } }
   policyTypes: [Ingress]

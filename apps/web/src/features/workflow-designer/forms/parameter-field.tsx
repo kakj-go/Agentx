@@ -1,6 +1,7 @@
 import { AlertTriangle, Plus, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import type { LexicalEditor } from "lexical";
 
 import { Button } from "../../../shared/ui/button";
 import { Input } from "../../../shared/ui/input";
@@ -12,11 +13,15 @@ import type {
   ReferenceNamespace,
   ResourceOption,
   UiField,
+  DynamicValue,
+  ReferenceEntry,
+  ValueSelector,
 } from "../model/types";
-import { CodeEditor, type CodeEditorHandle } from "./code-editor";
-import { ExpressionEditor } from "./expression-editor";
+import { CodeEditor } from "./code-editor";
+import { ExpressionBuilder } from "./expression-builder";
 import { ReferencePicker } from "./reference-picker/reference-picker";
-import { insertAtSelection } from "./reference-picker/reference-insertion";
+import { insertVariable, selectorDisplayLabel, VariableTokenEditor } from "./variable-token-editor";
+import { RequiredLabel } from "./required-label";
 
 const EMPTY_JSON_OBJECT = {};
 const EMPTY_JSON_ARRAY: unknown[] = [];
@@ -62,7 +67,8 @@ export function ParameterField({
     !ui?.visibleWhen ||
     parameters[ui.visibleWhen.field] === ui.visibleWhen.equals;
   const control = ui?.control;
-  const textReferenceEnabled = Boolean(referenceCatalog) && schema.templatable === true;
+  const textReferenceEnabled =
+    Boolean(referenceCatalog) && Boolean(schema["x-agentx-dynamicValue"]);
   useEffect(() => {
     onValidityChange?.(control ? SUPPORTED_CONTROLS.has(control) : false);
   }, [control, onValidityChange]);
@@ -111,7 +117,7 @@ export function ParameterField({
             onChange={(event) => onChange(event.target.checked)}
             type="checkbox"
           />
-          <span>{label}</span>
+          <span><RequiredLabel required={required}>{label}</RequiredLabel></span>
         </label>
         {error && <p className="mt-1 text-[10px] text-danger">{error}</p>}
       </div>
@@ -138,7 +144,7 @@ export function ParameterField({
         multiline
         onChange={onChange}
         schema={schema}
-        value={String(value ?? "")}
+        value={value}
       />,
     );
   if (control === "prompt")
@@ -150,7 +156,7 @@ export function ParameterField({
         multilineClassName="min-h-40"
         onChange={onChange}
         schema={schema}
-        value={String(value ?? "")}
+        value={value}
       />,
     );
   if (control === "expression")
@@ -160,7 +166,7 @@ export function ParameterField({
         enabled={textReferenceEnabled}
         onChange={onChange}
         schema={schema}
-        value={String(value ?? "")}
+        value={value}
         workflowId={workflowId}
       />,
     );
@@ -191,18 +197,18 @@ export function ParameterField({
       />,
     );
   if (control === "collection")
-    return field(<CollectionControl itemSchema={schema.items} onChange={onChange} value={value} />);
+    return field(<CollectionControl catalog={referenceCatalog} enabled={textReferenceEnabled} itemSchema={schema.items} onChange={onChange} value={value} />);
   if (control === "fixed_collection")
-    return field(<FixedCollectionControl onChange={onChange} value={value} />);
+    return field(<FixedCollectionControl catalog={referenceCatalog} enabled={textReferenceEnabled} onChange={onChange} value={value} />);
   if (control === "mapper")
-    return field(<MapperControl onChange={onChange} value={value} />);
+    return field(<MapperControl catalog={referenceCatalog} enabled={textReferenceEnabled} onChange={onChange} value={value} />);
   return field(
     <NativeReferenceControl
       catalog={referenceCatalog}
       enabled={textReferenceEnabled}
       onChange={onChange}
       schema={schema}
-      value={String(value ?? "")}
+      value={value}
     />,
   );
 }
@@ -216,51 +222,40 @@ function NativeReferenceControl({
   schema,
   onChange,
 }: {
-  value: string;
+  value: unknown;
   multiline?: boolean;
   multilineClassName?: string;
   enabled?: boolean;
   catalog?: ReferenceCatalog;
   schema: JsonSchemaProperty;
-  onChange: (value: string) => void;
+  onChange: (value: unknown) => void;
 }) {
-  const control = useRef<HTMLInputElement | HTMLTextAreaElement>(null);
-  const insert = (text: string) => {
-    const element = control.current;
-    const result = insertAtSelection(
-      value,
-      text,
-      element?.selectionStart,
-      element?.selectionEnd,
-    );
-    onChange(result.value);
-    requestAnimationFrame(() => {
-      element?.focus();
-      element?.setSelectionRange(result.cursor, result.cursor);
-    });
+  const dynamic = asDynamicValue(value);
+  const editor = useRef<LexicalEditor | null>(null);
+  const changeDynamic = (next: DynamicValue) => {
+    if (next.kind !== "literal") return onChange(next);
+    onChange({ kind: "literal", value: coerceLiteral(next.value, schema.type) } satisfies DynamicValue);
   };
+  const insert = (selector: ValueSelector) => {
+    if (editor.current) insertVariable(editor.current, selector, selectorDisplayLabel(selector, catalog));
+    else onChange({ kind: "reference", selector, missingPolicy: { kind: "error" } } satisfies DynamicValue);
+  };
+  if (!enabled) {
+    const literal = dynamic.kind === "literal" ? String(dynamic.value ?? "") : "";
+    return multiline
+      ? <Textarea className={multilineClassName} onChange={(event) => onChange(event.target.value)} value={literal} />
+      : <Input onChange={(event) => onChange(event.target.value)} value={literal} />;
+  }
+  if (dynamic.kind === "expression") return <ExpressionBuilder allowed={allowedNamespaces(schema)} catalog={catalog} onChange={(root) => onChange({ kind: "expression", root } satisfies DynamicValue)} value={dynamic.root} />;
   return (
     <ReferenceControl
       allowed={allowedNamespaces(schema)}
       catalog={catalog}
       enabled={enabled}
-      expectedType={schema.expectedType ?? schema.type}
+      expectedType={schema.type}
       onInsert={insert}
     >
-      {multiline ? (
-        <Textarea
-          className={multilineClassName}
-          onChange={(event) => onChange(event.target.value)}
-          ref={control as React.Ref<HTMLTextAreaElement>}
-          value={value}
-        />
-      ) : (
-        <Input
-          onChange={(event) => onChange(event.target.value)}
-          ref={control as React.Ref<HTMLInputElement>}
-          value={value}
-        />
-      )}
+      <VariableTokenEditor catalog={catalog} multiline={multiline} onChange={changeDynamic} onEditorReady={(next) => { editor.current = next; }} value={dynamic} />
     </ReferenceControl>
   );
 }
@@ -273,31 +268,26 @@ function ExpressionReferenceControl({
   workflowId,
   onChange,
 }: {
-  value: string;
+  value: unknown;
   enabled?: boolean;
   catalog?: ReferenceCatalog;
   schema: JsonSchemaProperty;
   workflowId?: string;
-  onChange: (value: string) => void;
+  onChange: (value: unknown) => void;
 }) {
-  const editor = useRef<CodeEditorHandle>(null);
-  return (
-    <ReferenceControl
-      allowed={allowedNamespaces(schema)}
-      catalog={catalog}
-      enabled={enabled}
-      expectedType={schema.expectedType ?? schema.type}
-      onInsert={(text) => editor.current?.insertText(text)}
-    >
-      <ExpressionEditor
-        completionItems={catalog ? completionItems(catalog) : undefined}
-        onChange={onChange}
-        ref={editor}
-        value={value}
-        workflowId={workflowId}
-      />
-    </ReferenceControl>
-  );
+  void workflowId;
+  if (!enabled) return <NativeReferenceControl catalog={catalog} enabled={false} onChange={onChange} schema={schema} value={value} />;
+  const dynamic = asDynamicValue(value);
+  const root = dynamic.kind === "expression"
+    ? dynamic.root
+    : dynamic.kind === "reference"
+      ? { kind: "reference", selector: dynamic.selector, missingPolicy: dynamic.missingPolicy } as const
+      : { kind: "literal", value: dynamic.kind === "literal" ? dynamic.value : "" } as const;
+  return <ExpressionBuilder allowed={allowedNamespaces(schema)} catalog={catalog} onChange={(next) => onChange({ kind: "expression", root: next } satisfies DynamicValue)} value={root} />;
+}
+
+export function DynamicValueControl({ value, onChange, catalog, allowed = ["inputs", "outputs", "contexts"], expectedType = "string", multiline = false }: { value: DynamicValue; onChange: (value: DynamicValue) => void; catalog?: ReferenceCatalog; allowed?: ReferenceNamespace[]; expectedType?: string; multiline?: boolean }) {
+  return <NativeReferenceControl catalog={catalog} enabled multiline={multiline} onChange={(next) => onChange(asDynamicValue(next))} schema={{ type: expectedType, "x-agentx-dynamicValue": { modes: ["literal", "reference", "template", "expression"], allowedNamespaces: allowed, acceptedCardinality: ["single"], missingPolicies: ["error", "null", "default", "omit"], recursive: false } }} value={value} />;
 }
 
 export function ReferenceControl({
@@ -313,25 +303,52 @@ export function ReferenceControl({
   catalog?: ReferenceCatalog;
   allowed: ReferenceNamespace[];
   expectedType?: string;
-  onInsert: (value: string) => void;
+  onInsert: (value: ValueSelector, entry: ReferenceEntry) => void;
 }) {
   const [open, setOpen] = useState(false);
   const anchor = useRef<HTMLDivElement>(null);
+  const suppressFocusOpen = useRef(false);
+  const releaseTimer = useRef<number>();
+  useEffect(() => () => {
+    if (releaseTimer.current !== undefined) window.clearTimeout(releaseTimer.current);
+  }, []);
   if (!enabled || !catalog) return children;
+  const insertAndClose = (value: ValueSelector, entry: ReferenceEntry) => {
+    suppressFocusOpen.current = true;
+    onInsert(value, entry);
+    setOpen(false);
+    releaseTimer.current = window.setTimeout(() => {
+      suppressFocusOpen.current = false;
+    }, 0);
+  };
   return (
-    <div className="relative" onClickCapture={() => setOpen(true)} onFocusCapture={() => setOpen(true)} ref={anchor}>
+    <div className="relative" onClickCapture={() => setOpen(true)} onFocusCapture={() => { if (!suppressFocusOpen.current) setOpen(true); }} ref={anchor}>
       {children}
       <ReferencePicker
         allowedNamespaces={allowed}
         catalog={catalog}
         expectedType={expectedType}
-        onInsert={onInsert}
+        onInsert={insertAndClose}
         onOpenChange={setOpen}
         open={open}
         anchorRef={anchor}
       />
     </div>
   );
+}
+
+function asDynamicValue(value: unknown): DynamicValue {
+  if (value && typeof value === "object" && "kind" in value && ["literal", "reference", "template", "expression"].includes(String((value as { kind: unknown }).kind))) return value as DynamicValue;
+  return { kind: "literal", value };
+}
+
+function coerceLiteral(value: unknown, type?: string): unknown {
+  if (typeof value !== "string") return value;
+  if (type === "number" || type === "integer") {
+    return value.trim() === "" ? undefined : Number(value);
+  }
+  if (type === "boolean") return value === "true";
+  return value;
 }
 
 function CodeControl({
@@ -413,9 +430,11 @@ function ObjectBuilder({ schema, value, onChange, catalog, enabled, path, locali
     return <div className="space-y-2" data-testid="json-array">{items.map((item, index) => <div className="space-y-1 rounded-md border border-border/60 p-2" data-testid="json-array-item" key={index}><div className="flex items-center justify-between"><span className="text-[10px] text-muted-foreground">#{index + 1}</span><Button aria-label={t('studio.remove', { index: index + 1 })} onClick={() => onChange(items.filter((_, currentIndex) => currentIndex !== index))} size="icon" variant="ghost"><Trash2 className="size-3.5" /></Button></div><ObjectBuilder catalog={catalog} enabled={enabled} localization={localization} onChange={(next) => onChange(items.map((current, currentIndex) => currentIndex === index ? next : current))} path={`${path}[]`} schema={schema.items ?? {}} value={item} /></div>)}<Button aria-label={t('studio.addItem')} onClick={() => onChange([...items, defaultForSchema(schema.items)])} size="sm" variant="secondary"><Plus className="size-3.5" />{t('studio.addItem')}</Button></div>;
   }
   const label = localization?.label(path) ?? schema.title ?? humanize(path.split('.').at(-1)?.replace('[]', '') ?? path);
+  const dynamicEnabled = Boolean(enabled || schema["x-agentx-dynamicValue"]);
+  if (dynamicEnabled) return <NativeReferenceControl catalog={catalog} enabled onChange={onChange} schema={{ ...schema, "x-agentx-dynamicValue": schema["x-agentx-dynamicValue"] ?? { modes: ["literal", "reference"], allowedNamespaces: ["inputs", "outputs", "contexts", "execution", "item", "loop"], acceptedCardinality: ["single"], missingPolicies: ["error", "null", "default", "omit"], recursive: false } }} value={value} />;
   if (type === 'boolean') return <label className="flex items-center gap-2 text-xs"><input checked={Boolean(value)} className="size-4 accent-primary" onChange={(event) => onChange(event.target.checked)} type="checkbox" />{label}</label>;
   if (schema.enum?.length) return <Select aria-label={label} className="w-full" onValueChange={(next) => onChange(schema.enum?.find((option) => String(option) === next) ?? next)} options={schema.enum.map((option) => ({ value: String(option), label: localization?.enumLabel(path, String(option)) ?? String(option) }))} value={value === undefined ? "" : String(value)} />;
-  return <ReferenceControl allowed={allowedNamespaces(schema)} catalog={catalog} enabled={(enabled || schema.templatable) && schema.type === 'string'} onInsert={(reference) => onChange(`${String(value ?? '')}${reference}`)}><Input aria-label={label || t('studio.value')} min={schema.minimum} onChange={(event) => onChange(type === 'number' || type === 'integer' ? Number(event.target.value) : event.target.value)} placeholder={localization?.placeholder(path)} type={type === 'number' || type === 'integer' ? 'number' : 'text'} value={value === undefined || value === null ? '' : String(value)} /></ReferenceControl>;
+  return <Input aria-label={label || t('studio.value')} min={schema.minimum} onChange={(event) => onChange(type === 'number' || type === 'integer' ? Number(event.target.value) : event.target.value)} placeholder={localization?.placeholder(path)} type={type === 'number' || type === 'integer' ? 'number' : 'text'} value={value === undefined || value === null ? '' : String(value)} />;
 }
 
 function AnyJsonValueBuilder({ schema, value, onChange, catalog, enabled, path = "value", localization }: { schema: JsonSchemaProperty; value: unknown; onChange: (value: unknown) => void; catalog?: ReferenceCatalog; enabled?: boolean; path?: string; localization?: StructuredFieldLocalization }) {
@@ -433,10 +452,14 @@ function defaultForSchema(schema?: JsonSchemaProperty): unknown { if (schema?.de
 function CollectionControl({
   value,
   itemSchema,
+  catalog,
+  enabled,
   onChange,
 }: {
   value: unknown;
   itemSchema?: JsonSchemaProperty;
+  catalog?: ReferenceCatalog;
+  enabled?: boolean;
   onChange: (value: unknown[]) => void;
 }) {
   const { t } = useTranslation();
@@ -448,6 +471,8 @@ function CollectionControl({
       {items.map((item, index) => (
         <div className="flex items-start gap-2" key={index}>
           <ObjectBuilder
+            catalog={catalog}
+            enabled={enabled}
             onChange={(next) => update(index, next)}
             path={`items[]`}
             schema={itemSchema ?? {}}
@@ -481,9 +506,13 @@ function CollectionControl({
 
 function FixedCollectionControl({
   value,
+  catalog,
+  enabled,
   onChange,
 }: {
   value: unknown;
+  catalog?: ReferenceCatalog;
+  enabled?: boolean;
   onChange: (value: Record<string, unknown>) => void;
 }) {
   const { t } = useTranslation();
@@ -512,7 +541,7 @@ function FixedCollectionControl({
             onChange={(event) => replace(index, event.target.value, item)}
             value={key}
           />
-          <AnyJsonValueBuilder onChange={(next) => replace(index, key, next)} schema={{}} value={item} />
+          <AnyJsonValueBuilder catalog={catalog} enabled={enabled} onChange={(next) => replace(index, key, next)} schema={{}} value={item} />
           <Button
             aria-label={t("studio.removeField", { key })}
             onClick={() =>
@@ -548,9 +577,13 @@ function FixedCollectionControl({
 
 function MapperControl({
   value,
+  catalog,
+  enabled,
   onChange,
 }: {
   value: unknown;
+  catalog?: ReferenceCatalog;
+  enabled?: boolean;
   onChange: (value: Record<string, unknown>) => void;
 }) {
   const { t } = useTranslation();
@@ -579,7 +612,7 @@ function MapperControl({
             onChange={(event) => replace(index, event.target.value, item)}
             value={key}
           />
-          <AnyJsonValueBuilder onChange={(next) => replace(index, key, next)} schema={{}} value={item} />
+          <AnyJsonValueBuilder catalog={catalog} enabled={enabled} onChange={(next) => replace(index, key, next)} schema={{}} value={item} />
           <Button
             aria-label={t("studio.removeField", { key })}
             onClick={() =>
@@ -651,9 +684,8 @@ function Field({
   return (
     <div className="block text-xs" data-testid={testId}>
       <span className="mb-1.5 flex items-center justify-between gap-2 text-muted-foreground">
-        <span>{label}</span>
+        <span><RequiredLabel required={required}>{label}</RequiredLabel></span>
         {unit && <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">{unit}</span>}
-        {required && <span className="ml-1 text-danger">*</span>}
       </span>
       {children}
       {error && (
@@ -691,7 +723,7 @@ const selectOption = (item: unknown, localizedLabel?: string) =>
     ? { value: String(item.value), label: localizedLabel ?? String(item.label) }
     : { value: String(item), label: localizedLabel ?? String(item) };
 const allowedNamespaces = (schema: JsonSchemaProperty): ReferenceNamespace[] =>
-  (schema.allowedNamespaces ?? ["inputs", "outputs", "contexts"]).filter(
+  (schema["x-agentx-dynamicValue"]?.allowedNamespaces ?? ["inputs", "outputs", "contexts"]).filter(
     (namespace): namespace is ReferenceNamespace =>
       namespace === "inputs" ||
       namespace === "outputs" ||
@@ -700,24 +732,6 @@ const allowedNamespaces = (schema: JsonSchemaProperty): ReferenceNamespace[] =>
       namespace === "execution" ||
       namespace === "loop",
   );
-function completionItems(catalog: ReferenceCatalog) {
-  return Object.values(catalog)
-    .flatMap((entries) => flattenReferences(entries))
-    .filter((entry) => entry.expression && !entry.sensitive)
-    .map((entry) => ({
-      label: entry.path,
-      insertText: entry.expression!,
-      detail: entry.type,
-    }));
-}
-function flattenReferences(
-  entries: import("../model/types").ReferenceEntry[],
-): import("../model/types").ReferenceEntry[] {
-  return entries.flatMap((entry) => [
-    entry,
-    ...flattenReferences(entry.children),
-  ]);
-}
 export const SUPPORTED_CONTROLS = new Set([
   "text",
   "textarea",

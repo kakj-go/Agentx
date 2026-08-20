@@ -118,7 +118,7 @@ async fn main() -> Result<()> {
         pool: connect_control_mysql(&settings.mysql).await?,
         control_objects: control_object_store(&settings.object_storage)?,
         runtime_url: env::var("AGENTX_RUNTIME_INTERNAL_URL")
-            .unwrap_or_else(|_| "http://runtime-gateway.agentx-v2-runtime.svc:8080".into()),
+            .unwrap_or_else(|_| "http://runtime-gateway.agentx-runtime.svc:8080".into()),
         http: reqwest::Client::new(),
         jwt_kid: required("AGENTX_CONTROL_PUBLISHER_JWT_KID")?,
         jwt_key: SecretString::from(required("AGENTX_CONTROL_PUBLISHER_JWT_PRIVATE_KEY_PEM")?),

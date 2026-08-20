@@ -1,11 +1,11 @@
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { useState } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 
 import { ParameterField } from './parameter-field'
 
 const referenceCatalog = {
-  inputs: [{ id: 'inputs.question', label: 'question', path: 'inputs.question', expression: '${{ inputs.question }}', type: 'string', children: [] }],
+  inputs: [{ id: 'inputs.question', label: 'question', path: 'inputs.question', selector: { namespace: 'inputs' as const, run: { kind: 'current' as const }, item: { kind: 'current' as const }, path: ['question'] }, type: 'string', children: [] }],
   outputs: [],
   contexts: [],
 }
@@ -35,11 +35,11 @@ describe('ParameterField', () => {
 
   it('renders a dedicated key/value mapper declared by the manifest', () => {
     const onChange = vi.fn()
-    render(<ParameterField name="values" onChange={onChange} parameters={{}} schema={{ type: 'object' }} ui={{ control: 'mapper' }} value={{ total: '${{ inputs.amount }}' }} />)
+    render(<ParameterField name="values" onChange={onChange} parameters={{}} schema={{ type: 'object' }} ui={{ control: 'mapper' }} value={{ total: 'gross' }} />)
 
     expect(screen.getByTestId('mapper-control')).toBeInTheDocument()
-    fireEvent.change(screen.getByLabelText('Value'), { target: { value: '${{ inputs.net }}' } })
-    expect(onChange).toHaveBeenCalledWith({ total: '${{ inputs.net }}' })
+    fireEvent.change(screen.getByLabelText('Value'), { target: { value: 'net' } })
+    expect(onChange).toHaveBeenCalledWith({ total: 'net' })
   })
 
   it('edits object and array parameters through visible field controls', () => {
@@ -138,13 +138,41 @@ describe('ParameterField', () => {
         onChange={vi.fn()}
         parameters={{}}
         referenceCatalog={referenceCatalog}
-        schema={{ type: 'string', templatable: true }}
+        schema={{ type: 'string', "x-agentx-dynamicValue": { modes: ['literal', 'reference'], allowedNamespaces: ['inputs'], acceptedCardinality: ['single'], missingPolicies: ['error'], recursive: false } }}
         ui={{ control: 'text' }}
         value=""
       />,
     )
     fireEvent.focus(screen.getByRole('textbox'))
     expect(screen.getByTestId('reference-picker')).toBeInTheDocument()
+  })
+
+  it('preserves a selected variable chip after the parent stores the dynamic value', async () => {
+    function Harness() {
+      const [value, setValue] = useState<unknown>('')
+      return (
+        <ParameterField
+          name="userQuestion"
+          onChange={setValue}
+          parameters={{}}
+          referenceCatalog={referenceCatalog}
+          schema={{ type: 'string', "x-agentx-dynamicValue": { modes: ['literal', 'reference'], allowedNamespaces: ['inputs'], acceptedCardinality: ['single'], missingPolicies: ['error'], recursive: false } }}
+          ui={{ control: 'text' }}
+          value={value}
+        />
+      )
+    }
+    render(<Harness />)
+
+    fireEvent.focus(screen.getByRole('textbox', { name: 'Value' }))
+    fireEvent.click(screen.getByRole('button', { name: /输入|Inputs/ }))
+    fireEvent.click(screen.getByRole('button', { name: /question/i }))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('parameter-userQuestion').querySelector('[data-agentx-variable]')).toBeInTheDocument()
+      expect(screen.getByRole('textbox', { name: 'Value' })).not.toHaveTextContent('[object Object]')
+      expect(screen.queryByTestId('reference-picker')).not.toBeInTheDocument()
+    })
   })
 
   it('shows units next to numeric node parameters', () => {

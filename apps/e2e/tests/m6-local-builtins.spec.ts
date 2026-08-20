@@ -115,6 +115,22 @@ async function setEditor(page: Page, name: string, value: string) {
   await page.keyboard.press('Escape')
 }
 
+async function setFilterCondition(page: Page) {
+  const scope = field(page, 'condition')
+  await scope.getByRole('combobox', { name: 'Expression type' }).click()
+  await page.getByRole('option', { name: '比较 / 算术' }).click()
+  await scope.getByRole('combobox', { name: 'Binary operator' }).click()
+  await page.getByRole('option', { name: '≥' }).click()
+  await scope.getByRole('combobox', { name: 'Expression type' }).nth(1).click()
+  await page.getByRole('option', { name: '变量' }).click()
+  await scope.getByRole('button', { name: /inputs|选择变量/i }).click()
+  const picker = page.getByTestId('reference-picker')
+  await picker.getByRole('button', { name: /当前数据|Current data/ }).click()
+  await picker.getByRole('button', { name: /当前节点原始输出|Current node raw output/ }).click()
+  await scope.getByRole('textbox', { name: 'Reference path' }).fill('score')
+  await scope.getByRole('textbox', { name: 'Expression' }).fill('2')
+}
+
 type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue }
 
 async function fillStructuredJson(page: Page, scope: Locator, value: JsonValue): Promise<void> {
@@ -242,7 +258,7 @@ test('M6 local built-ins execute transform, multi-input and validation/error wor
     { id: 3, group: 'b', score: 1, tags: ['ignored'], payload: '{}', when: '2026-03-01T00:00:00Z', text: 'low', old: { name: 'low' } },
   ]
   transformNodes.push(await addNode(page, 'item_generator')); await setEditor(page, 'items', JSON.stringify(generatedItems))
-  transformNodes.push(await addNode(page, 'filter')); await setEditor(page, 'condition', '${{ item.score >= 2 }}')
+  transformNodes.push(await addNode(page, 'filter')); await setFilterCondition(page)
   transformNodes.push(await addNode(page, 'sort')); await addCollectionItem(page, 'fields', { field: 'score', direction: 'desc', nulls: 'last' })
   transformNodes.push(await addNode(page, 'remove_duplicates')); await addCollectionItem(page, 'fields', 'id')
   transformNodes.push(await addNode(page, 'split_out')); await setText(page, 'field', 'tags')

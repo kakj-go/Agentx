@@ -95,7 +95,7 @@ async function createCrossDepartmentModel(page: Page) {
   const credential = await dialog(page, '新建凭证')
   await (await field(credential, '名称')).fill('Cross Department Credential')
   await select(credential, '凭证类型', 'Bearer Token')
-  await (await field(credential, '密钥内容')).fill('cross-department-secret')
+  await (await field(credential, '密钥内容')).fill('m5-model-secret')
   await select(credential, '所属部门', credentialDepartment)
   await submit(credential)
 
@@ -209,7 +209,7 @@ async function selectSaveVersionAndRun(page: Page, workflowId: string, modelNode
   expect((await version).status()).toBe(201)
   await page.getByRole('button', { name: '运行版本' }).click()
   await expect(page).toHaveURL(/\/executions\//)
-  await expect(page.getByText(/已完成|completed/i).first()).toBeVisible({ timeout: 60_000 })
+  await expect(page.getByText(/成功|succeeded/i).first()).toBeVisible({ timeout: 60_000 })
 }
 
 test('canvas resource grants complete cross-department approval, execution, and rejection flows', async ({ browser, page }) => {

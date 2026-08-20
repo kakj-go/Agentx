@@ -6,7 +6,7 @@ use agentx_domain::{
     EditorDocument, WorkflowDefinition, canonical_content_hash, validate_definition,
     validate_editor_document,
 };
-use agentx_runtime::{CompileContext, ExpressionContext, ExpressionEngine, WorkflowCompiler};
+use agentx_runtime::{CompileContext, WorkflowCompiler};
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
@@ -48,10 +48,6 @@ pub fn routes() -> Router<ControlApiState> {
         .route(
             "/api/v1/workflows/{id}/draft/validate",
             post(validate_draft),
-        )
-        .route(
-            "/api/v1/workflows/{id}/expressions/preview",
-            post(preview_expression),
         )
         .route(
             "/api/v1/workflows/{id}/debug-overlays/{node_id}",
@@ -339,7 +335,7 @@ async fn create_workflow(
         true,
     )
     .await?;
-    sqlx::query("INSERT INTO workflow_drafts(id,tenant_id,workflow_id,schema_version,revision,definition_json,editor_json,content_hash,editor_hash,updated_by) VALUES(?,?,?,'4.0',0,?,?,?,?,?)")
+    sqlx::query("INSERT INTO workflow_drafts(id,tenant_id,workflow_id,schema_version,revision,definition_json,editor_json,content_hash,editor_hash,updated_by) VALUES(?,?,?,'5.0',0,?,?,?,?,?)")
         .bind(draft_id).bind(actor.tenant_id).bind(workflow_id).bind(&definition).bind(&editor).bind(&definition_hash).bind(&editor_hash).bind(actor.user_id).execute(&mut *tx).await?;
     audit(
         &mut tx,
@@ -494,9 +490,9 @@ async fn save_draft(
     let next = current
         .checked_add(1)
         .ok_or_else(|| ApiError::internal("draft revision exhausted"))?;
-    sqlx::query("UPDATE workflow_drafts SET revision=?,schema_version='4.0',definition_json=?,editor_json=?,content_hash=?,editor_hash=?,updated_by=? WHERE tenant_id=? AND workflow_id=? AND revision=?")
+    sqlx::query("UPDATE workflow_drafts SET revision=?,schema_version='5.0',definition_json=?,editor_json=?,content_hash=?,editor_hash=?,updated_by=? WHERE tenant_id=? AND workflow_id=? AND revision=?")
         .bind(next).bind(&definition).bind(&editor).bind(&definition_hash).bind(&editor_hash).bind(actor.user_id).bind(actor.tenant_id).bind(id).bind(current).execute(&mut *tx).await?;
-    sqlx::query("INSERT INTO workflow_draft_revisions(id,tenant_id,workflow_id,draft_id,revision,schema_version,definition_json,editor_json,content_hash,editor_hash,created_by) VALUES(?,?,?,?,?,'4.0',?,?,?,?,?)")
+    sqlx::query("INSERT INTO workflow_draft_revisions(id,tenant_id,workflow_id,draft_id,revision,schema_version,definition_json,editor_json,content_hash,editor_hash,created_by) VALUES(?,?,?,?,?,'5.0',?,?,?,?,?)")
         .bind(Uuid::now_v7()).bind(actor.tenant_id).bind(id).bind(draft_id).bind(next).bind(&definition).bind(&editor).bind(&definition_hash).bind(&editor_hash).bind(actor.user_id).execute(&mut *tx).await?;
     replace_draft_resources(&mut tx, actor.tenant_id, id, draft_id, &parsed_definition).await?;
     audit(
@@ -1039,63 +1035,6 @@ async fn validate_draft(
     }))
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct ExpressionPreviewRequest {
-    expression: String,
-    #[serde(default)]
-    json: Value,
-    #[serde(default)]
-    input: Value,
-    #[serde(default)]
-    linked_nodes: Value,
-    #[serde(default)]
-    item_index: usize,
-    #[serde(default)]
-    run_index: u32,
-}
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct ExpressionPreviewResponse {
-    value: Value,
-    redacted: bool,
-}
-
-async fn preview_expression(
-    State(state): State<ControlApiState>,
-    actor: Actor,
-    Path(id): Path<Uuid>,
-    Json(input): Json<ExpressionPreviewRequest>,
-) -> ApiResult<Json<ExpressionPreviewResponse>> {
-    actor.require("workflow:edit")?;
-    require_workflow_access(&state, &actor, id, true).await?;
-    if input.expression.len() > 32768 {
-        return Err(ApiError::unprocessable(
-            "EXPRESSION_TOO_LARGE",
-            "Expression preview is limited to 32768 bytes",
-        ));
-    }
-    let value = ExpressionEngine
-        .evaluate(
-            &input.expression,
-            &ExpressionContext {
-                json: input.json,
-                input: input.input.clone(),
-                item_index: input.item_index,
-                run_index: input.run_index,
-                linked_nodes: input.linked_nodes.clone(),
-                inputs: input.input,
-                outputs: input.linked_nodes,
-                contexts: json!({}),
-                execution: json!({}),
-                loop_context: json!({}),
-            },
-        )
-        .map_err(|error| ApiError::unprocessable("INVALID_EXPRESSION", error.to_string()))?;
-    let (value, redacted) = redact_preview_value(value);
-    Ok(Json(ExpressionPreviewResponse { value, redacted }))
-}
-
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct DebugOverlayResponse {
@@ -1545,67 +1484,6 @@ fn composite_dependency_ids(definition: &WorkflowDefinition) -> ApiResult<Vec<Uu
         .collect()
 }
 
-fn redact_preview_value(value: Value) -> (Value, bool) {
-    match value {
-        Value::Object(values) => {
-            let mut redacted = false;
-            let values = values
-                .into_iter()
-                .map(|(key, value)| {
-                    if sensitive_key(&key) {
-                        redacted = true;
-                        (key, Value::String("[REDACTED]".into()))
-                    } else {
-                        let (value, child) = redact_preview_value(value);
-                        redacted |= child;
-                        (key, value)
-                    }
-                })
-                .collect();
-            (Value::Object(values), redacted)
-        }
-        Value::Array(values) => {
-            let mut redacted = false;
-            let values = values
-                .into_iter()
-                .map(|value| {
-                    let (value, child) = redact_preview_value(value);
-                    redacted |= child;
-                    value
-                })
-                .collect();
-            (Value::Array(values), redacted)
-        }
-        Value::String(value)
-            if value.to_ascii_lowercase().starts_with("bearer ")
-                || value.to_ascii_lowercase().starts_with("basic ") =>
-        {
-            (Value::String("[REDACTED]".into()), true)
-        }
-        value => (value, false),
-    }
-}
-fn sensitive_key(key: &str) -> bool {
-    let key = key
-        .chars()
-        .filter(|value| value.is_ascii_alphanumeric())
-        .flat_map(char::to_lowercase)
-        .collect::<String>();
-    [
-        "secret",
-        "password",
-        "passwd",
-        "token",
-        "apikey",
-        "authorization",
-        "cookie",
-        "credential",
-        "privatekey",
-    ]
-    .iter()
-    .any(|candidate| key.contains(candidate))
-}
-
 async fn audit(
     tx: &mut Transaction<'_, MySql>,
     actor: &Actor,
@@ -1622,12 +1500,8 @@ async fn audit(
 mod tests {
     use super::*;
     #[test]
-    fn visibility_and_redaction_are_stable() {
+    fn visibility_is_stable() {
         assert!(validate_visibility("company").is_ok());
         assert!(validate_visibility("public").is_err());
-        let (value, redacted) =
-            redact_preview_value(json!({"apiKey":"value","nested":{"ok":true}}));
-        assert!(redacted);
-        assert_eq!(value["apiKey"], "[REDACTED]");
     }
 }

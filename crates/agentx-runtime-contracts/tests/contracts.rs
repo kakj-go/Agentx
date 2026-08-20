@@ -253,7 +253,7 @@ fn work_package_uses_an_independent_key_and_rejects_payload_tampering() {
             },
             model_evaluator_executions: vec![],
             source_revision: "draft:7".into(),
-            definition: json!({"schemaVersion":"4.0"}),
+            definition: json!({"schemaVersion":"5.0"}),
             compiled_ir: compiled,
             node_manifests: vec![],
             overlay: RuntimeWorkPackageOverlayV1 {
@@ -468,13 +468,13 @@ fn evaluation_work_package_payload() -> RuntimeWorkPackagePayloadV1 {
                 evaluator_id,
                 resource_id,
                 prompt_object_id,
-                definition: json!({"schemaVersion":"4.0","kind":"model_evaluator"}),
+                definition: json!({"schemaVersion":"5.0","kind":"model_evaluator"}),
                 compiled_ir: compiled_workflow(),
                 node_manifests: vec![],
             },
         ],
         source_revision: "evaluation:1".into(),
-        definition: json!({"schemaVersion":"4.0"}),
+        definition: json!({"schemaVersion":"5.0"}),
         compiled_ir: compiled_workflow(),
         node_manifests: vec![],
         overlay: RuntimeWorkPackageOverlayV1 {
@@ -527,7 +527,7 @@ fn bundle_payload() -> ExecutionSpecPayloadV1 {
         workflow_id,
         workflow_version_id: Uuid::now_v7(),
         bundle_sequence: 7,
-        definition: json!({"schemaVersion": "4.0"}),
+        definition: json!({"schemaVersion": "5.0"}),
         compiled_ir: compiled_workflow(),
         node_manifests: vec![],
         input_contract: json!({}),
@@ -587,7 +587,7 @@ fn compatibility() -> WorkerCompatibilityV1 {
 fn compiled_workflow() -> CompiledWorkflowV1 {
     CompiledWorkflowV1 {
         contract_version: IR_SCHEMA_VERSION,
-        schema_version: "4.0".into(),
+        schema_version: "5.0".into(),
         compiler_version: "3".into(),
         canonical_hash: "canonical".into(),
         definition_hash: "definition".into(),

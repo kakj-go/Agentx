@@ -2,7 +2,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: clickhouse-init
-  namespace: agentx-v2-runtime
+  namespace: agentx-runtime
 data:
   01-users.sh: |
     #!/bin/sh

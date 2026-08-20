@@ -17,6 +17,7 @@ pub mod gateway;
 pub mod gc;
 pub mod internal_engine;
 pub mod object_upload;
+mod output_contract;
 mod output_projection;
 pub mod publish;
 pub mod query;
@@ -34,6 +35,7 @@ pub mod trace_delivery;
 pub mod trigger;
 pub mod vault;
 mod work_package_execution;
+mod worker_registry;
 pub mod worker_runtime;
 pub mod worker_support;
 

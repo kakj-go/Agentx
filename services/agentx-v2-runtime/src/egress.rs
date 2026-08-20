@@ -426,8 +426,7 @@ mod tests {
     #[test]
     fn managed_cluster_fixtures_keep_their_http_path() {
         assert!(
-            validate_provider_url("http://echo-mcp.agentx-v2-deps.svc.cluster.local:8090/mcp")
-                .is_ok()
+            validate_provider_url("http://echo-mcp.agentx-deps.svc.cluster.local:8090/mcp").is_ok()
         );
         assert!(validate_provider_url("http://10.0.0.1:8090/mcp").is_err());
         assert!(
@@ -446,7 +445,7 @@ mod tests {
         );
         assert!(
             validate_sandbox_manager_execute_url(
-                "http://sandbox-manager.agentx-v2-runtime.svc.cluster.local:8080/internal/runtime/v1/sandboxes:execute"
+                "http://sandbox-manager.agentx-runtime.svc.cluster.local:8080/internal/runtime/v1/sandboxes:execute"
             )
             .is_ok()
         );
@@ -458,7 +457,7 @@ mod tests {
         );
         assert!(
             validate_sandbox_manager_execute_url(
-                "http://arbitrary-service.agentx-v2-runtime.svc:8080/internal/runtime/v1/sandboxes:execute"
+                "http://arbitrary-service.agentx-runtime.svc:8080/internal/runtime/v1/sandboxes:execute"
             )
             .is_err()
         );

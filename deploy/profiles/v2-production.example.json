@@ -2,9 +2,9 @@
   "apiVersion": "agentx.io/deployment/v2alpha3",
   "environment": "production",
   "namespaces": {
-    "control": "agentx-v2-control",
-    "runtime": "agentx-v2-runtime",
-    "dependencies": "agentx-v2-deps"
+    "control": "agentx-control",
+    "runtime": "agentx-runtime",
+    "dependencies": "agentx-deps"
   },
   "images": {
     "registry": "registry.example.com/agentx",
@@ -93,7 +93,7 @@
     "control": "agentx-control-secrets",
     "runtime": "agentx-runtime-secrets",
     "observability": "agentx-observability-secrets",
-    "dependencies": null,
+    "dependencies": "agentx-dependencies-secrets",
     "workloads": {
       "platformControl": "agentx-platform-control-secrets",
       "controlMigration": "agentx-control-migration-secrets",

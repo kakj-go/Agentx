@@ -27,20 +27,25 @@ pub fn stream_name(capability: &str) -> Result<String> {
 
 pub async fn ensure_groups(redis: &mut ConnectionManager) -> Result<()> {
     for capability in agentx_node_protocol::ALL_RUNTIME_CAPABILITIES {
-        let stream = stream_name(capability)?;
-        let result = redis::cmd("XGROUP")
-            .arg("CREATE")
-            .arg(stream)
-            .arg(TASK_GROUP)
-            .arg("0-0")
-            .arg("MKSTREAM")
-            .query_async::<String>(redis)
-            .await;
-        if let Err(error) = result
-            && !error.to_string().contains("BUSYGROUP")
-        {
-            return Err(error).context("failed to create Runtime task consumer group");
-        }
+        ensure_group(redis, capability).await?;
+    }
+    Ok(())
+}
+
+async fn ensure_group(redis: &mut ConnectionManager, capability: &str) -> Result<()> {
+    let stream = stream_name(capability)?;
+    let result = redis::cmd("XGROUP")
+        .arg("CREATE")
+        .arg(stream)
+        .arg(TASK_GROUP)
+        .arg("0-0")
+        .arg("MKSTREAM")
+        .query_async::<String>(redis)
+        .await;
+    if let Err(error) = result
+        && error.code() != Some("BUSYGROUP")
+    {
+        return Err(error).context("failed to create Runtime task consumer group");
     }
     Ok(())
 }
@@ -61,7 +66,7 @@ pub async fn read(
     block_ms: usize,
 ) -> Result<Vec<TaskQueueItem>> {
     let stream = stream_name(capability)?;
-    let claimed: StreamAutoClaimReply = redis
+    let claimed: StreamAutoClaimReply = match redis
         .xautoclaim_options(
             &stream,
             TASK_GROUP,
@@ -70,7 +75,15 @@ pub async fn read(
             "0-0",
             StreamAutoClaimOptions::default().count(25),
         )
-        .await?;
+        .await
+    {
+        Ok(claimed) => claimed,
+        Err(error) if error.code() == Some("NOGROUP") => {
+            ensure_group(redis, capability).await?;
+            return Ok(Vec::new());
+        }
+        Err(error) => return Err(error.into()),
+    };
     if !claimed.claimed.is_empty() {
         return decode(&stream, claimed.claimed);
     }
@@ -78,9 +91,17 @@ pub async fn read(
         .group(TASK_GROUP, consumer)
         .count(25)
         .block(block_ms);
-    let reply: StreamReadReply = redis
+    let reply: StreamReadReply = match redis
         .xread_options(&[stream.as_str()], &[">"], &options)
-        .await?;
+        .await
+    {
+        Ok(reply) => reply,
+        Err(error) if error.code() == Some("NOGROUP") => {
+            ensure_group(redis, capability).await?;
+            return Ok(Vec::new());
+        }
+        Err(error) => return Err(error.into()),
+    };
     let mut items = Vec::new();
     for key in reply.keys {
         items.extend(decode(&key.key, key.ids)?);

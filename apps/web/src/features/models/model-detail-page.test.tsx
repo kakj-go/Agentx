@@ -24,6 +24,7 @@ describe('model edit form', () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = new URL(String(input), 'http://agentx.test').pathname
       requests.push({ path, init })
+      if (path === '/api/v1/models/aliases/model-1/test-connection') return jsonResponse({ checkedAt: '2026-08-11T01:00:00Z', status: 'unhealthy', latencyMs: 42, errorCode: 'PROVIDER_HTTP_ERROR', errorMessage: 'provider returned 401 Unauthorized' })
       if (path === '/api/v1/models/aliases/model-1') return jsonResponse(modelResponse)
       if (path === '/api/v1/departments') return jsonResponse([{ id: 'department-1', name: '研发部' }])
       if (path.includes('/prices')) return jsonResponse([{ id: 'price-1', deploymentId: 'deployment-1', versionNumber: 2, currency: 'CNY', inputPerMillion: '3.25000000', outputPerMillion: '7.50000000', createdAt: '2026-08-11T00:00:00Z' }])
@@ -57,6 +58,18 @@ describe('model edit form', () => {
     await waitFor(() => expect(requests.some((request) => request.path === '/api/v1/models/aliases/model-1' && request.init?.method === 'PATCH')).toBe(true))
     const request = requests.find((item) => item.path === '/api/v1/models/aliases/model-1' && item.init?.method === 'PATCH')
     expect(JSON.parse(String(request?.init?.body))).toMatchObject({ providerType: 'openai_compatible', price: { currency: 'CNY', inputPerMillion: '3.75', outputPerMillion: '6.5' } })
+  })
+
+  it('shows connection-test error details returned by the server', async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(<QueryClientProvider client={queryClient}><ToastProvider><MemoryRouter initialEntries={['/models/model-1']}><Routes><Route element={<ModelDetailPage />} path="/models/:id" /></Routes></MemoryRouter></ToastProvider></QueryClientProvider>)
+
+    fireEvent.click(await screen.findByRole('button', { name: '测试连接' }))
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('PROVIDER_HTTP_ERROR')
+    expect(alert).toHaveTextContent('provider returned 401 Unauthorized')
+    expect(screen.getByText('42 ms')).toBeInTheDocument()
   })
 })
 

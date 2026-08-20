@@ -29,7 +29,7 @@ R1～R4 可以在 R0 稳定后按能力并行，但共享 Contracts、Claim/Leas
 | ID | 状态 | 依赖 | 实施步骤 | 交付物 | 可验证验收 |
 |---|---|---|---|---|---|
 | V2R-001 | done | V2P-004、006 | Execution 创建只读取已激活 Bundle，固定 Bundle/Admission Epoch 并生成 Snapshot | Runtime Snapshot Builder | 不读取 Workflow Version/Catalog；历史 Execution 可解释；Head 切换不修改在途执行 |
-| V2R-005 | done | V2R-001 | 迁移 Item、Lineage、Expression、Context CAS、Attempt、Delivery、IF/Switch/Merge/Loop 和基础节点 | Runtime 状态机内核和 Fixture | Workflow 4.0 基础语义、重复 Delivery、冲突 CAS、循环预算和正式 End Output 通过 |
+| V2R-005 | done | V2R-001 | 迁移 Item、Lineage、Expression、Context CAS、Attempt、Delivery、IF/Switch/Merge/Loop 和基础节点 | Runtime 状态机内核和 Fixture | Workflow 5.0 基础语义、重复 Delivery、冲突 CAS、循环预算和正式 End Output 通过 |
 | V2R-004 | done | V2R-001、005 | 提取 command/outbox/recovery/artifact/quota Role；每个扫描使用公共 Claim/Lease/Fencing | `workflow-runtime` 多 Role 启动和测试 | 两副本竞争、过期接管、强退和 Drain 收敛；默认可合并 Deployment |
 | V2R-006 | done | V2R-001、004 | Worker 按 Protocol/IR/Compiler/Capability 过滤后 Claim Attempt；通用池支持逻辑 capability | Capability Registry、兼容矩阵和外部扩缩容指标 | 旧/不兼容 Worker 不领取；Redis 重复消息不重复执行已完成 Attempt |
 | V2R-002 | done | V2R-001 | Runtime 保存 Service Identity、Grant、Resource State、Policy Epoch 和 `max_policy_staleness`；新 Execution/需重授权 Attempt 本地校验 | Runtime Authorizer | 撤权传播后拒绝；LKG 和 Fail Closed 策略按租户生效；旧 Epoch 不能覆盖新值 |

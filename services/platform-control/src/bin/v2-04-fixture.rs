@@ -496,11 +496,11 @@ fn full_definition() -> Result<WorkflowDefinition> {
     }
     connections.push(json!({"id":"code-end","sourceNodeId":"code","sourceHandle":"main","targetNodeId":"__end__","targetHandle":"main","order":0}));
     serde_json::from_value(json!({
-        "schemaVersion":"4.0",
+        "schemaVersion":"5.0",
         "start":{"inputs":{"type":"object","properties":{"message":{"type":"string"}},"required":["message"],"additionalProperties":false},"contexts":{}},
         "nodes":nodes,
         "connections":connections,
-        "end":{"outputs":{"stdout":{"expression":"${{ outputs.code.main.current.json.stdout }}","schema":{"type":"string"},"required":true}}},
+        "end":{"outputs":{"stdout":{"value":{"kind":"reference","selector":{"namespace":"outputs","sourceNodeId":"code","port":"main","run":{"kind":"current"},"item":{"kind":"current"},"path":["stdout"]},"missingPolicy":{"kind":"error"}},"schema":{"type":"string"},"required":true}}},
         "settings":{"activationBudget":64,"executionOrder":"deterministic"}
     }))
     .map_err(Into::into)
@@ -508,7 +508,7 @@ fn full_definition() -> Result<WorkflowDefinition> {
 
 fn child_definition() -> Result<WorkflowDefinition> {
     serde_json::from_value(json!({
-        "schemaVersion":"4.0",
+        "schemaVersion":"5.0",
         "start":{"inputs":{"type":"object","additionalProperties":true},"contexts":{}},
         "nodes":[{"id":"grandchild","key":"grandchild","type":"sub_workflow","typeVersion":1,"name":"Fixed Grandchild","parameters":{"workflowVersionId":GRANDCHILD_VERSION},"outputProjection":{},"contextWrites":[],"resourceReferences":[]}],
         "connections":[
@@ -523,7 +523,7 @@ fn child_definition() -> Result<WorkflowDefinition> {
 
 fn grandchild_definition() -> Result<WorkflowDefinition> {
     serde_json::from_value(json!({
-        "schemaVersion":"4.0",
+        "schemaVersion":"5.0",
         "start":{"inputs":{"type":"object","additionalProperties":true},"contexts":{}},
         "nodes":[{"id":"grandchild-pass","key":"grandchild_pass","type":"no_op","typeVersion":1,"name":"Grandchild Pass","parameters":{},"outputProjection":{},"contextWrites":[],"resourceReferences":[]}],
         "connections":[
@@ -555,7 +555,7 @@ fn suspension_definition(node_type: &str) -> Result<WorkflowDefinition> {
         ]
     };
     serde_json::from_value(json!({
-        "schemaVersion":"4.0",
+        "schemaVersion":"5.0",
         "start":{"inputs":{"type":"object","additionalProperties":true},"contexts":{}},
         "nodes":[{"id":"suspend","key":"suspend","type":node_type,"typeVersion":1,"name":"Suspend","parameters":parameters,"outputProjection":{},"contextWrites":[],"resourceReferences":[]}],
         "connections":connections,
@@ -748,7 +748,7 @@ async fn seed_workflows(
             .bind(identity_id).bind(tenant).bind(workflow_id).execute(&mut **tx).await?;
         let draft_value = serde_json::to_value(draft)?;
         let draft_hash = agentx_runtime_contracts::content_hash(draft)?;
-        sqlx::query("INSERT INTO workflow_drafts(id,tenant_id,workflow_id,schema_version,revision,definition_json,content_hash,updated_by) VALUES(?,?,?,'4.0',1,?,?,?) ON DUPLICATE KEY UPDATE revision=1,definition_json=VALUES(definition_json),content_hash=VALUES(content_hash),updated_by=VALUES(updated_by)")
+        sqlx::query("INSERT INTO workflow_drafts(id,tenant_id,workflow_id,schema_version,revision,definition_json,content_hash,updated_by) VALUES(?,?,?,'5.0',1,?,?,?) ON DUPLICATE KEY UPDATE revision=1,definition_json=VALUES(definition_json),content_hash=VALUES(content_hash),updated_by=VALUES(updated_by)")
             .bind(Uuid::now_v7()).bind(tenant).bind(workflow_id).bind(draft_value).bind(draft_hash.as_str()).bind(user).execute(&mut **tx).await?;
     }
     sqlx::query("INSERT INTO workflow_service_identities(id,tenant_id,workflow_id,status,version) VALUES(?,?,?,'active',1) ON DUPLICATE KEY UPDATE status='active',version=1")
@@ -773,7 +773,7 @@ async fn seed_workflows(
             agentx_runtime_contracts::content_hash(grandchild_definition)?.to_string(),
         ),
     ] {
-        sqlx::query("INSERT INTO workflow_versions(id,tenant_id,workflow_id,version_number,source_revision,schema_version,definition_json,content_hash,created_by) VALUES(?,?,?,1,1,'4.0',?,?,?) ON DUPLICATE KEY UPDATE definition_json=VALUES(definition_json),content_hash=VALUES(content_hash)")
+        sqlx::query("INSERT INTO workflow_versions(id,tenant_id,workflow_id,version_number,source_revision,schema_version,definition_json,content_hash,created_by) VALUES(?,?,?,1,1,'5.0',?,?,?) ON DUPLICATE KEY UPDATE definition_json=VALUES(definition_json),content_hash=VALUES(content_hash)")
             .bind(version_id).bind(tenant).bind(workflow_id).bind(value).bind(hash).bind(user).execute(&mut **tx).await?;
     }
     sqlx::query("INSERT INTO workflow_deployments(id,tenant_id,workflow_id,environment_id,workflow_version_id,sequence_number,status,source,created_by) VALUES(?,?,?,?,?,1,'active','publish',?) ON DUPLICATE KEY UPDATE status='active'")

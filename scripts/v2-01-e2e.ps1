@@ -268,10 +268,10 @@ function Set-DevelopmentReplicas {
 $profilePath = if ([IO.Path]::IsPathRooted($ConfigFile)) { $ConfigFile } else { Join-Path $root $ConfigFile }
 $profile = Get-Content -Raw -LiteralPath $profilePath | ConvertFrom-Json
 $namespaces = @{
-    control = "agentx-v2-01-control-$RunId"
-    runtime = "agentx-v2-01-runtime-$RunId"
-    observability = "agentx-v2-01-runtime-$RunId"
-    dependencies = "agentx-v2-01-deps-$RunId"
+    control = "agentx-e2e-01-control-$RunId"
+    runtime = "agentx-e2e-01-runtime-$RunId"
+    observability = "agentx-e2e-01-runtime-$RunId"
+    dependencies = "agentx-e2e-01-deps-$RunId"
 }
 $developmentReplicas = @()
 $succeeded = $false
@@ -481,7 +481,7 @@ finally {
         $timeline.Add("$(Get-Date -Format o) development namespace replicas restored")
     }
     try {
-        $remainingNamespaces = @(& kubectl get namespace -o name | Where-Object { $_ -like "namespace/agentx-v2-01-*-$RunId" })
+    $remainingNamespaces = @(& kubectl get namespace -o name | Where-Object { $_ -like "namespace/agentx-e2e-01-*-$RunId" })
         $developmentStatus = @(((& kubectl -n agentx get deployment,statefulset -o json) -join "`n" | ConvertFrom-Json).items | ForEach-Object {
             [ordered]@{ kind = [string]$_.kind; name = [string]$_.metadata.name; desired = [int]$_.spec.replicas; ready = [int]$_.status.readyReplicas }
         })

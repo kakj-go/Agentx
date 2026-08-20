@@ -52,7 +52,7 @@ impl WorkPackageClient {
     pub(crate) fn from_env() -> anyhow::Result<Self> {
         Ok(Self {
             runtime_url: env::var("AGENTX_RUNTIME_INTERNAL_URL").unwrap_or_else(|_| {
-                "http://runtime-gateway-internal.agentx-v2-runtime.svc:8080".into()
+                "http://runtime-gateway-internal.agentx-runtime.svc:8080".into()
             }),
             http: reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(30))
@@ -1697,7 +1697,7 @@ mod debug_plan_tests {
 
     fn compiled() -> agentx_runtime_contracts::CompiledWorkflowV1 {
         let definition: WorkflowDefinition = serde_json::from_value(json!({
-            "schemaVersion":"4.0",
+            "schemaVersion":"5.0",
             "start":{"inputs":{"type":"object","additionalProperties":true},"contexts":{}},
             "nodes":[
                 {"id":"root","key":"root","type":"no_op","typeVersion":1,"name":"Root","disabled":false,"parameters":{},"outputProjection":{},"contextWrites":[],"resourceReferences":[],"settings":{}},

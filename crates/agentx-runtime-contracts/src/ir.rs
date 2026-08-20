@@ -51,10 +51,18 @@ pub struct CompiledNodeV1 {
     pub readiness: ReadinessPolicy,
     pub required_input_ports: Vec<String>,
     pub output_ports: Vec<String>,
+    pub effective_output_contract: EffectiveOutputContractV1,
     pub side_effect_level: SideEffectLevel,
     pub incoming_connections: Vec<usize>,
     pub outgoing_connections: Vec<usize>,
     pub component_index: usize,
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct EffectiveOutputContractV1 {
+    /// Frozen per-port JSON Schemas after applying node-instance projections.
+    pub port_schemas: BTreeMap<String, Value>,
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]

@@ -2779,42 +2779,6 @@
         ],
         "type": "object"
       },
-      "ExpressionPreviewRequest": {
-        "properties": {
-          "expression": {
-            "type": "string"
-          },
-          "input": {},
-          "itemIndex": {
-            "minimum": 0,
-            "type": "integer"
-          },
-          "json": {},
-          "linkedNodes": {},
-          "runIndex": {
-            "format": "int32",
-            "minimum": 0,
-            "type": "integer"
-          }
-        },
-        "required": [
-          "expression"
-        ],
-        "type": "object"
-      },
-      "ExpressionPreviewResponse": {
-        "properties": {
-          "redacted": {
-            "type": "boolean"
-          },
-          "value": {}
-        },
-        "required": [
-          "value",
-          "redacted"
-        ],
-        "type": "object"
-      },
       "FieldError": {
         "properties": {
           "code": {
@@ -12392,36 +12356,6 @@
         "responses": {},
         "tags": [
           "workflow_packages"
-        ]
-      }
-    },
-    "/api/v1/workflows/{id}/expressions/preview": {
-      "post": {
-        "operationId": "preview_expression",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ExpressionPreviewRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {},
-        "tags": [
-          "workflow_studio"
         ]
       }
     },

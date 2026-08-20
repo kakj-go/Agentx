@@ -132,7 +132,7 @@ async function findM6Workflow(page: Page, token: string) {
       const hasChatInputs = 'question' in properties && 'attachments' in properties
       const hasApproval = nodes.some((node) => node.type === 'approval')
       const hasModel = nodes.some((node) => node.resourceReferences?.some((reference) => reference.resourceType === 'model'))
-      return item.versionNumber === 1 && (item.schemaVersion ?? definition?.schemaVersion) === '4.0' && hasChatInputs && hasApproval && hasModel
+      return item.versionNumber === 1 && (item.schemaVersion ?? definition?.schemaVersion) === '5.0' && hasChatInputs && hasApproval && hasModel
     })
     if (version) return { workflow: candidate, version }
   }
@@ -145,7 +145,7 @@ test('M7 closes Application, Trigger, Evaluation, Approval and governance paths 
   const remoteNodeEndpoint = process.env.AGENTX_E2E_REMOTE_NODE_ENDPOINT ?? 'http://echo-node:8080'
   const { workflow, version } = await findM6Workflow(page, token)
   expect(workflow, 'M6 Studio must publish the Workflow used by M7').toBeTruthy()
-  expect(version, 'M6 Studio must publish a 4.0 chat-capable v1').toBeTruthy()
+  expect(version, 'M6 Studio must publish a 5.0 chat-capable v1').toBeTruthy()
   const environments = await request<Environment[]>(page, token, '/environments')
   const environment = environments.find((item) => item.code === 'development')
   expect(environment).toBeTruthy()
@@ -160,7 +160,7 @@ test('M7 closes Application, Trigger, Evaluation, Approval and governance paths 
   const savedTriggerDraft = await request<{ revision: number }>(page, token, `/workflows/${triggerWorkflow.id}/draft`, 'PUT', {
     expectedRevision: triggerDraft.revision,
     definition: {
-      schemaVersion: '4.0',
+      schemaVersion: '5.0',
       start: {
         inputs: { type: 'object', properties: { source: { type: 'string' } }, additionalProperties: true },
         contexts: {},
@@ -176,7 +176,7 @@ test('M7 closes Application, Trigger, Evaluation, Approval and governance paths 
       ],
       end: {
         outputs: {
-          result: { expression: '${{ outputs.set_result.main.current.json }}', schema: { type: 'object' }, required: true, sensitive: false },
+          result: { value: { kind: 'reference', selector: { namespace: 'outputs', sourceNodeId: 'set-result', port: 'main', run: { kind: 'current' }, item: { kind: 'current' }, path: [] }, missingPolicy: { kind: 'error' } }, schema: { type: 'object' }, required: true, sensitive: false },
         },
       },
       settings: { executionOrder: 'deterministic' },

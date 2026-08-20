@@ -1,10 +1,9 @@
+use agentx_domain::{DynamicValue, ValueNamespace};
 use serde_json::Value;
 
 use super::{
-    CompileIssue, ParameterExpressionContext, ParameterExpressionContract, exact_reference,
-    expression_reference_paths, json_types_compatible, output_reference_may_be_empty,
-    parameter_items_schema, parameter_property_schema, reference_json_type, schema_accepts_null,
-    schema_requires,
+    CompileIssue, ParameterExpressionContract, collect_dynamic_selectors, parameter_items_schema,
+    parameter_property_schema,
 };
 
 #[allow(clippy::too_many_arguments)]
@@ -14,73 +13,36 @@ pub(super) fn validate_parameter_expression_value_contract(
     value: &Value,
     schema: Option<&Value>,
     inherited: &ParameterExpressionContract,
-    required: bool,
-    context: &ParameterExpressionContext<'_>,
     issues: &mut Vec<CompileIssue>,
 ) {
     let contract = parameter_expression_contract(schema, inherited);
-    if let Value::String(source) = value {
-        let references = expression_reference_paths(source);
-        if references.is_empty() {
-            return;
-        }
-        if !contract.templatable {
+    if let Ok(dynamic) = serde_json::from_value::<DynamicValue>(value.clone()) {
+        if !matches!(dynamic, DynamicValue::Literal { .. }) && !contract.templatable {
             issues.push(CompileIssue {
                 code: "PARAMETER_NOT_TEMPLATABLE".into(),
                 path: path.into(),
-                message: format!("Parameter '{parameter_name}' does not allow expressions"),
+                message: format!("Parameter '{parameter_name}' does not allow dynamic values"),
             });
-            return;
         }
-        for reference in &references {
-            if let Some(root) = reference.first()
-                && !contract.allowed_namespaces.is_empty()
-                && !contract.allowed_namespaces.contains(root)
+        let mut selectors = Vec::new();
+        collect_dynamic_selectors(&dynamic, &mut selectors);
+        for selector in selectors {
+            let namespace = namespace_name(selector.namespace);
+            if !contract.allowed_namespaces.is_empty()
+                && !contract.allowed_namespaces.contains(namespace)
             {
                 issues.push(CompileIssue {
                     code: "EXPRESSION_NAMESPACE_NOT_ALLOWED".into(),
                     path: path.into(),
                     message: format!(
-                        "Parameter '{parameter_name}' cannot reference namespace '{root}'"
+                        "Parameter '{parameter_name}' cannot reference namespace '{namespace}'"
                     ),
                 });
             }
         }
-        let expected = schema
-            .and_then(|schema| schema.get("expectedType").and_then(Value::as_str))
-            .or_else(|| schema.and_then(|schema| schema.get("type").and_then(Value::as_str)));
-        if let (Some(expected), Some(reference)) = (
-            expected.filter(|value| *value != "any"),
-            exact_reference(value),
-        ) && let Some(actual) = reference_json_type(
-            &reference,
-            context.definition,
-            context.nodes,
-            context.manifests,
-        ) && !json_types_compatible(expected, &actual)
-        {
-            issues.push(CompileIssue {
-                code: "EXPRESSION_TYPE_MISMATCH".into(),
-                path: path.into(),
-                message: format!(
-                    "Parameter '{parameter_name}' expects {expected}, but the referenced value is {actual}"
-                ),
-            });
-        }
-        if required
-            && schema.is_some_and(|schema| !schema_accepts_null(schema))
-            && exact_reference(value).is_some_and(|reference| {
-                output_reference_may_be_empty(&reference, context.nodes, context.manifests)
-            })
-        {
-            issues.push(CompileIssue {
-                code: "REQUIRED_PARAMETER_MAY_BE_EMPTY".into(),
-                path: path.into(),
-                message: format!(
-                    "Required parameter '{parameter_name}' references an output selector that may be empty"
-                ),
-            });
-        }
+        return;
+    }
+    if value.is_string() {
         return;
     }
 
@@ -94,8 +56,6 @@ pub(super) fn validate_parameter_expression_value_contract(
                     item,
                     item_schema,
                     &contract,
-                    false,
-                    context,
                     issues,
                 );
             }
@@ -110,8 +70,6 @@ pub(super) fn validate_parameter_expression_value_contract(
                     child,
                     child_schema,
                     &contract,
-                    schema.is_some_and(|schema| schema_requires(schema, name)),
-                    context,
                     issues,
                 );
             }
@@ -120,16 +78,26 @@ pub(super) fn validate_parameter_expression_value_contract(
     }
 }
 
+fn namespace_name(namespace: ValueNamespace) -> &'static str {
+    match namespace {
+        ValueNamespace::Inputs => "inputs",
+        ValueNamespace::Outputs => "outputs",
+        ValueNamespace::Contexts => "contexts",
+        ValueNamespace::Execution => "execution",
+        ValueNamespace::Item => "item",
+        ValueNamespace::Loop => "loop",
+    }
+}
+
 fn parameter_expression_contract(
     schema: Option<&Value>,
     inherited: &ParameterExpressionContract,
 ) -> ParameterExpressionContract {
-    let templatable = schema
-        .and_then(|schema| schema.get("templatable"))
-        .and_then(Value::as_bool)
-        .unwrap_or(inherited.templatable);
+    let dynamic = schema.and_then(|schema| schema.get("x-agentx-dynamicValue"));
+    let templatable = dynamic.is_some() || inherited.templatable;
     let allowed_namespaces = schema
-        .and_then(|schema| schema.get("allowedNamespaces"))
+        .and_then(|_| dynamic)
+        .and_then(|dynamic| dynamic.get("allowedNamespaces"))
         .and_then(Value::as_array)
         .map(|values| {
             values
