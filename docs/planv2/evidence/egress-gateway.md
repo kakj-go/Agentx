@@ -1,5 +1,7 @@
 # Agentx SaaS 受控公网出口验收证据
 
+> 历史命令说明：本文中的 PowerShell、Shell、deployment Profile 和核心 Kustomize 命令只记录当时验收事实，相关入口已经删除，不得作为当前操作入口；请使用 `agentx-deploy`、`agentx-check` 与 `pytest tests/e2e`。
+
 > 历史环境快照：本文中的 `agentx-v2-*` Namespace 仅用于记录当时的验收环境，不代表当前部署规范。
 
 状态：本地功能、部署生命周期、密钥轮换和稳定性验收已完成；生产 NetworkPolicy enforcement 门禁仍为 `in_progress`，不得把当前 Docker Desktop `kindnet` 环境视为生产强隔离证据。

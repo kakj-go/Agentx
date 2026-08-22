@@ -1,135 +1,115 @@
-# Kubernetes 部署与扩展
+# Kubernetes 部署、扩展与可靠性
 
-## 1. 可组合部署契约
+## 1. 部署事实来源
 
-Agentx V2 通过 `scripts/deploy-v2.ps1` 和破坏性的 `agentx.io/deployment/v2alpha3` Profile 部署；`v2alpha2` 及更早版本会被明确拒绝。Profile 固定 `control/runtime/dependencies` 三个物理 Namespace；Observability 是独立逻辑 Plane，但与 Runtime 共用物理 Namespace。状态型依赖只能使用 bundled 或 external：
+Agentx 核心 Kubernetes 资源以 Helm 为唯一事实来源。部署主机通过 Python 3.12 + uv运行 `agentx-deploy`，Windows 与 Linux 使用相同参数和行为。CLI 调用 Helm/kubectl并解析 JSON输出，不实现第二套 Kubernetes Client，也不下载前置工具。
 
-| 组件 | 模式 |
-|---|---|
-| MySQL | `bundled` / `external` |
-| Redis | `bundled` / `external` |
-| ClickHouse | `bundled` / `external` |
-| Object Storage | `bundled-minio` / `external-s3` |
-| LightRAG、Mem0 | `bundled` / `external` / `disabled` |
-| Sandbox | `disabled` / `remote` |
-| Agentx Image | `local-build` / `registry` |
+四个逻辑域对应四个独立 Release：
 
-Profile 只保存非敏感配置和固定 Secret 引用。密码、API Key、Session Token 和加密 Key 只进入 Kubernetes Secret；CA、客户端证书和私钥由部署主机的绝对路径复制到只读 Trust Bundle。
+| Plane | Release | Namespace |
+|---|---|---|
+| Dependencies | `agentx-dependencies` | Dependencies Namespace |
+| Control | `agentx-control` | Control Namespace |
+| Runtime | `agentx-runtime` | Runtime Namespace |
+| Observability | `agentx-observability` | Runtime Namespace |
 
-镜像地址由 `images.registry + images.repositoryPrefix + 服务名 + images.tag/digest` 生成。`repositoryPrefix` 只负责同一仓库下的名称前缀；当服务名已经包含该前缀时不会重复添加。例如 Docker Hub Beta Profile 使用 `registry=kakj`、`repositoryPrefix=agentx-`，最终得到 `kakj/agentx-platform-control:v0.0.1-beta` 和 `kakj/agentx-migrate:v0.0.1-beta`。
+ingress-nginx 使用固定上游 Chart和独立 Release `agentx-ingress-nginx`，位于 Dependencies Namespace。Observability 虽与 Runtime 共用 Namespace，仍独立拥有 ServiceAccount、Secret、NetworkPolicy、Migration、Doctor 和 Helm历史。
 
-所有跨组件凭据都以 Dependencies Namespace 的 `agentx-dependencies-secrets` 为唯一权威来源，包括 Vault Token、Control 与 Runtime/Observability 的 JWT/Bundle/Work Package/User 签名材料、Runtime 与 Egress Gateway 的私钥/公钥/KID、Egress TLS/CA，以及 Observability Redis ACL 密码。Kubernetes 不允许 Pod 直接引用其他 Namespace 的 Secret，因此部署器按最小权限把这些值同步到 Control、Runtime、Observability 和 Gateway 的本地镜像 Secret；组件不直接读取跨 Namespace Secret，也不放宽 RBAC。生产 `existing-kubernetes` Profile 同样必须提供 `agentx-dependencies-secrets`，各工作负载 Secret 只保存本地凭据和所需共享值的镜像。
+Kustomize 只管理 LightRAG/Mem0 Addon与临时 E2E Fixture。核心 Helm与 Kustomize资源不得重名、使用同一 Selector或声明相同 Helm所有权。
 
-管理员只修改权威 Secret，随后必须执行全量协调同步：
+## 2. Values 契约
 
-```powershell
-.\scripts\deploy-v2.ps1 -Action SyncSecrets -Target All -ConfigFile deploy/profiles/v2-full-local.json
-```
+环境配置是 YAML，顶层固定为 `global`、`control`、`runtime`、`observability`、`dependencies`。四个 Chart携带相同 `values.schema.json`，测试保证公共定义无漂移。
 
-`SyncSecrets` 只允许 `-Target All`。它先拒绝缺项或不完整的共享密钥集合，再更新所有镜像，重跑 bundled Vault Bootstrap 并验证两个 Token，随后滚动 Runtime Redis、Egress Gateway 及所有消费共享凭据的应用并等待 Ready。普通 Install/Upgrade 会复用 Dependencies Secret 中已有权威值，单独重建 Control、Runtime 或 Observability 不会再生成不同的 Token/密钥；删除整个 Dependencies Secret 后才会执行一次旧分域 Secret 迁移或生成新材料。
+`global` 组合：
 
-共享签名密钥轮换不是单值更新：私钥、公钥集合和 KID 必须作为同一批次更新。Egress 应使用 `scripts/rotate-egress-keys.ps1`，它在新旧公钥重叠发布成功后才提交新的权威值；其他签名材料手工轮换时也应先在公钥 JSON 中保留新旧 KID，再分两次执行 `SyncSecrets`，最后移除旧公钥。只更新密钥对的一半会被部署器拒绝。
+- 三个物理 Namespace和两个 Ingress Host；
+- Registry、Repository Prefix、Tag/Digest、Pull Policy和可选 Pull Secret；
+- bundled/external MySQL、Redis、ClickHouse、S3、Vault和外部 OpenSandbox；
+- Egress Gateway端口、Sandbox私有入口、固定外部依赖 CIDR；
+- 权威 Secret、工作负载 Secret和备份 RPO/RTO。
 
-本地 Full 将 Control MySQL 放在 Control，Runtime MySQL/Redis/ClickHouse 放在 Runtime，Vault/MinIO/Ingress 放在 Dependencies。生产使用相同三个 Namespace，但状态型中间件可以全部位于集群外，只要 Agentx Pod 能解析地址、完成 TLS 验证并通过 Doctor。
+production 必须使用镜像摘要、existing Kubernetes Secret、外部状态依赖、HTTPS/私有 CA、MySQL `verify_identity`、`rediss://` 和已知云厂商内部 LoadBalancer Annotation。外部资源在安装、升级和卸载中都不被创建、修改或删除。
 
-## 2. 目录边界
+## 3. 安装和发布顺序
 
-```text
-deploy/
-├── profiles/
-├── ingress-nginx/
-├── k8s/
-│   ├── v2/{control,runtime,observability,dependencies}/
-│   ├── addons/{lightrag,mem0}/
-│   └── fixtures/
-└── opensandbox/{docker,kubernetes}/
-```
+安装顺序是架构契约：
 
-Control、Runtime、Observability、Dependencies 继续保持四个逻辑 Kustomization；部署器把 Observability 映射到 Runtime Namespace，并负责动态 Namespace、Secret、镜像重写、Pull Policy 和应用顺序。Echo MCP/Node 只用于 local/E2E，不属于基础生产服务。
+1. Values/工具/集群/Namespace/生产门禁。
+2. production 只读校验所有权威、工作负载、CA/TLS和镜像 Secret，缺项时在创建资源前失败。
+3. 创建或验证所选 Target的 Namespace及 Pod Security标签。
+4. local/test创建或复用权威 Secret，并发布最小镜像 Secret。
+5. 安装 ingress-nginx。
+6. 安装 Dependencies并等待 Egress Gateway、Vault、MinIO等适用依赖 Ready。
+7. 安装 Control、Runtime、Observability。
+8. 等待 Migration、Bootstrap、Init Container、Deployment、StatefulSet和 PDB。
+9. 执行每个 Release的 Helm Test/Doctor。
+10. 输出 Revision、镜像、Namespace和访问入口；production保存 Release Manifest。
 
-## 3. 安装流程
+所有 Helm发布使用 `--atomic --wait --wait-for-jobs`。单 Target操作只检查前置 Release，不隐式修改其他 Target。Upgrade从集群读取当前 Deployment副本并通过本次 Helm Override保留；扩缩容必须由操作者显式执行。
 
-公开 Beta 镜像面向用户提供一键安装入口，Windows/PowerShell 执行 `pwsh ./scripts/install.ps1`，Linux/Bash 执行 `bash ./scripts/install.sh`。两个入口都使用 `deploy/profiles/v2-dockerhub-beta.json`，并按 `Validate → Install → Doctor` 完成配置校验、资源安装和安装后健康检查。
+## 4. Migration、Bootstrap 与契约窗口
 
-高级部署、独立 Target 操作和自定义 Profile 仍使用底层部署器：
+Migration Job是普通 Helm资源，名称包含 Release Revision，不使用安装前 Hook。Job等待数据库并使用数据库锁保证并发唯一执行。应用 Pod的 Init Container查询目标 Schema Version，Schema可用前不启动业务容器。
 
-```powershell
-.\scripts\deploy-v2.ps1 -Action Validate -ConfigFile deploy/profiles/v2-full-local.json
-.\scripts\deploy-v2.ps1 -Action Install -Target All -ConfigFile deploy/profiles/v2-full-local.json
-.\scripts\deploy-v2.ps1 -Action Doctor -Target All -ConfigFile deploy/profiles/v2-full-local.json
-```
+Bootstrap在首次安装每个 Release时只创建一次，Migration完成前由同一 Job有界重试。Bootstrap必须幂等，双重执行作为 E2E不变量验证。
 
-顺序固定为：
+Expand Migration可手工创建一次性 Revision外 Job。Contract门禁检查旧 ReplicaSet、协议兼容窗口和 Release状态；任何失败都中止发布。Rollback只接受单 Target和明确 Helm Revision，不伪造跨 Release的“整体 Revision”。
 
-1. 校验 Profile、PowerShell、kubectl、Docker/镜像模式、权限和 Kustomize/Helm 渲染。单独执行 `-Action Validate` 到此结束，不创建资源；`-Action Doctor` 会复用已安装环境、刷新受管 Secret/Gateway并创建一次性 Doctor Job。
-2. 创建或复用 Namespace，创建/验证 Secret 和 CA Trust Bundle。
-3. 安装专用 ingress-nginx，创建 Gateway 公钥/TLS Secret、Service 和 NetworkPolicy。
-4. 先部署并等待 `agentx-egress-gateway`，再安装 selected bundled 基础设施并等待 StatefulSet/Bucket Job。
-5. 运行 `doctor-infrastructure`，实际执行 MySQL `SELECT 1`、Redis `PING`、ClickHouse `SELECT 1` 和 S3 临时对象写入、读取、内容校验及删除。
-6. 运行 MySQL/ClickHouse Migration。
-7. 部署核心服务，并让 Readiness 反映周期依赖探测；Runtime 外部调用方只有在 Gateway Ready 后才滚动升级。
+## 5. Secret 权威源
 
-Gateway 密钥轮换按 `发布新旧双公钥 -> Gateway Ready -> 四个调用方逐个更新私钥/KID并 Ready -> 删除旧公钥` 执行，失败时恢复旧私钥/KID和原公钥集合。生产 `privateLoadBalancer` 只接受 AWS、Azure 或 GCP 已知的内部 LB Annotation，并将 Profile Endpoint 端口单独映射到容器 `3129`；任意非空 Annotation 不构成内部 LB 证明。
+Dependencies Namespace中的 `agentx-dependencies-secrets` 是共享 JWT、Bundle、Work Package、User签名、Egress Key/KID、Egress TLS和 Observability Redis材料的权威源。Pod不能跨 Namespace引用 Secret，因此每个工作负载使用本 Namespace的最小镜像 Secret。
 
-8. remote Sandbox 模式部署 Manager 并运行 `doctor-opensandbox`。
-9. 部署 bundled Addon，或对 external Addon 做集群内 Endpoint 连通性检查。
-10. 创建业务 Ingress，等待全部 Rollout，并把每个逻辑 Plane 的发布描述写入独立的 `agentx-v2-release-state-<plane>` ConfigMap。
+- local/test：Python `cryptography` 生成材料；先查权威 Secret，重复 Install/Upgrade保持原值。
+- production：只接受预先创建的权威、工作负载和外部依赖 Secret。
+- Helm：只渲染 Secret名称和 Key，不生成或承载明文。
+- 普通 Install/Upgrade：不隐式轮换持久密钥。
+- `sync-secrets`：同步与权威源同名的共享 Key并滚动消费者。
+- `rotate-egress-keys`：互斥执行双公钥重叠、Gateway Ready、调用方逐个切换、旧公钥删除；失败恢复并重新滚动。
 
-`-Action Render` 执行 Profile、Chart 和 Kustomize 渲染但不修改 Kubernetes 资源；`-Action Validate` 只校验 Profile 和架构约束。
+## 6. 外部依赖与 CA
 
-## 4. 外部依赖与 TLS
+Control、Runtime和 Observability Chart通过投影 Secret把私有 CA只读挂载至 `/etc/agentx-ca`，并设置各 Rust Client的 CA Path。生产不允许关闭证书校验。
 
-MySQL 支持 TLS Mode、私有 CA 和 mTLS；Redis 使用 Rustls 并支持 `rediss://`、私有 CA、mTLS 和独立密码；ClickHouse 使用 HTTPS/Rustls 并合并系统 CA 与私有 CA Bundle；S3 支持 Access/Secret Key、Session Token、Path/Virtual-host Style 和私有 CA Bundle。
+- Control：Control MySQL、S3、Vault CA。
+- Runtime：Runtime MySQL、Redis、S3、Vault、OpenSandbox CA。
+- Observability：ClickHouse、受限 Redis、S3 CA。
+- Sandbox Egress：独立 TLS/CA Secret和单一私有入口。
 
-不能关闭证书校验。生产 Object Storage 禁止 HTTP。外部 S3 Bucket 必须预创建，部署脚本不会创建、清空或删除外部 Bucket。新环境变量使用 `AGENTX_S3_ACCESS_KEY/SECRET_KEY`，运行时代码短期兼容旧 MinIO 变量。
+外部 S3 Bucket必须预创建。PVC不是备份。备份/恢复由外部 Adapter执行，主 CLI只做安全前置、Receipt白名单、RPO/RTO与 JSON Schema验证。
 
-Sandbox Manager 只解析 Runtime MySQL 和 OpenSandbox Settings；Runtime Gateway、Workflow Runtime、Workflow Worker 按各自 Role 使用 Runtime MySQL、Redis、Object Storage、Vault或 Provider；Observability只使用受限 Redis ACL、ClickHouse和独立对象存储身份。服务不会因无关依赖配置缺失而获得跨域凭据。
+## 7. 网络与安全
 
-## 5. 专用 Ingress
+- Control/Runtime执行 Restricted Pod Security；Dependencies仅为 ingress/OpenSandbox所需边界放宽。
+- Runtime业务 Pod不能直连公网，Model/MCP/Memory/RAG/HTTP等动态流量经 Gateway `3128`。
+- Sandbox默认断网；显式允许时只访问 Gateway `3129` TLS入口。
+- Gateway应用层和 NetworkPolicy共同拒绝私网、回环、Metadata、保留网段和未批准端口。
+- Observability无 Runtime MySQL凭据，只使用受限 Redis ACL、ClickHouse和独立对象存储身份。
+- 核心部署不引入 Prometheus、指标 Adapter、HPA、KEDA、Operator或 GitOps控制器。
 
-脚本管理固定 ingress-nginx Chart `4.15.1`、Controller `1.15.1`、Release `agentx-ingress-nginx` 和 Profile 指定的 IngressClass。它安装在 `agentx-deps`（或 RunId 对应 Dependencies Namespace），不是默认 IngressClass，不接管未带 V2 所有权标记的 Controller。
+严格 NetworkPolicy认证必须在实际执行策略的 CNI上完成；不支持策略执行的本地集群不能形成生产安全证据。
 
-Profile 必须提供 Host，可选择已有 TLS Secret。默认环境使用 `LoadBalancer`；RunId 临时环境使用独立 IngressClass、独立 Helm资源名和 `ClusterIP`，避免并发环境争用 80/443。卸载前会扫描全集群；仍有 Ingress 使用该 IngressClass 时保留 Controller。
+## 8. 健康、扩展和故障恢复
 
-`network.externalEgress` 只描述 MySQL、Redis、Vault、S3、ClickHouse 和 OpenSandbox 等固定运维依赖 CIDR，不再配置动态 `provider*` 目标。用户 Model/MCP/Memory/RAG/HTTP 等公网流量统一经 Gateway，默认只开放公共 TCP 443；可增加少量显式 HTTPS 端口，但不能开放端口范围。
+Readiness表示必需依赖与 Schema可用，Liveness只表示进程存活：
 
-Sandbox 代理不创建公共 Ingress。本地使用固定 NodePort 和 `host.docker.internal`；生产使用集群内 Service 或带 TLS、来源 CIDR和云平台内部 LB Annotation 的私有 LoadBalancer。Docker Desktop DNS 可能返回 `198.18.0.0/15` 合成地址：本地只对“域名解析结果”例外，用户直接填写该网段仍会被应用层拒绝；生产没有此例外。
+- Platform Control无状态扩展，Control MySQL保存权威管理状态。
+- Runtime Gateway通过 Runtime MySQL持久化游标，Redis仅唤醒。
+- Workflow Runtime多副本使用 MySQL状态条件、Claim/Lease/Fencing和 Outbox。
+- Worker按 Capability扩展，并依赖 Runtime MySQL、Redis、S3和 Runtime API。
+- Sandbox Manager多副本共享 MySQL Lease并接入独立 OpenSandbox。
+- Observability消费受限 Redis Trace Stream写入 ClickHouse；ClickHouse故障不阻断 Execution提交。
 
-## 6. Addon 边界
+Kubernetes重启不能替代幂等、Lease、Fencing、Outbox和恢复逻辑。
 
-LightRAG/Mem0 是可选业务 Addon，不是 Agentx 权威状态存储。bundled 模式由 Profile 提供 Provider Base URL、模型和 Embedding 配置，由独立 Secret 提供 API Key；local Full 可以使用 Echo MCP，test/production 必须使用真实 Provider。
+## 9. 卸载与数据保护
 
-external 模式不把 Endpoint 或 Credential 作为全局租户资源。Bootstrap 后，管理员在 UI/API 创建 Credential、Connection、测试连接并向 Workflow Service Identity 创建 Grant。切换 Addon 模式时 Workload 可删除，但 PVC 默认保留。
+普通 Uninstall删除对应 Helm Release，但保留 Namespace、PVC和外部资源。Observability卸载不删除 Runtime Release或共享 Namespace。Runtime仍存在时拒绝单独卸载 Dependencies。
 
-## 7. OpenSandbox 边界
+只有 local/test、`Target=all`且同时提供 `--purge-data --yes` 时才删除三个 Namespace；production直接拒绝。IngressClass仍有使用者时保留 Controller，Purge模式则失败并要求先处理使用者。
 
-OpenSandbox Server、Controller、RuntimeClass 和计算节点归 Dependencies，但当前仍由其独立安装流程管理，不由主部署脚本隐式创建。Sandbox disabled 时不部署 Manager，也不注入 Manager URL/Token；Worker仍订阅 Sandbox capability，Code节点会明确返回 `RUNTIME_UNAVAILABLE`，不会永久留在队列。
+## 10. E2E 和质量门禁
 
-remote 模式部署一个逻辑 Sandbox Manager 服务；其多副本共享 MySQL Lease并连接一个 Lifecycle Endpoint。OpenSandbox Kubernetes Runtime 负责为会话创建并调度任意多个 Sandbox Pod。本阶段不实现多个独立 Docker Host Provider 的容量调度和 Sticky Routing。
+pytest负责临时集群环境、安装/升级/回滚/Doctor/清理、port-forward、日志事件和证据。领域 Marker为 infrastructure、publishing、gateway、runtime、observability、security、upgrade、product。TypeScript Playwright继续负责 UI操作，不改写为 Python浏览器测试；OpenSandbox官方 Go SDK差分 Oracle继续保留 Go。
 
-本地 Docker+runc 和当前 Kubernetes 环境用于功能验收。gVisor/Kata、生产 Vault、镜像签名和攻击隔离当前暂不重试，由 M7 INT-006/010/011/014 作为生产发布强化验收，不阻塞当前 Kubernetes 部署认证。
-
-## 8. 运行健康与扩展
-
-- Platform Control：无状态，可水平扩展；Control MySQL为必需依赖，通过内部 API查询 Runtime/Observability。
-- Runtime Gateway：无状态；SSE游标持久化在 Runtime MySQL，Redis只用于唤醒。
-- Workflow Runtime：多副本通过 Runtime MySQL状态条件和 Lease协作，承载 command/outbox/recovery/trigger/trace-relay 等 Role。
-- Workflow Worker：按 capability/队列扩展，周期探测 Runtime MySQL、Redis、Object Storage 和 Runtime API。
-- Sandbox Manager：共享 MySQL Lease，周期验证 MySQL、OpenSandbox `/health` 和认证列表接口，Heartbeat 使用真实状态。
-- Observability：消费受限 Runtime Redis Trace Stream并写入/查询 ClickHouse；没有 Runtime MySQL凭据，ClickHouse故障不影响 Execution提交。
-
-Readiness 表示必需依赖可用，Liveness 只表示进程存活。所有外部调用仍需要重试、幂等键、Lease 和 Outbox，不能把 Kubernetes 重启当作一致性机制。
-
-## 9. 升级与卸载
-
-Upgrade/Rollback按 `Control/Runtime/Observability/Dependencies` 逻辑 Target 独立操作；Runtime与 Observability共享 Namespace时仍使用不同 Release State和资源标签。Upgrade/Rollback保留集群现有副本数，首次 Install使用 Profile默认的 1 副本。
-
-Uninstall按逻辑 Plane删除资源；`Uninstall -Target Observability` 不删除 Runtime Deployment、Runtime MySQL/Redis或 Runtime Namespace。普通卸载保留 Namespace；只有非生产 RunId 的 `-Target All -PurgeTestResources` 才删除三个去重后的临时 Namespace。外部依赖永不修改，PVC不是备份。
-
-ingress-nginx通过 Helm Annotation和 Ownership ConfigMap验证所有权。卸载时先删除受管业务 Ingress，再扫描 IngressClass使用者；只有无人使用且所有权匹配时才删除 Controller和集群级 IngressClass。
-
-## 10. E2E
-
-`scripts/v2-profile-tests.ps1` 覆盖 `v2alpha3` Schema、`v2alpha2` 及更早 Profile拒绝、三 Namespace渲染、逻辑 Target、八类 Deployment/PDB和零 HPA/指标栈资源。`scripts/v2-07-profile-tests.ps1` 继续验证安全与发布 Profile门禁。
-
-完整 V2 E2E 使用 RunId创建 Control/Runtime/Dependencies三个临时 Namespace和唯一 IngressClass，执行 Migration、Bootstrap、Doctor、发布、Invocation、Worker、Trace、故障与恢复验证。测试结束删除三个临时 Namespace以及本次受管 Helm Release/IngressClass，不触碰正式开发 Namespace。历史 `2→4→2` Run仅作为横向扩展正确性的既有证据；当前默认常驻副本数为 1。
+静态门禁覆盖：ruff、pytest、Values Schema、四 Chart lint/template、Kustomize渲染、资源所有权冲突、表/API/Claim契约、架构边界、2000行限制、Rust/Web测试和 `git diff --check`。运行命令与完整 Runbook见[部署手册](../deploy/README.md)。

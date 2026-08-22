@@ -12,4 +12,4 @@
 | Worker / Sandbox | Attempt / Sandbox Lease | Redis Group + MySQL Lease / `SKIP LOCKED` | Provider 调用在 Claim 提交后 | Result Hash、Provider Label、稳定 Operation Key |
 | Observability Consumer | Redis Pending | Consumer Group + Pending 接管 | ClickHouse 成功后 ACK | Pending Entry、`event_id + content_hash` |
 
-静态门禁 `scripts/v2-claim-lease-tests.ps1` 校验目录完整性、源文件存在、批次上限、索引登记、Pod UID 注入，并拒绝生产源码以 Pod 本地时间判断 `locked_until`。动态的旧 Token 拒绝、强退接管和外部响应丢失必须由 `scripts/v2-06-e2e.ps1` 提供证据，静态目录不能替代 E2E。
+静态门禁 `uv run --frozen pytest deploy/tests/test_contracts.py -k claim_lease` 校验目录完整性、源文件存在、批次上限、索引登记，并拒绝生产源码以 Pod 本地时间判断 `locked_until`；同文件的 Helm 测试校验 Pod UID 注入。动态的旧 Token 拒绝、强退接管和外部响应丢失必须由 `uv run --frozen pytest tests/e2e -m runtime --values <values.yaml>` 提供证据，静态目录不能替代 E2E。

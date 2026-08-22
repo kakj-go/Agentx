@@ -1,0 +1,29 @@
+{{- if ne .Values.global.environment "production" }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: vault
+  namespace: {{ .Values.global.namespaces.dependencies }}
+spec:
+  serviceName: vault
+  replicas: 1
+  selector: { matchLabels: { app.kubernetes.io/name: vault } }
+  template:
+    metadata: { labels: { app.kubernetes.io/name: vault, agentx.io/plane: dependencies } }
+    spec:
+      serviceAccountName: vault
+      automountServiceAccountToken: false
+      containers:
+        - name: vault
+          image: hashicorp/vault:1.19
+          args: ["server", "-dev", "-dev-listen-address=0.0.0.0:8200"]
+          env:
+            - name: VAULT_DEV_ROOT_TOKEN_ID
+              valueFrom: { secretKeyRef: { name: {{ .Values.global.secrets.dependencies }}, key: VAULT_DEV_ROOT_TOKEN_ID } }
+          ports: [{ name: http, containerPort: 8200 }]
+          readinessProbe: { httpGet: { path: "/v1/sys/health?standbyok=true", port: http }, periodSeconds: 5 }
+          volumeMounts: [{ name: data, mountPath: /vault/file }]
+  volumeClaimTemplates:
+    - metadata: { name: data }
+      spec: { accessModes: [ReadWriteOnce], resources: { requests: { storage: 1Gi } } }
+{{- end }}

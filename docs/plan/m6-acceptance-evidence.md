@@ -1,5 +1,7 @@
 # M6 Workflow Studio 验收证据
 
+> 历史命令说明：本文中的 PowerShell、Shell、deployment Profile 和核心 Kustomize 命令只记录当时验收事实，相关入口已经删除，不得作为当前操作入口；请使用 `agentx-deploy`、`agentx-check` 与 `pytest tests/e2e`。
+
 状态：`done`。最终验收日期：2026-08-08。最终 Kubernetes Run ID：`20260808T051133152Z`。
 
 M6 的 STU-001～016 已全部实现并通过契约、单元、构建、临时 Kubernetes 和真实浏览器闭环验收。Studio 使用 Agentx 原生 Definition 4.0、Editor Document、Debug Overlay、Node Manifest 和 ExecutionRuntime；不兼容 n8n JSON、节点包、Credential 或 JavaScript 表达式。

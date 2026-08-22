@@ -1,0 +1,8 @@
+{{- if eq .Values.global.components.clickhouse.mode "bundled" }}
+apiVersion: v1
+kind: Service
+metadata: { name: clickhouse, namespace: {{ .Values.global.namespaces.runtime }} }
+spec:
+  selector: { app.kubernetes.io/name: clickhouse }
+  ports: [{ name: http, port: 8123 }, { name: native, port: 9000 }]
+{{- end }}

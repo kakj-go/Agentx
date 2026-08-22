@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Service
+metadata: { name: platform-control-metrics, namespace: {{ .Values.global.namespaces.control }} }
+spec:
+  clusterIP: None
+  selector: { app.kubernetes.io/name: platform-control }
+  ports: [{ name: metrics, port: 9092, targetPort: metrics }]

@@ -1,0 +1,4 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: { name: workflow-worker, namespace: {{ .Values.global.namespaces.runtime }} }
+spec: { minAvailable: 1, selector: { matchLabels: { app.kubernetes.io/name: workflow-worker } } }

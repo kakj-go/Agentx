@@ -1,0 +1,4 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: { name: agentx-egress-gateway, namespace: {{ .Values.global.namespaces.dependencies }} }
+spec: { minAvailable: 1, selector: { matchLabels: { app.kubernetes.io/name: agentx-egress-gateway } } }

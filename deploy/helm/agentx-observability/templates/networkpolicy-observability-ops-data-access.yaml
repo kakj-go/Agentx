@@ -1,0 +1,15 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: observability-ops-data-access, namespace: {{ .Values.global.namespaces.runtime }} }
+spec:
+  podSelector: { matchLabels: { agentx.io/ops-job: "true" } }
+  policyTypes: [Egress]
+  egress:
+    - to: [{ podSelector: { matchLabels: { app.kubernetes.io/name: clickhouse } } }]
+      ports: [{ protocol: TCP, port: 8123 }]
+    - to:
+        - namespaceSelector: { matchLabels: { agentx.io/plane: dependencies } }
+          podSelector: { matchLabels: { app.kubernetes.io/name: object-storage } }
+      ports: [{ protocol: TCP, port: 9000 }]
+    - to: [{ namespaceSelector: {}, podSelector: { matchLabels: { k8s-app: kube-dns } } }]
+      ports: [{ protocol: UDP, port: 53 }, { protocol: TCP, port: 53 }]

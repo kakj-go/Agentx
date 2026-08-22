@@ -67,7 +67,7 @@ C-1 公共 API 逐路径处置与替代链路补齐
 - SQL、Env、Secret、数据库权限、NetworkPolicy、2000 行限制和 `git diff --check` 通过。
 - 无 Kafka/Pulsar/NATS/Event Sourcing Framework、通用 Control Runtime Summary 或 V1 双路径残留。
 
-当前仓库通用检查入口是 `scripts/check.ps1`；V2 实施过程中必须新增并固化 V2 专用边界、Migration、Profile、容量和 E2E 脚本，最终证据不得只引用人工命令历史。
+当前仓库通用检查入口是 `uv run --frozen agentx-check`；V2 边界、Migration、Values、Helm 和 E2E 门禁必须由 Python/pytest 固化，最终证据不得只引用人工命令历史。
 
 ## 6. 08A 完成与 08B 最终门禁
 

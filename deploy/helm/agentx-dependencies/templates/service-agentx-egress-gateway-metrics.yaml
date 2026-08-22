@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Service
+metadata: { name: agentx-egress-gateway-metrics, namespace: {{ .Values.global.namespaces.dependencies }} }
+spec:
+  clusterIP: None
+  selector: { app.kubernetes.io/name: agentx-egress-gateway }
+  ports: [{ name: metrics, port: 9092, targetPort: metrics }]

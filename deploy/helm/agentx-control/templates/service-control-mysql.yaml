@@ -1,0 +1,11 @@
+{{- if eq .Values.global.components.controlMysql.mode "bundled" }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: control-mysql
+  namespace: {{ .Values.global.namespaces.control }}
+spec:
+  selector:
+    app.kubernetes.io/name: control-mysql
+  ports: [{ name: mysql, port: 3306 }]
+{{- end }}

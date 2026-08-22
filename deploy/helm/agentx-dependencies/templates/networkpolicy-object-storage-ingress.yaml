@@ -1,0 +1,12 @@
+{{- if eq .Values.global.components.objectStorage.mode "bundled-minio" }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: object-storage-ingress, namespace: {{ .Values.global.namespaces.dependencies }} }
+spec:
+  podSelector: { matchLabels: { app.kubernetes.io/name: object-storage } }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector: { matchExpressions: [{ key: agentx.io/plane, operator: In, values: [control, runtime, dependencies] }] }
+      ports: [{ protocol: TCP, port: 9000 }]
+{{- end }}

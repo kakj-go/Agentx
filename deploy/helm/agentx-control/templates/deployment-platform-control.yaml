@@ -1,0 +1,94 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: platform-control, namespace: {{ .Values.global.namespaces.control }} }
+spec:
+  replicas: {{ .Values.control.services.platformControl.replicas }}
+  strategy: { type: RollingUpdate, rollingUpdate: { maxUnavailable: 1, maxSurge: 1 } }
+  selector: { matchLabels: { app.kubernetes.io/name: platform-control } }
+  template:
+    metadata: { labels: { app.kubernetes.io/name: platform-control, agentx.io/plane: control, agentx.io/public-api: control, agentx.io/metrics: enabled } }
+    spec:
+      serviceAccountName: platform-control
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 60
+      securityContext: { runAsNonRoot: true, seccompProfile: { type: RuntimeDefault } }
+      initContainers:
+{{ include "agentx.control.schemaGate" (list . "platformControl") | nindent 8 }}
+      containers:
+        - name: platform-control
+          image: {{ include "agentx.image" (list . "platform-control") }}
+          imagePullPolicy: {{ .Values.global.images.pullPolicy }}
+          args: []
+          env:
+            - name: AGENTX_INSTANCE_ID
+              valueFrom: { fieldRef: { fieldPath: metadata.uid } }
+            - { name: AGENTX_CONTROL_ROLES, value: {{ join "," .Values.control.services.platformControl.roles | quote }} }
+            - { name: AGENTX_CONTROL_API_JWT_ISSUER, value: agentx-platform }
+            - { name: AGENTX_CONTROL_API_JWT_AUDIENCE, value: agentx-web }
+            - { name: AGENTX_CONTROL_API_COOKIE_SECURE, value: {{ eq .Values.global.environment "production" | quote }} }
+            - { name: AGENTX_CONTROL_MYSQL_HOST, value: {{ .Values.global.components.controlMysql.host | quote }} }
+            - { name: AGENTX_CONTROL_MYSQL_PORT, value: {{ .Values.global.components.controlMysql.port | quote }} }
+            - { name: AGENTX_CONTROL_MYSQL_DATABASE, value: {{ .Values.global.components.controlMysql.database | quote }} }
+            - { name: AGENTX_CONTROL_MYSQL_USER, value: {{ .Values.global.components.controlMysql.appUser | quote }} }
+            - { name: AGENTX_CONTROL_MYSQL_MAX_CONNECTIONS, value: {{ .Values.control.services.platformControl.mysqlPool | quote }} }
+            - { name: AGENTX_CONTROL_MYSQL_TLS_MODE, value: {{ .Values.global.components.controlMysql.tlsMode | quote }} }
+            - { name: AGENTX_CONTROL_S3_ENDPOINT, value: {{ .Values.global.components.objectStorage.endpoint | quote }} }
+            - { name: AGENTX_CONTROL_S3_BUCKET, value: {{ .Values.global.components.objectStorage.domains.control.bucket | quote }} }
+            - { name: AGENTX_CONTROL_S3_REGION, value: {{ .Values.global.components.objectStorage.region | quote }} }
+            - { name: AGENTX_CONTROL_S3_ALLOW_HTTP, value: {{ .Values.global.components.objectStorage.allowHttp | quote }} }
+            - { name: AGENTX_CONTROL_S3_PATH_STYLE, value: {{ .Values.global.components.objectStorage.pathStyle | quote }} }
+            - { name: AGENTX_RUNTIME_INTERNAL_URL, value: {{ printf "http://runtime-gateway-internal.%s.svc:8080" .Values.global.namespaces.runtime | quote }} }
+            - { name: AGENTX_OBSERVABILITY_INTERNAL_URL, value: {{ printf "http://observability.%s.svc:8080" .Values.global.namespaces.runtime | quote }} }
+            - { name: AGENTX_CONTROL_VAULT_ENDPOINT, value: {{ .Values.global.components.secretProvider.endpoint | quote }} }
+            - { name: AGENTX_CONTROL_VAULT_MOUNT, value: {{ .Values.global.components.secretProvider.mount | quote }} }
+            - name: AGENTX_CONTROL_MYSQL_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ include "agentx.secret" (list . "platformControl" "control") }}, key: AGENTX_CONTROL_MYSQL_PASSWORD } }
+            - name: AGENTX_CONTROL_S3_ACCESS_KEY
+              valueFrom: { secretKeyRef: { name: {{ include "agentx.secret" (list . "platformControl" "control") }}, key: AGENTX_CONTROL_S3_ACCESS_KEY } }
+            - name: AGENTX_CONTROL_S3_SECRET_KEY
+              valueFrom: { secretKeyRef: { name: {{ include "agentx.secret" (list . "platformControl" "control") }}, key: AGENTX_CONTROL_S3_SECRET_KEY } }
+            - name: AGENTX_CONTROL_PUBLISHER_JWT_KID
+              valueFrom: { secretKeyRef: { name: {{ include "agentx.secret" (list . "platformControl" "control") }}, key: AGENTX_CONTROL_PUBLISHER_JWT_KID } }
+            - name: AGENTX_CONTROL_PUBLISHER_JWT_PRIVATE_KEY_PEM
+              valueFrom: { secretKeyRef: { name: {{ include "agentx.secret" (list . "platformControl" "control") }}, key: AGENTX_CONTROL_PUBLISHER_JWT_PRIVATE_KEY_PEM } }
+            - name: AGENTX_CONTROL_PROJECTOR_JWT_KID
+              valueFrom: { secretKeyRef: { name: {{ include "agentx.secret" (list . "platformControl" "control") }}, key: AGENTX_CONTROL_PROJECTOR_JWT_KID } }
+            - name: AGENTX_CONTROL_PROJECTOR_JWT_PRIVATE_KEY_PEM
+              valueFrom: { secretKeyRef: { name: {{ include "agentx.secret" (list . "platformControl" "control") }}, key: AGENTX_CONTROL_PROJECTOR_JWT_PRIVATE_KEY_PEM } }
+            - name: AGENTX_CONTROL_BFF_JWT_KID
+              valueFrom: { secretKeyRef: { name: {{ include "agentx.secret" (list . "platformControl" "control") }}, key: AGENTX_CONTROL_BFF_JWT_KID } }
+            - name: AGENTX_CONTROL_BFF_JWT_PRIVATE_KEY_PEM
+              valueFrom: { secretKeyRef: { name: {{ include "agentx.secret" (list . "platformControl" "control") }}, key: AGENTX_CONTROL_BFF_JWT_PRIVATE_KEY_PEM } }
+            - name: AGENTX_CONTROL_BUNDLE_KEY_ID
+              valueFrom: { secretKeyRef: { name: {{ include "agentx.secret" (list . "platformControl" "control") }}, key: AGENTX_CONTROL_BUNDLE_KEY_ID } }
+            - name: AGENTX_CONTROL_BUNDLE_ED25519_PRIVATE_KEY_PEM
+              valueFrom: { secretKeyRef: { name: {{ include "agentx.secret" (list . "platformControl" "control") }}, key: AGENTX_CONTROL_BUNDLE_ED25519_PRIVATE_KEY_PEM } }
+            - name: AGENTX_CONTROL_WORK_PACKAGE_KEY_ID
+              valueFrom: { secretKeyRef: { name: {{ include "agentx.secret" (list . "platformControl" "control") }}, key: AGENTX_CONTROL_WORK_PACKAGE_KEY_ID } }
+            - name: AGENTX_CONTROL_WORK_PACKAGE_ED25519_PRIVATE_KEY_PEM
+              valueFrom: { secretKeyRef: { name: {{ include "agentx.secret" (list . "platformControl" "control") }}, key: AGENTX_CONTROL_WORK_PACKAGE_ED25519_PRIVATE_KEY_PEM } }
+            - name: AGENTX_CONTROL_API_REFRESH_JWT_SIGNING_SECRET
+              valueFrom: { secretKeyRef: { name: {{ include "agentx.secret" (list . "platformControl" "control") }}, key: AGENTX_CONTROL_API_REFRESH_JWT_SIGNING_SECRET } }
+            - name: AGENTX_CONTROL_USER_JWT_KID
+              valueFrom: { secretKeyRef: { name: {{ include "agentx.secret" (list . "platformControl" "control") }}, key: AGENTX_CONTROL_USER_JWT_KID } }
+            - name: AGENTX_CONTROL_USER_JWT_PRIVATE_KEY_PEM
+              valueFrom: { secretKeyRef: { name: {{ include "agentx.secret" (list . "platformControl" "control") }}, key: AGENTX_CONTROL_USER_JWT_PRIVATE_KEY_PEM } }
+            - name: AGENTX_CONTROL_USER_JWT_PUBLIC_KEYS_JSON
+              valueFrom: { secretKeyRef: { name: {{ include "agentx.secret" (list . "platformControl" "control") }}, key: AGENTX_CONTROL_USER_JWT_PUBLIC_KEYS_JSON } }
+            - name: AGENTX_CONTROL_VAULT_TOKEN
+              valueFrom: { secretKeyRef: { name: {{ include "agentx.secret" (list . "platformControl" "control") }}, key: AGENTX_CONTROL_VAULT_TOKEN } }
+{{ include "agentx.control.caEnv" . | nindent 12 }}
+          ports:
+            - { name: http, containerPort: 8080 }
+            - { name: admin, containerPort: 9091 }
+            - { name: metrics, containerPort: 9092 }
+          resources: { requests: { cpu: 100m, memory: 128Mi, ephemeral-storage: 64Mi }, limits: { cpu: 1, memory: 512Mi, ephemeral-storage: 256Mi } }
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, runAsNonRoot: true, capabilities: { drop: [ALL] } }
+          startupProbe: { httpGet: { path: /health/live, port: http }, periodSeconds: 2, failureThreshold: 30 }
+          readinessProbe: { httpGet: { path: /health/ready, port: http }, periodSeconds: 5, failureThreshold: 2 }
+          livenessProbe: { httpGet: { path: /health/live, port: http }, periodSeconds: 10, failureThreshold: 3 }
+          lifecycle: { preStop: { httpGet: { path: /health/drain, port: admin, scheme: HTTP } } }
+          volumeMounts:
+{{ include "agentx.control.caMount" . | nindent 12 }}
+      volumes:
+{{ include "agentx.control.caVolume" . | nindent 8 }}

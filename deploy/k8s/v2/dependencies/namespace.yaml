@@ -1,5 +1,0 @@
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: agentx-deps
-  labels: { agentx.io/plane: dependencies, agentx.io/ingress: allowed }

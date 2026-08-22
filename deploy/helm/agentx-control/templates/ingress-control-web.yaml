@@ -1,0 +1,26 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: control-web
+  namespace: {{ .Values.global.namespaces.control }}
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+spec:
+  ingressClassName: {{ .Values.global.ingress.className }}
+  {{- with .Values.global.ingress.controlTlsSecretName }}
+  tls:
+    - hosts: [{{ $.Values.global.ingress.controlHost | quote }}]
+      secretName: {{ . }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.global.ingress.controlHost }}
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service: { name: platform-control, port: { number: 8080 } }
+          - path: /
+            pathType: Prefix
+            backend:
+              service: { name: web-console, port: { number: 8080 } }

@@ -1,0 +1,59 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: observability, namespace: {{ .Values.global.namespaces.runtime }} }
+spec:
+  replicas: {{ .Values.observability.services.observability.replicas }}
+  strategy: { type: RollingUpdate, rollingUpdate: { maxUnavailable: 1, maxSurge: 1 } }
+  selector: { matchLabels: { app.kubernetes.io/name: observability } }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: observability, agentx.io/plane: observability, agentx.io/internal-api: observability-v1, agentx.io/metrics: enabled }
+    spec:
+      serviceAccountName: observability
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 60
+      securityContext: { runAsNonRoot: true, seccompProfile: { type: RuntimeDefault } }
+      initContainers:
+{{ include "agentx.observability.schemaGate" . | nindent 8 }}
+      containers:
+        - name: observability
+          image: {{ include "agentx.image" (list . "observability") }}
+          imagePullPolicy: {{ .Values.global.images.pullPolicy }}
+          env:
+            - name: AGENTX_INSTANCE_ID
+              valueFrom: { fieldRef: { fieldPath: metadata.uid } }
+            - { name: AGENTX_OBSERVABILITY_ROLES, value: {{ join "," .Values.observability.services.observability.roles | quote }} }
+            - { name: AGENTX_CLICKHOUSE_URL, value: {{ .Values.global.components.clickhouse.url | quote }} }
+            - { name: AGENTX_CLICKHOUSE_DATABASE, value: {{ .Values.global.components.clickhouse.database | quote }} }
+            - { name: AGENTX_CLICKHOUSE_QUERY_USER, value: {{ .Values.global.components.clickhouse.queryUser | quote }} }
+            - { name: AGENTX_CLICKHOUSE_CONSUMER_USER, value: {{ .Values.global.components.clickhouse.consumerUser | quote }} }
+            - { name: AGENTX_OBSERVABILITY_REDIS_URL, value: {{ .Values.global.components.runtimeRedis.url | quote }} }
+            - { name: AGENTX_OBSERVABILITY_REDIS_USERNAME, value: observability }
+            - { name: AGENTX_OBSERVABILITY_JWT_ISSUER, value: {{ .Values.global.components.objectStorage.domains.control.bucket | quote }} }
+            - name: AGENTX_CLICKHOUSE_QUERY_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ include "agentx.secret" (list . "observability" "observability") }}, key: AGENTX_CLICKHOUSE_QUERY_PASSWORD } }
+            - name: AGENTX_CLICKHOUSE_CONSUMER_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ include "agentx.secret" (list . "observability" "observability") }}, key: AGENTX_CLICKHOUSE_CONSUMER_PASSWORD } }
+            - name: AGENTX_OBSERVABILITY_REDIS_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ include "agentx.secret" (list . "observability" "observability") }}, key: AGENTX_OBSERVABILITY_REDIS_PASSWORD } }
+            - name: AGENTX_OBSERVABILITY_BFF_JWT_PUBLIC_KEYS_JSON
+              valueFrom: { secretKeyRef: { name: {{ include "agentx.secret" (list . "observability" "observability") }}, key: AGENTX_OBSERVABILITY_BFF_JWT_PUBLIC_KEYS_JSON } }
+{{ include "agentx.observability.caEnv" . | nindent 12 }}
+          ports:
+            - { name: http, containerPort: 8080 }
+            - { name: admin, containerPort: 9091 }
+            - { name: metrics, containerPort: 9092 }
+          resources: { requests: { cpu: 100m, memory: 128Mi, ephemeral-storage: 64Mi }, limits: { cpu: 1, memory: 512Mi, ephemeral-storage: 256Mi } }
+          startupProbe: { httpGet: { path: /health/live, port: http }, periodSeconds: 2, failureThreshold: 30 }
+          readinessProbe: { httpGet: { path: /health/ready, port: http }, periodSeconds: 5, failureThreshold: 2 }
+          livenessProbe: { httpGet: { path: /health/live, port: http }, periodSeconds: 10, failureThreshold: 3 }
+          lifecycle: { preStop: { httpGet: { path: /health/drain, port: admin, scheme: HTTP } } }
+          volumeMounts:
+{{ include "agentx.observability.caMount" . | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities: { drop: [ALL] }
+      volumes:
+{{ include "agentx.observability.caVolume" . | nindent 8 }}

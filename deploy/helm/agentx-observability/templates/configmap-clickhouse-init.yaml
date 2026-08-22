@@ -1,0 +1,25 @@
+{{- if eq .Values.global.components.clickhouse.mode "bundled" }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: clickhouse-init
+  namespace: {{ .Values.global.namespaces.runtime }}
+data:
+  01-users.sh: |
+    #!/bin/sh
+    set -eu
+    query_password="$(cat /run/secrets/agentx/query-password)"
+    consumer_password="$(cat /run/secrets/agentx/consumer-password)"
+    case "$query_password" in
+      *[!A-Za-z0-9]*) echo "ClickHouse passwords must be alphanumeric" >&2; exit 1 ;;
+    esac
+    case "$consumer_password" in
+      *[!A-Za-z0-9]*) echo "ClickHouse passwords must be alphanumeric" >&2; exit 1 ;;
+    esac
+    clickhouse-client --user "$CLICKHOUSE_USER" --password "$CLICKHOUSE_PASSWORD" --multiquery <<SQL
+    CREATE USER IF NOT EXISTS observability_query IDENTIFIED WITH sha256_password BY '$query_password';
+    ALTER USER observability_query IDENTIFIED WITH sha256_password BY '$query_password';
+    CREATE USER IF NOT EXISTS observability_consumer IDENTIFIED WITH sha256_password BY '$consumer_password';
+    ALTER USER observability_consumer IDENTIFIED WITH sha256_password BY '$consumer_password';
+    SQL
+{{- end }}

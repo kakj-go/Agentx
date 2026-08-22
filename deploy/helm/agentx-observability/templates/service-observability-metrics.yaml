@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Service
+metadata: { name: observability-metrics, namespace: {{ .Values.global.namespaces.runtime }} }
+spec:
+  clusterIP: None
+  selector: { app.kubernetes.io/name: observability }
+  ports: [{ name: metrics, port: 9092, targetPort: metrics }]

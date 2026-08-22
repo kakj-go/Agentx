@@ -1,0 +1,47 @@
+{{- if eq .Values.global.components.runtimeMysql.mode "bundled" }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata: { name: runtime-mysql, namespace: {{ .Values.global.namespaces.runtime }} }
+spec:
+  serviceName: runtime-mysql
+  replicas: 1
+  selector: { matchLabels: { app.kubernetes.io/name: runtime-mysql } }
+  template:
+    metadata: { labels: { app.kubernetes.io/name: runtime-mysql, agentx.io/plane: runtime } }
+    spec:
+      serviceAccountName: workflow-runtime
+      automountServiceAccountToken: false
+      securityContext: { runAsNonRoot: true, runAsUser: 999, runAsGroup: 999, fsGroup: 999, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: mysql
+          image: mysql:8.4
+          securityContext: { allowPrivilegeEscalation: false, capabilities: { drop: [ALL] } }
+          env:
+            - { name: MYSQL_DATABASE, value: {{ .Values.global.components.runtimeMysql.database | quote }} }
+            - { name: MYSQL_ROOT_PASSWORD_FILE, value: /run/secrets/agentx/root-password }
+          ports: [{ name: mysql, containerPort: 3306 }]
+          startupProbe:
+            exec: { command: [sh, -ec, 'mysqladmin ping -h 127.0.0.1 -uroot -p"$(cat /run/secrets/agentx/root-password)"'] }
+            failureThreshold: 60
+            periodSeconds: 2
+          readinessProbe:
+            exec: { command: [sh, -ec, 'mysqladmin ping -h 127.0.0.1 -uroot -p"$(cat /run/secrets/agentx/root-password)"'] }
+            periodSeconds: 5
+          volumeMounts:
+            - { name: data, mountPath: /var/lib/mysql }
+            - { name: init, mountPath: /docker-entrypoint-initdb.d, readOnly: true }
+            - { name: mysql-secrets, mountPath: /run/secrets/agentx, readOnly: true }
+      volumes:
+        - name: init
+          configMap: { name: runtime-mysql-init, defaultMode: 0555 }
+        - name: mysql-secrets
+          secret:
+            secretName: agentx-runtime-secrets
+            items:
+              - { key: AGENTX_RUNTIME_MYSQL_PASSWORD, path: app-password }
+              - { key: AGENTX_RUNTIME_MYSQL_MIGRATE_PASSWORD, path: migrate-password }
+              - { key: AGENTX_RUNTIME_MYSQL_ROOT_PASSWORD, path: root-password }
+  volumeClaimTemplates:
+    - metadata: { name: data }
+      spec: { accessModes: [ReadWriteOnce], resources: { requests: { storage: 2Gi } } }
+{{- end }}

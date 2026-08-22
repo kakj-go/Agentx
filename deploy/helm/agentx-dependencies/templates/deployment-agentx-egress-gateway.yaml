@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: agentx-egress-gateway, namespace: {{ .Values.global.namespaces.dependencies }} }
+spec:
+  replicas: {{ .Values.dependencies.services.egressGateway.replicas }}
+  strategy: { type: RollingUpdate, rollingUpdate: { maxUnavailable: 1, maxSurge: 1 } }
+  selector: { matchLabels: { app.kubernetes.io/name: agentx-egress-gateway } }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: agentx-egress-gateway, agentx.io/plane: dependencies, agentx.io/security-infrastructure: egress, agentx.io/metrics: enabled }
+    spec:
+      serviceAccountName: agentx-egress-gateway
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 60
+      securityContext: { runAsNonRoot: true, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: agentx-egress-gateway
+          image: {{ include "agentx.image" (list . "agentx-egress-gateway") }}
+          imagePullPolicy: {{ .Values.global.images.pullPolicy }}
+          env:
+            - { name: AGENTX_EGRESS_ALLOWED_PUBLIC_PORTS, value: {{ join "," .Values.global.network.egressGateway.allowedPublicPorts | quote }} }
+            - { name: AGENTX_EGRESS_BLOCKED_CIDRS, value: "10.0.0.0/8,100.64.0.0/10,127.0.0.0/8,169.254.0.0/16,172.16.0.0/12,192.168.0.0/16,198.18.0.0/15,::1/128,fc00::/7,fe80::/10" }
+            - { name: AGENTX_EGRESS_ALLOW_DOCKER_DESKTOP_DNS, value: {{ ne .Values.global.environment "production" | quote }} }
+            - { name: AGENTX_EGRESS_MAX_SANDBOX_TUNNELS, value: "64" }
+            - { name: AGENTX_EGRESS_SANDBOX_TOKEN_MAX_CONCURRENT_TUNNELS, value: "4" }
+            - { name: AGENTX_EGRESS_SANDBOX_TOKEN_MAX_CONNECTIONS, value: "32" }
+            - { name: AGENTX_EGRESS_SANDBOX_TOKEN_MAX_TOTAL_SECONDS, value: "3600" }
+            - { name: AGENTX_EGRESS_TLS_CERT_PATH, value: /var/run/agentx-egress-tls/tls.crt }
+            - { name: AGENTX_EGRESS_TLS_KEY_PATH, value: /var/run/agentx-egress-tls/tls.key }
+            - name: AGENTX_EGRESS_JWT_PUBLIC_KEYS_JSON
+              valueFrom: { secretKeyRef: { name: {{ index (.Values.global.secrets.workloads | default dict) "egressGateway" | default "agentx-egress-gateway-secrets" }}, key: AGENTX_EGRESS_JWT_PUBLIC_KEYS_JSON } }
+          ports:
+            - { name: health, containerPort: 8080 }
+            - { name: runtime-proxy, containerPort: 3128 }
+            - { name: sandbox-proxy, containerPort: 3129 }
+            - { name: admin, containerPort: 9091 }
+            - { name: metrics, containerPort: 9092 }
+          volumeMounts:
+            - { name: tls, mountPath: /var/run/agentx-egress-tls, readOnly: true }
+          resources: { requests: { cpu: 100m, memory: 64Mi, ephemeral-storage: 32Mi }, limits: { cpu: 1, memory: 256Mi, ephemeral-storage: 128Mi } }
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, runAsNonRoot: true, capabilities: { drop: [ALL] } }
+          startupProbe: { httpGet: { path: /health/live, port: health }, periodSeconds: 2, failureThreshold: 30 }
+          readinessProbe: { httpGet: { path: /health/ready, port: health }, periodSeconds: 5, failureThreshold: 2 }
+          livenessProbe: { httpGet: { path: /health/live, port: health }, periodSeconds: 10, failureThreshold: 3 }
+          lifecycle: { preStop: { httpGet: { path: /health/drain, port: admin, scheme: HTTP } } }
+      volumes:
+        - name: tls
+          secret: { secretName: {{ .Values.global.network.egressGateway.sandboxAccess.tlsSecretName }} }

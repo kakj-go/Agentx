@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Service
+metadata: { name: sandbox-manager-metrics, namespace: {{ .Values.global.namespaces.runtime }} }
+spec:
+  clusterIP: None
+  selector: { app.kubernetes.io/name: sandbox-manager }
+  ports: [{ name: metrics, port: 9092, targetPort: metrics }]

@@ -1,5 +1,7 @@
 # M4 验收证据
 
+> 历史命令说明：本文中的 PowerShell、Shell、deployment Profile 和核心 Kustomize 命令只记录当时验收事实，相关入口已经删除，不得作为当前操作入口；请使用 `agentx-deploy`、`agentx-check` 与 `pytest tests/e2e`。
+
 状态：`done`。最终验收复核日期：2026-08-04。
 
 M4 的阶段 08 和 09 共 24 项原子任务已完成实现，并通过最终快速门禁、Kubernetes E2E、故障恢复、数据库断言和浏览器交互验收。交付范围包括 Definition 2.0、Node Protocol/API、确定性编译和运行状态机、Coordinator/Worker、Checkpoint/Fork、Wait/Approval 与 Execution/Recovery Workbench。完整 Workflow Studio、AI/MCP/Skill/RAG/Memory/OpenSandbox Runner 和 Application/Evaluation/Trigger 全链路接线仍分别属于 M5～M7。

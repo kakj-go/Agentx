@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Service
+metadata: { name: runtime-gateway-metrics, namespace: {{ .Values.global.namespaces.runtime }} }
+spec:
+  clusterIP: None
+  selector: { app.kubernetes.io/name: runtime-gateway }
+  ports: [{ name: metrics, port: 9092, targetPort: metrics }]

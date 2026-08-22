@@ -1,77 +1,98 @@
-# Kubernetes 界面 E2E 测试规范
+# Kubernetes E2E 测试规范
 
-## 1. 目的和适用范围
+## 1. 分工
 
-Playwright E2E 是所有已完成业务功能的阶段门禁，用于证明用户可以在真实浏览器中通过可见界面完成业务闭环。快速单元、契约和组件测试继续由 scripts/check.ps1 承担，不能用它们替代界面 E2E。
+pytest 是 Kubernetes环境和系统级 E2E的唯一编排入口；TypeScript Playwright继续验证真实浏览器和 UI业务操作。Python只负责安装环境、port-forward、环境变量、调用 pnpm Playwright和收集报告，不复制浏览器场景。
 
-本规范适用于 M2.1 及之后所有新增或修改的页面、表单、菜单和业务按钮。
+## 2. 领域 Marker
 
-## 2. 环境模型
+| Marker | 范围 |
+|---|---|
+| `infrastructure` | Namespace、存储、Secret、TLS、Migration、Bootstrap和数据域 |
+| `publishing` | Bundle Prepare/Activate/Rollback与跨面投递 |
+| `gateway` | Invocation、SSE、Webhook和幂等 |
+| `runtime` | Worker、恢复、Claim/Lease、Drain和 Sandbox |
+| `observability` | Trace Relay、Redis、ClickHouse与降级恢复 |
+| `security` | NetworkPolicy、受控公网出口、Secret隔离和 RuntimeClass |
+| `upgrade` | 独立升级、Migration竞争、Rollback、备份恢复 |
+| `product` | 完整 UI/API闭环、稳定性和残留检查 |
 
-- 每次验收创建独立 agentx-e2e Namespace 和全新 PVC。
-- 部署 MySQL、Redis、ClickHouse、MinIO、Migration Job、Platform API、Web 和当前阶段需要的业务服务。
-- M2.1 默认部署 Echo MCP，不依赖公网服务。
-- 通过 kubectl port-forward 暴露 Web，同源 /api 代理保持与生产一致。
-- 默认在成功或失败后删除 Namespace；KeepNamespace 只用于人工排障。
-- E2E 不复用 agentx 开发 Namespace 的数据或登录状态。
+文件按业务域存放于 `tests/e2e/<domain>/`，不再使用阶段编号作为主组织方式。历史 Playwright文件可以逐步按产品域更名，但部署迁移不得改变测试行为。
 
-## 3. 数据和操作规则
+## 3. 环境模型
 
-- Bootstrap、登录、资源创建、编辑、授权、发布等业务数据必须通过页面按钮、表单、拖拽和菜单创建。
-- API 或数据库只允许用于环境准备、清理、故障注入和最终证据校验，不能替代被测 UI 操作。
-- 测试优先使用可访问角色、Label 和稳定业务名称定位，不依赖 CSS 层级、内部组件类名或随机 ID。
-- 画布连线必须通过真实鼠标拖动 Handle，不允许直接注入 React Flow State。
-- 文件场景使用浏览器文件选择或拖拽输入，不直接写对象存储。
+每次运行生成唯一 Run ID，并派生：
 
-## 4. 按钮覆盖规则
+- Control、Runtime、Dependencies三个临时 Namespace；
+- 唯一 IngressClass与 ingress-nginx Release资源名；
+- 独立 `artifacts/e2e/<run-id>/` 证据目录；
+- 两个有界生命周期的 Web/Runtime port-forward。
 
-- 每个新增或修改的业务按钮至少有一个 Playwright 真实点击路径。
-- 新建、编辑、保存、发布、授权、测试连接和调试等命令必须断言可见结果或服务端错误。
-- 通用资源授权从统一 `/resource-grants` 页面完成；Workflow Studio 可以对当前工作流的完整依赖包执行直接授权或提交设计期申请，资源详情页不得保留第二套授权入口。
-- 删除、撤权、覆盖、调试高副作用 Tool 等危险操作同时覆盖取消和确认。
-- 乐观锁操作至少覆盖一次 409，且确认页面不会静默覆盖服务器状态。
-- 权限受限操作同时覆盖按钮隐藏和后端拒绝或 /403 路由。
-- 未接入 Runtime 的按钮保持禁用，并断言不会创建伪 Execution。
+Fixture通过 `agentx-deploy install/upgrade/doctor/uninstall`管理四个 Helm Release。Addon/Echo Provider仅在请求对应 Fixture时通过 `deploy/kustomize/e2e-fixtures`安装，不进入核心 Release。
 
-## 5. 通用界面门禁
+`--scale-down-development` 可在测试前记录常驻开发 Deployment副本并缩容为 0，结束时在 `finally`恢复。默认成功或失败都清理临时 Namespace；只有失败且显式使用 `--keep-on-failure` 才保留现场。
 
-- Chromium 桌面视口固定为 1440×900，后续阶段按风险补充其他桌面尺寸。
-- 至少覆盖 zh-CN、en-US、浅色和深色状态。
-- 页面不得出现原始翻译键、Invalid Date、Secret 明文或不可恢复的错误。
-- MCP Schema 必须断言字段、类型和必填信息，不能只断言原始 JSON；Skill Markdown 必须通过富文本工具栏和 `contenteditable` 完成编辑。
-- 多字段 Dialog 在 1440×900 下必须断言主要提交按钮处于视口内；仅真实超过浏览器可用高度时允许滚动。
-- 所有关键页面必须覆盖加载完成、空结果、失败提示和权限不足中的适用状态。
-- 表单使用可访问 Label，Dialog 具有稳定名称，图标按钮具有 aria-label。
+## 4. 数据和操作规则
 
-## 6. 证据和保留
+- Bootstrap、登录、资源创建、编辑、授权、发布等业务数据必须通过页面或正式 API创建。
+- API/数据库只允许环境准备、故障注入和最终证据断言，不能替代被测 UI操作。
+- 画布连线使用真实鼠标拖动 Handle，不注入 React State。
+- 文件场景使用浏览器文件选择或拖拽，不直接写对象存储。
+- 升级场景必须证明副本、PVC、权威 Secret和业务数据保持；Rollback必须使用明确 Helm Revision。
+- Migration并发、Bootstrap幂等、Secret轮换回滚、Dependencies卸载保护和 production Purge拒绝是系统级不变量。
 
-Playwright 生成：
+## 5. Playwright 门禁
 
-- HTML Report
-- JUnit XML
-- 成功与失败 Trace
-- 失败 Screenshot 和 Video
+- Chromium桌面视口固定为 `1440×900`，worker为 1。
+- zh-CN、en-US、浅色和深色按风险覆盖。
+- 每个新增或修改业务按钮至少有一个真实点击路径。
+- 高副作用操作同时覆盖取消与确认；乐观锁至少覆盖一次 409。
+- 权限受限操作同时覆盖按钮状态和服务端拒绝。
+- 关键页面覆盖加载、空结果、失败和权限不足中的适用状态。
+- 使用可访问 Role、Label和稳定业务名称，不依赖 CSS层级或随机 ID。
+- Playwright不得出现非条件性的 skipped 场景；条件 Skip必须说明外部能力前提。
 
-编排脚本额外保存 Kubernetes 资源、事件、Platform API 日志、Echo MCP 日志和 port-forward 日志。验收证据文档记录命令、结果、报告路径和关键业务闭环，不提交包含 Secret 或真实业务数据的附件。
+Python设置 `AGENTX_E2E_BASE_URL`、`AGENTX_E2E_RUNTIME_URL`、Run ID和 Provider Endpoint，然后调用：
+
+```bash
+pnpm --filter @agentx/e2e test
+```
+
+## 6. 证据与脱敏
+
+每个 Run保存：
+
+- install/uninstall JSON；
+- Kubernetes资源、事件、Pod日志和命令时间线；
+- port-forward stdout/stderr；
+- Playwright HTML、JUnit、Trace、Screenshot和 Video；
+- 升级/回滚 Revision、备份 Receipt与验收 Manifest。
+
+所有文本在写盘前脱敏 Password、Token、Secret、私钥和带凭据 URL。不得提交真实 Secret、数据库连接串或客户数据。
 
 ## 7. 运行命令
 
-完整阶段验收：
+```bash
+# 单域
+uv run --frozen pytest tests/e2e --values deploy/values/local.yaml -m infrastructure
 
-    ./scripts/e2e.ps1
+# 多域
+uv run --frozen pytest tests/e2e --values deploy/values/local.yaml -m "security or upgrade"
 
-复用已构建镜像：
+# 产品闭环
+uv run --frozen pytest tests/e2e --values deploy/values/local.yaml -m product
 
-    ./scripts/e2e.ps1 -SkipBuild
+# 失败时保留现场
+uv run --frozen pytest tests/e2e --values deploy/values/local.yaml -m product --keep-on-failure
+```
 
-保留失败现场：
+## 8. 平台门禁
 
-    ./scripts/e2e.ps1 -SkipBuild -KeepNamespace
+- Linux严格 E2E必须使用执行 NetworkPolicy的 CNI，并接入生产等价 OpenSandbox RuntimeClass。
+- Windows使用同一 uv命令在 Docker Desktop Kubernetes运行功能闭环。
+- 不执行 NetworkPolicy的本地 CNI只能运行明确标注的非生产子集，不能跳过后形成生产安全证据。
+- OpenSandbox官方 Go SDK Oracle位于 `tests/e2e/oracles/opensandbox/`；Docker镜像 Entrypoint仍使用 POSIX Shell，不要求容器安装 Python。
 
-有界面调试：
+## 9. 完成定义
 
-    ./scripts/e2e.ps1 -SkipBuild -KeepNamespace -Headed
-
-## 8. 完成定义
-
-功能任务只有在单元、集成、OpenAPI、前端快速检查和临时 Kubernetes E2E 全部通过后才能标记 done。E2E 失败时对应阶段保持 in_progress 或 blocked，不允许用人工点击结果替代自动化证据。
+功能任务只有在相关单元、契约、Helm/Kustomize渲染、临时 Kubernetes系统测试和 Playwright场景全部通过后才能完成。成功和失败路径都必须证明开发副本恢复、后台进程停止、临时 Namespace与测试容器已清理；不能用人工点击替代自动化证据。

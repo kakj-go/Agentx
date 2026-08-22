@@ -1,5 +1,7 @@
 # 画布资源授权申请验收证据
 
+> 历史命令说明：本文中的 PowerShell、Shell、deployment Profile 和核心 Kustomize 命令只记录当时验收事实，相关入口已经删除，不得作为当前操作入口；请使用 `agentx-deploy`、`agentx-check` 与 `pytest tests/e2e`。
+
 状态：`done`。最终复核日期：2026-08-11。最终 Kubernetes Run ID：`20260811T091319636Z`。
 
 本文证明 Workflow Studio 的资源选择、直接授权、设计期申请、跨部门会签、通知、脱敏和授权后运行已经形成独立于运行时 Approval 的完整闭环。

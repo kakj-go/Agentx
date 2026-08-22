@@ -1,0 +1,11 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: observability-internal-api-ingress, namespace: {{ .Values.global.namespaces.runtime }} }
+spec:
+  podSelector: { matchLabels: { agentx.io/internal-api: observability-v1 } }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector: { matchLabels: { agentx.io/plane: control } }
+          podSelector: { matchLabels: { app.kubernetes.io/name: platform-control } }
+      ports: [{ protocol: TCP, port: 8080 }]

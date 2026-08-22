@@ -1,0 +1,13 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: ingress-client-egress, namespace: {{ .Values.global.namespaces.dependencies }} }
+spec:
+  podSelector: { matchLabels: { agentx.io/ingress-client: allowed } }
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector: { matchExpressions: [{ key: agentx.io/plane, operator: In, values: [control, runtime] }] }
+          podSelector: { matchExpressions: [{ key: agentx.io/public-api, operator: Exists }] }
+      ports: [{ protocol: TCP, port: 8080 }]
+    - to: [{ namespaceSelector: {}, podSelector: { matchLabels: { k8s-app: kube-dns } } }]
+      ports: [{ protocol: UDP, port: 53 }, { protocol: TCP, port: 53 }]

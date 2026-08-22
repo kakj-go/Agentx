@@ -1,121 +1,267 @@
-# Agentx V2 Kubernetes 部署
+# Agentx Helm + Python 部署手册
 
-用户安装入口是 Windows/PowerShell 的 `scripts/install.ps1` 和 Linux/Bash 的 `scripts/install.sh`；高级部署与运维入口是 `scripts/deploy-v2.ps1`。Profile API 固定为破坏性的 `agentx.io/deployment/v2alpha3`。`v2alpha2` 及更早版本不做转换，校验时会明确拒绝。
+Agentx 使用四个独立 Helm Release 管理核心资源，并以 Python 3.12 CLI 在 Windows 和 Linux 上提供相同命令。旧脚本、JSON Profile 和核心 Kustomize 清单已经删除，不提供兼容入口。
 
-## 1. 物理 Namespace 与逻辑 Plane
+## 1. 前置条件
 
-| 物理 Namespace | 逻辑 Plane / 组件 |
-|---|---|
-| `agentx-control` | Control：`web-console`、`platform-control`、Control MySQL、Migration、Ingress |
-| `agentx-runtime` | Runtime + Observability：四个 Runtime Deployment、Runtime MySQL/Redis、`observability`、ClickHouse、各自 Migration/Doctor/Bootstrap |
-| `agentx-deps` | Dependencies：`agentx-egress-gateway`、专用 ingress-nginx、Vault、MinIO、共享 Bootstrap；集群内部署的 OpenSandbox/LightRAG/Mem0 也属于此域 |
+部署主机必须预先安装：
 
-Observability 与 Runtime 共用 Namespace，但仍使用独立的 ServiceAccount、Secret、Redis ACL、ClickHouse账号、NetworkPolicy、Release State 和 `agentx.io/plane=observability` Pod 标签。Observability 不持有 Runtime MySQL 凭据。
+- Python `3.12.x`；
+- uv；
+- Helm 3；
+- kubectl；
+- 可访问的 Kubernetes 集群。
 
-生产环境也创建这三个 Namespace。外部 MySQL、Redis、ClickHouse、S3、Vault 和 OpenSandbox 不由部署器安装；Dependencies Namespace 至少承载专用 ingress-nginx。
-
-## 2. 前置条件与 Profile
-
-- PowerShell 7、`kubectl` 和可访问的 Kubernetes 集群。
-- `local-build` 镜像模式需要 Docker；`registry` 模式需要集群可拉取 Profile 中的固定镜像。
-- 脚本优先使用 PATH 中的 Helm；否则下载并校验固定 Helm `3.18.4`。
-- ingress-nginx 固定 Chart `4.15.1`、Controller `1.15.1` 和 Chart SHA-256。
-
-Profile 的 `namespaces` 只能包含不同且非空的 `control`、`runtime`、`dependencies`。本地示例为 `deploy/profiles/v2-full-local.json`，生产示例为 `deploy/profiles/v2-production.example.json`。
-
-公开 Beta 镜像使用 `deploy/profiles/v2-dockerhub-beta.json`。该 Profile 从 Docker Hub 的 `kakj/agentx-*:v0.0.1-beta` 拉取镜像，不需要在部署主机编译 Agentx；仍需按 [OpenSandbox 接入说明](opensandbox/README.md) 独立准备 OpenSandbox Lifecycle 服务。
-
-```powershell
-.\scripts\deploy-v2.ps1 -Action Validate -Target All -ConfigFile deploy/profiles/v2-full-local.json
-.\scripts\deploy-v2.ps1 -Action Render -Target All -ConfigFile deploy/profiles/v2-full-local.json
-```
-
-快速部署公开 Beta 镜像时只需执行对应平台的一键脚本。脚本内部固定按 `Validate → Install → Doctor` 执行，任一阶段失败都会停止：
-
-```powershell
-.\scripts\install.ps1
-```
+CLI 只校验这些工具和版本，不下载 Helm/kubectl，也不修改用户机器。Docker 仅在执行 `build-images` 时需要。Python 和 uv 不进入任何 Agentx 业务容器。
 
 ```bash
-bash ./scripts/install.sh
+uv sync --frozen
+uv run --frozen agentx-deploy validate --values deploy/values/local.yaml
 ```
 
-Profile 只保存非敏感配置和 Secret 引用。`agentx-deps/agentx-dependencies-secrets` 是跨组件 Vault、JWT/签名、Egress TLS/KID 和 Observability Redis ACL 凭据的唯一权威源；`generated-local` 自动生成权威值及三个 Namespace 的最小镜像，生产 `existing-kubernetes` 必须预先创建权威 Secret、Profile 引用的工作负载 Secret和外部基础设施凭据。
+`validate --cluster` 额外读取集群能力和 existing Secret，不创建资源。`render` 只运行 Helm 本地渲染，不访问集群。
 
-## 3. 安装与独立逻辑 Target
+## 2. 目录边界
 
-```powershell
-.\scripts\deploy-v2.ps1 -Action Install -Target All -ConfigFile deploy/profiles/v2-full-local.json
-.\scripts\deploy-v2.ps1 -Action Status -Target All -ConfigFile deploy/profiles/v2-full-local.json
-.\scripts\deploy-v2.ps1 -Action Doctor -Target All -ConfigFile deploy/profiles/v2-full-local.json
+```text
+deploy/
+├── helm/
+│   ├── agentx-control/
+│   ├── agentx-runtime/
+│   ├── agentx-observability/
+│   └── agentx-dependencies/
+├── values/
+│   ├── local.yaml
+│   ├── dockerhub-beta.yaml
+│   ├── production.example.yaml
+│   └── values.schema.json
+├── python/agentx_deploy/
+├── tests/
+├── kustomize/
+│   ├── addons/
+│   └── e2e-fixtures/
+├── ingress-nginx/
+├── opensandbox/
+└── release/
 ```
 
-`-Target` 支持 `Control`、`Runtime`、`Observability`、`Dependencies`、`All`。Runtime 与 Observability 虽共享 Namespace，渲染、升级、状态、Doctor、回滚和卸载仍按逻辑 Plane 标签与资源清单隔离。Release State 分别保存为 `agentx-v2-release-state-control`、`agentx-v2-release-state-runtime` 和 `agentx-v2-release-state-observability`。
+核心 Agentx 资源只能出现在四个 Chart 中。`deploy/kustomize/addons` 存放 LightRAG/Mem0，`deploy/kustomize/e2e-fixtures` 存放 Echo Provider 等临时测试资源；两者不得覆盖 Helm 的资源名称或 Selector。
 
-安装顺序为：Profile/工具预检、三个 Namespace、分域 Secret、Dependencies ingress-nginx、Gateway 公钥/TLS/NetworkPolicy、Gateway Ready、bundled 基础设施、Migration、Bootstrap/Doctor、其余七类应用 Deployment、Rollout 和独立 Release State。八类应用首次安装默认均为 1 副本；Upgrade/Rollback 保留集群中现有副本数。
+## 3. Release 与 Namespace 所有权
 
-## 4. Ingress
+| Target | Release | Namespace | 所有资源 |
+|---|---|---|---|
+| `dependencies` | `agentx-dependencies` | `global.namespaces.dependencies` | Egress Gateway、local/test Vault/MinIO |
+| `control` | `agentx-control` | `global.namespaces.control` | Web、Platform Control、Control MySQL、Migration/Bootstrap/Doctor |
+| `runtime` | `agentx-runtime` | `global.namespaces.runtime` | Gateway、Runtime、Worker、Sandbox Manager、Runtime MySQL/Redis |
+| `observability` | `agentx-observability` | Runtime Namespace | Observability、ClickHouse、Migration/Bootstrap/Doctor |
+| Ingress | `agentx-ingress-nginx` | Dependencies Namespace | 固定上游 ingress-nginx Chart |
 
-Control 与 Runtime 的 Ingress 对象留在各自业务 Namespace。Controller 的 Helm Release 固定为 `agentx-ingress-nginx`，安装在 Profile 的 Dependencies Namespace，IngressClass 使用 Profile 的 `ingress.className`，且不会设为默认类。
+Observability 与 Runtime 共用物理 Namespace，但使用不同 Release、ServiceAccount、Secret、标签、NetworkPolicy 和数据权限。OpenSandbox Server、Controller、RuntimeClass 与计算节点不属于这些 Release。
 
-部署器使用 Helm Annotation 与 `agentx-ingress-ownership` ConfigMap 校验所有权；发现同名但未受管的 Release 或 IngressClass 会拒绝接管。卸载时先删除本 Target 的受管 Ingress，再扫描全集群使用者；只有无人使用且所有权匹配时才卸载 Controller 和 IngressClass。
+## 4. Values
 
-RunId E2E 为每次运行生成三个临时 Namespace、独立 IngressClass 和独立 Helm 资源名，并将 Controller Service 设为 `ClusterIP`，避免并发临时环境争用宿主机 80/443。
+四个 Chart 使用完全相同的顶层 Values 与 JSON Schema：
 
-## 5. 安全边界
+| 顶层字段 | 用途 |
+|---|---|
+| `global` | 环境、Namespace、镜像、Ingress、依赖、网络、Secret 和备份约束 |
+| `control` | Web/Platform Control 副本、角色和连接池 |
+| `runtime` | Gateway/Runtime/Worker/Sandbox Manager 副本、角色和连接池 |
+| `observability` | Observability 副本与角色 |
+| `dependencies` | Egress Gateway 副本 |
 
-- Control、Runtime Namespace 执行 Restricted Pod Security；Dependencies 按 ingress-nginx/OpenSandbox 所需权限配置。
-- ingress-nginx 只能访问 Control/Runtime 公共入口，不能访问内部 API、MySQL、Redis、ClickHouse或 Vault 管理端口。
-- Observability 只能使用受限 Runtime Redis ACL、ClickHouse和自己的对象存储身份；不能读取 Runtime MySQL、Control数据或 Provider Secret。
-- Control MySQL位于 Control；Runtime MySQL、Redis、ClickHouse位于 Runtime；Vault、MinIO、OpenSandbox位于 Dependencies。
-- Runtime 应用不能直连公网；Model/MCP/Memory/RAG/HTTP/Remote Action/Poll/Lifecycle 只允许通过 Gateway 的 3128。Sandbox 默认无网络，双重显式开启后只允许 DNS 和 Gateway 的 3129 TLS 入口。
-- Gateway 只允许 DNS 和 Profile 登记的公共 HTTPS 端口，应用层再次阻断私网、集群、Metadata、回环和保留地址；Gateway Secret 只有公钥/TLS，不含任何业务数据凭据。
-- 不部署 Prometheus、Prometheus Adapter、Metrics Server、HPA 或 KEDA。
+所有命令必须显式提供 `--values`，没有隐式环境默认值。
 
-## 6. 升级、回滚与卸载
+- `local.yaml`：本地镜像、bundled MySQL/Redis/ClickHouse/MinIO/Vault、自动生成 Secret。
+- `dockerhub-beta.yaml`：公开 Beta 镜像，其余本地依赖与 `local` 相同。
+- `production.example.yaml`：外部状态依赖、HTTPS/私有 CA、existing Secret 和镜像摘要示例。
 
-```powershell
-.\scripts\deploy-v2.ps1 -Action Upgrade -Target All -ConfigFile deploy/profiles/v2-full-local.json
-.\scripts\deploy-v2.ps1 -Action Rollback -Target Runtime -ConfigFile deploy/profiles/v2-full-local.json -PreviousReleaseManifest <manifest.json>
-.\scripts\deploy-v2.ps1 -Action Uninstall -Target Observability -ConfigFile deploy/profiles/v2-full-local.json
+production 强制使用外部 MySQL、Redis、ClickHouse、S3、Vault 和 OpenSandbox；MySQL 必须 `verify_identity`，Redis 必须 `rediss://`，其他 Endpoint 必须 HTTPS，并为每项配置 `caSecretName`。Sandbox Egress 只接受 AWS/Azure/GCP 的已知内部 LoadBalancer Annotation。
+
+## 5. 安装
+
+完整安装顺序固定为：
+
+1. 校验 Values、Python/uv/Helm/kubectl、集群连接、Namespace 和生产门禁。
+2. production 在创建资源前验证权威 Secret、工作负载 Secret、CA/TLS 和镜像拉取 Secret的名称及 Key。
+3. 创建所选 Target 对应的三个物理 Namespace及安全标签。
+4. local/test 查询或创建权威 Secret，并只发布所选 Target 所需镜像 Secret；重复安装不会更换持久密钥。
+5. 安装固定 Release `agentx-ingress-nginx`。
+6. 安装 Dependencies，等待 Egress Gateway 和 bundled 依赖 Ready。
+7. 依次安装 Control、Runtime、Observability。
+8. 等待 Migration Job、Bootstrap Job、Init Container、Deployment、StatefulSet 和 PDB。
+9. 主动执行每个 Release 的 Helm Test/Doctor。
+10. 输出 Release Revision、镜像引用、Namespace 和访问入口；production 另外写入 `artifacts/releases/` Release Manifest。
+
+```bash
+# local
+uv run --frozen agentx-deploy install --values deploy/values/local.yaml
+
+# Docker Hub Beta
+uv run --frozen agentx-deploy install --values deploy/values/dockerhub-beta.yaml
+
+# production：先复制示例并替换所有 Endpoint、摘要、CA 和 Secret
+uv run --frozen agentx-deploy validate --values deploy/values/production.yaml --cluster
+uv run --frozen agentx-deploy render --values deploy/values/production.yaml > artifacts/production-render.yaml
+uv run --frozen agentx-deploy install --values deploy/values/production.yaml --output json
 ```
 
-`Uninstall -Target Observability` 只删除 Observability标签资源，不删除 Runtime工作负载、Runtime MySQL/Redis或共享 Runtime Namespace。普通卸载保留 Namespace；非生产 RunId 环境使用 `-PurgeTestResources` 且 `-Target All` 时，才会删除去重后的三个临时 Namespace和无人使用的受管 Ingress集群资源。
+`--target control|runtime|observability|dependencies|all` 默认 `all`。独立 Target 只验证其依赖；例如 Runtime 要求 Dependencies Release 已存在，不会自动安装或升级 Dependencies。
 
-Runtime 仍存在带 `agentx.io/egress-client=managed` 的 Deployment 时，单独执行 `Uninstall -Target Dependencies` 会被拒绝；完整卸载应先移除 Runtime 再移除 Gateway。
+## 6. 命令契约
 
-管理员更新共享凭据时只修改 `agentx-dependencies-secrets`，然后执行以下命令。该 Action 必须使用 `Target All`，会同步本地/工作负载镜像、重新签发并校验 bundled Vault Token、重启 Runtime Redis 和全部凭据消费者并等待 Ready。组件普通 Upgrade 不会轮换这些权威值。
+所有命令支持 `--output text|json`，失败返回非零退出码；JSON 模式的错误也输出 JSON。命令、输出和异常会脱敏 Password、Token、Secret、私钥和带凭据 URL。
 
-```powershell
-.\scripts\deploy-v2.ps1 -Action SyncSecrets -Target All -ConfigFile deploy/profiles/v2-full-local.json
+### Validate 与 Render
+
+```bash
+uv run --frozen agentx-deploy validate --values deploy/values/local.yaml
+uv run --frozen agentx-deploy validate --values deploy/values/production.yaml --cluster --output json
+uv run --frozen agentx-deploy render --values deploy/values/local.yaml --target runtime
 ```
 
-Egress 四个调用身份使用独立私钥/KID。轮换先以 `Plan` 检查权威 Secret 与所有镜像一致，再执行 `Rotate`；脚本先发布新旧双公钥并滚动 Gateway，再逐个替换调用方私钥/KID，全部 Ready 后才删除旧公钥并原子提交到 `agentx-dependencies-secrets`。中途失败会把调用方和 Gateway 恢复到旧 KID，且使用 Namespace 内互斥锁拒绝并发轮换。
+`render` 不访问集群。`validate --cluster` 只读集群，不 Apply 资源。
 
-```powershell
-.\scripts\rotate-egress-keys.ps1 -Action Plan -ConfigFile deploy/profiles/v2-full-local.json
-.\scripts\rotate-egress-keys.ps1 -Action Rotate -ConfigFile deploy/profiles/v2-full-local.json
+### Status 与 Doctor
+
+```bash
+uv run --frozen agentx-deploy status --values deploy/values/local.yaml --output json
+uv run --frozen agentx-deploy doctor --values deploy/values/local.yaml --target all
 ```
 
-本地测试数据允许全部重建时，可在完整 `Target All` 操作中使用 `-RecreateV2Data`。生产环境禁止该开关；PVC本身不是备份，状态型依赖切换必须另行执行停写、导出、恢复和验证。
+Status 聚合 Helm Revision/状态、Deployment/StatefulSet/Job/PDB、配置镜像和 Ingress Endpoint。Doctor 运行对应 Release 的 Helm Test Job，检查适用的 MySQL、Redis、ClickHouse、对象存储、Vault、Egress Gateway，以及带 API Key 与可选 CA 的 OpenSandbox `/health` 链路。
 
-## 7. 验收
+### Upgrade 与 Rollback
 
-```powershell
-.\scripts\v2-profile-tests.ps1
-.\scripts\v2-secret-sync-e2e.ps1
-.\scripts\v2-07-profile-tests.ps1 -SkipWebSourceBaseline
+```bash
+uv run --frozen agentx-deploy upgrade --values deploy/values/local.yaml --target runtime
+uv run --frozen agentx-deploy rollback --values deploy/values/local.yaml --target runtime --revision 2
 ```
 
-临时 Kubernetes E2E 通过 `-RunId` 创建并在结束时删除三个临时 Namespace。验收应确认：只有三个物理 Namespace、八类 Deployment 均为 1 副本、八个 PDB、零 HPA/指标栈资源，Observability/ClickHouse 位于 Runtime，Gateway/ingress-nginx 位于 Dependencies；公共 HTTPS 正向调用与私网/Metadata/直连公网负向矩阵通过，并完成 Migration、Bootstrap、Doctor、发布、Invocation、Worker 和 Trace 查询闭环。
+Upgrade 在调用 Helm 前读取当前 Deployment 副本数，并作为本次显式 Helm Override保留。Rollback 必须指定单一 Target 和明确 Revision；完整回滚由操作者按 Target逐个执行。Rollback 完成后自动运行该 Release 的 Doctor。
 
-公网出口专项 E2E 分成两个互不混淆的阶段：功能矩阵使用本机 Fixture 加固定摘要的 Cloudflare Quick Tunnel 容器，覆盖 Model、MCP JSON/SSE、Memory、RAG、HTTP Request、Remote Action、Poll、Lifecycle和私网/Metadata拒绝；长稳阶段通过 `-StabilityOnlyEndpoint` 直接连接稳定公共 HTTPS Endpoint，覆盖并发 Tunnel、Drain、滚动升级和连接回收，不把匿名 Tunnel 的可用性计入 Gateway 稳定性。成功或失败都会删除 Job/Pod、停止 Fixture并强制清理本次唯一命名的 Tunnel 容器。
+### Uninstall
 
-Quick Tunnel 无可用性保证。脚本最多申请三个候选域名，每个都必须从部署主机通过公网 `/health` 后才创建 Kubernetes Job；候选失败不会重跑已经开始的业务矩阵。发布认证必须分别保存一次功能矩阵成功结果和一次 `-StabilityMinutes 30` 长稳结果。
+```bash
+# 保留 Namespace、PVC和外部资源
+uv run --frozen agentx-deploy uninstall --values deploy/values/local.yaml --target observability
 
-直连公网拒绝是严格门禁，要求集群 CNI 实际执行 Kubernetes NetworkPolicy。当前 Docker Desktop 若使用不支持 NetworkPolicy enforcement 的 `kindnet`，该断言会正确失败；仅在已经单独记录此环境限制时，可显式添加 `-SkipDirectNetworkPolicyAssertion` 验证其余 Gateway 矩阵。生产验收不得使用该开关，必须在 Calico、Cilium 或等价 CNI 上执行严格模式。
-
-```powershell
-.\scripts\v2-egress-e2e.ps1 -ConfigFile deploy/profiles/v2-full-local.json -Concurrency 16
-.\scripts\v2-egress-e2e.ps1 -ConfigFile deploy/profiles/v2-full-local.json -StabilityMinutes 30 -Concurrency 16 -StabilityOnlyEndpoint https://www.cloudflare.com/cdn-cgi/trace
+# 只允许 local/test 且必须为 all
+uv run --frozen agentx-deploy uninstall --values deploy/values/local.yaml --target all --purge-data --yes
 ```
+
+Runtime Release 仍存在时拒绝单独卸载 Dependencies。IngressClass 仍有使用者时保留 ingress-nginx；数据清理模式遇到使用者会失败。production 永远拒绝 `--purge-data`。
+
+## 7. Migration 与 Bootstrap
+
+Migration 是带 Helm Release Revision 后缀的普通 Job，不使用安装前 Hook，因此升级不会修改不可变 Job。Job先等待数据库，Rust Migration 使用数据库锁保证并发唯一性；应用 Pod使用轻量 Init Container 等待目标 Schema Version。
+
+Helm 始终使用 `--atomic --wait --wait-for-jobs`。Bootstrap 每个首次安装只创建一个 Job；Job在 Migration 完成前有界重试，幂等双重执行由 `tests/e2e/infrastructure` 验证。
+
+手工 Expand 和 Contract 门禁：
+
+```bash
+uv run --frozen agentx-deploy migrate --values deploy/values/local.yaml --target runtime --phase expand
+uv run --frozen agentx-deploy migrate --values deploy/values/local.yaml --target runtime --phase contract
+```
+
+Contract 会拒绝仍有不可用旧 ReplicaSet 的发布。失败不得继续发布。
+
+## 8. Secret 与密钥轮换
+
+`global.secrets.dependencies` 是共享签名材料的权威 Secret。local/test 使用 `cryptography` 生成 RSA、Ed25519、密码和 Egress TLS，先读取已有权威 Secret，重复 Install/Upgrade 保持原值。Helm模板只引用 Secret 名称与 Key。
+
+production 必须预先创建：
+
+- Dependencies 权威 Secret；
+- `global.secrets.workloads.*` 最小权限工作负载 Secret；
+- 外部依赖 CA Secret（Key 为 `ca.crt`）；
+- Ingress TLS、Egress TLS/CA 和可选镜像拉取 Secret。
+
+管理员修改权威值后执行：
+
+```bash
+uv run --frozen agentx-deploy sync-secrets --values deploy/values/production.yaml --target all
+```
+
+同步只覆盖镜像 Secret 中与权威 Secret 同名的共享 Key，保留工作负载本地凭据，然后滚动所有消费者并等待 Ready。普通 Install/Upgrade 不轮换持久密钥。
+
+Egress 轮换：
+
+```bash
+uv run --frozen agentx-deploy rotate-egress-keys --values deploy/values/production.yaml --action plan
+uv run --frozen agentx-deploy rotate-egress-keys --values deploy/values/production.yaml --action rotate
+```
+
+Rotate 使用集群互斥锁，执行“发布新旧双公钥 → Gateway Ready → 四个调用方逐个切换 → 删除旧公钥 → Gateway Ready”。任一步失败会恢复权威、Gateway 和所有调用方 Secret并重新滚动。
+
+## 9. 备份与恢复
+
+CLI 不嵌入云厂商 SDK。外部 Adapter 接收语言无关参数并只返回五字段 JSON Receipt；Python Adapter 会由当前 Python 解释器执行，因此 Windows/Linux 命令一致。
+
+```bash
+uv run --frozen agentx-deploy backup \
+  --values deploy/values/production.yaml \
+  --data-target control-mysql \
+  --backup-id release-20260822 \
+  --adapter tools/provider-adapter.py
+
+uv run --frozen agentx-deploy restore \
+  --values deploy/values/production.yaml \
+  --data-target control-mysql \
+  --backup-id release-20260822 \
+  --restore-target control-db-restore.example.internal \
+  --adapter tools/provider-adapter.py
+```
+
+Receipt 会校验字段白名单、RPO/RTO 和 `deploy/release/backup-manifest.schema.json`，证据默认写入 `artifacts/data-operations/`。原地恢复必须额外提供 `--allow-in-place-restore`。
+
+## 10. 镜像构建
+
+```bash
+# 构建全部 Agentx 镜像并导入本地 Kubernetes
+uv run --frozen agentx-deploy build-images --values deploy/values/local.yaml
+
+# 只构建并推送指定服务
+uv run --frozen agentx-deploy build-images --values deploy/values/local.yaml \
+  --service platform-control --service runtime-gateway --push --skip-kubernetes-import
+```
+
+production Values 禁止本地构建。Docker Desktop 使用 control-plane containerd导入；其他本地集群使用短生命周期、唯一命名的 loader Pod，结束后强制清理。
+
+## 11. Kustomize Addon 与 Fixture
+
+Addon 和 Fixture 不随核心 Install 自动部署：
+
+```bash
+kubectl -n agentx-deps apply -k deploy/kustomize/addons/lightrag
+kubectl -n agentx-deps apply -k deploy/kustomize/addons/mem0
+kubectl -n agentx-deps apply -k deploy/kustomize/e2e-fixtures/runtime-providers
+```
+
+pytest 的 `e2e_providers` Fixture 会按需安装最后一项。静态测试会同时渲染 Helm/Kustomize，并拒绝资源名称或 Helm 所有权重叠。
+
+## 12. E2E
+
+领域 Marker：`infrastructure`、`publishing`、`gateway`、`runtime`、`observability`、`security`、`upgrade`、`product`。每次运行生成 Run ID、三个 Namespace、独立 IngressClass、命令时间线、资源/事件/日志和 Playwright 报告。
+
+```bash
+uv run --frozen pytest tests/e2e --values deploy/values/local.yaml -m infrastructure
+uv run --frozen pytest tests/e2e --values deploy/values/local.yaml -m "security or upgrade"
+uv run --frozen pytest tests/e2e --values deploy/values/local.yaml -m product --keep-on-failure
+```
+
+`--scale-down-development` 会暂时把常驻开发 Deployment缩容为 0，并在 `finally` 恢复原副本。默认无论成功失败都清理临时 Namespace；只有失败且显式提供 `--keep-on-failure` 才保留现场。后台 port-forward 使用跨平台进程组管理并在结束时停止。
+
+严格 NetworkPolicy 验收必须使用 Calico、Cilium 或等价执行策略的 CNI。Docker Desktop 不支持策略执行时只能运行明确标注的非生产子集，不能形成生产安全证据。
+
+## 13. 统一门禁与 CI
+
+```bash
+uv sync --frozen --extra test
+uv run --frozen agentx-check --fast
+uv run --frozen agentx-check
+```
+
+`agentx-check` 聚合 uv 锁文件、ruff、pytest、四 Chart lint/template、Kustomize 渲染、2000 行限制、Rust fmt/clippy/test、架构边界、Web lint/test/build 和 `git diff --check`。GitHub Actions在 Windows/Linux 运行 Python/CLI/Helm矩阵；带 `agentx-e2e` 标签的受管 Runner运行完整 Linux严格 CNI和 Windows Docker Desktop闭环。

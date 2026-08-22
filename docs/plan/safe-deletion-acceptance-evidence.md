@@ -1,5 +1,7 @@
 # 业务域国际化与安全删除验收证据
 
+> 历史命令说明：本文中的 PowerShell、Shell、deployment Profile 和核心 Kustomize 命令只记录当时验收事实，相关入口已经删除，不得作为当前操作入口；请使用 `agentx-deploy`、`agentx-check` 与 `pytest tests/e2e`。
+
 ## 1. 完成边界
 
 - 前端翻译资源已由里程碑命名迁移为业务域模块，`common` 只承载跨业务同义文案；中英文键结构、禁止里程碑 namespace、业务域词条所有权、稳定错误码、Model/Skill Alias 隔离均有静态回归测试。

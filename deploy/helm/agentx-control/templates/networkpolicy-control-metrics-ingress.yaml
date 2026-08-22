@@ -1,0 +1,10 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: control-metrics-ingress, namespace: {{ .Values.global.namespaces.control }} }
+spec:
+  podSelector: { matchLabels: { agentx.io/metrics: enabled } }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector: { matchLabels: { agentx.io/metrics-access: "true" } }
+      ports: [{ protocol: TCP, port: 9092 }]

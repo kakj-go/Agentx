@@ -182,8 +182,8 @@ INT-001～004 可以并行，但必须复用同一 `ExecutionRuntime` 和 Event 
 - JUnit、HTML Report、Trace、Kubernetes 事件、Pod Spec、镜像 Digest/SBOM/签名和数据库断言按 Stage/Run ID 隔离保存；无环境运行不能覆盖完整证据。
 - 故障测试至少覆盖 Worker 强退、Coordinator 重启、Redis 中断、ClickHouse 中断、MinIO 延迟、OpenSandbox 超时/残留、Vault 暂不可用和 SSE 断线。
 - 安全矩阵使用两个租户/部门身份验证 Workflow、Execution、Artifact、Grant、Credential Handle、Approval、Application Key 和 Sandbox 网络边界。
-- `scripts/m7-capacity.ps1` 生成版本化容量证据；`scripts/vault-integration.ps1` 生成真实 Vault KV v2 证据；`scripts/m7-release-gate.ps1` 只有在全部业务、容量、故障、安全、升级、隔离和供应链证据通过后才生成最终验收文件。
-- `scripts/m7-local-release-tests.ps1` 使用 `scripts/deploy.ps1 + Kustomize` 完成 INT-009/011 本地验收；Helm 仍只安装 ingress-nginx，不新增 Agentx Chart。真实本地 Run 通过前两项保持 `in_progress`。
+- `uv run --frozen agentx-check` 汇总 Rust、Web、Python、契约、Helm/Kustomize 渲染和静态边界门禁；容量、Vault、故障、安全、升级、隔离和供应链证据由 `tests/e2e` 对应领域测试按 Run ID 输出。
+- `uv run --frozen pytest tests/e2e -m upgrade --values deploy/values/local.yaml` 使用四个 Agentx Helm Release 完成 INT-009/011 本地升级与回滚验收；Kustomize 只安装显式 Addon 或 E2E Fixture。真实本地 Run 通过前两项保持 `in_progress`。
 
 ## 9. 发布门禁
 

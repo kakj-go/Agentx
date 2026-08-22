@@ -1,5 +1,7 @@
 # M7 全链路闭环与首期发布验收证据
 
+> 历史命令说明：本文中的 PowerShell、Shell、deployment Profile 和核心 Kustomize 命令只记录当时验收事实，相关入口已经删除，不得作为当前操作入口；请使用 `agentx-deploy`、`agentx-check` 与 `pytest tests/e2e`。
+
 状态：`in_progress`。当前复核日期：2026-08-07。最新业务闭环 Kubernetes Run ID：`20260807T125227802Z`。
 
 M7 的 Application、Session、Message、Webhook、Approval Resume 和 Evaluation 已接入同一个 Version Execution Runtime，配额、保留、Worker Capability、Vault Broker、Runtime Event Projector 和发布供应链代码也已落地。完整业务闭环、撤权、故障、双租户安全、Retention 全引用矩阵和页面矩阵已经通过；M7 尚未标记为 `done`，因为容量、升级/回滚和签名镜像证据还未全部生成。

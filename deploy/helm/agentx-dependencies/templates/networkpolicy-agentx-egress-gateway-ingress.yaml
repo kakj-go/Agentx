@@ -1,0 +1,13 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: agentx-egress-gateway-ingress, namespace: {{ .Values.global.namespaces.dependencies }} }
+spec:
+  podSelector: { matchLabels: { app.kubernetes.io/name: agentx-egress-gateway } }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector: { matchLabels: { agentx.io/plane: runtime } }
+          podSelector: { matchLabels: { agentx.io/egress-client: managed } }
+      ports: [{ protocol: TCP, port: 3128 }]
+    - from: [{ ipBlock: { cidr: 192.168.0.0/16 } }]
+      ports: [{ protocol: TCP, port: 3129 }]

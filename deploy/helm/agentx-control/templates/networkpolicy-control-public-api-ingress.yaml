@@ -1,0 +1,13 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: control-public-api-ingress, namespace: {{ .Values.global.namespaces.control }} }
+spec:
+  podSelector: { matchLabels: { agentx.io/public-api: control } }
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{ podSelector: { matchLabels: { app.kubernetes.io/name: web-console } } }]
+      ports: [{ protocol: TCP, port: 8080 }]
+    - from:
+        - namespaceSelector: { matchLabels: { agentx.io/ingress: allowed } }
+          podSelector: { matchLabels: { agentx.io/ingress-client: allowed } }
+      ports: [{ protocol: TCP, port: 8080 }]

@@ -1,6 +1,0 @@
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: agentx-control
-  labels:
-    agentx.io/plane: control

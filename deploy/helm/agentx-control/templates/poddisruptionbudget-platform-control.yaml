@@ -1,0 +1,4 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: { name: platform-control, namespace: {{ .Values.global.namespaces.control }} }
+spec: { minAvailable: 1, selector: { matchLabels: { app.kubernetes.io/name: platform-control } } }

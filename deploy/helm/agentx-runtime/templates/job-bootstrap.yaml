@@ -1,0 +1,42 @@
+{{- if .Release.IsInstall }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: runtime-bootstrap-{{ .Release.Revision }}
+  namespace: {{ .Values.global.namespaces.runtime }}
+  labels: { agentx.io/plane: runtime, app.kubernetes.io/name: runtime-bootstrap-{{ .Release.Revision }} }
+spec:
+  activeDeadlineSeconds: 600
+  backoffLimit: 60
+  template:
+    metadata: { labels: { agentx.io/plane: runtime, agentx.io/runtime-data: mysql-redis, agentx.io/ops-job: "true" } }
+    spec:
+      serviceAccountName: workflow-runtime
+      automountServiceAccountToken: false
+      restartPolicy: OnFailure
+      securityContext: { runAsNonRoot: true, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: bootstrap
+          image: {{ include "agentx.image" (list . "agentx-bootstrap") }}
+          imagePullPolicy: {{ .Values.global.images.pullPolicy }}
+          args: [runtime]
+          env:
+            - { name: AGENTX_RUNTIME_MYSQL_HOST, value: {{ .Values.global.components.runtimeMysql.host | quote }} }
+            - { name: AGENTX_RUNTIME_MYSQL_PORT, value: {{ .Values.global.components.runtimeMysql.port | quote }} }
+            - { name: AGENTX_RUNTIME_MYSQL_DATABASE, value: {{ .Values.global.components.runtimeMysql.database | quote }} }
+            - { name: AGENTX_RUNTIME_MYSQL_USER, value: {{ .Values.global.components.runtimeMysql.appUser | quote }} }
+            - { name: AGENTX_RUNTIME_REDIS_URL, value: {{ .Values.global.components.runtimeRedis.url | quote }} }
+            - name: AGENTX_RUNTIME_MYSQL_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ include "agentx.secret" (list . "runtimeMigration" "runtime") }}, key: AGENTX_RUNTIME_MYSQL_PASSWORD } }
+            - name: AGENTX_RUNTIME_REDIS_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ include "agentx.secret" (list . "runtimeMigration" "runtime") }}, key: AGENTX_RUNTIME_REDIS_PASSWORD } }
+{{ include "agentx.runtime.caEnv" . | nindent 12 }}
+          resources: { requests: { cpu: 25m, memory: 32Mi }, limits: { cpu: 250m, memory: 128Mi } }
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, runAsNonRoot: true, capabilities: { drop: [ALL] } }
+          volumeMounts:
+{{ include "agentx.runtime.caMount" . | nindent 12 }}
+      volumes:
+{{ include "agentx.runtime.caVolume" . | nindent 8 }}
+
+{{- end }}
+

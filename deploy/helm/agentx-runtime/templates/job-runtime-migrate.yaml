@@ -1,0 +1,44 @@
+apiVersion: batch/v1
+kind: Job
+metadata: { name: runtime-migrate-{{ .Release.Revision }}, namespace: {{ .Values.global.namespaces.runtime }}, labels: { app.kubernetes.io/name: runtime-migrate, agentx.io/plane: runtime } }
+spec:
+  backoffLimit: 2
+  template:
+    metadata: { labels: { app.kubernetes.io/name: runtime-migrate, agentx.io/plane: runtime, agentx.io/runtime-data: mysql } }
+    spec:
+      serviceAccountName: workflow-runtime
+      automountServiceAccountToken: false
+      securityContext: { runAsNonRoot: true, seccompProfile: { type: RuntimeDefault } }
+      restartPolicy: OnFailure
+      initContainers:
+        - name: wait-for-runtime-mysql
+          image: mysql:8.4
+          securityContext: { allowPrivilegeEscalation: false, runAsNonRoot: true, runAsUser: 999, runAsGroup: 999, capabilities: { drop: [ALL] } }
+          command: [sh, -ec]
+          args: ['until MYSQL_PWD="$AGENTX_RUNTIME_MYSQL_PASSWORD" mysql {{ if eq .Values.global.environment "production" }}--ssl-mode=VERIFY_IDENTITY --ssl-ca=/etc/agentx-ca/mysql.pem{{ else }}--ssl-mode=DISABLED{{ end }} -h "$AGENTX_RUNTIME_MYSQL_HOST" -u "$AGENTX_RUNTIME_MYSQL_USER" -e "SELECT 1" agentx_runtime >/dev/null 2>&1; do sleep 2; done']
+          env:
+            - { name: AGENTX_RUNTIME_MYSQL_HOST, value: {{ .Values.global.components.runtimeMysql.host | quote }} }
+            - { name: AGENTX_RUNTIME_MYSQL_USER, value: {{ .Values.global.components.runtimeMysql.migrateUser | quote }} }
+            - name: AGENTX_RUNTIME_MYSQL_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ include "agentx.secret" (list . "runtimeMigration" "runtime") }}, key: AGENTX_RUNTIME_MYSQL_MIGRATE_PASSWORD } }
+          volumeMounts:
+{{ include "agentx.runtime.caMount" . | nindent 12 }}
+      containers:
+        - name: migrate
+          image: {{ include "agentx.image" (list . "agentx-migrate") }}
+          imagePullPolicy: {{ .Values.global.images.pullPolicy }}
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, runAsNonRoot: true, capabilities: { drop: [ALL] } }
+          args: [runtime]
+          env:
+            - { name: AGENTX_RUNTIME_MYSQL_HOST, value: {{ .Values.global.components.runtimeMysql.host | quote }} }
+            - { name: AGENTX_RUNTIME_MYSQL_PORT, value: {{ .Values.global.components.runtimeMysql.port | quote }} }
+            - { name: AGENTX_RUNTIME_MYSQL_DATABASE, value: {{ .Values.global.components.runtimeMysql.database | quote }} }
+            - { name: AGENTX_RUNTIME_MYSQL_USER, value: {{ .Values.global.components.runtimeMysql.migrateUser | quote }} }
+            - { name: AGENTX_RUNTIME_MYSQL_TLS_MODE, value: {{ .Values.global.components.runtimeMysql.tlsMode | quote }} }
+            - name: AGENTX_RUNTIME_MYSQL_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ include "agentx.secret" (list . "runtimeMigration" "runtime") }}, key: AGENTX_RUNTIME_MYSQL_MIGRATE_PASSWORD } }
+{{ include "agentx.runtime.caEnv" . | nindent 12 }}
+          volumeMounts:
+{{ include "agentx.runtime.caMount" . | nindent 12 }}
+      volumes:
+{{ include "agentx.runtime.caVolume" . | nindent 8 }}

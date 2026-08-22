@@ -1,0 +1,8 @@
+{{- if eq .Values.global.components.runtimeMysql.mode "bundled" }}
+apiVersion: v1
+kind: Service
+metadata: { name: runtime-mysql, namespace: {{ .Values.global.namespaces.runtime }} }
+spec:
+  selector: { app.kubernetes.io/name: runtime-mysql }
+  ports: [{ name: mysql, port: 3306 }]
+{{- end }}

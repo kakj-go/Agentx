@@ -1,0 +1,27 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: runtime-provider-ingress, namespace: {{ .Values.global.namespaces.dependencies }} }
+spec:
+  podSelector: { matchLabels: { agentx.io/runtime-provider: allowed } }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector: { matchLabels: { agentx.io/runtime-provider: allowed } }
+      ports:
+        - { protocol: TCP, port: 8090 }
+        - { protocol: TCP, port: 5432 }
+    - from:
+        - namespaceSelector: { matchLabels: { agentx.io/plane: runtime } }
+          podSelector: { matchLabels: { agentx.io/plane: runtime } }
+      ports: [{ protocol: TCP, port: 8081 }]
+    - from:
+        - namespaceSelector: { matchLabels: { agentx.io/plane: runtime } }
+          podSelector: { matchLabels: { agentx.io/plane: runtime } }
+      ports: [{ protocol: TCP, port: 8080 }]
+    - from:
+        - namespaceSelector: { matchLabels: { agentx.io/plane: runtime } }
+          podSelector: { matchLabels: { agentx.io/plane: runtime } }
+      ports:
+        - { protocol: TCP, port: 8090 }
+        - { protocol: TCP, port: 9621 }
+        - { protocol: TCP, port: 8000 }

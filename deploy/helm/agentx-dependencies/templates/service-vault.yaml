@@ -1,0 +1,8 @@
+{{- if ne .Values.global.environment "production" }}
+apiVersion: v1
+kind: Service
+metadata: { name: vault, namespace: {{ .Values.global.namespaces.dependencies }} }
+spec:
+  selector: { app.kubernetes.io/name: vault }
+  ports: [{ name: http, port: 8200 }]
+{{- end }}

@@ -1,0 +1,63 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: sandbox-manager, namespace: {{ .Values.global.namespaces.runtime }} }
+spec:
+  replicas: {{ .Values.runtime.services.sandboxManager.replicas }}
+  strategy: { type: RollingUpdate, rollingUpdate: { maxUnavailable: 1, maxSurge: 1 } }
+  selector: { matchLabels: { app.kubernetes.io/name: sandbox-manager } }
+  template:
+    metadata: { labels: { app.kubernetes.io/name: sandbox-manager, agentx.io/plane: runtime, agentx.io/runtime-data: mysql, agentx.io/metrics: enabled } }
+    spec:
+      serviceAccountName: sandbox-manager
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 60
+      securityContext: { runAsNonRoot: true, seccompProfile: { type: RuntimeDefault } }
+      initContainers:
+{{ include "agentx.runtime.schemaGate" (list . "sandboxManager") | nindent 8 }}
+      containers:
+        - name: sandbox-manager
+          image: {{ include "agentx.image" (list . "sandbox-manager") }}
+          imagePullPolicy: {{ .Values.global.images.pullPolicy }}
+          env:
+            - name: AGENTX_INSTANCE_ID
+              valueFrom: { fieldRef: { fieldPath: metadata.uid } }
+            - { name: AGENTX_RUNTIME_MYSQL_HOST, value: {{ .Values.global.components.runtimeMysql.host | quote }} }
+            - { name: AGENTX_RUNTIME_MYSQL_PORT, value: {{ .Values.global.components.runtimeMysql.port | quote }} }
+            - { name: AGENTX_RUNTIME_MYSQL_DATABASE, value: {{ .Values.global.components.runtimeMysql.database | quote }} }
+            - { name: AGENTX_RUNTIME_MYSQL_USER, value: {{ .Values.global.components.runtimeMysql.appUser | quote }} }
+            - { name: AGENTX_RUNTIME_MYSQL_MAX_CONNECTIONS, value: {{ .Values.runtime.services.sandboxManager.mysqlPool | quote }} }
+            - { name: AGENTX_RUNTIME_MYSQL_TLS_MODE, value: {{ .Values.global.components.runtimeMysql.tlsMode | quote }} }
+            - { name: AGENTX_OPENSANDBOX_ENDPOINT, value: {{ .Values.global.components.sandbox.endpoint | quote }} }
+            - { name: AGENTX_OPENSANDBOX_SECURE_ACCESS, value: {{ .Values.global.components.sandbox.secureAccess | quote }} }
+            - { name: AGENTX_EGRESS_SANDBOX_PROXY_URL, value: {{ .Values.global.network.egressGateway.sandboxAccess.endpoint | quote }} }
+            - name: AGENTX_EGRESS_JWT_KEY_ID
+              valueFrom: { secretKeyRef: { name: {{ include "agentx.secret" (list . "sandboxManager" "runtime") }}, key: AGENTX_SANDBOX_EGRESS_JWT_KEY_ID } }
+            - { name: AGENTX_EGRESS_SANDBOX_CA_PATH, value: /var/run/agentx-egress-ca/ca.crt }
+            - name: AGENTX_EGRESS_JWT_PRIVATE_KEY_PEM
+              valueFrom: { secretKeyRef: { name: {{ include "agentx.secret" (list . "sandboxManager" "runtime") }}, key: AGENTX_SANDBOX_EGRESS_JWT_PRIVATE_KEY_PEM } }
+            - name: AGENTX_OPENSANDBOX_API_KEY
+              valueFrom: { secretKeyRef: { name: {{ include "agentx.secret" (list . "sandboxManager" "runtime") }}, key: AGENTX_OPENSANDBOX_API_KEY } }
+            - name: AGENTX_RUNTIME_MYSQL_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ include "agentx.secret" (list . "sandboxManager" "runtime") }}, key: AGENTX_RUNTIME_MYSQL_PASSWORD } }
+{{ include "agentx.runtime.caEnv" . | nindent 12 }}
+          ports:
+            - { name: http, containerPort: 8080 }
+            - { name: admin, containerPort: 9091 }
+            - { name: metrics, containerPort: 9092 }
+          resources: { requests: { cpu: 50m, memory: 64Mi, ephemeral-storage: 32Mi }, limits: { cpu: 500m, memory: 256Mi, ephemeral-storage: 128Mi } }
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, runAsNonRoot: true, capabilities: { drop: [ALL] } }
+          startupProbe: { httpGet: { path: /health/live, port: http }, periodSeconds: 2, failureThreshold: 30 }
+          readinessProbe: { httpGet: { path: /health/ready, port: http }, periodSeconds: 5, failureThreshold: 2 }
+          livenessProbe: { httpGet: { path: /health/live, port: http }, periodSeconds: 10, failureThreshold: 3 }
+          lifecycle: { preStop: { httpGet: { path: /health/drain, port: admin, scheme: HTTP } } }
+          volumeMounts:
+            - { name: egress-ca, mountPath: /var/run/agentx-egress-ca, readOnly: true }
+{{- if eq .Values.global.environment "production" }}
+{{ include "agentx.runtime.caMount" . | nindent 12 }}
+{{- end }}
+      volumes:
+        - name: egress-ca
+          secret: { secretName: {{ .Values.global.network.egressGateway.sandboxAccess.caSecretName }}, optional: false }
+{{- if eq .Values.global.environment "production" }}
+{{ include "agentx.runtime.caVolume" . | nindent 8 }}
+{{- end }}

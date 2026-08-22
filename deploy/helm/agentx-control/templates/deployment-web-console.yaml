@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: web-console, namespace: {{ .Values.global.namespaces.control }} }
+spec:
+  replicas: {{ .Values.control.services.webConsole.replicas }}
+  strategy: { type: RollingUpdate, rollingUpdate: { maxUnavailable: 1, maxSurge: 1 } }
+  selector: { matchLabels: { app.kubernetes.io/name: web-console } }
+  template:
+    metadata: { labels: { app.kubernetes.io/name: web-console, agentx.io/plane: control, agentx.io/public-api: control } }
+    spec:
+      serviceAccountName: platform-control
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 60
+      securityContext: { runAsNonRoot: true, seccompProfile: { type: RuntimeDefault } }
+      initContainers:
+        - name: copy-web-assets
+          image: {{ include "agentx.image" (list . "web-console") }}
+          imagePullPolicy: {{ .Values.global.images.pullPolicy }}
+          command: ["/bin/sh", "-c", "cp -a /opt/agentx-web/. /work/"]
+          volumeMounts: [{ name: web-assets, mountPath: /work }]
+          resources: { requests: { cpu: 10m, memory: 16Mi, ephemeral-storage: 16Mi }, limits: { cpu: 100m, memory: 64Mi, ephemeral-storage: 64Mi } }
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, runAsNonRoot: true, capabilities: { drop: [ALL] } }
+      containers:
+        - name: web-console
+          image: {{ include "agentx.image" (list . "web-console") }}
+          imagePullPolicy: {{ .Values.global.images.pullPolicy }}
+          env:
+            - { name: AGENTX_RUNTIME_PUBLIC_BASE_URL, value: {{ printf "%s://%s" (ternary "https" "http" (ne .Values.global.ingress.runtimeTlsSecretName nil)) .Values.global.ingress.runtimeHost | quote }} }
+          ports: [{ name: http, containerPort: 8080 }]
+          volumeMounts:
+            - { name: web-assets, mountPath: /usr/share/nginx/html }
+            - { name: web-tmp, mountPath: /tmp }
+            - { name: web-cache, mountPath: /var/cache/nginx }
+          resources: { requests: { cpu: 25m, memory: 32Mi, ephemeral-storage: 32Mi }, limits: { cpu: 500m, memory: 128Mi, ephemeral-storage: 128Mi } }
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, runAsNonRoot: true, capabilities: { drop: [ALL] } }
+          startupProbe: { httpGet: { path: /health/live, port: http }, periodSeconds: 2, failureThreshold: 30 }
+          readinessProbe: { httpGet: { path: /health/ready, port: http }, periodSeconds: 5, failureThreshold: 2 }
+          livenessProbe: { httpGet: { path: /health/live, port: http }, periodSeconds: 10, failureThreshold: 3 }
+          lifecycle:
+            preStop:
+              exec: { command: ["/bin/sh", "-c", "nginx -s quit; while kill -0 1 2>/dev/null; do sleep 1; done"] }
+      volumes:
+        - { name: web-assets, emptyDir: {} }
+        - { name: web-tmp, emptyDir: {} }
+        - { name: web-cache, emptyDir: {} }

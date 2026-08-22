@@ -1,6 +1,0 @@
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: agentx-runtime
-  labels:
-    agentx.io/plane: runtime

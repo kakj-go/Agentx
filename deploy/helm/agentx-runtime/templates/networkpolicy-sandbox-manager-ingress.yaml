@@ -1,0 +1,9 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: sandbox-manager-ingress, namespace: {{ .Values.global.namespaces.runtime }} }
+spec:
+  podSelector: { matchLabels: { app.kubernetes.io/name: sandbox-manager } }
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{ podSelector: { matchLabels: { app.kubernetes.io/name: workflow-worker } } }]
+      ports: [{ protocol: TCP, port: 8080 }]

@@ -1,0 +1,43 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: observability-doctor
+  namespace: {{ .Values.global.namespaces.runtime }}
+  annotations: { "helm.sh/hook": test, "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded }
+  labels: { agentx.io/plane: observability, app.kubernetes.io/name: observability-doctor }
+spec:
+  backoffLimit: 0
+  template:
+    metadata: { labels: { agentx.io/plane: observability, agentx.io/ops-job: "true" } }
+    spec:
+      serviceAccountName: observability
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      securityContext: { runAsNonRoot: true, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: doctor
+          image: {{ include "agentx.image" (list . "agentx-doctor") }}
+          imagePullPolicy: {{ .Values.global.images.pullPolicy }}
+          args: [observability]
+          env:
+            - { name: AGENTX_CLICKHOUSE_URL, value: {{ .Values.global.components.clickhouse.url | quote }} }
+            - { name: AGENTX_CLICKHOUSE_DATABASE, value: {{ .Values.global.components.clickhouse.database | quote }} }
+            - { name: AGENTX_CLICKHOUSE_USER, value: {{ .Values.global.components.clickhouse.queryUser | quote }} }
+            - { name: AGENTX_OBSERVABILITY_S3_ENDPOINT, value: {{ .Values.global.components.objectStorage.endpoint | quote }} }
+            - { name: AGENTX_OBSERVABILITY_S3_BUCKET, value: {{ .Values.global.components.objectStorage.domains.observability.bucket | quote }} }
+            - { name: AGENTX_OBSERVABILITY_S3_REGION, value: {{ .Values.global.components.objectStorage.region | quote }} }
+            - { name: AGENTX_OBSERVABILITY_S3_ALLOW_HTTP, value: {{ .Values.global.components.objectStorage.allowHttp | quote }} }
+            - { name: AGENTX_OBSERVABILITY_S3_PATH_STYLE, value: {{ .Values.global.components.objectStorage.pathStyle | quote }} }
+            - name: AGENTX_CLICKHOUSE_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ include "agentx.secret" (list . "observabilityMigration" "observability") }}, key: AGENTX_CLICKHOUSE_QUERY_PASSWORD } }
+            - name: AGENTX_OBSERVABILITY_S3_ACCESS_KEY
+              valueFrom: { secretKeyRef: { name: {{ include "agentx.secret" (list . "observabilityMigration" "observability") }}, key: AGENTX_OBSERVABILITY_S3_ACCESS_KEY } }
+            - name: AGENTX_OBSERVABILITY_S3_SECRET_KEY
+              valueFrom: { secretKeyRef: { name: {{ include "agentx.secret" (list . "observabilityMigration" "observability") }}, key: AGENTX_OBSERVABILITY_S3_SECRET_KEY } }
+{{ include "agentx.observability.caEnv" . | nindent 12 }}
+          resources: { requests: { cpu: 25m, memory: 32Mi }, limits: { cpu: 250m, memory: 128Mi } }
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, runAsNonRoot: true, capabilities: { drop: [ALL] } }
+          volumeMounts:
+{{ include "agentx.observability.caMount" . | nindent 12 }}
+      volumes:
+{{ include "agentx.observability.caVolume" . | nindent 8 }}

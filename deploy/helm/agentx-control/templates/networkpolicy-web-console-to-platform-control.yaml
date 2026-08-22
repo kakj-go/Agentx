@@ -1,0 +1,9 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: web-console-to-platform-control, namespace: {{ .Values.global.namespaces.control }} }
+spec:
+  podSelector: { matchLabels: { app.kubernetes.io/name: web-console } }
+  policyTypes: [Egress]
+  egress:
+    - to: [{ podSelector: { matchLabels: { app.kubernetes.io/name: platform-control } } }]
+      ports: [{ protocol: TCP, port: 8080 }]

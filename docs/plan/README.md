@@ -2,6 +2,8 @@
 
 本目录将产品与架构文档转化为可执行任务。设计依据仍以 [产品与架构文档索引](../README.md) 为准；本目录负责实现顺序、依赖、交付物、测试和验收门禁。
 
+> 历史验收文件中的 PowerShell、Shell、deployment Profile 和核心 Kustomize 命令只记录当时执行事实，相关入口现已删除，不得继续执行。当前部署和测试入口以 [部署架构](../07-deployment.md)、[部署手册](../../deploy/README.md) 和 [E2E 规范](e2e-testing-standard.md) 为准。
+
 ## 1. 当前基线
 
 - M1 基础管理闭环已经完成：单公司 Bootstrap、JWT、部门、用户、角色、数据范围、OpenAPI 和 Kubernetes Migration Job 可用。

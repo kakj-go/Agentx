@@ -1,0 +1,11 @@
+{{- if eq .Values.global.components.runtimeMysql.mode "bundled" }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: runtime-mysql-ingress, namespace: {{ .Values.global.namespaces.runtime }} }
+spec:
+  podSelector: { matchLabels: { app.kubernetes.io/name: runtime-mysql } }
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{ podSelector: { matchLabels: { agentx.io/plane: runtime } } }]
+      ports: [{ protocol: TCP, port: 3306 }]
+{{- end }}

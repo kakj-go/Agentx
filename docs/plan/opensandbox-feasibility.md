@@ -28,7 +28,7 @@
 | Kubernetes | Docker Desktop，Linux/amd64，16 CPU，约 15.9 GB |
 | Python | 3.12 |
 
-OpenSandbox 官方本地要求为 Docker 和 Python 3.10+，并明确支持 Windows + WSL2；当前机器满足要求。`uv` 不是运行前提，可通过 pip/venv 安装，项目后续可在脚本中选择固定安装方式。
+OpenSandbox官方本地要求为 Docker和 Python 3.10+，并明确支持 Windows + WSL2；当前机器满足要求。OpenSandbox本身不要求 uv；Agentx部署主机固定使用 Python 3.12 + uv运行跨平台部署与 E2E编排。
 
 ## 3. 实机验证
 
@@ -83,7 +83,7 @@ OpenSandbox 官方本地要求为 Docker 和 Python 3.10+，并明确支持 Wind
 - 生产链路不增加 Go Sidecar。Go SDK 只在契约测试中作为差分 Oracle；Sidecar 虽可降低少量初始 HTTP 编码，却会增加 RPC/部署/密钥/流取消/观测和版本升级边界，不能降低 M5 的整体故障面。
 - 未支持的必需字段、事件或组件版本统一返回 `SANDBOX_PROTOCOL_UNSUPPORTED`；禁止通过忽略字段、自动跟随重定向或伪造空结果继续执行。
 
-风险等级为“中等、可控”。Rust Adapter 已在真实 OpenSandbox 上完成 create、Server Proxy Endpoint、文件上传、Command 和 terminate 链路，且 Endpoint/Header/SSE 单元测试已通过；`scripts/opensandbox-contract.ps1` 固定源码 Commit/Spec Hash，并使用官方 Go SDK 对同一 Python/Artifact Fixture 执行 create/get/Endpoint/upload/command/download/Metrics/kill Oracle。首期只实现 create/get/kill、Endpoint、Command SSE、interrupt、文件上传/下载、Metrics 和网络策略；Jupyter Context、PTY WebSocket、Pool、Snapshot 等完整高级能力延期。
+风险等级为“中等、可控”。Rust Adapter已在真实 OpenSandbox上完成 create、Server Proxy Endpoint、文件上传、Command和 terminate链路，且 Endpoint/Header/SSE单元测试已通过；当前 pytest契约编排使用 `tests/e2e/oracles/opensandbox/` 中的官方 Go SDK Oracle，对同一 Python/Artifact Fixture执行 create/get/Endpoint/upload/command/download/Metrics/kill。首期只实现 create/get/kill、Endpoint、Command SSE、interrupt、文件上传/下载、Metrics和网络策略；Jupyter Context、PTY WebSocket、Pool、Snapshot等高级能力延期。
 
 ## 6. 同类方案比较
 

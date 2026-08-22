@@ -1,0 +1,21 @@
+{{- if eq .Values.global.environment "production" }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: control-external-egress, namespace: {{ .Values.global.namespaces.control }} }
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    {{- range $name := list "controlMysql" "objectStorage" "vault" }}
+    {{- with index $.Values.global.network.externalEgress $name }}
+    - to:
+        {{- range .cidrs }}
+        - ipBlock: { cidr: {{ . | quote }} }
+        {{- end }}
+      ports:
+        {{- range .ports }}
+        - { protocol: TCP, port: {{ . }} }
+        {{- end }}
+    {{- end }}
+    {{- end }}
+{{- end }}

@@ -1,0 +1,9 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: agentx-egress-gateway-metrics-ingress, namespace: {{ .Values.global.namespaces.dependencies }} }
+spec:
+  podSelector: { matchLabels: { app.kubernetes.io/name: agentx-egress-gateway } }
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{ namespaceSelector: { matchLabels: { agentx.io/metrics-access: "true" } } }]
+      ports: [{ protocol: TCP, port: 9092 }]

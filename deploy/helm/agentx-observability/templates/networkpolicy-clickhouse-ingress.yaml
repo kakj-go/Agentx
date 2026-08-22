@@ -1,0 +1,15 @@
+{{- if eq .Values.global.components.clickhouse.mode "bundled" }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: clickhouse-ingress, namespace: {{ .Values.global.namespaces.runtime }} }
+spec:
+  podSelector: { matchLabels: { app.kubernetes.io/name: clickhouse } }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions:
+              - { key: app.kubernetes.io/name, operator: In, values: [observability, clickhouse-migrate] }
+        - podSelector: { matchLabels: { agentx.io/ops-job: "true" } }
+      ports: [{ protocol: TCP, port: 8123 }]
+{{- end }}

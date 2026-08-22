@@ -1,0 +1,44 @@
+apiVersion: batch/v1
+kind: Job
+metadata: { name: clickhouse-migrate-{{ .Release.Revision }}, namespace: {{ .Values.global.namespaces.runtime }}, labels: { app.kubernetes.io/name: clickhouse-migrate, agentx.io/plane: observability } }
+spec:
+  backoffLimit: 2
+  template:
+    metadata: { labels: { app.kubernetes.io/name: clickhouse-migrate, agentx.io/plane: observability } }
+    spec:
+      serviceAccountName: observability
+      automountServiceAccountToken: false
+      securityContext: { runAsNonRoot: true, seccompProfile: { type: RuntimeDefault } }
+      restartPolicy: OnFailure
+      initContainers:
+        - name: wait-for-clickhouse
+          image: curlimages/curl:8.12.1
+          securityContext: { allowPrivilegeEscalation: false, runAsNonRoot: true, runAsUser: 101, runAsGroup: 102, capabilities: { drop: [ALL] } }
+          command: [sh, -ec]
+          args: ['until curl --fail --silent {{ if eq .Values.global.environment "production" }}--cacert /etc/agentx-ca/clickhouse.pem{{ end }} --user "$AGENTX_CLICKHOUSE_USER:$AGENTX_CLICKHOUSE_PASSWORD" "${AGENTX_CLICKHOUSE_URL%/}/ping" >/dev/null; do sleep 2; done']
+          env:
+            - { name: AGENTX_CLICKHOUSE_URL, value: {{ .Values.global.components.clickhouse.url | quote }} }
+            - { name: AGENTX_CLICKHOUSE_USER, value: {{ .Values.global.components.clickhouse.migrateUser | quote }} }
+            - name: AGENTX_CLICKHOUSE_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ include "agentx.secret" (list . "observabilityMigration" "observability") }}, key: AGENTX_CLICKHOUSE_MIGRATE_PASSWORD } }
+          volumeMounts:
+{{ include "agentx.observability.caMount" . | nindent 12 }}
+      containers:
+        - name: migrate
+          image: {{ include "agentx.image" (list . "agentx-migrate") }}
+          imagePullPolicy: {{ .Values.global.images.pullPolicy }}
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, runAsNonRoot: true, capabilities: { drop: [ALL] } }
+          args: [observability]
+          env:
+            - { name: AGENTX_CLICKHOUSE_URL, value: {{ .Values.global.components.clickhouse.url | quote }} }
+            - { name: AGENTX_CLICKHOUSE_DATABASE, value: {{ .Values.global.components.clickhouse.database | quote }} }
+            - { name: AGENTX_CLICKHOUSE_USER, value: {{ .Values.global.components.clickhouse.migrateUser | quote }} }
+            - { name: AGENTX_CLICKHOUSE_QUERY_USER, value: {{ .Values.global.components.clickhouse.queryUser | quote }} }
+            - { name: AGENTX_CLICKHOUSE_CONSUMER_USER, value: {{ .Values.global.components.clickhouse.consumerUser | quote }} }
+            - name: AGENTX_CLICKHOUSE_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ include "agentx.secret" (list . "observabilityMigration" "observability") }}, key: AGENTX_CLICKHOUSE_MIGRATE_PASSWORD } }
+{{ include "agentx.observability.caEnv" . | nindent 12 }}
+          volumeMounts:
+{{ include "agentx.observability.caMount" . | nindent 12 }}
+      volumes:
+{{ include "agentx.observability.caVolume" . | nindent 8 }}

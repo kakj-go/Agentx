@@ -1,0 +1,48 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: control-migrate-{{ .Release.Revision }}
+  namespace: {{ .Values.global.namespaces.control }}
+  labels: { app.kubernetes.io/name: control-migrate, agentx.io/plane: control }
+spec:
+  backoffLimit: 2
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: control-migrate, agentx.io/plane: control }
+    spec:
+      serviceAccountName: platform-control
+      automountServiceAccountToken: false
+      securityContext: { runAsNonRoot: true, seccompProfile: { type: RuntimeDefault } }
+      restartPolicy: OnFailure
+      initContainers:
+        - name: wait-for-control-mysql
+          image: mysql:8.4
+          securityContext: { allowPrivilegeEscalation: false, runAsNonRoot: true, runAsUser: 999, runAsGroup: 999, capabilities: { drop: [ALL] } }
+          command: [sh, -ec]
+          args: ['until MYSQL_PWD="$AGENTX_CONTROL_MYSQL_PASSWORD" mysql {{ if eq .Values.global.environment "production" }}--ssl-mode=VERIFY_IDENTITY --ssl-ca=/etc/agentx-ca/mysql.pem{{ else }}--ssl-mode=DISABLED{{ end }} -h "$AGENTX_CONTROL_MYSQL_HOST" -u "$AGENTX_CONTROL_MYSQL_USER" -e "SELECT 1" agentx_control >/dev/null 2>&1; do sleep 2; done']
+          env:
+            - { name: AGENTX_CONTROL_MYSQL_HOST, value: {{ .Values.global.components.controlMysql.host | quote }} }
+            - { name: AGENTX_CONTROL_MYSQL_USER, value: {{ .Values.global.components.controlMysql.migrateUser | quote }} }
+            - name: AGENTX_CONTROL_MYSQL_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ include "agentx.secret" (list . "controlMigration" "control") }}, key: AGENTX_CONTROL_MYSQL_MIGRATE_PASSWORD } }
+          volumeMounts:
+{{ include "agentx.control.caMount" . | nindent 12 }}
+      containers:
+        - name: migrate
+          image: {{ include "agentx.image" (list . "agentx-migrate") }}
+          imagePullPolicy: {{ .Values.global.images.pullPolicy }}
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, runAsNonRoot: true, capabilities: { drop: [ALL] } }
+          args: [control]
+          env:
+            - { name: AGENTX_CONTROL_MYSQL_HOST, value: {{ .Values.global.components.controlMysql.host | quote }} }
+            - { name: AGENTX_CONTROL_MYSQL_PORT, value: {{ .Values.global.components.controlMysql.port | quote }} }
+            - { name: AGENTX_CONTROL_MYSQL_DATABASE, value: {{ .Values.global.components.controlMysql.database | quote }} }
+            - { name: AGENTX_CONTROL_MYSQL_USER, value: {{ .Values.global.components.controlMysql.migrateUser | quote }} }
+            - { name: AGENTX_CONTROL_MYSQL_TLS_MODE, value: {{ .Values.global.components.controlMysql.tlsMode | quote }} }
+            - name: AGENTX_CONTROL_MYSQL_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ include "agentx.secret" (list . "controlMigration" "control") }}, key: AGENTX_CONTROL_MYSQL_MIGRATE_PASSWORD } }
+{{ include "agentx.control.caEnv" . | nindent 12 }}
+          volumeMounts:
+{{ include "agentx.control.caMount" . | nindent 12 }}
+      volumes:
+{{ include "agentx.control.caVolume" . | nindent 8 }}

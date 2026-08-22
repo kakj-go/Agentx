@@ -1,5 +1,7 @@
 # M1 基础管理闭环验收证据
 
+> 历史命令说明：本文中的 PowerShell、Shell、deployment Profile 和核心 Kustomize 命令只记录当时验收事实，相关入口已经删除，不得作为当前操作入口；请使用 `agentx-deploy`、`agentx-check` 与 `pytest tests/e2e`。
+
 ## 自动化检查
 
 - `scripts/check.ps1`：Rustfmt、Clippy、Rust 单元/集成测试、OpenAPI 漂移、TypeScript 契约漂移、Oxlint、Vitest、TypeScript、Vite 和 Kustomize 检查。

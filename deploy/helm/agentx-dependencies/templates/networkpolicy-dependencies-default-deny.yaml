@@ -1,0 +1,4 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: dependencies-default-deny, namespace: {{ .Values.global.namespaces.dependencies }} }
+spec: { podSelector: {}, policyTypes: [Ingress, Egress] }

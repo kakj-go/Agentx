@@ -1,5 +1,7 @@
 # M5 验收证据
 
+> 历史命令说明：本文中的 PowerShell、Shell、deployment Profile 和核心 Kustomize 命令只记录当时验收事实，相关入口已经删除，不得作为当前操作入口；请使用 `agentx-deploy`、`agentx-check` 与 `pytest tests/e2e`。
+
 状态：当前 Kubernetes 部署验收 `done`；AGT-010 的生产强化子项暂不重试并转入 M7。当前复核日期：2026-08-05。
 
 M5 已交付 Runtime Port 与快照、资源 Adapter、Agent Ledger/预算/循环、Rust `OpenSandboxAdapter`、`sandbox-manager`、Agent/Code API 和 Execution Runtime Workbench。固定 Commit/Spec Hash 的官方 Go SDK Oracle，Agent+MCP、重复 Tool 停止，Skill 递归授权，固定版本 LightRAG/Mem0，Python/JavaScript/Shell/Browser Code，部分输出 Artifact/Trace、Credential 临时文件、网络 deny/allow、内存限制、自然 TTL、租户 Sandbox 并发配额、取消、Manager 重启/Reaper 和 ClickHouse 中断补投均已通过，AGT-001～013 标记为 `done`。当前 Docker Desktop Kubernetes+runc 部署基线验收已完成；生产 RuntimeClass、Vault、镜像签名和生产级跨租户攻击隔离列为后续生产强化。

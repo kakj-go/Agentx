@@ -1,0 +1,13 @@
+{{- if eq .Values.global.components.controlMysql.mode "bundled" }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: control-mysql-access
+  namespace: {{ .Values.global.namespaces.control }}
+spec:
+  podSelector: { matchLabels: { app.kubernetes.io/name: control-mysql } }
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{ podSelector: { matchLabels: { agentx.io/plane: control } } }]
+      ports: [{ protocol: TCP, port: 3306 }]
+{{- end }}

@@ -1,5 +1,7 @@
 # M4 可靠运行实施任务清单
 
+> 历史命令说明：本文中的 PowerShell、Shell、deployment Profile 和核心 Kustomize 命令只记录当时验收事实，相关入口已经删除，不得作为当前操作入口；请使用 `agentx-deploy`、`agentx-check` 与 `pytest tests/e2e`。
+
 状态：`done`。RUN-001～014、REC-001～010 和阶段 08/09 门禁均已完成，命令、报告、数据库断言与浏览器检查见 [M4 验收证据](m4-acceptance-evidence.md)。本清单将[阶段 08](08-workflow-runtime-core.md)和[阶段 09](09-checkpoint-wait-recovery.md)的 24 项任务组织为可连续交付的实施批次，并以 n8n Workflow 行为与可实现能力一致作为运行语义目标。
 
 ## 1. 完成结果

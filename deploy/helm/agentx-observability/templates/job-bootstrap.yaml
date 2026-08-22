@@ -1,0 +1,38 @@
+{{- if .Release.IsInstall }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: observability-bootstrap-{{ .Release.Revision }}
+  namespace: {{ .Values.global.namespaces.runtime }}
+  labels: { agentx.io/plane: observability, app.kubernetes.io/name: observability-bootstrap-{{ .Release.Revision }} }
+spec:
+  activeDeadlineSeconds: 600
+  backoffLimit: 60
+  template:
+    metadata: { labels: { agentx.io/plane: observability, agentx.io/ops-job: "true" } }
+    spec:
+      serviceAccountName: observability
+      automountServiceAccountToken: false
+      restartPolicy: OnFailure
+      securityContext: { runAsNonRoot: true, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: bootstrap
+          image: {{ include "agentx.image" (list . "agentx-bootstrap") }}
+          imagePullPolicy: {{ .Values.global.images.pullPolicy }}
+          args: [observability]
+          env:
+            - { name: AGENTX_CLICKHOUSE_URL, value: {{ .Values.global.components.clickhouse.url | quote }} }
+            - { name: AGENTX_CLICKHOUSE_DATABASE, value: {{ .Values.global.components.clickhouse.database | quote }} }
+            - { name: AGENTX_CLICKHOUSE_USER, value: {{ .Values.global.components.clickhouse.queryUser | quote }} }
+            - name: AGENTX_CLICKHOUSE_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ include "agentx.secret" (list . "observabilityMigration" "observability") }}, key: AGENTX_CLICKHOUSE_QUERY_PASSWORD } }
+{{ include "agentx.observability.caEnv" . | nindent 12 }}
+          resources: { requests: { cpu: 25m, memory: 32Mi }, limits: { cpu: 250m, memory: 128Mi } }
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, runAsNonRoot: true, capabilities: { drop: [ALL] } }
+          volumeMounts:
+{{ include "agentx.observability.caMount" . | nindent 12 }}
+      volumes:
+{{ include "agentx.observability.caVolume" . | nindent 8 }}
+
+{{- end }}
+

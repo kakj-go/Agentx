@@ -1,0 +1,60 @@
+name: quality
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  python-helm:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.8.13"
+          enable-cache: true
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.18.4
+      - uses: azure/setup-kubectl@v4
+        with:
+          version: v1.33.4
+      - run: uv sync --frozen --extra test
+      - run: uv run --frozen agentx-check --fast
+
+  kubernetes-e2e-linux:
+    if: ${{ vars.AGENTX_E2E_LINUX_ENABLED == 'true' }}
+    needs: python-helm
+    runs-on: [self-hosted, linux, agentx-e2e, strict-cni]
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.8.13"
+      - run: uv sync --frozen --extra test
+      - run: corepack enable && pnpm install --frozen-lockfile
+      - run: uv run --frozen pytest tests/e2e --values deploy/values/dockerhub-beta.yaml --timeout=7200
+
+  kubernetes-e2e-windows:
+    if: ${{ vars.AGENTX_E2E_WINDOWS_ENABLED == 'true' }}
+    needs: python-helm
+    runs-on: [self-hosted, windows, agentx-e2e, docker-desktop]
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.8.13"
+      - run: uv sync --frozen --extra test
+      - run: corepack enable; pnpm install --frozen-lockfile
+      - run: uv run --frozen pytest tests/e2e --values deploy/values/dockerhub-beta.yaml --timeout=7200

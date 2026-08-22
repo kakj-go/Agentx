@@ -25,11 +25,11 @@ Migration 使用三个独立一次性目标：`control-migrate`、`runtime-migra
 | `agentx-runtime` | Runtime + Observability：四类 Runtime 服务、`observability`、Runtime MySQL、Runtime Redis、ClickHouse 与两域 Migration |
 | `agentx-deps` | Dependencies + Ingress：`agentx-egress-gateway`、Vault、MinIO、专用 ingress-nginx，以及可选 OpenSandbox/Addon |
 
-Observability 与 Runtime 只共享 Namespace，不共享数据权限：Observability 仍使用独立 ServiceAccount、Secret、Redis ACL 和 ClickHouse 账号，NetworkPolicy 只允许它访问 Runtime Redis Trace/JTI 通道和 ClickHouse，禁止 Runtime MySQL。Profile 契约为 `agentx.io/deployment/v2alpha3`，`v2alpha2` 及更早版本不做兼容转换。
+Observability 与 Runtime 只共享 Namespace，不共享数据权限：Observability 仍使用独立 ServiceAccount、Secret、Redis ACL 和 ClickHouse 账号，NetworkPolicy 只允许它访问 Runtime Redis Trace/JTI 通道和 ClickHouse，禁止 Runtime MySQL。部署输入是四个 Chart 共享的 YAML Values 契约，顶层固定为 `global`、`control`、`runtime`、`observability`、`dependencies`；旧 deployment Profile 已删除且不做兼容转换。
 
-当前 Kubernetes 应用层有 8 类常驻 Deployment；默认紧凑 Profile 首次安装时每类 Deployment 均为 1 个副本，并各有一个 PDB。Agentx 另可在本地 Profile 部署 MySQL、Redis、MinIO、Vault 和 ClickHouse 等开发依赖，但不再部署 Prometheus、Prometheus Adapter 或 Metrics Server，也不创建任何 HPA/KEDA 资源。七类后端应用与 Egress Gateway 继续通过独立的 `*-metrics` Service 暴露 `9092 /metrics`；采集、告警和扩缩容均由用户平台负责。
+当前 Kubernetes 应用层有 8 类常驻 Deployment；默认 local Values 首次安装时每类 Deployment 均为 1 个副本，并各有一个 PDB。Agentx 可通过 local Values 部署 MySQL、Redis、MinIO、Vault 和 ClickHouse 等开发依赖，但不再部署 Prometheus、Prometheus Adapter 或 Metrics Server，也不创建任何 HPA/KEDA 资源。七类后端应用与 Egress Gateway 继续通过独立的 `*-metrics` Service 暴露 `9092 /metrics`；采集、告警和扩缩容均由用户平台负责。
 
-Profile 的 `replicas` 是首次安装值，当前统一为 `1`；`maxReplicas` 只用于连接池容量预算。单副本默认值用于降低开发和初始部署资源占用，不提供 Pod 级冗余，但运行时正确性仍不能依赖单副本。Upgrade/Rollback 保留当前 Deployment 副本数；用户手工扩缩容或外部 scaler 必须遵守 `maxReplicas` 预算。PDB、健康探针、Drain 和 Claim/Lease/Fencing 仍由 Agentx 清单与运行时契约保证。
+Values 的 `replicas` 是首次安装值，当前统一为 `1`；`maxReplicas` 只用于连接池容量预算。单副本默认值用于降低开发和初始部署资源占用，不提供 Pod 级冗余，但运行时正确性仍不能依赖单副本。Upgrade/Rollback 保留当前 Deployment 副本数；用户手工扩缩容或外部 scaler 必须遵守 `maxReplicas` 预算。PDB、健康探针、Drain 和 Claim/Lease/Fencing 仍由 Agentx 清单与运行时契约保证。
 
 ## 2. 当前调用链
 

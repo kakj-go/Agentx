@@ -40,7 +40,7 @@ Agentx 是一个采用 n8n 式画布交互、但使用 Agentx 原生 Workflow/No
 | [plan/m4-task-list.md](plan/m4-task-list.md) | M4 可靠运行的实施批次、依赖、门禁、Kubernetes E2E 与剩余任务统计 |
 | [plan/m4-acceptance-evidence.md](plan/m4-acceptance-evidence.md) | M4 Runtime、Recovery、Workbench、Kubernetes 故障注入和数据库断言证据 |
 | [plan/opensandbox-feasibility.md](plan/opensandbox-feasibility.md) | OpenSandbox 当前机器兼容性、Rust SDK 缺口、直接 Adapter 决策和生产隔离边界 |
-| [plan/composable-deployment.md](plan/composable-deployment.md) | Full/Custom Profile、分散依赖、统一脚本和部署验收门禁 |
+| [plan/composable-deployment.md](plan/composable-deployment.md) | 已被 Helm + Python 取代的可组合部署历史设计与验收事实 |
 | [plan/m5-task-list.md](plan/m5-task-list.md) | M5 Rust 协议门禁、Agent、资源 Runtime、OpenSandbox、Trace 和 E2E 实施批次 |
 | [plan/m5-acceptance-evidence.md](plan/m5-acceptance-evidence.md) | M5 当前实现、自动化证据、未关闭门禁和生产强隔离边界 |
 | [plan/m6-acceptance-evidence.md](plan/m6-acceptance-evidence.md) | M6 Workflow Studio 契约、实现、静态门禁和 Kubernetes E2E 验收证据 |
@@ -75,7 +75,7 @@ Agentx 是一个采用 n8n 式画布交互、但使用 Agentx 原生 Workflow/No
 10. 控制面可以模块化单体起步，但 Workflow Worker、Sandbox Manager 和 Trace Writer 必须能够独立扩容。
 11. 前端使用 Tailwind CSS 设计令牌和统一组件层，复杂无障碍交互基于 Radix UI。
 12. Workflow 画布使用 React Flow；Workflow Definition、Editor Document 和 Debug Overlay 分离，运行编译只消费 Definition。
-13. Kubernetes 部署使用统一 Profile 组合 bundled/external 基础设施、可选 Addon 和 registry/local-build 镜像，并通过专用 ingress-nginx 暴露 Web。
+13. Kubernetes 核心资源由 Control、Runtime、Observability、Dependencies 四个 Helm Release管理；Python 3.12 + uv提供 Windows/Linux统一命令，Kustomize只管理可选 Addon和 E2E Fixture，并通过专用 ingress-nginx暴露 Web。
 14. Sandbox 采用独立安装的 OpenSandbox；本地 Docker+runc 与当前 Kubernetes 用于功能验收，gVisor/Kata 和生产强隔离作为后续强化。
 
 ## 分阶段详细设计

@@ -1,0 +1,11 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: workflow-worker-vault-egress, namespace: {{ .Values.global.namespaces.runtime }} }
+spec:
+  podSelector: { matchLabels: { app.kubernetes.io/name: workflow-worker } }
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector: { matchLabels: { agentx.io/plane: dependencies } }
+          podSelector: { matchLabels: { app.kubernetes.io/name: vault } }
+      ports: [{ protocol: TCP, port: 8200 }]

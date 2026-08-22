@@ -1,0 +1,36 @@
+{{- if ne .Values.global.environment "production" }}
+apiVersion: batch/v1
+kind: Job
+metadata: { name: vault-bootstrap, namespace: {{ .Values.global.namespaces.dependencies }} }
+spec:
+  template:
+    metadata: { labels: { app.kubernetes.io/name: vault-bootstrap, agentx.io/plane: dependencies } }
+    spec:
+      serviceAccountName: vault
+      automountServiceAccountToken: false
+      restartPolicy: OnFailure
+      containers:
+        - name: bootstrap
+          image: hashicorp/vault:1.19
+          env:
+            - { name: VAULT_ADDR, value: http://vault:8200 }
+            - name: VAULT_TOKEN
+              valueFrom: { secretKeyRef: { name: {{ .Values.global.secrets.dependencies }}, key: VAULT_DEV_ROOT_TOKEN_ID } }
+            - name: CONTROL_VAULT_TOKEN
+              valueFrom: { secretKeyRef: { name: {{ .Values.global.secrets.dependencies }}, key: CONTROL_VAULT_TOKEN } }
+            - name: RUNTIME_VAULT_TOKEN
+              valueFrom: { secretKeyRef: { name: {{ .Values.global.secrets.dependencies }}, key: RUNTIME_VAULT_TOKEN } }
+          command: [/bin/sh, -ec]
+          args:
+            - |
+              until vault status >/dev/null 2>&1; do sleep 2; done
+              vault secrets enable -path=secret kv-v2 2>/dev/null || true
+              printf 'path "secret/data/tenants/+/webhooks/+" { capabilities = ["create", "update"] }\n' | vault policy write agentx-control-webhook-writer -
+              printf 'path "secret/data/tenants/+/runtime-credentials/+" { capabilities = ["create", "update"] }\n' | vault policy write agentx-control-runtime-credential-writer -
+              printf 'path "secret/data/tenants/+/credentials/+" { capabilities = ["create", "update", "read"] }\npath "secret/destroy/tenants/+/credentials/+" { capabilities = ["update"] }\n' | vault policy write agentx-control-credential-manager -
+              printf 'path "secret/data/tenants/+/webhooks/+" { capabilities = ["read"] }\npath "secret/data/tenants/+/runtime-credentials/+" { capabilities = ["read"] }\npath "secret/data/tenants/+/credentials/+" { capabilities = ["read"] }\n' | vault policy write agentx-runtime-secret-reader -
+              vault token lookup "$CONTROL_VAULT_TOKEN" >/dev/null 2>&1 || vault token create -policy=agentx-control-webhook-writer -policy=agentx-control-runtime-credential-writer -policy=agentx-control-credential-manager -id="$CONTROL_VAULT_TOKEN" -orphan >/dev/null
+              vault token lookup "$RUNTIME_VAULT_TOKEN" >/dev/null 2>&1 || vault token create -policy=agentx-runtime-secret-reader -id="$RUNTIME_VAULT_TOKEN" -orphan >/dev/null
+              vault token lookup "$CONTROL_VAULT_TOKEN" >/dev/null
+              vault token lookup "$RUNTIME_VAULT_TOKEN" >/dev/null
+{{- end }}

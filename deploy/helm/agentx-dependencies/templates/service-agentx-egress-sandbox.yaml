@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: Service
+metadata: { name: agentx-egress-sandbox, namespace: {{ .Values.global.namespaces.dependencies }} }
+spec:
+  {{- $access := .Values.global.network.egressGateway.sandboxAccess }}
+  {{- if eq $access.mode "nodePort" }}
+  type: NodePort
+  {{- else if eq $access.mode "privateLoadBalancer" }}
+  type: LoadBalancer
+  loadBalancerSourceRanges:
+    {{- toYaml $access.sourceCidrs | nindent 4 }}
+  {{- else }}
+  type: ClusterIP
+  {{- end }}
+  selector: { app.kubernetes.io/name: agentx-egress-gateway }
+  ports:
+    - name: sandbox-proxy
+      port: 3129
+      targetPort: sandbox-proxy
+      {{- if eq $access.mode "nodePort" }}
+      nodePort: {{ regexFind "[0-9]+$" $access.endpoint | int }}
+      {{- end }}

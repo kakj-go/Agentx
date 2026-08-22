@@ -1,5 +1,7 @@
 # M3 验收证据
 
+> 历史命令说明：本文中的 PowerShell、Shell、deployment Profile 和核心 Kustomize 命令只记录当时验收事实，相关入口已经删除，不得作为当前操作入口；请使用 `agentx-deploy`、`agentx-check` 与 `pytest tests/e2e`。
+
 状态：`done`。验收日期：2026-08-03。
 
 M3 已完成阶段 05 至 07 的外围控制面和运行查询链路。Workflow Scheduler、真实 Application Invocation、批量评测 Execution 和审批恢复调度不属于本阶段，仍由阶段 08、09 和 12 负责。

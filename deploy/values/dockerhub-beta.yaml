@@ -1,0 +1,158 @@
+global:
+  environment: local
+  namespaces:
+    control: agentx-control
+    runtime: agentx-runtime
+    dependencies: agentx-deps
+  images:
+    registry: kakj
+    repositoryPrefix: agentx-
+    tag: v0.0.1-beta
+    pullPolicy: Always
+    services:
+    - agentx-migrate
+    - agentx-bootstrap
+    - agentx-doctor
+    - platform-control
+    - web-console
+    - runtime-gateway
+    - workflow-runtime
+    - workflow-worker
+    - sandbox-manager
+    - agentx-egress-gateway
+    - observability
+  ingress:
+    className: agentx-nginx
+    controlHost: agentx.localhost
+    runtimeHost: run.agentx.localhost
+    controlTlsSecretName: null
+    runtimeTlsSecretName: null
+  components:
+    controlMysql:
+      mode: bundled
+      host: control-mysql.agentx-control.svc
+      port: 3306
+      database: agentx_control
+      appUser: control_app
+      migrateUser: control_migrate
+      tlsMode: disabled
+      maxConnections: 60
+      serverMaxConnections: 151
+    runtimeMysql:
+      mode: bundled
+      host: runtime-mysql.agentx-runtime.svc
+      port: 3306
+      database: agentx_runtime
+      appUser: runtime_app
+      migrateUser: runtime_migrate
+      tlsMode: disabled
+      maxConnections: 105
+      serverMaxConnections: 151
+    runtimeRedis:
+      mode: bundled
+      url: redis://runtime-redis.agentx-runtime.svc:6379/
+    secretProvider:
+      mode: vault_kv_v2
+      endpoint: http://vault.agentx-deps.svc:8200
+      mount: secret
+    sandbox:
+      mode: external_opensandbox
+      endpoint: http://opensandbox.agentx-deps.svc:8080
+      secureAccess: false
+    clickhouse:
+      mode: bundled
+      url: http://clickhouse.agentx-runtime.svc:8123
+      database: agentx_observability
+      queryUser: observability_query
+      consumerUser: observability_consumer
+      migrateUser: observability_migrate
+    objectStorage:
+      mode: bundled-minio
+      endpoint: http://object-storage.agentx-deps.svc:9000
+      region: us-east-1
+      allowHttp: true
+      pathStyle: true
+      domains:
+        control:
+          bucket: agentx-control
+          user: control_object
+        runtime:
+          bucket: agentx-runtime
+          user: runtime_object
+        observability:
+          bucket: agentx-observability
+          user: observability_object
+  network:
+    egressGateway:
+      allowedPublicPorts:
+      - 443
+      sandboxAccess:
+        mode: nodePort
+        endpoint: https://host.docker.internal:31429
+        tlsSecretName: agentx-egress-tls
+        caSecretName: agentx-egress-tls
+        sourceCidrs:
+        - 192.168.0.0/16
+        serviceAnnotations: {}
+    externalEgress: {}
+  secrets:
+    mode: generated-local
+    control: agentx-control-secrets
+    runtime: agentx-runtime-secrets
+    observability: agentx-observability-secrets
+    dependencies: agentx-dependencies-secrets
+control:
+  services:
+    webConsole:
+      replicas: 1
+      maxReplicas: 4
+    platformControl:
+      replicas: 1
+      maxReplicas: 4
+      roles:
+      - api
+      - publisher
+      - projector
+      - retention
+      mysqlPool: 10
+runtime:
+  services:
+    runtimeGateway:
+      replicas: 1
+      maxReplicas: 4
+      mysqlPool: 8
+    workflowRuntime:
+      replicas: 1
+      maxReplicas: 4
+      roles:
+      - coordinator
+      - trigger
+      - command
+      - outbox
+      - recovery
+      - artifact
+      - quota
+      - trace-relay
+      mysqlPool: 10
+    workflowWorker:
+      replicas: 1
+      maxReplicas: 4
+      capability: all
+      mysqlPool: 6
+    sandboxManager:
+      replicas: 1
+      maxReplicas: 4
+      mysqlPool: 2
+observability:
+  services:
+    observability:
+      replicas: 1
+      maxReplicas: 4
+      roles:
+      - trace-consumer
+      - query
+dependencies:
+  services:
+    egressGateway:
+      replicas: 1
+      maxReplicas: 4

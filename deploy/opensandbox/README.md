@@ -1,6 +1,6 @@
 # OpenSandbox 接入
 
-Agentx 使用 [OpenSandbox](https://github.com/opensandbox-group/OpenSandbox) 的官方 Lifecycle API 和 execd API。默认 Kustomize 不部署 OpenSandbox，因为本地和生产使用不同 Runtime，且生产隔离配置必须由集群安全基线决定。
+Agentx 使用 [OpenSandbox](https://github.com/opensandbox-group/OpenSandbox) 的官方 Lifecycle API 和 execd API。四个 Agentx Helm Chart都不部署 OpenSandbox，因为本地和生产使用不同 Runtime，且生产隔离配置必须由集群安全基线决定。
 
 ## 本地 Docker Desktop
 
@@ -40,7 +40,7 @@ Endpoint 文档仍由 `sandbox-manager` 加密存储并经过 Host、CIDR 和 He
 
 ## E2E 生命周期
 
-M5 E2E 由脚本执行以下顺序：
+pytest Runtime/Product E2E执行以下顺序：
 
 1. 探测或启动 OpenSandbox Server，验证 `/health` 和 API Key。
 2. 记录测试前 Sandbox 清单，并拒绝复用未知 Sandbox。
@@ -48,4 +48,10 @@ M5 E2E 由脚本执行以下顺序：
 4. 验证命令、文件、Artifact、资源超限、默认断网、双开关公共 HTTPS、内部地址/代理绕过拒绝、超时和取消。
 5. 幂等销毁本次 Sandbox，断言无残留，再删除 Namespace。
 
-完整环境结论和实测版本见 [OpenSandbox 可行性评估](../../../docs/plan/opensandbox-feasibility.md)。
+运行入口：
+
+```bash
+uv run --frozen pytest tests/e2e --values deploy/values/local.yaml -m "runtime or product"
+```
+
+官方 Go SDK差分 Oracle保留在 `tests/e2e/oracles/opensandbox/`。完整环境结论和实测版本见 [OpenSandbox 可行性评估](../../docs/plan/opensandbox-feasibility.md)。

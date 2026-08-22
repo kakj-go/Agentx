@@ -1,0 +1,8 @@
+{{- if eq .Values.global.components.runtimeRedis.mode "bundled" }}
+apiVersion: v1
+kind: Service
+metadata: { name: runtime-redis, namespace: {{ .Values.global.namespaces.runtime }} }
+spec:
+  selector: { app.kubernetes.io/name: runtime-redis }
+  ports: [{ name: redis, port: 6379 }]
+{{- end }}

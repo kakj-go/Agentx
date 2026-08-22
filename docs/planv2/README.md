@@ -1,5 +1,7 @@
 # Agentx V2 控制面与执行面分离重构总计划
 
+> `planv2/evidence` 与 `planv2/contracts` 中出现的旧 PowerShell、Shell、deployment Profile 和核心 Kustomize 命令只记录历史执行事实，相关入口现已删除，不得继续执行。当前部署和测试入口以 [部署架构](../07-deployment.md)、[部署手册](../../deploy/README.md) 和 [E2E 规范](../plan/e2e-testing-standard.md) 为准。
+
 ## 1. 目标
 
 V2 已在 08A 将原“服务进程分离、共享 MySQL”的架构重构为相互独立的控制面、执行面和可观测面；以下生产级条件仍需由 08B 最终认证：

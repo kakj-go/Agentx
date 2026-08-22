@@ -1,0 +1,8 @@
+{{- if eq .Values.global.components.objectStorage.mode "bundled-minio" }}
+apiVersion: v1
+kind: Service
+metadata: { name: object-storage, namespace: {{ .Values.global.namespaces.dependencies }} }
+spec:
+  selector: { app.kubernetes.io/name: object-storage }
+  ports: [{ name: api, port: 9000 }, { name: console, port: 9001 }]
+{{- end }}
