@@ -102,4 +102,23 @@ describe('Workflow 5.0 reference selectors', () => {
     expect(decision?.type).toBe('string')
     expect(decision?.selector).toEqual({ namespace: 'outputs', sourceNodeId: 'first', port: 'approved', run: { kind: 'current' }, item: { kind: 'current' }, path: ['decision'] })
   })
+
+  it('marks Model and Agent text as the recommended stable output', () => {
+    const model = {
+      ...manifest,
+      nodeType: 'model',
+      outputPorts: [{ name: 'main', kind: 'main', required: false, variadic: false }],
+      outputSchema: { type: 'object', properties: { text: { type: 'string' }, structuredOutput: { type: ['object', 'null'] } }, required: ['text'] },
+      outputCardinality: { main: 'exactly_one' },
+    } as NodeManifest
+    const source = { ...action('first', 'model'), data: { ...action('first', 'model').data, nodeType: 'model' } } as StudioNode
+    const catalog = buildReferenceCatalog(
+      { ...document, nodes: [source, action('target', 'target')], edges: [{ id: 'edge', source: 'first', target: 'target', sourceHandle: 'main', targetHandle: 'main', data: { edgeKind: 'execution' } }] },
+      new Map([['model@1', model]]),
+      'target',
+    )
+    const current = catalog.outputs[0].children[0].children.find((entry) => entry.label === 'current')!
+    expect(current.children.find((entry) => entry.label === 'text')?.recommended).toBe(true)
+    expect(current.children.find((entry) => entry.label === 'structuredOutput')?.recommended).not.toBe(true)
+  })
 })

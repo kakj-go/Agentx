@@ -77,7 +77,7 @@ class VariableNode extends DecoratorNode<React.ReactNode> {
   }
 
   isKeyboardSelectable() {
-    return true;
+    return false;
   }
 
   exportJSON(): SerializedVariableNode {

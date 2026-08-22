@@ -80,6 +80,8 @@ shared/components 保存 PageContainer、PageHeader、FilterBar、DataTable、Me
 
 Feature 页面优先组合共享组件，不重复定义页面标题、表格密度、状态颜色和空状态。
 
+`apps/web/src/docs` 集中保存面向最终用户的内嵌接入文档、双语内容、动态代码示例和文档展示组件；Feature 页面只传入当前实体、公开 Endpoint 与已发布 Schema，不在业务页面复制长篇说明。Application 的 API Key 与 Webhook 文档以当前激活 Deployment 为数据源，在尚未创建 API Key 或 Webhook 时也必须能直接查看输入/输出 Schema；未创建 Webhook 时只用占位符表示尚未生成的专属 URL 和 Secret。接口参考按 Endpoint 展示请求字段、响应字段和 Curl、Java、Go、Node.js、Python 示例。外部 API 的方法、路径、Header 和 Schema 仍以版本化 OpenAPI 为契约真相，内嵌文档负责快速开始、安全说明和错误排查，不替代 OpenAPI。
+
 ## 5. Feature 边界
 
     features/
@@ -189,9 +191,11 @@ React Flow 的 Node 和 Edge 结构只属于前端编辑状态，不能直接成
 - 自动保存使用 Server Revision；Undo/Redo 只改变本地 Editor State，不能回退服务端 Revision。
 - Execution Event 使用 Cursor 重连，断线后通过 Execution Query 校准；非终态运行更新最多每 100ms 合并一次，终态立即提交；完整 Trace 和大型输出不进入 Zustand。
 
-Workflow Studio 底部 Trace 与独立执行详情复用 `features/traces` 中的分页 Query Hook、`TraceWaterfall` 和 `TraceDetail`。Span 数据只保存在 TanStack Query Cache，不复制到 Zustand。瀑布保留筛选匹配项的祖先上下文，支持层级折叠、类型/异常筛选、搜索、50%–200% 时间轴缩放、键盘 treegrid 操作和继续加载；默认选择首个失败 Span，其次运行中 Span，最后选择 Execution 根 Span。运行中宽度按当前时间刷新，终态只使用服务端耗时。
+Workflow Studio 底部 Trace、独立执行详情和 Node Inspector 复用 `features/traces` 中的 `TraceWorkspace/TraceNodeDetails`。Workspace 默认进入节点视图：顶部固定显示最终输出、状态、耗时、Token 和成本，主体按 Start Boundary、每个 Node Execution、End Boundary 排列；Node 卡片以 Runtime MySQL 的输入输出为权威，按 Port/Item 解包并优先展示稳定语义字段，内部 Span 默认折叠且只在节点展开时携带 `nodeExecutionId` 加载。Trace 延迟或不可用必须显示明确诊断状态，不能用空输入替代权威数据。三个入口必须向共享内容组件传递同一个按 Execution 作用域授权的 Artifact 下载动作；超过 Trace 内联预算的内容只展示脱敏 Preview 和 Artifact 入口，浏览器不得绕过 `/executions/{executionId}/artifacts/{artifactId}` 直接访问对象存储。
 
-桌面端详情列固定约 370px，低于 1120px 后移到瀑布下方。Studio 首次进入 Trace 页签时，低于 420px 的执行轨道扩展到 420px，但不缩小用户手动设置的更大高度；选择 Node 或子 Span 时联动画布节点。Node Inspector 复用同一 Span 详情。独立执行详情使用 Trace 和 Recovery 两个主视图并默认显示 Trace；Recovery 保留节点数据、Checkpoint、Wait、Approval、Side Effect 与 Fork，Agent、Runtime Call、Sandbox 不再维护第二套重复展示面板。
+高级调用瀑布复用分页 Query Hook、`TraceWaterfall` 和 `TraceDetail`。Span 数据只保存在 TanStack Query Cache，不复制到 Zustand。瀑布保留筛选匹配项的祖先上下文，支持层级折叠、类型/异常筛选、搜索、50%–200% 时间轴缩放、键盘 treegrid 操作和继续加载；默认选择首个失败 Span，其次运行中 Span，最后选择 Execution 根 Span。详情按 Span 类型与 `contentKind` 动态生成页签，纯生命周期 Span 不显示误导性的空输入/输出。运行中宽度按当前时间刷新，终态只使用服务端耗时。
+
+桌面端高级详情列固定约 370px，低于 1120px 后移到瀑布下方。Studio 首次进入 Trace 页签时，执行轨道扩展到最多 560px（同时受视口 80% 上限约束），但不缩小用户手动设置的更大高度；用户继续向上拖动时最高可占视口的 4/5。轨道自身裁剪溢出，内部节点视图、瀑布和详情各自滚动，避免详情遮挡画布或相邻面板。选择 Node 或子 Span 时联动画布节点。Node Inspector 直接复用单节点语义详情，不再自行搜索 Span 后套通用详情。独立执行详情使用 Trace 和 Recovery 两个主视图并默认显示 Trace；Recovery 只保留 Checkpoint、Wait、Approval、Side Effect、事件与 Fork，删除重复的节点 Outline 和输入输出面板。
 
 ## 10. 路由
 
@@ -216,16 +220,24 @@ Workflow Studio 底部 Trace 与独立执行详情复用 `features/traces` 中�
 - /roles
 - /workflows/:workflowId/editor
 
-Playground 调用正式 Application API，不建立单独的执行实现。
+Playground 调用正式 Application API，不建立单独的执行实现。页面用 `mode=parameters|conversation`、`applicationId` 和 `sessionId` 恢复刷新前状态，运行与消息历史全部来自服务端。
 
-首期企业工作台只验收 1280px 及以上桌面布局。Sidebar 折叠状态保存到 agentx.sidebar.collapsed；不实现移动端 Drawer。一级列表页统一使用本地搜索、状态筛选、8 条分页和无结果状态。
+参数测试采用“无 Session 运行历史 / Schema 表单 / 结果详情”三栏布局。共享 `SchemaForm` 负责 string、multiline、enum、number、integer、boolean、object、array、Artifact、Artifact Array、递归默认值、恢复默认和 JSON 模式，Workflow Studio 的 Run Parameters 与 Playground 复用该组件。选择历史运行时，表单以当前 Deployment Schema 默认值为基础，只回填 Execution 输入中名称与类型仍兼容的字段，忽略旧版本已删除或改型的参数。Artifact 先上传到 `/gateway/v1/artifacts`，随后用 Artifact Reference 调用正式 Invocation API；结果面板展示输出、错误、耗时、Token、成本、文件和 Execution/Trace 入口。
+
+对话测试采用“会话历史 / 消息历史与固定 Composer”两栏布局，工作区填满页面剩余高度，各栏内部独立滚动。共享映射配置放在 Radix Dialog 中，由带 Tooltip 和可访问名称的齿轮图标打开，只列出类型兼容的顶层字段；没有活动映射时发送按钮禁用，附件按钮在未映射文件输入时禁用。Composer 使用多行矩形输入框，附件 `+` 在左下角，发送图标在右下角，Enter 发送且 Shift+Enter 换行。`application:manage` 可以保存或清除映射，只有 `application:invoke` 的用户可以使用已发布映射。保存后轮询 `publishing/active/failed`，发布期间保留服务端草稿并暂停发送；用户与 Assistant 附件都渲染文件卡片，Assistant 消息提供 Execution/Trace 入口。Session 列表使用首条用户问题作为标题，单行省略并在悬停时展示完整标题。
+
+首期企业工作台只验收 1280px 及以上桌面布局。Sidebar 折叠状态保存到 agentx.sidebar.collapsed；不实现移动端 Drawer。普通一级列表页继续使用本地搜索、状态筛选、8 条分页和无结果状态；执行记录页是受控服务端表格的明确例外，不能加载固定 100 条后本地筛选。
+
+执行记录页的搜索、状态、时间和更多筛选写入 URL，Cursor 只保存在当前页面内存中。TanStack Query Key 使用规范化筛选条件和当前 Cursor；文本输入 300ms 防抖，任何筛选变化清空 Cursor 栈。公共查询统一使用 `limit`，页面固定为 8，通过 Cursor 栈实现上一页/下一页；Cursor 过期时回到第一页并明确提示结果已刷新。应用、Workflow、MCP Tool、用户和部门选项使用共享的可搜索多选 Popover 按需加载，其中部门使用 `/departments/search`，避免改变组织树接口语义；已选条件显示可移除标签与“清除全部”。
+
+执行表格展示当前 Control 名称补充与 Runtime 审计快照的不同语义：应用和 Workflow 名称是 BFF 对当页稳定 ID 批量解析的当前名称；发起用户、发起部门和触发名称来自执行时快照。未知触发枚举保留协议原值用于诊断，已知值必须使用 `executions.triggerTypes` 的中英文映射。
 
 ## 11. M2.1 资源界面
 
 - Model 列表只提供“新建模型”，在同一个 Dialog 中按连接、模型能力、所属部门和默认参数的顺序完成配置，不要求预先创建连接。Model 详情使用相同字段集合统一编辑；连接或模型参数变化都创建不可变 Deployment Revision，并展示 Revision 历史。
 - Credential 详情允许修改名称和状态，但绝不把 Secret 放入表单默认值或 Query Cache。
 - MCP 列表和详情替代旧 Tool 页面，Tool Schema 使用只读 JSON Schema 字段树展示名称、类型、必填、说明、约束及嵌套关系，策略和受控调试使用独立 Dialog。
-- Skill 详情采用文件树、编辑/预览区和元数据区三栏布局；根 `SKILL.md` 在正文上方独立编辑必填描述并隐藏 YAML frontmatter 细节，Markdown 正文使用 MIT 许可的 MDXEditor/Lexical 富文本层并继续保存标准 Markdown，上传和 ZIP 导入继续走统一 API Client。
+- Skill 详情采用文件树、编辑/预览区和元数据区三栏布局；根 `SKILL.md` 在正文上方使用多行文本框独立编辑必填描述并隐藏 YAML frontmatter 细节。Markdown 正文使用 MIT 许可的 MDXEditor/Lexical 富文本层并继续保存标准 Markdown，工作区文件引用从富文本工具栏选择并插入当前光标位置；上传和 ZIP 导入继续走统一 API Client。
 - 资源详情页不嵌入授权面板；`/resource-grants` 使用资源类型 Tab 分栏聚合 Credential、Model、MCP Server、MCP Tool、Skill、Knowledge 和 Memory，每栏列出对应资源并统一处理 Department 与 Workflow Service Identity Grant。Workflow Studio 允许对当前工作流的完整资源依赖包发起直接授权或审批申请，这是该统一授权控制面的任务内快捷入口。
 - Model 列表展示与当前 Alias/Deployment 配置绑定的 `untested/healthy/unhealthy` 连接状态，连接测试从 Alias 详情页手动触发。
 - Dialog 默认按内容完整展开并垂直居中；字段超过六项的通用表单自动使用双列宽布局，只有内容真实超过 `100dvh - 32px` 时才允许外层滚动。

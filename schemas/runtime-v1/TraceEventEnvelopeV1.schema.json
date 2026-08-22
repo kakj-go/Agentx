@@ -1,5 +1,28 @@
 {
   "$defs": {
+    "TraceContentKindV1": {
+      "enum": [
+        "workflow_input",
+        "workflow_output",
+        "node_input",
+        "node_output",
+        "attempt_input",
+        "attempt_output",
+        "resolved_parameters",
+        "runtime_request",
+        "runtime_response",
+        "agent_input",
+        "agent_output",
+        "iteration_input",
+        "iteration_output",
+        "sandbox_request",
+        "sandbox_response",
+        "wait_request",
+        "wait_response",
+        "conversion_record"
+      ],
+      "type": "string"
+    },
     "TraceEventKindV1": {
       "enum": [
         "started",
@@ -11,6 +34,7 @@
     "TraceSpanKindV1": {
       "enum": [
         "execution",
+        "boundary",
         "node",
         "attempt",
         "agent_run",
@@ -50,15 +74,19 @@
     "contentHash": {
       "type": "string"
     },
+    "contentKind": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/TraceContentKindV1"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "contentPreview": true,
     "contentRef": {
       "format": "uuid",
-      "type": [
-        "string",
-        "null"
-      ]
-    },
-    "contentRole": {
       "type": [
         "string",
         "null"

@@ -2,6 +2,7 @@ use agentx_runtime_contracts::{RuntimeResourceBindingV1, VaultSecretReferenceV1}
 use reqwest::header::{HeaderMap, HeaderValue};
 use serde_json::{Value, json};
 
+use super::output::tool_execution_output;
 use super::{
     RuntimeWorker, WorkerExecution, provider_secret_header, runtime_call_fingerprint, stable_id,
 };
@@ -45,7 +46,7 @@ impl RuntimeWorker {
             )
             .await
         {
-            Ok(Some(value)) => return WorkerExecution::succeeded(value),
+            Ok(Some(value)) => return tool_execution_output(WorkerExecution::succeeded(value)),
             Ok(None) => {}
             Err(result) => return result,
         }
@@ -141,10 +142,19 @@ impl RuntimeWorker {
                     .await;
             }
         };
+        let response_artifact_id = crate::trace_artifact::externalize_runtime_call_response(
+            &self.pool,
+            &self.objects,
+            claim,
+            call_id,
+            &payload,
+        )
+        .await;
         if let Err(error) = sqlx::query(
-            "UPDATE runtime_calls SET status='succeeded',response_json=?,ended_at=UTC_TIMESTAMP(6) WHERE id=? AND status='sent'",
+            "UPDATE runtime_calls SET status='succeeded',response_json=?,response_artifact_id=?,ended_at=UTC_TIMESTAMP(6) WHERE id=? AND status='sent'",
         )
         .bind(&payload)
+        .bind(response_artifact_id)
         .bind(call_id)
         .execute(&self.pool)
         .await
@@ -159,7 +169,7 @@ impl RuntimeWorker {
             Some(&payload),
         )
         .await;
-        WorkerExecution::succeeded(payload)
+        tool_execution_output(WorkerExecution::succeeded(payload))
     }
 
     #[allow(clippy::too_many_arguments)]

@@ -46,6 +46,9 @@
                 "null"
               ]
             },
+            "origin": {
+              "$ref": "#/$defs/ExecutionOriginV1"
+            },
             "sideEffectResolution": {
               "$ref": "#/$defs/SideEffectResolutionV1"
             },
@@ -58,6 +61,7 @@
             "kind",
             "sourceExecutionId",
             "checkpointId",
+            "origin",
             "mode",
             "sideEffectResolution"
           ],
@@ -149,6 +153,52 @@
           "type": "object"
         }
       ]
+    },
+    "ExecutionOriginV1": {
+      "additionalProperties": false,
+      "description": "Immutable audit context captured when an Execution is created.\n\nControl remains authoritative for current IAM and resource names. Runtime\nstores this snapshot so later renames do not rewrite execution history.",
+      "properties": {
+        "initiatorDepartmentId": {
+          "format": "uuid",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "initiatorDepartmentName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "initiatorUserId": {
+          "format": "uuid",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "initiatorUserName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "triggerName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "triggerSourceId": {
+          "format": "uuid",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
     },
     "PartialExecutionModeV1": {
       "enum": [

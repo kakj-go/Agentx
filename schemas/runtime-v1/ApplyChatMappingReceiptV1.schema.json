@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "bundleId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "deploymentId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "replayed": {
+      "type": "boolean"
+    },
+    "version": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "apiVersion",
+    "deploymentId",
+    "bundleId",
+    "version",
+    "replayed"
+  ],
+  "title": "ApplyChatMappingReceiptV1",
+  "type": "object"
+}

@@ -18,10 +18,16 @@ use thiserror::Error;
 
 use crate::{ExpressionEngine, NodeRegistry};
 
+#[path = "compiler_normalization.rs"]
+mod normalization;
 #[path = "compiler_parameter_expressions.rs"]
 mod parameter_expressions;
+use normalization::{
+    normalized_context_writes, normalized_node_parameters, normalized_output_projection,
+    normalized_workflow_end, validate_parameter_reference_types,
+};
 
-pub const COMPILER_VERSION: &str = "agentx-workflow-5.0.0";
+pub const COMPILER_VERSION: &str = "agentx-workflow-5.0.1";
 
 #[derive(Clone, Debug, Default)]
 pub struct CompileContext {
@@ -311,6 +317,15 @@ impl<'a> WorkflowCompiler<'a> {
                     &mut issues,
                 );
                 validate_output_projection(*definition_index, node, manifest, &mut issues);
+                validate_parameter_reference_types(
+                    &node.parameters,
+                    &manifest.parameter_schema,
+                    &format!("nodes[{definition_index}].parameters"),
+                    definition,
+                    &enabled,
+                    &manifests,
+                    &mut issues,
+                );
             }
             validate_reference_paths(
                 &node.parameters,
@@ -495,10 +510,10 @@ impl<'a> WorkflowCompiler<'a> {
                     name: node.name.clone(),
                     node_type: node.node_type.clone(),
                     type_version: node.type_version,
-                    parameters: normalized_node_parameters(node),
-                    output_projection: serde_json::to_value(&node.output_projection)
+                    parameters: normalized_node_parameters(node, manifest),
+                    output_projection: serde_json::to_value(normalized_output_projection(node))
                         .expect("output projection serializes"),
-                    context_writes: node.context_writes.clone(),
+                    context_writes: normalized_context_writes(node, definition),
                     settings: node.settings.clone(),
                     capability: manifest.capability.clone(),
                     execution_style: manifest.execution_style.clone(),
@@ -526,6 +541,7 @@ impl<'a> WorkflowCompiler<'a> {
                                     )
                                 })
                                 .collect(),
+                            cardinalities: manifest.output_cardinality.clone(),
                         },
                     side_effect_level: manifest.side_effect_level.clone(),
                     incoming_connections: Vec::new(),
@@ -579,7 +595,7 @@ impl<'a> WorkflowCompiler<'a> {
             activation_budget: definition.settings.activation_budget,
             start: definition.start.clone(),
             contexts: definition.start.contexts.clone(),
-            end: definition.end.clone(),
+            end: normalized_workflow_end(definition),
             nodes,
             connections,
             terminal_connections,
@@ -589,26 +605,6 @@ impl<'a> WorkflowCompiler<'a> {
             subworkflow_version_ids: subworkflows.into_iter().collect(),
         })
     }
-}
-
-fn normalized_node_parameters(node: &WorkflowNode) -> Value {
-    let mut parameters = node.parameters.clone();
-    if node.node_type != "code" {
-        return parameters;
-    }
-    let egress_mode = parameters
-        .get("egressMode")
-        .or_else(|| parameters.pointer("/networkPolicy/egressMode"))
-        .and_then(Value::as_str)
-        .unwrap_or("none")
-        .to_owned();
-    if let Some(object) = parameters.as_object_mut() {
-        object.insert(
-            "networkPolicy".to_owned(),
-            serde_json::json!({"defaultAction":"deny","egressMode":egress_mode}),
-        );
-    }
-    parameters
 }
 
 fn validate_binding_slots(
@@ -1100,6 +1096,7 @@ fn collect_dynamic_selectors<'a>(value: &'a DynamicValue, selectors: &mut Vec<&'
         DynamicValue::Reference {
             selector,
             missing_policy,
+            ..
         } => {
             selectors.push(selector);
             collect_missing_policy_selectors(missing_policy, selectors);
@@ -1355,7 +1352,7 @@ fn validate_reference_path(
                     && output_schema.get("properties").is_some()
                     && !json_schema_has_path(&output_schema, &reference[7..])
                 {
-                    reference_issue(issues, "UNKNOWN_OUTPUT_FIELD", path, reference);
+                    unknown_output_field_issue(issues, path, reference, manifest, &reference[7..]);
                 }
                 if output_reference_is_sensitive(&output_schema, reference)
                     && usage_exposes_value(usage)
@@ -1422,9 +1419,15 @@ fn validate_reference_path(
                 };
                 if reference.len() > field_offset
                     && output_schema.get("properties").is_some()
-                    && !json_schema_has_path(&output_schema, &reference[field_offset..])
+                    && !json_schema_allows_path(&output_schema, &reference[field_offset..])
                 {
-                    reference_issue(issues, "UNKNOWN_OUTPUT_FIELD", path, reference);
+                    unknown_output_field_issue(
+                        issues,
+                        path,
+                        reference,
+                        manifest,
+                        &reference[field_offset..],
+                    );
                 }
                 if output_reference_is_sensitive(&output_schema, reference)
                     && usage_exposes_value(usage)
@@ -1478,10 +1481,7 @@ fn validate_reference_path(
                 "message",
                 "details",
                 "sourceNodeId",
-                "sourceNodeKey",
                 "nodeExecutionId",
-                "runIndex",
-                "iterationIndex",
                 "retryable",
             ];
             if reference.get(1).map(String::as_str) != Some("json")
@@ -1534,6 +1534,33 @@ fn is_common_error_predecessor(
 
 fn json_schema_has_path(schema: &Value, path: &[String]) -> bool {
     json_schema_at_path(schema, path).is_some()
+}
+
+fn json_schema_allows_path(schema: &Value, path: &[String]) -> bool {
+    let mut current = schema;
+    for segment in path {
+        if segment.parse::<usize>().is_ok() {
+            let Some(items) = current.get("items") else {
+                return current.get("type").and_then(Value::as_str) != Some("array");
+            };
+            current = items;
+            continue;
+        }
+        if let Some(child) = current
+            .get("properties")
+            .and_then(Value::as_object)
+            .and_then(|properties| properties.get(segment))
+        {
+            current = child;
+            continue;
+        }
+        match current.get("additionalProperties") {
+            Some(Value::Bool(false)) => return false,
+            Some(child) if child.is_object() => current = child,
+            _ => return true,
+        }
+    }
+    true
 }
 
 fn json_schema_path_is_sensitive(schema: &Value, path: &[String]) -> bool {
@@ -1589,9 +1616,16 @@ fn merged_output_schema(node: &WorkflowNode, manifest: &NodeManifestVersion, por
         .get(port)
         .cloned()
         .unwrap_or_else(|| manifest.output_schema.clone());
-    let Some(properties) = schema.get_mut("properties").and_then(Value::as_object_mut) else {
+    let Some(schema_object) = schema.as_object_mut() else {
         return schema;
     };
+    if !schema_object.contains_key("properties") {
+        schema_object.insert("properties".into(), Value::Object(Default::default()));
+    }
+    let properties = schema_object
+        .get_mut("properties")
+        .and_then(Value::as_object_mut)
+        .expect("object output schema properties");
     if let Some(projection) = node.output_projection.get(port) {
         for (name, field) in projection {
             let mut field_schema = field.schema.clone();
@@ -1653,12 +1687,9 @@ fn reference_json_type(
             None
         }
         "item" => match reference.get(2).map(String::as_str) {
-            Some("runIndex" | "iterationIndex") => Some("integer".into()),
             Some("retryable") => Some("boolean".into()),
             Some("details") => Some("object".into()),
-            Some("code" | "message" | "sourceNodeId" | "sourceNodeKey" | "nodeExecutionId") => {
-                Some("string".into())
-            }
+            Some("code" | "message" | "sourceNodeId" | "nodeExecutionId") => Some("string".into()),
             _ => None,
         },
         _ => None,
@@ -1682,14 +1713,26 @@ fn validate_end_output_contract(
     let Some(expected) = output.schema.get("type").and_then(Value::as_str) else {
         return;
     };
-    if let Some(actual) = reference_json_type(&reference, definition, nodes, manifests)
-        && !json_types_compatible(expected, &actual)
+    let actual = reference_json_type(&reference, definition, nodes, manifests);
+    if expected != "string" && actual.as_deref().is_none() {
+        issues.push(CompileIssue {
+            code: "END_OUTPUT_TYPE_UNKNOWN".into(),
+            path: path.into(),
+            message: format!(
+                "End output at {path} declares {expected}, but the referenced value has no concrete type"
+            ),
+        });
+    } else if expected != "string"
+        && actual
+            .as_deref()
+            .is_some_and(|actual| !json_types_compatible(expected, actual))
     {
         issues.push(CompileIssue {
             code: "END_OUTPUT_TYPE_MISMATCH".into(),
             path: path.into(),
             message: format!(
-                "End output at {path} declares {expected}, but the referenced value is {actual}"
+                "End output at {path} declares {expected}, but the referenced value is {}",
+                actual.as_deref().unwrap_or("unknown")
             ),
         });
     }
@@ -1735,6 +1778,35 @@ fn is_reachable(source: usize, target: usize, graph: &[Vec<usize>]) -> bool {
 
 fn reference_issue(issues: &mut Vec<CompileIssue>, code: &str, path: &str, reference: &[String]) {
     issues.push(CompileIssue { code: code.into(), path: path.into(), message: format!("Invalid structured reference '{}'; references must resolve through the Workflow 5.0 contract", reference.join(".")) });
+}
+
+fn unknown_output_field_issue(
+    issues: &mut Vec<CompileIssue>,
+    path: &str,
+    reference: &[String],
+    manifest: &NodeManifestVersion,
+    fields: &[String],
+) {
+    let missing = fields.first().map(String::as_str).unwrap_or("unknown");
+    let message = if matches!(manifest.node_type.as_str(), "model" | "agent")
+        && matches!(
+            missing,
+            "message"
+                | "messages"
+                | "toolCalls"
+                | "iterations"
+                | "artifacts"
+                | "providerRawResponse"
+        ) {
+        format!("AI output field '{missing}' no longer exists; reselect the stable 'text' field")
+    } else {
+        format!("Output field '{missing}' does not exist in the frozen Manifest contract")
+    };
+    issues.push(CompileIssue {
+        code: "UNKNOWN_OUTPUT_FIELD".into(),
+        path: path.into(),
+        message: format!("{message} (reference '{}')", reference.join(".")),
+    });
 }
 
 fn port_matches(ports: &[agentx_node_protocol::NodePort], handle: &str) -> bool {

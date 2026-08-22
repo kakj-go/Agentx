@@ -100,10 +100,19 @@ ALTER TABLE runtime_user_application_grants
 
 ALTER TABLE workflow_executions
     ADD COLUMN trace_watermark BIGINT UNSIGNED NOT NULL DEFAULT 0 AFTER state_version,
+    ADD COLUMN initiator_user_id BINARY(16) NULL AFTER trigger_type,
+    ADD COLUMN initiator_user_name VARCHAR(255) NULL AFTER initiator_user_id,
+    ADD COLUMN initiator_department_id BINARY(16) NULL AFTER initiator_user_name,
+    ADD COLUMN initiator_department_name VARCHAR(255) NULL AFTER initiator_department_id,
+    ADD COLUMN trigger_source_id BINARY(16) NULL AFTER initiator_department_name,
+    ADD COLUMN trigger_name VARCHAR(255) NULL AFTER trigger_source_id,
     ADD KEY idx_runtime_execution_snapshot (tenant_id,created_at,id),
     ADD KEY idx_runtime_execution_app_snapshot (tenant_id,application_id,created_at,id),
     ADD KEY idx_runtime_execution_workflow_snapshot (tenant_id,workflow_id,created_at,id),
-    ADD KEY idx_runtime_execution_status_snapshot (tenant_id,status,created_at,id);
+    ADD KEY idx_runtime_execution_status_snapshot (tenant_id,status,created_at,id),
+    ADD KEY idx_runtime_execution_user_snapshot (tenant_id,initiator_user_id,created_at,id),
+    ADD KEY idx_runtime_execution_department_snapshot (tenant_id,initiator_department_id,created_at,id),
+    ADD KEY idx_runtime_execution_trigger_snapshot (tenant_id,trigger_type,trigger_source_id,created_at,id);
 
 ALTER TABLE application_invocations
     ADD KEY idx_runtime_invocation_snapshot (tenant_id,created_at,id),

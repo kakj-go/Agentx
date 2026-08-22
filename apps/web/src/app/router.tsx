@@ -5,7 +5,7 @@ import { createBrowserRouter } from 'react-router-dom'
 import { DashboardPage } from '../features/dashboard/dashboard-page'
 import { NotFoundPage } from '../features/not-found/not-found-page'
 import { EnterpriseLayout } from '../layouts/enterprise-workbench/enterprise-layout'
-import { Protected, PublicRoute, RequirePermission } from './auth-guards'
+import { Protected, PublicRoute, RequireAnyPermission, RequirePermission } from './auth-guards'
 import { SetupPage } from '../features/auth/setup-page'
 import { LoginPage } from '../features/auth/login-page'
 import { ChangePasswordPage } from '../features/auth/change-password-page'
@@ -68,7 +68,7 @@ export const router = createBrowserRouter([
       { path: 'applications/:id', element: deferred(<RequirePermission permission="application:view"><ApplicationDetailPage /></RequirePermission>) },
       { path: 'playground', element: deferred(<RequirePermission permission="application:invoke"><PlaygroundPage /></RequirePermission>) },
       { path: 'executions', element: deferred(<RequirePermission permission="execution:view"><ExecutionsPage /></RequirePermission>) },
-      { path: 'executions/:id', element: deferred(<RequirePermission permission="execution:view"><ExecutionDetailPage /></RequirePermission>) },
+      { path: 'executions/:id', element: deferred(<RequireAnyPermission permissions={['execution:view', 'application:invoke']}><ExecutionDetailPage /></RequireAnyPermission>) },
       { path: 'approvals', element: deferred(<RequirePermission permission="approval:view"><ApprovalsPage /></RequirePermission>) },
       { path: 'approvals/resource-grants/:id', element: deferred(<RequirePermission permission="workflow:view"><ResourceGrantRequestDetailPage /></RequirePermission>) },
       { path: 'approvals/:id', element: deferred(<RequirePermission permission="approval:view"><ApprovalDetailPage /></RequirePermission>) },

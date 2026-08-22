@@ -184,7 +184,13 @@ pub struct ExecutionSearchRequestV1 {
     pub tenant_id: Uuid,
     pub application_ids: Vec<Uuid>,
     pub workflow_ids: Vec<Uuid>,
+    pub tool_ids: Vec<Uuid>,
+    pub initiator_user_ids: Vec<Uuid>,
+    pub initiator_department_ids: Vec<Uuid>,
+    pub trigger_types: Vec<String>,
+    pub trigger_name: Option<String>,
     pub statuses: Vec<String>,
+    pub session_mode: ExecutionSessionModeV1,
     #[schemars(with = "Option<String>")]
     #[serde(with = "time::serde::rfc3339::option")]
     pub created_after: Option<OffsetDateTime>,
@@ -194,6 +200,15 @@ pub struct ExecutionSearchRequestV1 {
     pub search: Option<String>,
     pub cursor: Option<String>,
     pub limit: u32,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecutionSessionModeV1 {
+    #[default]
+    All,
+    Stateless,
+    Session,
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
@@ -227,9 +242,18 @@ pub struct ExecutionSummaryV1 {
     pub bundle_id: Uuid,
     pub trace_id: Uuid,
     pub trigger_type: String,
+    pub initiator_user_id: Option<Uuid>,
+    pub initiator_user_name: Option<String>,
+    pub initiator_department_id: Option<Uuid>,
+    pub initiator_department_name: Option<String>,
+    pub trigger_source_id: Option<Uuid>,
+    pub trigger_name: Option<String>,
     pub status: String,
     pub duration_ms: Option<u64>,
     pub cost_micros: u64,
+    pub cost_currency: Option<String>,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
     pub error_code: Option<String>,
     #[schemars(with = "String")]
     #[serde(with = "time::serde::rfc3339")]
@@ -293,6 +317,7 @@ pub struct ExecutionDetailV1 {
     pub trace_watermark: u64,
     pub parent_execution_id: Option<Uuid>,
     pub work_package_id: Option<Uuid>,
+    pub input: Option<Value>,
     pub output: Option<Value>,
     pub error: Option<Value>,
 }
@@ -324,9 +349,14 @@ pub struct ExecutionNodeV1 {
     pub output: Option<Value>,
     pub error_code: Option<String>,
     pub error_message: Option<String>,
-    #[schemars(with = "String")]
-    #[serde(with = "time::serde::rfc3339")]
-    pub created_at: OffsetDateTime,
+    pub cost_micros: u64,
+    pub cost_currency: Option<String>,
+    #[schemars(with = "Option<String>")]
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub started_at: Option<OffsetDateTime>,
+    #[schemars(with = "Option<String>")]
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub ended_at: Option<OffsetDateTime>,
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
@@ -387,6 +417,7 @@ pub struct RuntimeCallDetailV1 {
     pub input_tokens: u64,
     pub output_tokens: u64,
     pub cost_micros: u64,
+    pub cost_currency: Option<String>,
     pub error_code: Option<String>,
 }
 
@@ -419,6 +450,27 @@ pub struct ExecutionCollectionPageV1<T> {
     #[serde(deserialize_with = "crate::deserialize_v1")]
     pub api_version: u32,
     pub items: Vec<T>,
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ExecutionEventV1 {
+    pub sequence: u64,
+    pub event_type: String,
+    pub status: String,
+    pub summary: Value,
+    #[schemars(with = "String")]
+    #[serde(with = "time::serde::rfc3339")]
+    pub occurred_at: OffsetDateTime,
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ExecutionEventPageV1 {
+    #[serde(deserialize_with = "crate::deserialize_v1")]
+    pub api_version: u32,
+    pub items: Vec<ExecutionEventV1>,
+    pub next_cursor: Option<u64>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
@@ -479,7 +531,7 @@ pub struct TraceEventEnvelopeV1 {
     pub error_message: Option<String>,
     pub attributes: Value,
     pub content_ref: Option<Uuid>,
-    pub content_role: Option<String>,
+    pub content_kind: Option<TraceContentKindV1>,
     pub content_preview: Option<Value>,
     #[schemars(with = "String")]
     #[serde(with = "time::serde::rfc3339")]
@@ -499,6 +551,7 @@ pub enum TraceEventKindV1 {
 #[serde(rename_all = "snake_case")]
 pub enum TraceSpanKindV1 {
     Execution,
+    Boundary,
     Node,
     Attempt,
     AgentRun,
@@ -506,6 +559,29 @@ pub enum TraceSpanKindV1 {
     RuntimeCall,
     Sandbox,
     Wait,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TraceContentKindV1 {
+    WorkflowInput,
+    WorkflowOutput,
+    NodeInput,
+    NodeOutput,
+    AttemptInput,
+    AttemptOutput,
+    ResolvedParameters,
+    RuntimeRequest,
+    RuntimeResponse,
+    AgentInput,
+    AgentOutput,
+    IterationInput,
+    IterationOutput,
+    SandboxRequest,
+    SandboxResponse,
+    WaitRequest,
+    WaitResponse,
+    ConversionRecord,
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
@@ -544,9 +620,13 @@ pub struct TraceSpanSummaryV1 {
 #[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TraceContentV1 {
-    pub role: String,
+    pub event_id: Uuid,
+    pub kind: TraceContentKindV1,
     pub preview: Option<Value>,
     pub content_ref: Option<Uuid>,
+    #[schemars(with = "String")]
+    #[serde(with = "time::serde::rfc3339")]
+    pub occurred_at: OffsetDateTime,
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
@@ -556,9 +636,7 @@ pub struct TraceSpanDetailV1 {
     pub api_version: u32,
     pub execution_id: Uuid,
     pub span: TraceSpanSummaryV1,
-    pub attributes: Value,
-    pub input: Option<TraceContentV1>,
-    pub output: Option<TraceContentV1>,
+    pub contents: Vec<TraceContentV1>,
     pub events: Vec<TraceEventEnvelopeV1>,
 }
 

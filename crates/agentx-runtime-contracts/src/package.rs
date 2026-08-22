@@ -143,6 +143,7 @@ pub struct RuntimeWorkPackagePayloadV1 {
     pub schema_version: u32,
     pub package_id: Uuid,
     pub tenant_id: Uuid,
+    pub origin: crate::ExecutionOriginV1,
     pub purpose: WorkPackagePurpose,
     pub call_purpose: RuntimeCallPurposeV1,
     pub spec: crate::RuntimeWorkPackageSpecV1,

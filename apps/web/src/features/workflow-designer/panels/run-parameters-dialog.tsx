@@ -8,6 +8,7 @@ import { Input } from "../../../shared/ui/input";
 import { Select } from "../../../shared/ui/select";
 import { Textarea } from "../../../shared/ui/textarea";
 import { Tooltip } from "../../../shared/ui/tooltip";
+import { SchemaForm, type JsonSchema } from "../../../shared/components/schema-form";
 import { StructuredJsonControl } from "../forms/parameter-field";
 import type {
   ContextDefinition,
@@ -103,19 +104,7 @@ export function RunParametersDialog({
         <div className="space-y-6 p-5">
           {inputFields.length > 0 && (
             <FieldSection title={t("studio.runParameters.inputs")}>
-              {inputFields.map(([name, schema]) => (
-                <SchemaField
-                  error={errors[`input.${name}`]}
-                  key={name}
-                  name={name}
-                  onChange={(value) =>
-                    setInput((current) => ({ ...current, [name]: value }))
-                  }
-                  required={(inputSchema.required ?? []).includes(name)}
-                  schema={schema}
-                  value={input[name]}
-                />
-              ))}
+              <div className="sm:col-span-2"><SchemaForm errors={Object.fromEntries(Object.entries(errors).filter(([name]) => name.startsWith("input.")).map(([name, message]) => [name.slice(6), message]))} onChange={setInput} schema={inputSchema as JsonSchema} values={input} /></div>
             </FieldSection>
           )}
           {contextFields.length > 0 && (

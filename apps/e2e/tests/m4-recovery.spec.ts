@@ -19,7 +19,7 @@ async function runFixture(page: Page, name: string) {
   const row = page.getByRole('row').filter({ hasText: name })
   await expect(row).toBeVisible()
   await row.getByRole('link', { name: '详情' }).click()
-  await page.getByRole('button', { name: '运行版本' }).click()
+  await page.getByRole('button', { name: '测试运行' }).click()
   await expect(page).toHaveURL(/\/executions\/[0-9a-f-]+$/)
   return { executionId: page.url().split('/').at(-1) as string, url: page.url() }
 }

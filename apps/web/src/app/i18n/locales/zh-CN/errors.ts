@@ -15,6 +15,7 @@ const translations = {
     "MCP_SERVER_NAME_EXISTS": "该 MCP Server 名称已存在。",
     "SKILL_NAME_EXISTS": "该技能名称已存在。",
     "SKILL_ALIAS_EXISTS": "该技能别名已存在。",
+    "INVALID_SKILL_ALIAS": "技能别名只能包含中英文字母、数字、连字符和下划线。",
     "SKILL_PATH_EXISTS": "技能工作区中已存在相同路径。",
     "SANDBOX_PROFILE_NAME_EXISTS": "该沙箱配置名称已存在。",
     "DATASET_CASE_KEY_EXISTS": "测试集中已存在相同的用例 Key。",

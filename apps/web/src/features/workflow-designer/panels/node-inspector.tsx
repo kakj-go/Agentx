@@ -25,8 +25,8 @@ import { deleteOverlay, saveOverlay } from "../api/studio-api";
 import type {
   NodeExecution,
 } from "../../../shared/api/types";
-import { TraceDetail } from "../../traces/trace-detail";
-import { useExecutionTrace } from "../../traces/use-trace";
+import { TraceNodeDetails } from "../../traces/trace-node-card";
+import { useExecutionArtifactDownload } from "../../traces/use-execution-artifact-download";
 import type {
   ActionNodeData,
   BindingNodeData,
@@ -97,6 +97,7 @@ export function NodeInspector({
   onResourceRequest?: (option: ResourceOption, context?: ResourceRequestContext) => Promise<void>;
 }) {
   const { t, i18n } = useTranslation();
+  const downloadArtifact = useExecutionArtifactDownload(executionId);
   const [tab, setTab] = useState("parameters");
   const unsupported = parameterEntries(manifest).some(
     ([name]) =>
@@ -129,6 +130,12 @@ export function NodeInspector({
         : referenceCatalog,
     [data, manifest, nodeId, referenceCatalog, t],
   );
+  const parameterCatalog = useMemo(
+    () => referenceCatalog
+      ? addCurrentItemReference(referenceCatalog, t("studio.references.currentInput"))
+      : referenceCatalog,
+    [referenceCatalog, t],
+  );
   const translate = (key: string, fallback?: string) =>
     fallback ? t(key, { defaultValue: fallback }) : t(key);
   const nodeRuns = useQuery({
@@ -140,16 +147,11 @@ export function NodeInspector({
     enabled: Boolean(executionId && nodeId),
     refetchInterval: executionId ? 2_000 : false,
   });
-  const trace = useExecutionTrace(executionId, tab === "trace");
   const selectedRuns = useMemo(
     () => nodeRuns.data?.items.filter((node) => node.nodeId === nodeId) ?? [],
     [nodeId, nodeRuns.data?.items],
   );
   const selectedRun = selectedRuns.at(-1);
-  const selectedExecutionIds = new Set(selectedRuns.map((run) => run.id));
-  const selectedSpan = trace.spans.find(
-    (span) => span.spanKind === "node" && Boolean(span.nodeExecutionId && selectedExecutionIds.has(span.nodeExecutionId)),
-  );
   const [overlayText, setOverlayText] = useState("{}");
   const overlay = useMutation({
     mutationFn: (kind: string) =>
@@ -299,7 +301,7 @@ export function NodeInspector({
             manifest={manifest}
             onChange={onChange}
             providerOptions={providerOptions}
-            referenceCatalog={referenceCatalog}
+            referenceCatalog={parameterCatalog}
             currentNodeCatalog={currentNodeCatalog}
             resources={resources}
             onResourceAuthorize={onResourceAuthorize}
@@ -351,7 +353,7 @@ export function NodeInspector({
           />
         </TabsContent>
         <TabsContent className="min-h-0 flex-1 overflow-auto" value="trace">
-          {executionId ? <TraceDetail executionId={executionId} span={selectedSpan} /> : <p className="p-4 text-xs text-muted-foreground">{t("studio.runtime.noExecution")}</p>}
+          {executionId && selectedRun ? <TraceNodeDetails active={tab === "trace"} executionId={executionId} node={selectedRun} onDownloadArtifact={downloadArtifact} /> : <p className="p-4 text-xs text-muted-foreground">{executionId ? t("trace.noNodeRuns") : t("studio.runtime.noExecution")}</p>}
         </TabsContent>
       </Tabs>
       <div className="shrink-0 border-t border-border p-4">
@@ -893,6 +895,23 @@ function addCurrentNodeReferences(
         children: itemFields,
       },
     ],
+  };
+}
+
+function addCurrentItemReference(
+  catalog: ReferenceCatalog,
+  label: string,
+): ReferenceCatalog {
+  return {
+    ...catalog,
+    item: [{
+      id: "item.json",
+      label,
+      path: "item.json",
+      selector: valueSelector("item"),
+      type: "object",
+      children: [],
+    }],
   };
 }
 

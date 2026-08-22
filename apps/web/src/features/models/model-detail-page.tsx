@@ -51,10 +51,7 @@ export function ModelDetailPage() {
     if (!model.data) return
     let parameters: unknown
     try { parameters = JSON.parse(values.parameters) as unknown } catch { throw new Error(t('models.invalidJson')) }
-    const inputPrice = values.input.trim()
-    const outputPrice = values.output.trim()
-    if (Boolean(inputPrice) !== Boolean(outputPrice)) throw new Error(t('models.pricePairRequired'))
-    const price = inputPrice ? { currency: values.currency.trim() || 'USD', inputPerMillion: inputPrice, outputPerMillion: outputPrice } : null
+    const price = { currency: values.currency.trim(), inputPerMillion: values.input.trim(), outputPerMillion: values.output.trim() }
     await apiRequest<Model>(`/models/aliases/${id}`, {
       method: 'PATCH',
       body: jsonBody({
@@ -81,8 +78,8 @@ export function ModelDetailPage() {
   const currentPrice = prices.data?.[0]
   const priceFields: EntityFormField[] = [
     { name: 'currency', label: t('models.currency'), defaultValue: 'USD', required: true },
-    { name: 'input', label: t('models.inputPrice'), type: 'number', required: true, step: 'any' },
-    { name: 'output', label: t('models.outputPrice'), type: 'number', required: true, step: 'any' },
+    { name: 'input', label: t('models.inputPrice'), type: 'number', min: 0, required: true, step: 'any' },
+    { name: 'output', label: t('models.outputPrice'), type: 'number', min: 0, required: true, step: 'any' },
   ]
   const editFields: EntityFormField[] = value ? [
     { name: 'connectionName', label: t('models.connectionName'), defaultValue: value.connectionName, required: true },
@@ -94,9 +91,9 @@ export function ModelDetailPage() {
     { name: 'maxInputTokens', label: t('models.maxInputTokens'), type: 'number', defaultValue: String(value.maxInputTokens), min: 1, required: true, step: 1 },
     { name: 'maxOutputTokens', label: t('models.maxOutputTokens'), type: 'number', defaultValue: String(value.maxOutputTokens), min: 1, required: true, step: 1 },
     { name: 'status', label: t('models.fields.status'), type: 'select', defaultValue: value.status, required: true, options: statusOptions(t) },
-    { name: 'currency', label: t('models.currency'), defaultValue: currentPrice?.currency ?? 'USD' },
-    { name: 'input', label: t('models.inputPrice'), type: 'number', defaultValue: currentPrice?.inputPerMillion ?? '', step: 'any' },
-    { name: 'output', label: t('models.outputPrice'), type: 'number', defaultValue: currentPrice?.outputPerMillion ?? '', step: 'any' },
+    { name: 'currency', label: t('models.currency'), defaultValue: currentPrice?.currency ?? 'USD', required: true },
+    { name: 'input', label: t('models.inputPrice'), type: 'number', defaultValue: currentPrice?.inputPerMillion ?? '', min: 0, required: true, step: 'any' },
+    { name: 'output', label: t('models.outputPrice'), type: 'number', defaultValue: currentPrice?.outputPerMillion ?? '', min: 0, required: true, step: 'any' },
     { name: 'department', apiName: 'ownerDepartmentId', label: t('models.department'), type: 'select', defaultValue: value.ownerDepartmentId, required: true, options: (departments.data ?? []).map((item) => ({ value: item.id, label: item.name })) },
     { name: 'parameters', label: t('models.defaultParameters'), type: 'textarea', defaultValue: JSON.stringify(value.defaultParameters, null, 2) },
   ] : []

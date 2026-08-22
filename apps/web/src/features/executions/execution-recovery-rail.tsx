@@ -3,7 +3,7 @@ import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
 
-import type { Approval, Checkpoint, ExecutionWait, NodeExecution } from '../../shared/api/types'
+import type { Approval, Checkpoint, ExecutionEvent, ExecutionWait, NodeExecution } from '../../shared/api/types'
 import { useLocaleFormat } from '../../shared/lib/locale-format'
 import { localizedValue } from '../../shared/lib/localized-value'
 import { Button } from '../../shared/ui/button'
@@ -13,15 +13,16 @@ type RecoveryRailProps = {
   waits: ExecutionWait[]
   approvals: Approval[]
   nodes: NodeExecution[]
+  events: ExecutionEvent[]
   canConfirm: boolean
   onConfirm: (node: NodeExecution) => void
 }
 
-export function ExecutionRecoveryRail({ checkpoints, waits, approvals, nodes, canConfirm, onConfirm }: RecoveryRailProps) {
+export function ExecutionRecoveryRail({ checkpoints, waits, approvals, nodes, events, canConfirm, onConfirm }: RecoveryRailProps) {
   const { t } = useTranslation()
   const { formatDateTime } = useLocaleFormat()
   const confirmations = nodes.filter((node) => node.sideEffectLevel === 'irreversible' && node.status === 'waiting')
-  return <aside aria-label={t('executions.recovery.ariaLabel')} className="min-w-0 border-l border-border bg-surface max-xl:border-l-0 max-xl:border-t">
+  return <aside aria-label={t('executions.recovery.ariaLabel')} className="min-w-0 bg-surface">
     <div className="flex h-12 items-center border-b border-border px-4"><strong className="text-xs">{t('executions.recovery.title')}</strong></div>
     <div className="max-h-[calc(100vh-250px)] overflow-auto max-xl:max-h-none">
       {waits.length > 0 && <RailSection icon={TimerReset} title={t('executions.recovery.wait')}>
@@ -36,6 +37,10 @@ export function ExecutionRecoveryRail({ checkpoints, waits, approvals, nodes, ca
       <RailSection icon={GitFork} title={t('executions.recovery.checkpoints', { count: checkpoints.length })}>
         {checkpoints.slice().reverse().slice(0, 8).map((checkpoint) => <div className="border-b border-border/70 py-2.5 last:border-0" key={checkpoint.id}><div className="flex items-center justify-between gap-2"><strong className="text-[11px]">#{checkpoint.sequenceNumber} {checkpoint.checkpointType}</strong><span className="text-[9px] text-muted-foreground">{formatDateTime(checkpoint.createdAt)}</span></div><p className="mt-1 truncate font-mono text-[9px] text-muted-foreground" title={checkpoint.stateHash}>{checkpoint.stateHash}</p><p className="mt-1 text-[9px] text-muted-foreground">{t('executions.recovery.activationsAndDeliveries', { activations: checkpoint.activationCount, deliveries: checkpoint.deliveryCount })}</p></div>)}
         {!checkpoints.length && <p className="py-3 text-[10px] text-muted-foreground">{t('executions.recovery.noCheckpoints')}</p>}
+      </RailSection>
+      <RailSection icon={Clock3} title={t('executions.recovery.events')}>
+        {events.slice().reverse().slice(0, 100).map((event) => <div className="grid grid-cols-[70px_minmax(0,1fr)_auto] gap-3 border-b border-border/70 py-2.5 text-[10px] last:border-0" key={event.sequence}><span className="font-mono text-muted-foreground">#{event.sequence}</span><span className="min-w-0"><strong className="block truncate text-foreground">{event.eventType}</strong><span className="mt-1 block truncate font-mono text-[9px] text-muted-foreground">{JSON.stringify(event.summary)}</span></span><span className="text-muted-foreground">{formatDateTime(event.occurredAt)}</span></div>)}
+        {!events.length && <p className="py-3 text-[10px] text-muted-foreground">{t('executions.recovery.noEvents')}</p>}
       </RailSection>
     </div>
   </aside>

@@ -15,6 +15,7 @@ const translations = {
     "MCP_SERVER_NAME_EXISTS": "An MCP server with this name already exists.",
     "SKILL_NAME_EXISTS": "A Skill with this name already exists.",
     "SKILL_ALIAS_EXISTS": "A Skill with this alias already exists.",
+    "INVALID_SKILL_ALIAS": "A Skill alias may contain letters in any language, numbers, hyphens, and underscores only.",
     "SKILL_PATH_EXISTS": "An entry already exists at this workspace path.",
     "SANDBOX_PROFILE_NAME_EXISTS": "A Sandbox Profile with this name already exists.",
     "DATASET_CASE_KEY_EXISTS": "A Test Case with this key already exists in the Dataset.",

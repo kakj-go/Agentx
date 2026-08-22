@@ -1,15 +1,43 @@
 const translations = {
   "trace": "查看 Trace",
   "mainViews": { "trace": "Trace", "recovery": "恢复" },
-  "runVersion": "运行版本",
   "cost": "成本",
   "title": "执行记录",
   "description": "查询工作流执行、Trace 和检查点。",
-  "search": "搜索执行或工作流",
+  "search": "搜索执行 ID、Trace ID 或错误码",
   "trigger": "触发方式",
   "executionIdLabel": "执行 ID",
   "startedAt": "开始时间",
-  "duration": "耗时"
+  "duration": "耗时",
+  "source": "来源",
+  "initiator": "发起人",
+  "application": "应用",
+  "workflow": "工作流",
+  "tool": "实际调用工具",
+  "user": "用户",
+  "department": "发起部门",
+  "moreFilters": "更多筛选",
+  "clearAll": "清除全部",
+  "createdAfter": "开始时间下限",
+  "createdBefore": "开始时间上限",
+  "dateTimePicker": {
+    "time": "时间",
+    "now": "现在",
+    "clear": "清除",
+    "invalidTime": "请输入有效时间，格式为 HH:mm。",
+    "outOfRange": "所选时间不在允许范围内。"
+  },
+  "triggerName": "触发名称",
+  "triggerNamePlaceholder": "搜索执行时触发名称",
+  "selectApplication": "选择应用",
+  "selectWorkflow": "选择工作流",
+  "selectTool": "选择工具",
+  "selectUser": "选择用户",
+  "selectDepartment": "选择部门",
+  "selectTriggerType": "选择触发方式",
+  "filterLoadFailed": "筛选选项加载失败",
+  "resultsRefreshed": "查询游标已过期，结果已刷新",
+  "total": "共 {{count}} 条"
   ,"nodePanel": {
     "selectNode": "选择左侧节点查看运行数据", "ariaLabel": "节点运行数据", "outlineAriaLabel": "执行节点大纲", "outline": "执行节点大纲", "runCount": "{{count}} 次运行", "noNodes": "尚无节点运行", "run": "运行", "input": "输入", "output": "输出", "lineage": "Lineage", "attempts": "尝试记录", "logs": "日志", "noInput": "该节点没有输入", "noOutput": "该节点尚无输出", "noLineage": "没有 Lineage 记录", "noAttempts": "没有尝试记录", "noLogs": "没有节点日志", "attempt": "尝试 {{number}}", "worker": "Worker", "deadline": "截止时间", "started": "开始时间", "sourceSummary": "运行 {{run}} · 输出 {{output}} · 项 {{source}} → 项 {{target}}"
   }
@@ -56,6 +84,14 @@ const translations = {
     "schedule": "定时触发",
     "event": "事件",
     "sub_workflow": "子工作流"
+    ,"user": "用户调用"
+    ,"api_key": "API Key"
+    ,"debug": "调试"
+    ,"evaluation": "评测"
+    ,"poll": "轮询"
+    ,"lifecycle": "生命周期"
+    ,"fork": "派生执行"
+    ,"composite": "子工作流"
   }
 } as const
 

@@ -461,7 +461,6 @@ impl ExecutionMachine {
                     "main"
                 };
                 let mut outputs = BTreeMap::new();
-                let activation = &self.activations[&id];
                 outputs.insert(
                     port.into(),
                     vec![Item {
@@ -470,10 +469,7 @@ impl ExecutionMachine {
                             "message":message,
                             "details":{},
                             "sourceNodeId":self.workflow.nodes[node_index].id,
-                            "sourceNodeKey":self.workflow.nodes[node_index].key,
                             "nodeExecutionId":id,
-                            "runIndex":activation.run_index,
-                            "iterationIndex":activation.generation,
                             "retryable":retryable
                         }),
                         ..Item::default()

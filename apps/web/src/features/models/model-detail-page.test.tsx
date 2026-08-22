@@ -43,8 +43,8 @@ describe('model edit form', () => {
     const dialog = await screen.findByRole('dialog')
     const fieldLabels = Array.from(dialog.querySelectorAll('form > label > span')).map((element) => element.textContent)
     expect(fieldLabels.slice(6, 13)).toEqual([
-      '最大输入 Token*', '最大输出 Token*', '模型状态*', '币种',
-      '输入单价/百万 Token', '输出单价/百万 Token', '所属部门*',
+      '最大输入 Token*', '最大输出 Token*', '模型状态*', '币种*',
+      '输入单价/百万 Token*', '输出单价/百万 Token*', '所属部门*',
     ])
 
     expect(within(dialog).getByLabelText('API 格式')).toHaveTextContent('OpenAI Chat Completions')

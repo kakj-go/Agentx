@@ -1,4 +1,6 @@
 use super::*;
+use agentx_domain::ValueCoercion;
+use agentx_node_protocol::OutputCardinality;
 
 fn reference(
     namespace: ValueNamespace,
@@ -20,6 +22,7 @@ fn reference(
                 .collect(),
         },
         missing_policy: MissingValuePolicy::Error,
+        coerce: None,
     }
 }
 
@@ -114,7 +117,7 @@ fn rejects_unknown_ports_and_recursive_subworkflows() {
 }
 
 #[test]
-fn validates_literal_parameters_and_accepts_deferred_expressions() {
+fn rejects_undeclared_parameters_and_accepts_empty_loop_configuration() {
     let registry = NodeRegistry::m5_defaults();
     let compiler = WorkflowCompiler::new(&registry);
     let mut definition = fixture();
@@ -127,10 +130,10 @@ fn validates_literal_parameters_and_accepts_deferred_expressions() {
             .issues
             .iter()
             .any(|issue| issue.code == "INVALID_NODE_PARAMETERS"
-                && issue.path == "nodes[3].parameters.batchSize")
+                && issue.path.starts_with("nodes[3].parameters"))
     );
 
-    definition.nodes[3].parameters = serde_json::json!({"batchSize":reference_json(ValueNamespace::Item,None,None,ValueSelection::Current,&["batch"])});
+    definition.nodes[3].parameters = serde_json::json!({});
     compiler
         .compile(&definition, &CompileContext::default())
         .unwrap();
@@ -390,6 +393,26 @@ fn end_error_outputs_reject_unknown_error_item_fields() {
     compiler
         .compile(&definition, &CompileContext::default())
         .unwrap();
+
+    for removed in ["sourceNodeKey", "runIndex", "iterationIndex"] {
+        definition.end.error.outputs.get_mut("bad").unwrap().value = reference(
+            ValueNamespace::Item,
+            None,
+            None,
+            ValueSelection::Current,
+            &[removed],
+        );
+        let error = compiler
+            .compile(&definition, &CompileContext::default())
+            .unwrap_err();
+        assert!(
+            error
+                .issues
+                .iter()
+                .any(|issue| issue.code == "UNKNOWN_ERROR_ITEM_REFERENCE"),
+            "removed error field {removed} must not compile"
+        );
+    }
 }
 
 #[test]
@@ -552,6 +575,76 @@ fn validates_run_item_and_output_schema_paths() {
 }
 
 #[test]
+fn removed_ai_output_fields_require_reselecting_text() {
+    let definition: WorkflowDefinition = serde_json::from_value(serde_json::json!({
+        "schemaVersion":"5.0",
+        "start":{"inputs":{"type":"object","properties":{},"additionalProperties":false},"contexts":{}},
+        "nodes":[{"id":"model","key":"model","type":"model","typeVersion":1,"name":"Model","parameters":{"prompt":"system","userQuestion":"question"},"outputProjection":{},"contextWrites":[]}],
+        "connections":[
+            {"id":"start","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"model","targetHandle":"main","order":0},
+            {"id":"end","sourceNodeId":"model","sourceHandle":"main","targetNodeId":"__end__","targetHandle":"main","order":0}
+        ],
+        "end":{"outputs":{"answer":{"schema":{"type":"string"},"value":reference_json(ValueNamespace::Outputs,Some("model"),Some("main"),ValueSelection::First,&["message"]),"required":true}}}
+    }))
+    .unwrap();
+    let error = WorkflowCompiler::new(&NodeRegistry::m5_defaults())
+        .compile(&definition, &CompileContext::default())
+        .unwrap_err();
+    let issue = error
+        .issues
+        .iter()
+        .find(|issue| issue.code == "UNKNOWN_OUTPUT_FIELD")
+        .expect("removed AI field issue");
+    assert!(issue.message.contains("no longer exists"));
+    assert!(issue.message.contains("'text'"));
+}
+
+#[test]
+fn end_string_output_freezes_reference_coercion_in_ir() {
+    let registry = NodeRegistry::m5_defaults();
+    let compiler = WorkflowCompiler::new(&registry);
+    let definition: WorkflowDefinition = serde_json::from_value(serde_json::json!({
+        "schemaVersion":"5.0",
+        "start":{"inputs":{"type":"object","properties":{}},"contexts":{}},
+        "nodes":[{"id":"http","key":"http","type":"declarative_http","typeVersion":1,"name":"HTTP","parameters":{"url":"https://example.invalid"},"outputProjection":{},"contextWrites":[]}],
+        "connections":[{"id":"start","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"http","targetHandle":"main","order":0},{"id":"end","sourceNodeId":"http","sourceHandle":"main","targetNodeId":"__end__","targetHandle":"main","order":0}],
+        "end":{"outputs":{"answer":{"schema":{"type":"string"},"value":{"kind":"reference","selector":{"namespace":"outputs","sourceNodeId":"http","port":"main","run":{"kind":"current"},"item":{"kind":"first"},"path":["body"]},"missingPolicy":{"kind":"error"}},"required":true}}}
+    })).unwrap();
+    let compiled = compiler
+        .compile(&definition, &CompileContext::default())
+        .unwrap();
+    assert!(matches!(
+        compiled.end.outputs["answer"].value,
+        DynamicValue::Reference {
+            coerce: Some(ValueCoercion::String),
+            ..
+        }
+    ));
+}
+
+#[test]
+fn unknown_reference_type_is_rejected_for_non_string_end_output() {
+    let registry = NodeRegistry::m5_defaults();
+    let compiler = WorkflowCompiler::new(&registry);
+    let definition: WorkflowDefinition = serde_json::from_value(serde_json::json!({
+        "schemaVersion":"5.0",
+        "start":{"inputs":{"type":"object","properties":{}},"contexts":{}},
+        "nodes":[{"id":"http","key":"http","type":"declarative_http","typeVersion":1,"name":"HTTP","parameters":{"url":"https://example.invalid"},"outputProjection":{},"contextWrites":[]}],
+        "connections":[{"id":"start","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"http","targetHandle":"main","order":0},{"id":"end","sourceNodeId":"http","sourceHandle":"main","targetNodeId":"__end__","targetHandle":"main","order":0}],
+        "end":{"outputs":{"answer":{"schema":{"type":"object"},"value":{"kind":"reference","selector":{"namespace":"outputs","sourceNodeId":"http","port":"main","run":{"kind":"current"},"item":{"kind":"first"},"path":["body"]},"missingPolicy":{"kind":"error"}},"required":true}}}
+    })).unwrap();
+    let error = compiler
+        .compile(&definition, &CompileContext::default())
+        .unwrap_err();
+    assert!(
+        error
+            .issues
+            .iter()
+            .any(|issue| issue.code == "END_OUTPUT_TYPE_UNKNOWN")
+    );
+}
+
+#[test]
 fn freezes_approval_decision_port_schema_and_accepts_decision_reference() {
     let registry = NodeRegistry::m5_defaults();
     let compiler = WorkflowCompiler::new(&registry);
@@ -585,7 +678,11 @@ fn freezes_approval_decision_port_schema_and_accepts_decision_reference() {
     );
     assert_eq!(
         schema["required"],
-        serde_json::json!(["taskId", "decision", "decidedBy"])
+        serde_json::json!(["taskId", "decision", "decidedBy", "reason", "input"])
+    );
+    assert_eq!(
+        compiled.nodes[0].effective_output_contract.cardinalities["approved"],
+        OutputCardinality::ZeroOrOne
     );
 }
 

@@ -50,7 +50,7 @@ pub(crate) async fn resolve_and_create(
         &request.node.parameters,
         &ExpressionContext {
             json: current.clone(),
-            input: current,
+            input: current.clone(),
             inputs: execution_input,
             outputs: load_output_namespace(tx, request.tenant_id, request.execution_id).await?,
             contexts: request.context.clone(),
@@ -83,6 +83,7 @@ pub(crate) async fn resolve_and_create(
         request.state_version,
         request.node,
         &resolved_parameters,
+        &current,
         request.machine,
         request.context,
     )
@@ -176,8 +177,30 @@ pub async fn enqueue_due(pool: &sqlx::MySqlPool, owner: Uuid, limit: u32) -> Run
         sqlx::query("UPDATE execution_resume_tokens SET status=IF(?='resumed','used','expired'),used_at=UTC_TIMESTAMP(6) WHERE tenant_id=? AND id=? AND status='active'")
             .bind(&wait_status).bind(tenant_id).bind(row.try_get::<Uuid,_>("resume_token_id")?).execute(&mut *tx).await?;
     }
+    let approvals = sqlx::query(
+        "SELECT id,tenant_id,execution_id,node_execution_id,request_payload_json FROM approval_tasks WHERE status IN ('pending','claimed') AND deadline_at<=UTC_TIMESTAMP(6) ORDER BY deadline_at,id LIMIT ? FOR UPDATE SKIP LOCKED",
+    )
+    .bind(limit.clamp(1, 100))
+    .fetch_all(&mut *tx)
+    .await?;
+    for row in &approvals {
+        use sqlx::Row;
+        let task_id: Uuid = row.try_get("id")?;
+        let tenant_id: Uuid = row.try_get("tenant_id")?;
+        let execution_id: Uuid = row.try_get("execution_id")?;
+        let node_execution_id: Uuid = row.try_get("node_execution_id")?;
+        let input: Option<Value> = row.try_get("request_payload_json")?;
+        sqlx::query("UPDATE approval_tasks SET status='timed_out',resume_status='pending',version=version+1,locked_by=NULL,locked_until=NULL WHERE tenant_id=? AND id=? AND status IN ('pending','claimed')")
+            .bind(tenant_id).bind(task_id).execute(&mut *tx).await?;
+        sqlx::query("INSERT IGNORE INTO runtime_commands(id,tenant_id,command_type,aggregate_type,aggregate_id,idempotency_key,payload_json,status) VALUES(?,?,'resume_wait','execution',?,?,?,'pending')")
+            .bind(crate::engine_names::deterministic_uuid(task_id, b"approval-timeout-command"))
+            .bind(tenant_id).bind(execution_id.to_string()).bind(format!("approval-timeout:{task_id}"))
+            .bind(json!({"nodeExecutionId":node_execution_id,"outputPort":"timed_out","waitStatus":"timed_out","payload":approval_timeout_output(task_id,input.unwrap_or(Value::Null))}))
+            .execute(&mut *tx).await?;
+        crate::event_export::enqueue_approval_event_from_task(&mut tx, tenant_id, task_id).await?;
+    }
     tx.commit().await?;
-    Ok(rows.len() as u64)
+    Ok((rows.len() + approvals.len()) as u64)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -191,6 +214,7 @@ pub(crate) async fn create(
     state_version: u64,
     node: &agentx_runtime::CompiledNode,
     parameters: &Value,
+    input: &Value,
     machine: &ExecutionMachine,
     context: &Value,
 ) -> RuntimeResult<()> {
@@ -225,13 +249,10 @@ pub(crate) async fn create(
             .get("description")
             .and_then(Value::as_str)
             .map(str::to_owned);
-        let request = parameters.get("request").cloned();
-        let timeout_seconds = parameters
-            .get("timeoutSeconds")
-            .and_then(Value::as_u64)
-            .unwrap_or(86_400);
+        let request = Some(input.clone());
+        let (timeout_seconds, timeout_at) = approval_timeout(parameters)?;
         sqlx::query(
-            "INSERT INTO approval_tasks(id,tenant_id,execution_id,node_execution_id,bundle_id,checkpoint_id,workflow_id,node_id,title,description,request_payload_json,status,resume_status,deadline_at,version) VALUES(?,?,?,?,?,?,?,?,?,?,?,'pending','not_requested',DATE_ADD(UTC_TIMESTAMP(6),INTERVAL ? SECOND),1)",
+            "INSERT INTO approval_tasks(id,tenant_id,execution_id,node_execution_id,bundle_id,checkpoint_id,workflow_id,node_id,title,description,request_payload_json,status,resume_status,deadline_at,version) VALUES(?,?,?,?,?,?,?,?,?,?,?,'pending','not_requested',COALESCE(?,DATE_ADD(UTC_TIMESTAMP(6),INTERVAL ? SECOND)),1)",
         )
         .bind(task_id)
         .bind(tenant_id)
@@ -244,6 +265,7 @@ pub(crate) async fn create(
         .bind(&title)
         .bind(&description)
         .bind(&request)
+        .bind(timeout_at)
         .bind(timeout_seconds)
         .execute(&mut **tx)
         .await?;
@@ -327,15 +349,15 @@ pub(crate) async fn create(
         .execute(&mut **tx)
         .await?;
         let query = if kind == "duration" {
-            sqlx::query("INSERT INTO wait_subscriptions(id,tenant_id,execution_id,node_execution_id,bundle_id,checkpoint_id,state_version,resume_token_id,wait_kind,status,wake_at,timeout_at,authentication_mode,response_mode) VALUES(?,?,?,?,?,?,?,?,'duration','waiting',DATE_ADD(UTC_TIMESTAMP(6),INTERVAL ? MICROSECOND),?,'signed','accepted')")
+            sqlx::query("INSERT INTO wait_subscriptions(id,tenant_id,execution_id,node_execution_id,bundle_id,checkpoint_id,state_version,resume_token_id,wait_kind,status,wake_at,timeout_at,authentication_mode,response_mode,payload_schema_json) VALUES(?,?,?,?,?,?,?,?,'duration','waiting',DATE_ADD(UTC_TIMESTAMP(6),INTERVAL ? MICROSECOND),?,'signed','accepted',?)")
                 .bind(wait_id).bind(tenant_id).bind(execution_id).bind(node_execution_id.as_uuid())
                 .bind(bundle_id).bind(checkpoint_id).bind(state_version).bind(token_id)
-                .bind(duration_micros).bind(timeout_at)
+                .bind(duration_micros).bind(timeout_at).bind(parameters.get("payloadSchema"))
         } else {
-            sqlx::query("INSERT INTO wait_subscriptions(id,tenant_id,execution_id,node_execution_id,bundle_id,checkpoint_id,state_version,resume_token_id,wait_kind,status,wake_at,timeout_at,authentication_mode,response_mode) VALUES(?,?,?,?,?,?,?,?,?,'waiting',?,?,?,'accepted')")
+            sqlx::query("INSERT INTO wait_subscriptions(id,tenant_id,execution_id,node_execution_id,bundle_id,checkpoint_id,state_version,resume_token_id,wait_kind,status,wake_at,timeout_at,authentication_mode,response_mode,payload_schema_json) VALUES(?,?,?,?,?,?,?,?,?,'waiting',?,?,?,'accepted',?)")
                 .bind(wait_id).bind(tenant_id).bind(execution_id).bind(node_execution_id.as_uuid())
                 .bind(bundle_id).bind(checkpoint_id).bind(state_version).bind(token_id).bind(kind)
-                .bind(resume_at).bind(timeout_at).bind(parameters.get("authenticationMode").and_then(Value::as_str).unwrap_or("signed"))
+                .bind(resume_at).bind(timeout_at).bind(parameters.get("authenticationMode").and_then(Value::as_str).unwrap_or("signed")).bind(parameters.get("payloadSchema"))
         };
         query.execute(&mut **tx).await?;
         emit_wait_started(
@@ -360,6 +382,33 @@ pub(crate) async fn create(
         .await?;
     }
     Ok(())
+}
+
+fn approval_timeout(parameters: &Value) -> RuntimeResult<(u64, Option<OffsetDateTime>)> {
+    let timeout_seconds = parameters
+        .get("timeoutMs")
+        .and_then(Value::as_u64)
+        .unwrap_or(86_400_000)
+        .div_ceil(1_000);
+    let timeout_at = parameters
+        .get("timeoutAt")
+        .and_then(Value::as_str)
+        .map(|value| OffsetDateTime::parse(value, &Rfc3339))
+        .transpose()
+        .map_err(|error| {
+            RuntimeError::InvalidRequest("INVALID_APPROVAL_TIMEOUT", error.to_string())
+        })?;
+    Ok((timeout_seconds, timeout_at))
+}
+
+fn approval_timeout_output(task_id: Uuid, input: Value) -> Value {
+    json!({
+        "taskId": task_id,
+        "decision": "timed_out",
+        "reason": null,
+        "decidedBy": null,
+        "input": input,
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -394,7 +443,34 @@ async fn emit_wait_started(
     trace.node_execution_id = Some(node_execution_id.as_uuid());
     trace.wait_id = Some(wait_id);
     trace.attributes = json!({"waitKind":wait_kind});
-    trace.content_role = content.map(|_| "input".into());
+    trace.content_kind = content.map(|_| agentx_runtime_contracts::TraceContentKindV1::WaitRequest);
     trace.content_preview = content.and_then(crate::trace_delivery::bounded_preview);
     crate::trace_delivery::enqueue_best_effort(tx, trace).await;
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+    use uuid::Uuid;
+
+    use super::{approval_timeout, approval_timeout_output};
+
+    #[test]
+    fn approval_timeout_consumes_milliseconds_and_absolute_deadline() {
+        let (seconds, deadline) =
+            approval_timeout(&json!({"timeoutMs":1501,"timeoutAt":"2026-08-20T10:00:00Z"}))
+                .unwrap();
+        assert_eq!(seconds, 2);
+        assert_eq!(deadline.unwrap().unix_timestamp(), 1_787_220_000);
+        assert!(approval_timeout(&json!({"timeoutAt":"not-a-time"})).is_err());
+    }
+
+    #[test]
+    fn approval_timeout_output_matches_the_frozen_port_contract() {
+        let task_id = Uuid::now_v7();
+        assert_eq!(
+            approval_timeout_output(task_id, json!({"request":"deploy"})),
+            json!({"taskId":task_id,"decision":"timed_out","reason":null,"decidedBy":null,"input":{"request":"deploy"}})
+        );
+    }
 }

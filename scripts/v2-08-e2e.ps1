@@ -4,6 +4,9 @@ param(
     [switch]$BuildImages,
     [switch]$SkipLocalGates,
     [switch]$SkipControlUi,
+    [switch]$PlaygroundOnly,
+    [switch]$ExecutionFiltersOnly,
+    [switch]$ScaleDownDevelopment,
     [ValidateRange(30, 120)][int]$StabilityMinutes = 30,
     [string]$OpenSandboxEndpoint = "http://127.0.0.1:18080",
     [string]$OpenSandboxApiKey = "agentx-local-opensandbox-key"
@@ -15,6 +18,9 @@ $root = Split-Path -Parent $PSScriptRoot
 $safeRunId = ($RunId.ToLowerInvariant() -replace '[^a-z0-9-]', '-').Trim('-')
 if (-not $safeRunId) { throw "RunId must contain a DNS-label character." }
 if ($safeRunId.Length -gt 24) { $safeRunId = $safeRunId.Substring(0, 24).TrimEnd('-') }
+if ($PlaygroundOnly -and $ExecutionFiltersOnly) {
+    throw "PlaygroundOnly and ExecutionFiltersOnly cannot be used together."
+}
 $namespaces = [ordered]@{
     control = "agentx-e2e-08-control-$safeRunId"
     runtime = "agentx-e2e-08-runtime-$safeRunId"
@@ -314,10 +320,10 @@ function Assert-V2MigrationHistory {
         "-n", $namespaces.observability, "exec", "statefulset/clickhouse", "--", "sh", "-ec",
         'clickhouse-client --user "$CLICKHOUSE_USER" --password "$CLICKHOUSE_PASSWORD" --database "$CLICKHOUSE_DB" --query "SELECT count()*100+sum(version) FROM observability_schema_migrations"'
     ) -join "").Trim()
-    if ($observability -ne "306") {
+    if ($observability -ne "203") {
         throw "Observability Migration history is incomplete ($observability); rebuild agentx-migrate before V2-08A."
     }
-    Complete-Scenario "migration-history-complete" @("control=1..7", "runtime=1..8", "observability=1..3")
+    Complete-Scenario "migration-history-complete" @("control=1..7", "runtime=1..8", "observability=1..2")
 }
 function Invoke-FailureMatrix {
     foreach ($deployment in @("platform-control", "web-console")) { Invoke-Kubectl @("-n", $namespaces.control, "scale", "deployment/$deployment", "--replicas=0") | Out-Null }
@@ -327,6 +333,14 @@ function Invoke-FailureMatrix {
     }
     finally {
         foreach ($deployment in @("platform-control", "web-console")) { Invoke-Kubectl @("-n", $namespaces.control, "scale", "deployment/$deployment", "--replicas=2") | Out-Null; Wait-Deployment $namespaces.control $deployment }
+        # The web-console service forward is bound to a concrete Pod and exits
+        # when the Control plane is scaled to zero. Recreate all browser/API
+        # forwards after the Pods return so later UI degradation checks use live
+        # endpoints instead of a stale local listener.
+        Stop-Forwards
+        Start-Forward $namespaces.control "service/web-console" 18081 8080
+        Start-Forward $namespaces.runtime "service/runtime-gateway-public" 18082 8080
+        Start-Forward $namespaces.dependencies "service/$($profile.ingress.className)-08-$safeRunId-controller" 18083 80
     }
     Complete-Scenario "control-offline-runtime" @("timeline.json")
 
@@ -343,9 +357,20 @@ function Invoke-FailureMatrix {
     try {
         $value = Wait-Invocation (Start-TestInvocation "v2-08-clickhouse-down-$safeRunId" "clickhouse-down").id $runtimeContext.apiKey
         if ($value.status -ne "completed") { throw "ClickHouse outage changed Runtime terminal state." }
+        if (-not $value.executionId) { throw "ClickHouse outage invocation returned no Execution ID." }
+        $env:AGENTX_E2E_DEGRADED_EXECUTION_ID = [string]$value.executionId
+        $env:AGENTX_E2E_TRACE_PHASE = "degraded"
+        Invoke-Playwright "trace-degraded" @("tests/trace-degraded.spec.ts")
     }
-    finally { Invoke-Kubectl @("-n", $namespaces.observability, "scale", "statefulset/clickhouse", "--replicas=1") | Out-Null; Wait-StatefulSet $namespaces.observability "clickhouse" }
-    Complete-Scenario "clickhouse-independent-terminal" @("timeline.json")
+    finally {
+        Invoke-Kubectl @("-n", $namespaces.observability, "scale", "statefulset/clickhouse", "--replicas=1") | Out-Null
+        Wait-StatefulSet $namespaces.observability "clickhouse"
+    }
+    $env:AGENTX_E2E_TRACE_PHASE = "recovered"
+    Invoke-Playwright "trace-recovered" @("tests/trace-degraded.spec.ts")
+    Remove-Item Env:AGENTX_E2E_DEGRADED_EXECUTION_ID -ErrorAction SilentlyContinue
+    Remove-Item Env:AGENTX_E2E_TRACE_PHASE -ErrorAction SilentlyContinue
+    Complete-Scenario "clickhouse-independent-terminal" @("trace-degraded-junit.xml", "trace-recovered-junit.xml")
 
     Invoke-Kubectl @("-n", $namespaces.runtime, "exec", "statefulset/runtime-redis", "--", "sh", "-c", 'redis-cli -a "$REDIS_PASSWORD" FLUSHALL') | Out-Null
     Invoke-Kubectl @("-n", $namespaces.runtime, "delete", "pod/runtime-redis-0", "--wait=true") | Out-Null
@@ -432,7 +457,10 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "V2 boundary gate failed." }
     }
     Start-OpenSandbox
-    Record-And-StopDevelopment
+    if ($ScaleDownDevelopment) {
+        Record-And-StopDevelopment
+        Add-Timeline "Paused development deployments for E2E capacity"
+    }
     $sourceProfilePath = if ([IO.Path]::IsPathRooted($ConfigFile)) { $ConfigFile } else { Join-Path $root $ConfigFile }
     $script:profile = Get-Content -Raw -LiteralPath $sourceProfilePath | ConvertFrom-Json
     $profile.environment = "local"
@@ -448,6 +476,8 @@ try {
     $render = (& (Join-Path $PSScriptRoot "deploy-v2.ps1") -Action Render -Target All -ConfigFile $profilePath) -join "`n"
     $render | Set-Content -LiteralPath (Join-Path $artifactDirectory "render.yaml") -Encoding utf8NoBOM
     if ($render -match '(?i)platform-api|trigger-gateway|trace-writer|workflow-coordinator|agentx-runtime-rpc|/runtime/v1') { throw "V2-08 render still contains a V1 runtime entry." }
+    if ($render -match "$([regex]::Escape($namespaces.control))-secrets|$([regex]::Escape($namespaces.runtime))-secrets") { throw "Run-scoped namespace substitution renamed a generated-local Secret." }
+    if ($render -match "local/$([regex]::Escape($namespaces.control))|local/$([regex]::Escape($namespaces.runtime))") { throw "Run-scoped namespace substitution renamed an object-storage bucket." }
     & (Join-Path $PSScriptRoot "deploy-v2.ps1") -Action Install -Target All -ConfigFile $profilePath -RunId "08-$safeRunId" -RecreateV2Data -BuildImages:$BuildImages
     if ($LASTEXITCODE -ne 0) { throw "V2-08 local deployment failed." }
     Assert-V2MigrationHistory
@@ -496,18 +526,28 @@ try {
     $env:AGENTX_V2_08_CONTEXT_OUTPUT = $runtimeContextPath
     Invoke-Playwright "api-first" @("tests/v2-08-api-first.spec.ts")
     $script:runtimeContext = Get-Content -Raw -LiteralPath $runtimeContextPath | ConvertFrom-Json
-    Invoke-Playwright "workflow4" @("tests/workflow4-closure.spec.ts", "--retries=1")
-    if (-not $SkipControlUi) {
-        Invoke-Playwright "control-ui" @("tests/m2.1-control-plane.spec.ts", "tests/resource-grant-requests.spec.ts")
-    }
-    $productTests = if ($SkipControlUi) {
-        @("tests/m6-workflow-studio.spec.ts", "--grep", "M6 Studio creates")
+    Invoke-Playwright "application-docs" @("tests/application-integration-docs.spec.ts")
+    if ($PlaygroundOnly) {
+        Invoke-Playwright "playground-parameters" @("tests/playground-closure.spec.ts")
+        Invoke-Playwright "playground-workflow4" @("tests/workflow4-closure.spec.ts", "--retries=1")
+        Invoke-Playwright "playground-conversation" @("tests/m6-workflow-studio.spec.ts", "tests/m7-business-closure.spec.ts", "--grep", "M6 Studio creates|M6 Studio makes dual-Agent|M7 closes Application")
+    } elseif ($ExecutionFiltersOnly) {
+        Invoke-Playwright "execution-filters" @("tests/execution-filters.spec.ts")
     } else {
-        @("tests/m6-workflow-studio.spec.ts", "tests/m7-business-closure.spec.ts", "tests/safe-deletion.spec.ts")
+        Invoke-Playwright "execution-filters" @("tests/execution-filters.spec.ts")
+        Invoke-Playwright "workflow4" @("tests/workflow4-closure.spec.ts", "--retries=1")
+        if (-not $SkipControlUi) {
+            Invoke-Playwright "control-ui" @("tests/m2.1-control-plane.spec.ts", "tests/resource-grant-requests.spec.ts")
+        }
+        $productTests = if ($SkipControlUi) {
+            @("tests/m6-workflow-studio.spec.ts", "tests/m6-local-builtins.spec.ts", "--grep", "M6 Studio creates|M6 standalone|M6 local built-ins")
+        } else {
+            @("tests/m6-workflow-studio.spec.ts", "tests/m6-local-builtins.spec.ts", "tests/m7-business-closure.spec.ts", "tests/safe-deletion.spec.ts")
+        }
+        Invoke-Playwright "product-closure" $productTests
+        Invoke-FailureMatrix
+        Invoke-PerformanceRegression
     }
-    Invoke-Playwright "product-closure" $productTests
-    Invoke-FailureMatrix
-    Invoke-PerformanceRegression
     foreach ($target in @("Control", "Runtime", "Observability")) {
         & (Join-Path $PSScriptRoot "deploy-v2.ps1") -Action Doctor -Target $target -ConfigFile $profilePath | Set-Content -LiteralPath (Join-Path $artifactDirectory "doctor-$($target.ToLowerInvariant()).log")
         if ($LASTEXITCODE -ne 0) { throw "$target Doctor failed." }
@@ -534,6 +574,8 @@ finally {
     Remove-Item Env:AGENTX_V2_08_CONTEXT_OUTPUT -ErrorAction SilentlyContinue
     Remove-Item Env:AGENTX_E2E_RUNTIME_URL -ErrorAction SilentlyContinue
     Remove-Item Env:AGENTX_E2E_HOST_RESOLVER_RULES -ErrorAction SilentlyContinue
+    Remove-Item Env:AGENTX_E2E_DEGRADED_EXECUTION_ID -ErrorAction SilentlyContinue
+    Remove-Item Env:AGENTX_E2E_TRACE_PHASE -ErrorAction SilentlyContinue
     try { Restore-Development } catch { $errors.Add($_.Exception.Message) }
     try { Remove-OwnedMetricsClusterResources } catch { $errors.Add($_.Exception.Message) }
     if (Test-Path -LiteralPath $profilePath -PathType Leaf) {

@@ -5,10 +5,11 @@ use agentx_node_protocol::NodeCapability;
 use agentx_runtime::{COMPILER_VERSION, CompileContext, NodeRegistry, WorkflowCompiler};
 use agentx_runtime_contracts::{
     BUNDLE_SCHEMA_VERSION, DependencyClosureEntryV1, DependencyClosureV1, DependencyKindV1,
-    ExecutionSpecBundleV1, ExecutionSpecPayloadV1, RuntimeAuthorizationSnapshotV1,
-    RuntimeCallPurposeV1, RuntimeModelEvaluatorExecutionV1, RuntimeObjectReferenceV1,
-    RuntimePolicyV1, RuntimeResourceBindingV1, RuntimeTriggerSpecV1, RuntimeWorkPackageOverlayV1,
-    RuntimeWorkPackagePayloadV1, RuntimeWorkPackageV1, WorkPackagePurpose, WorkerCompatibilityV1,
+    ExecutionOriginV1, ExecutionSpecBundleV1, ExecutionSpecPayloadV1,
+    RuntimeAuthorizationSnapshotV1, RuntimeCallPurposeV1, RuntimeModelEvaluatorExecutionV1,
+    RuntimeObjectReferenceV1, RuntimePolicyV1, RuntimeResourceBindingV1, RuntimeTriggerSpecV1,
+    RuntimeWorkPackageOverlayV1, RuntimeWorkPackagePayloadV1, RuntimeWorkPackageV1,
+    WorkPackagePurpose, WorkerCompatibilityV1,
 };
 use ed25519_dalek::SigningKey;
 use serde_json::{Value, json};
@@ -43,6 +44,7 @@ pub struct BundleBuildSource {
 pub struct WorkPackageBuildSource {
     pub package_id: Uuid,
     pub tenant_id: Uuid,
+    pub origin: ExecutionOriginV1,
     pub purpose: WorkPackagePurpose,
     pub call_purpose: RuntimeCallPurposeV1,
     pub spec: agentx_runtime_contracts::RuntimeWorkPackageSpecV1,
@@ -405,6 +407,7 @@ pub fn build_work_package(
             schema_version: BUNDLE_SCHEMA_VERSION,
             package_id: source.package_id,
             tenant_id: source.tenant_id,
+            origin: source.origin,
             purpose: source.purpose,
             call_purpose: source.call_purpose,
             spec: source.spec,
@@ -467,7 +470,7 @@ fn build_model_evaluators(
                     "typeVersion":1,
                     "name":"Model Evaluator",
                     "parameters":{"prompt":"runtime_object"},
-                    "outputProjection":{},
+                    "outputProjection":{"main":{"evaluation":{"value":{"kind":"reference","selector":{"namespace":"item","run":{"kind":"current"},"item":{"kind":"current"},"path":["structuredOutput"]},"missingPolicy":{"kind":"error"}},"schema":{"type":"object"},"sensitive":false}}},
                     "contextWrites":[],
                     "resourceReferences":[{
                         "resourceType":"model",
@@ -479,7 +482,7 @@ fn build_model_evaluators(
                     {"id":"start-evaluate","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"evaluate","targetHandle":"main","order":0},
                     {"id":"evaluate-end","sourceNodeId":"evaluate","sourceHandle":"main","targetNodeId":"__end__","targetHandle":"main","order":0}
                 ],
-                "end":{"outputs":{"evaluation":{"value":{"kind":"reference","selector":{"namespace":"outputs","sourceNodeId":"evaluate","port":"main","run":{"kind":"current"},"item":{"kind":"current"},"path":["structuredOutput"]},"missingPolicy":{"kind":"error"}},"schema":{"type":"object"},"required":true}}},
+                "end":{"outputs":{"evaluation":{"value":{"kind":"reference","selector":{"namespace":"outputs","sourceNodeId":"evaluate","port":"main","run":{"kind":"current"},"item":{"kind":"current"},"path":["evaluation"]},"missingPolicy":{"kind":"error"}},"schema":{"type":"object"},"required":true}}},
                 "settings":{"activationBudget":4,"executionOrder":"deterministic"}
             }))
             .map_err(|error| BuildError::Compilation(error.to_string()))?;
@@ -583,6 +586,7 @@ fn workflow_runtime_triggers(
             triggers.push(runtime_trigger(
                 &context,
                 &node.id,
+                &node.name,
                 "poll",
                 true,
                 configuration,
@@ -607,6 +611,7 @@ fn workflow_runtime_triggers(
             triggers.push(runtime_trigger(
                 &context,
                 &node.id,
+                &node.name,
                 &format!("lifecycle:{operation_name}"),
                 operation == LifecycleOperation::Activate,
                 configuration,
@@ -627,6 +632,7 @@ struct RuntimeTriggerContext {
 fn runtime_trigger(
     context: &RuntimeTriggerContext,
     node_id: &str,
+    trigger_name: &str,
     kind: &str,
     enabled: bool,
     configuration: agentx_runtime_contracts::RuntimeTriggerConfigurationV1,
@@ -643,6 +649,7 @@ fn runtime_trigger(
     Ok(RuntimeTriggerSpecV1 {
         schema_version: 1,
         trigger_id,
+        trigger_name: trigger_name.to_owned(),
         application_id: context.application_id,
         node_id: format!("{node_id}:{kind}"),
         revision: context.revision,
@@ -851,6 +858,7 @@ mod tests {
         WorkPackageBuildSource {
             package_id,
             tenant_id,
+            origin: agentx_runtime_contracts::ExecutionOriginV1::system(None),
             purpose: WorkPackagePurpose::Debug,
             call_purpose: RuntimeCallPurposeV1::Debug,
             spec: agentx_runtime_contracts::RuntimeWorkPackageSpecV1::Debug {
@@ -1158,12 +1166,16 @@ mod tests {
                 "inputs":{"type":"object","required":["question"],"properties":{"question":{"type":"string"}},"additionalProperties":false},
                 "contexts":{"counter":{"schema":{"type":"number"},"default":0,"mutable":true,"sensitive":false,"clientWritable":false,"scope":"execution_tree","mergePolicy":"increment"}}
             },
-            "nodes":[{"id":"child","key":"child","type":node_type,"typeVersion":1,"name":"Child","parameters":{"workflowVersionId":child_id,"inputs":{"question":{"kind":"reference","selector":{"namespace":"inputs","run":{"kind":"current"},"item":{"kind":"current"},"path":["question"]},"missingPolicy":{"kind":"error"}}}},"outputProjection":{},"contextWrites":[],"resourceReferences":[]}],
+            "nodes":[
+                {"id":"child","key":"child","type":node_type,"typeVersion":1,"name":"Child","parameters":{"workflowVersionId":child_id,"inputs":{"question":{"kind":"reference","selector":{"namespace":"inputs","run":{"kind":"current"},"item":{"kind":"current"},"path":["question"]},"missingPolicy":{"kind":"error"}}}},"outputProjection":{},"contextWrites":[],"resourceReferences":[]},
+                {"id":"summary","key":"summary","type":"set","typeVersion":1,"name":"Summary","parameters":{"values":{"answer":{"kind":"reference","selector":{"namespace":"outputs","sourceNodeId":"child","port":"main","run":{"kind":"current"},"item":{"kind":"current"},"path":["answer"]},"missingPolicy":{"kind":"error"}},"counter":{"kind":"reference","selector":{"namespace":"contexts","run":{"kind":"current"},"item":{"kind":"current"},"path":["counter"]},"missingPolicy":{"kind":"error"}}},"keepOnlySet":true},"outputProjection":{"main":{"answer_text":{"value":{"kind":"reference","selector":{"namespace":"item","run":{"kind":"current"},"item":{"kind":"current"},"path":["answer"]},"missingPolicy":{"kind":"error"}},"schema":{"type":"string"},"sensitive":false},"counter_value":{"value":{"kind":"reference","selector":{"namespace":"item","run":{"kind":"current"},"item":{"kind":"current"},"path":["counter"]},"missingPolicy":{"kind":"error"}},"schema":{"type":"number"},"sensitive":false}}},"contextWrites":[],"resourceReferences":[]}
+            ],
             "connections":[
                 {"id":"start-child","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"child","targetHandle":"main","order":0},
-                {"id":"child-end","sourceNodeId":"child","sourceHandle":"main","targetNodeId":"__end__","targetHandle":"main","order":0}
+                {"id":"child-summary","sourceNodeId":"child","sourceHandle":"main","targetNodeId":"summary","targetHandle":"main","order":0},
+                {"id":"summary-end","sourceNodeId":"summary","sourceHandle":"main","targetNodeId":"__end__","targetHandle":"main","order":0}
             ],
-            "end":{"outputs":{"answer":{"value":{"kind":"reference","selector":{"namespace":"outputs","sourceNodeId":"child","port":"main","run":{"kind":"current"},"item":{"kind":"current"},"path":["answer"]},"missingPolicy":{"kind":"error"}},"schema":{"type":"string"},"required":true,"sensitive":false}}},
+            "end":{"outputs":{"answer":{"value":{"kind":"reference","selector":{"namespace":"outputs","sourceNodeId":"summary","port":"main","run":{"kind":"current"},"item":{"kind":"current"},"path":["answer_text"]},"missingPolicy":{"kind":"error"}},"schema":{"type":"string"},"required":true,"sensitive":false},"counter":{"value":{"kind":"reference","selector":{"namespace":"outputs","sourceNodeId":"summary","port":"main","run":{"kind":"current"},"item":{"kind":"current"},"path":["counter_value"]},"missingPolicy":{"kind":"error"}},"schema":{"type":"number"},"required":true,"sensitive":false}}},
             "settings":{}
         }))
         .unwrap();

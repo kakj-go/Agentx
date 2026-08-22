@@ -28,6 +28,7 @@ const end: WorkflowEnd = {
 }
 
 const catalog: ReferenceCatalog = { inputs: [], outputs: [], contexts: [] }
+const dynamicValueMime = 'application/x-agentx-dynamic-value+json'
 
 afterEach(async () => { await i18n.changeLanguage('zh-CN') })
 
@@ -35,6 +36,12 @@ function Harness({ boundary }: { boundary: 'start' | 'end' }) {
   const [startValue, setStart] = useState(start)
   const [endValue, setEnd] = useState(end)
   return <><WorkflowInterfacePanel boundary={boundary} end={endValue} onClose={() => undefined} onEndChange={setEnd} onStartChange={setStart} referenceCatalog={catalog} start={startValue} /><output data-testid="definition-state">{JSON.stringify({ start: startValue, end: endValue })}</output></>
+}
+
+function pasteDynamicValue(value: unknown) {
+  fireEvent.paste(screen.getByLabelText('Value'), {
+    clipboardData: { getData: (type: string) => type === dynamicValueMime ? JSON.stringify(value) : '' },
+  })
 }
 
 describe('Workflow boundary forms', () => {
@@ -109,6 +116,18 @@ describe('Workflow boundary forms', () => {
     expect(screen.getByLabelText(/Minimum files|最少文件数/)).toBeInTheDocument()
     expect(screen.getByLabelText(/Maximum total file size|文件总大小上限/)).toBeInTheDocument()
     expect(screen.queryByText(/Constraints and default|约束与默认值/)).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /Save|保存/ }))
+
+    const state = JSON.parse(screen.getByTestId('definition-state').textContent ?? '{}')
+    expect(state.start.inputs.properties.input_1.items).toMatchObject({
+      type: 'object',
+      additionalProperties: false,
+      required: ['artifactId'],
+      properties: {
+        artifactId: { type: 'string', format: 'uuid' },
+        sha256: { type: 'string' },
+      },
+    })
   })
 
   it('offers array cardinality and uniqueness constraints', () => {
@@ -173,8 +192,8 @@ describe('Workflow boundary forms', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /Edit field|编辑字段/ }))
     fireEvent.focus(screen.getByLabelText('Value'))
-    fireEvent.click(screen.getByRole('button', { name: /Current data|当前数据/ }))
-    fireEvent.click(screen.getByRole('button', { name: /Current error|当前错误/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Current data|当前数据/ }).querySelector('[data-tree-toggle]')!)
+    fireEvent.click(screen.getByRole('button', { name: /Current error|当前错误/ }).querySelector('[data-tree-toggle]')!)
     fireEvent.click(screen.getByRole('button', { name: /Error message|错误消息/ }))
     await waitFor(() => expect(screen.getByTestId('variable-token-editor').querySelector('[data-agentx-variable]')).not.toBeNull())
     fireEvent.click(screen.getByRole('button', { name: /Save|保存/ }))
@@ -185,7 +204,7 @@ describe('Workflow boundary forms', () => {
     })
   })
 
-  it('preserves a success expression when a field rename blurs immediately before typing', async () => {
+  it('preserves a success expression when a field rename blurs immediately before content editing', async () => {
     render(<Harness boundary="end" />)
 
     fireEvent.click(screen.getAllByRole('button', { name: /Add field|添加字段/ })[0])
@@ -195,14 +214,28 @@ describe('Workflow boundary forms', () => {
     fireEvent.change(name, { target: { value: 'answer' } })
     fireEvent.blur(name)
     fireEvent.focus(expression)
+    pasteDynamicValue({ kind: 'literal', value: 'final answer' })
+    await waitFor(() => expect(expression).toHaveTextContent('final answer'))
     fireEvent.click(screen.getAllByLabelText(/Required|必填/)[0])
     fireEvent.click(screen.getByRole('button', { name: /Save|保存/ }))
 
     const state = JSON.parse(screen.getByTestId('definition-state').textContent ?? '{}')
     expect(state.end.outputs.answer).toMatchObject({
-      value: { kind: 'literal', value: '' },
+      value: { kind: 'literal', value: 'final answer' },
       required: true,
     })
+  })
+
+  it('rejects an empty End output when Save is clicked', () => {
+    render(<Harness boundary="end" />)
+
+    fireEvent.click(screen.getAllByRole('button', { name: /Add field|添加字段/ })[0])
+    fireEvent.change(screen.getByLabelText(/Output name|输出名称/), { target: { value: 'answer' } })
+    fireEvent.click(screen.getByRole('button', { name: /Save|保存/ }))
+
+    expect(screen.getByRole('alert')).toHaveTextContent(/expression is required|输出表达式不能为空/i)
+    expect(screen.getByRole('dialog', { name: /Output field|输出字段/ })).toBeVisible()
+    expect(JSON.parse(screen.getByTestId('definition-state').textContent ?? '{}').end.outputs).toEqual({})
   })
 
   it('rejects invalid and duplicate End output names before changing the definition', () => {
@@ -230,7 +263,7 @@ describe('Workflow boundary forms', () => {
     expect(screen.getByText(/Global variable name|全局变量名称/).parentElement).toHaveTextContent('*')
   })
 
-  it('configures an End output through the field dialog', () => {
+  it('configures an End output through the field dialog', async () => {
     render(<Harness boundary="end" />)
 
     fireEvent.click(screen.getAllByRole('button', { name: /Add field|添加字段/ })[0])
@@ -239,12 +272,14 @@ describe('Workflow boundary forms', () => {
     fireEvent.change(screen.getByLabelText(/Output name|输出名称/), { target: { value: 'answer' } })
     fireEvent.change(screen.getByLabelText(/Title|标题/), { target: { value: 'Answer' } })
     fireEvent.change(screen.getByLabelText(/Description|说明/), { target: { value: 'Final answer' } })
+    pasteDynamicValue({ kind: 'literal', value: 42 })
+    await waitFor(() => expect(screen.getByLabelText('Value')).toHaveTextContent('42'))
     fireEvent.click(screen.getByLabelText(/Sensitive|敏感/))
     fireEvent.click(screen.getByRole('button', { name: /Save|保存/ }))
 
     const state = JSON.parse(screen.getByTestId('definition-state').textContent ?? '{}')
     expect(state.end.outputs.answer).toMatchObject({
-      value: { kind: 'literal', value: '' },
+      value: { kind: 'literal', value: 42 },
       schema: { type: 'number', title: 'Answer', description: 'Final answer' },
       sensitive: true,
     })

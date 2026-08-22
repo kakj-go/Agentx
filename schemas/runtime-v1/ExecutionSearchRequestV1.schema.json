@@ -1,4 +1,14 @@
 {
+  "$defs": {
+    "ExecutionSessionModeV1": {
+      "enum": [
+        "all",
+        "stateless",
+        "session"
+      ],
+      "type": "string"
+    }
+  },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "properties": {
@@ -32,6 +42,20 @@
         "null"
       ]
     },
+    "initiatorDepartmentIds": {
+      "items": {
+        "format": "uuid",
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "initiatorUserIds": {
+      "items": {
+        "format": "uuid",
+        "type": "string"
+      },
+      "type": "array"
+    },
     "limit": {
       "format": "uint32",
       "minimum": 0,
@@ -43,6 +67,9 @@
         "null"
       ]
     },
+    "sessionMode": {
+      "$ref": "#/$defs/ExecutionSessionModeV1"
+    },
     "statuses": {
       "items": {
         "type": "string"
@@ -52,6 +79,25 @@
     "tenantId": {
       "format": "uuid",
       "type": "string"
+    },
+    "toolIds": {
+      "items": {
+        "format": "uuid",
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "triggerName": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "triggerTypes": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
     },
     "workflowIds": {
       "items": {
@@ -66,7 +112,12 @@
     "tenantId",
     "applicationIds",
     "workflowIds",
+    "toolIds",
+    "initiatorUserIds",
+    "initiatorDepartmentIds",
+    "triggerTypes",
     "statuses",
+    "sessionMode",
     "limit"
   ],
   "title": "ExecutionSearchRequestV1",

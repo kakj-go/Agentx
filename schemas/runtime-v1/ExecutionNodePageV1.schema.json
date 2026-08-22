@@ -6,8 +6,22 @@
         "capability": {
           "type": "string"
         },
-        "createdAt": {
-          "type": "string"
+        "costCurrency": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "costMicros": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "endedAt": {
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "errorCode": {
           "type": [
@@ -51,6 +65,12 @@
           "minimum": 0,
           "type": "integer"
         },
+        "startedAt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "status": {
           "type": "string"
         }
@@ -65,7 +85,7 @@
         "iterationIndex",
         "status",
         "capability",
-        "createdAt"
+        "costMicros"
       ],
       "type": "object"
     }

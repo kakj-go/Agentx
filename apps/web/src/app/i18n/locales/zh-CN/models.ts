@@ -14,7 +14,6 @@ const translations = {
   "healthy": "连接正常",
   "unhealthy": "连接失败",
   "invalidJson": "JSON 格式无效",
-  "pricePairRequired": "输入单价和输出单价需要同时填写",
   "openaiCompatible": "OpenAI Chat Completions",
   "created": "创建成功",
   "noCredential": "不使用凭证",

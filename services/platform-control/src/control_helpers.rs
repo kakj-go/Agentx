@@ -1,7 +1,9 @@
 use std::str::FromStr;
 
+use anyhow::{Context, Result};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use rand::{RngCore, rngs::OsRng};
+use serde_json::Value;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
@@ -76,6 +78,38 @@ pub fn parse_action_id(value: &str, action: Option<&str>, code: &'static str) ->
     .ok_or_else(|| ApiError::bad_request(code, "Application action path is invalid"))?;
     Uuid::parse_str(id)
         .map_err(|_| ApiError::bad_request(code, "Application action path is invalid"))
+}
+
+pub fn payload_uuid(payload: &Value, key: &str) -> Result<Uuid> {
+    payload
+        .get(key)
+        .and_then(Value::as_str)
+        .and_then(|value| Uuid::parse_str(value).ok())
+        .with_context(|| format!("Admission Outbox {key}"))
+}
+
+pub fn payload_strings(payload: &Value, key: &str) -> Result<Vec<String>> {
+    payload
+        .get(key)
+        .and_then(Value::as_array)
+        .with_context(|| format!("Admission Outbox {key}"))?
+        .iter()
+        .map(|value| {
+            value
+                .as_str()
+                .map(ToOwned::to_owned)
+                .with_context(|| format!("Admission Outbox {key} item"))
+        })
+        .collect()
+}
+
+pub fn payload_uuids(payload: &Value, key: &str) -> Result<Vec<Uuid>> {
+    payload_strings(payload, key)?
+        .into_iter()
+        .map(|value| {
+            Uuid::parse_str(&value).with_context(|| format!("Admission Outbox {key} UUID item"))
+        })
+        .collect()
 }
 
 pub async fn allocate_activation_sequence(

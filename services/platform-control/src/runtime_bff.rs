@@ -1,11 +1,11 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 
 use agentx_runtime_contracts::{
     ApplyReceiptV1, ContentHash, DELEGATION_TOKEN_TTL_SECONDS, ExecutionCheckpointV1,
-    ExecutionCollectionPageV1, ExecutionCommandV1, ExecutionDetailV1, ExecutionNodeV1,
-    ExecutionRuntimeDetailsV1, ExecutionSearchPageV1, ExecutionSearchRequestV1, ExecutionWaitV1,
-    PartialExecutionModeV1, RuntimeCommandApplyRequestV1, SideEffectResolutionV1, content_hash,
-    issue_delegation_token, now_unix,
+    ExecutionCollectionPageV1, ExecutionCommandV1, ExecutionDetailV1, ExecutionEventPageV1,
+    ExecutionNodeV1, ExecutionRuntimeDetailsV1, ExecutionSearchPageV1, ExecutionSearchRequestV1,
+    ExecutionSessionModeV1, ExecutionWaitV1, PartialExecutionModeV1, RuntimeCommandApplyRequestV1,
+    SideEffectResolutionV1, content_hash, issue_delegation_token, now_unix,
 };
 use axum::{
     Json, Router,
@@ -18,12 +18,13 @@ use axum::{
 use secrecy::ExposeSecret;
 use serde::Deserialize;
 use serde_json::{Value, json};
-use sqlx::Row;
+use sqlx::{MySql, QueryBuilder, Row};
+use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use uuid::Uuid;
 
 use crate::{
     api_error::{ApiError, ApiResult},
-    control_api::{Actor, ControlApiState},
+    control_api::{Actor, ControlApiState, execution_origin},
 };
 
 pub fn routes() -> Router<ControlApiState> {
@@ -59,11 +60,18 @@ pub fn routes() -> Router<ControlApiState> {
 #[derive(Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ExecutionListQuery {
-    page: Option<u32>,
-    page_size: Option<u32>,
-    application_id: Option<Uuid>,
-    workflow_id: Option<Uuid>,
-    status: Option<String>,
+    limit: Option<u32>,
+    application_ids: Option<String>,
+    workflow_ids: Option<String>,
+    tool_ids: Option<String>,
+    initiator_user_ids: Option<String>,
+    initiator_department_ids: Option<String>,
+    trigger_types: Option<String>,
+    trigger_name: Option<String>,
+    statuses: Option<String>,
+    session_mode: Option<String>,
+    created_after: Option<String>,
+    created_before: Option<String>,
     search: Option<String>,
     cursor: Option<String>,
 }
@@ -73,29 +81,119 @@ async fn search_executions(
     actor: Actor,
     Query(query): Query<ExecutionListQuery>,
 ) -> ApiResult<Json<Value>> {
-    actor.require("execution:view")?;
-    let page_size = query.page_size.unwrap_or(50).clamp(1, 100);
+    let limit = query.limit.unwrap_or(8);
+    if !(1..=100).contains(&limit) {
+        return Err(ApiError::bad_request(
+            "INVALID_LIMIT",
+            "limit must be between 1 and 100",
+        ));
+    }
+    let application_ids = parse_uuid_filter(query.application_ids.as_deref(), "applicationIds")?;
+    let can_view_executions = actor
+        .permissions
+        .iter()
+        .any(|permission| permission == "execution:view");
+    let can_query_invokable_applications = actor
+        .permissions
+        .iter()
+        .any(|permission| permission == "application:invoke")
+        && !application_ids.is_empty()
+        && query.session_mode.as_deref() == Some("stateless");
+    if !can_view_executions && !can_query_invokable_applications {
+        return Err(ApiError::forbidden("Missing permission execution:view"));
+    }
+    let workflow_ids = parse_uuid_filter(query.workflow_ids.as_deref(), "workflowIds")?;
+    let tool_ids = parse_uuid_filter(query.tool_ids.as_deref(), "toolIds")?;
+    let initiator_user_ids =
+        parse_uuid_filter(query.initiator_user_ids.as_deref(), "initiatorUserIds")?;
+    let initiator_department_ids = parse_uuid_filter(
+        query.initiator_department_ids.as_deref(),
+        "initiatorDepartmentIds",
+    )?;
+    let trigger_types = parse_enum_filter(
+        query.trigger_types.as_deref(),
+        "triggerTypes",
+        &[
+            "user",
+            "api_key",
+            "webhook",
+            "schedule",
+            "poll",
+            "lifecycle",
+            "debug",
+            "evaluation",
+            "fork",
+            "composite",
+        ],
+    )?;
+    let statuses = parse_enum_filter(
+        query.statuses.as_deref(),
+        "statuses",
+        &[
+            "created",
+            "queued",
+            "running",
+            "waiting",
+            "waiting_approval",
+            "suspended",
+            "succeeded",
+            "failed",
+            "cancelled",
+            "timed_out",
+        ],
+    )?;
+    let session_mode = match query.session_mode.as_deref().unwrap_or("all") {
+        "all" => ExecutionSessionModeV1::All,
+        "stateless" => ExecutionSessionModeV1::Stateless,
+        "session" => ExecutionSessionModeV1::Session,
+        _ => {
+            return Err(ApiError::bad_request(
+                "INVALID_SESSION_MODE",
+                "sessionMode must be all, stateless, or session",
+            ));
+        }
+    };
+    let trigger_name = validate_filter_text(query.trigger_name, "triggerName")?;
+    let search = validate_filter_text(query.search, "search")?;
+    let created_after = parse_filter_time(query.created_after.as_deref(), "createdAfter")?;
+    let created_before = parse_filter_time(query.created_before.as_deref(), "createdBefore")?;
+    if created_after
+        .zip(created_before)
+        .is_some_and(|(after, before)| after > before)
+    {
+        return Err(ApiError::bad_request(
+            "INVALID_TIME_RANGE",
+            "createdAfter must not be later than createdBefore",
+        ));
+    }
     let request = ExecutionSearchRequestV1 {
         api_version: 1,
         tenant_id: actor.tenant_id,
-        application_ids: query.application_id.into_iter().collect(),
-        workflow_ids: query.workflow_id.into_iter().collect(),
-        statuses: query.status.into_iter().collect(),
-        created_after: None,
-        created_before: None,
-        search: query.search,
+        application_ids,
+        workflow_ids,
+        tool_ids,
+        initiator_user_ids,
+        initiator_department_ids,
+        trigger_types,
+        trigger_name,
+        statuses,
+        session_mode,
+        created_after,
+        created_before,
+        search,
         cursor: query.cursor,
-        limit: page_size,
+        limit,
     };
     let request_hash = content_hash(&json!({"operation":"execution-search","request":request}))
         .map_err(ApiError::internal)?;
-    let tenant_wide = request.application_ids.is_empty() && request.workflow_ids.is_empty();
+    let (tenant_wide, authorized_application_ids, authorized_workflow_ids) =
+        execution_query_scope(&state, &actor).await?;
     let token = delegation_token(
         &state,
         &actor,
         "runtime.query.executions",
-        request.application_ids.iter().copied().collect(),
-        request.workflow_ids.iter().copied().collect(),
+        authorized_application_ids,
+        authorized_workflow_ids,
         BTreeSet::new(),
         tenant_wide,
         request_hash,
@@ -112,18 +210,46 @@ async fn search_executions(
         .await
         .map_err(runtime_unavailable)?;
     let page: ExecutionSearchPageV1 = runtime_json(response).await?;
-    let mut items = Vec::with_capacity(page.items.len());
-    for summary in page.items {
-        items.push(summary_json(&state, actor.tenant_id, summary).await?);
-    }
+    let items = summaries_json(&state, actor.tenant_id, page.items).await?;
     Ok(Json(json!({
         "items": items,
-        "page": query.page.unwrap_or(1),
-        "pageSize": page_size,
+        "limit": limit,
         "total": page.total,
         "nextCursor": page.next,
         "snapshotId": page.snapshot_id,
     })))
+}
+
+async fn execution_query_scope(
+    state: &ControlApiState,
+    actor: &Actor,
+) -> ApiResult<(bool, BTreeSet<Uuid>, BTreeSet<Uuid>)> {
+    let tenant_wide: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM user_roles ur JOIN roles r ON r.tenant_id=ur.tenant_id AND r.id=ur.role_id AND r.status='active' JOIN role_permissions rp ON rp.tenant_id=r.tenant_id AND rp.role_id=r.id JOIN permissions p ON p.id=rp.permission_id AND p.permission_key='execution:view' WHERE ur.tenant_id=? AND ur.user_id=? AND r.data_scope='company')")
+        .bind(actor.tenant_id)
+        .bind(actor.user_id)
+        .fetch_one(&state.pool)
+        .await?;
+    if tenant_wide {
+        return Ok((true, BTreeSet::new(), BTreeSet::new()));
+    }
+
+    let application_ids = sqlx::query_scalar::<_, Uuid>("SELECT a.id FROM applications a WHERE a.tenant_id=? AND (a.owner_user_id=? OR a.visibility='company' OR (a.visibility='department' AND EXISTS(SELECT 1 FROM department_closure dc WHERE dc.tenant_id=a.tenant_id AND dc.ancestor_id=a.owner_department_id AND dc.descendant_id=?))) ORDER BY a.id")
+        .bind(actor.tenant_id)
+        .bind(actor.user_id)
+        .bind(actor.department_id)
+        .fetch_all(&state.pool)
+        .await?
+        .into_iter()
+        .collect();
+    let workflow_ids = sqlx::query_scalar::<_, Uuid>("SELECT w.id FROM workflows w WHERE w.tenant_id=? AND (w.owner_user_id=? OR EXISTS(SELECT 1 FROM workflow_members wm WHERE wm.tenant_id=w.tenant_id AND wm.workflow_id=w.id AND wm.user_id=?)) ORDER BY w.id")
+        .bind(actor.tenant_id)
+        .bind(actor.user_id)
+        .bind(actor.user_id)
+        .fetch_all(&state.pool)
+        .await?
+        .into_iter()
+        .collect();
+    Ok((false, application_ids, workflow_ids))
 }
 
 async fn get_execution(
@@ -131,7 +257,13 @@ async fn get_execution(
     actor: Actor,
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    actor.require("execution:view")?;
+    if !actor
+        .permissions
+        .iter()
+        .any(|permission| matches!(permission.as_str(), "execution:view" | "application:invoke"))
+    {
+        return Err(ApiError::forbidden("Missing permission execution:view"));
+    }
     let detail = runtime_execution_detail(&state, &actor, id).await?;
     let mut response = summary_json(&state, actor.tenant_id, detail.summary).await?;
     let object = response
@@ -141,6 +273,7 @@ async fn get_execution(
         "parentExecutionId".into(),
         json!(detail.parent_execution_id),
     );
+    object.insert("input".into(), detail.input.unwrap_or(Value::Null));
     object.insert("output".into(), detail.output.unwrap_or(Value::Null));
     object.insert("error".into(), detail.error.unwrap_or(Value::Null));
     object.insert("stateVersion".into(), json!(detail.state_version));
@@ -154,7 +287,13 @@ async fn get_nodes(
     actor: Actor,
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    actor.require("execution:view")?;
+    if !actor
+        .permissions
+        .iter()
+        .any(|permission| matches!(permission.as_str(), "execution:view" | "application:invoke"))
+    {
+        return Err(ApiError::forbidden("Missing permission execution:view"));
+    }
     let page: ExecutionCollectionPageV1<ExecutionNodeV1> = runtime_execution_get(
         &state,
         &actor,
@@ -189,17 +328,28 @@ async fn get_events(
     State(state): State<ControlApiState>,
     actor: Actor,
     Path(id): Path<Uuid>,
+    Query(query): Query<ExecutionEventQuery>,
 ) -> ApiResult<Json<Value>> {
     actor.require("execution:view")?;
-    let page: ExecutionCollectionPageV1<Value> = runtime_execution_get(
+    let after = query.after.unwrap_or_default();
+    let limit = query.limit.unwrap_or(200).clamp(1, 1000);
+    let page: ExecutionEventPageV1 = runtime_execution_get(
         &state,
         &actor,
         id,
         "execution_events",
-        &format!("/internal/runtime/v1/query/executions/{id}/events"),
+        &format!("/internal/runtime/v1/query/executions/{id}/events?after={after}&limit={limit}"),
     )
     .await?;
-    Ok(Json(json!({"items":page.items,"nextCursor":null})))
+    Ok(Json(
+        json!({"items":page.items,"nextCursor":page.next_cursor}),
+    ))
+}
+
+#[derive(Default, Deserialize)]
+struct ExecutionEventQuery {
+    after: Option<u64>,
+    limit: Option<u32>,
 }
 
 async fn get_waits(
@@ -222,8 +372,8 @@ async fn get_waits(
         .map(|wait| {
             json!({
                 "id":wait.wait_id,"executionId":id,"nodeExecutionId":wait.node_execution_id,
-                "waitKind":wait.wait_kind,"status":wait.status,"wakeAt":wait.wake_at,
-                "timeoutAt":wait.timeout_at,"authenticationMode":"signed","resumeUrl":null
+                "waitKind":wait.wait_kind,"status":wait.status,"wakeAt":wait.wake_at.and_then(rfc3339),
+                "timeoutAt":wait.timeout_at.and_then(rfc3339),"authenticationMode":"signed","resumeUrl":null
             })
         })
         .collect::<Vec<_>>();
@@ -252,7 +402,7 @@ async fn get_checkpoints(
             "nodeExecutionId":checkpoint.node_execution_id,
             "sequenceNumber":checkpoint.sequence_number,"checkpointType":checkpoint.checkpoint_type,
             "stateHash":checkpoint.state_hash,"activationCount":0,"deliveryCount":0,
-            "createdAt":checkpoint.created_at
+            "createdAt":rfc3339(checkpoint.created_at)
         }))
         .collect::<Vec<_>>();
     Ok(Json(json!({"items":items})))
@@ -287,9 +437,17 @@ async fn get_runtime_details(
         .iter()
         .map(|call| call.cost_micros)
         .sum::<u64>();
+    let cost_currencies = details
+        .calls
+        .iter()
+        .filter_map(|call| call.cost_currency.as_deref())
+        .collect::<BTreeSet<_>>();
+    let cost_currency = (cost_currencies.len() == 1)
+        .then(|| cost_currencies.first().copied())
+        .flatten();
     Ok(Json(json!({
         "executionId":id,"inputTokens":input_tokens,"outputTokens":output_tokens,
-        "costMicros":cost_micros,"agentRuns":details.agent_runs,"iterations":[],
+        "costMicros":cost_micros,"costCurrency":cost_currency,"agentRuns":details.agent_runs,"iterations":[],
         "calls":details.calls,"sandboxes":details.sandboxes,"attempts":details.attempts
     })))
 }
@@ -299,7 +457,13 @@ async fn get_artifact(
     actor: Actor,
     Path((id, artifact_id)): Path<(Uuid, Uuid)>,
 ) -> ApiResult<Response> {
-    actor.require("trace:view")?;
+    if !actor
+        .permissions
+        .iter()
+        .any(|permission| matches!(permission.as_str(), "trace:view" | "application:invoke"))
+    {
+        return Err(ApiError::forbidden("Missing permission trace:view"));
+    }
     let path = format!("/internal/runtime/v1/query/executions/{id}/artifacts/{artifact_id}");
     let request_hash = content_hash(&json!({
         "operation":"execution_artifact","executionId":id
@@ -409,6 +573,7 @@ async fn fork_execution(
         command: ExecutionCommandV1::Fork {
             source_execution_id: id,
             checkpoint_id: input.checkpoint_id,
+            origin: execution_origin(&state, &actor).await?,
             mode,
             node_id: input.node_id,
             side_effect_resolution: resolution,
@@ -460,9 +625,11 @@ async fn confirm_side_effect(
 }
 
 #[derive(Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct TraceQuery {
     limit: Option<u32>,
     cursor: Option<String>,
+    node_execution_id: Option<Uuid>,
 }
 
 async fn get_trace(
@@ -471,12 +638,18 @@ async fn get_trace(
     Path(id): Path<Uuid>,
     Query(query): Query<TraceQuery>,
 ) -> ApiResult<Json<Value>> {
-    actor.require("trace:view")?;
+    if !actor
+        .permissions
+        .iter()
+        .any(|permission| matches!(permission.as_str(), "trace:view" | "application:invoke"))
+    {
+        return Err(ApiError::forbidden("Missing permission trace:view"));
+    }
     let detail = runtime_execution_detail(&state, &actor, id).await?;
     let request_hash = content_hash(&json!({
         "operation":"execution-trace","executionId":id,
         "expectedWatermark":detail.trace_watermark,"limit":query.limit.unwrap_or(200),
-        "cursor":query.cursor
+        "cursor":query.cursor,"nodeExecutionId":query.node_execution_id
     }))
     .map_err(ApiError::internal)?;
     let token = delegation_token_with_audience(
@@ -495,14 +668,19 @@ async fn get_trace(
         .as_deref()
         .map(|cursor| format!("&cursor={cursor}"))
         .unwrap_or_default();
+    let node_execution_query = query
+        .node_execution_id
+        .map(|node_execution_id| format!("&nodeExecutionId={node_execution_id}"))
+        .unwrap_or_default();
     let response = state
         .http
         .get(format!(
-            "{}/internal/observability/v1/executions/{id}/trace?expectedWatermark={}&limit={}{}",
+            "{}/internal/observability/v1/executions/{id}/trace?expectedWatermark={}&limit={}{}{}",
             state.observability_query_url,
             detail.trace_watermark,
             query.limit.unwrap_or(200).clamp(1, 1000),
-            cursor_query
+            cursor_query,
+            node_execution_query
         ))
         .header("x-agentx-request-hash", request_hash.as_str())
         .bearer_auth(token)
@@ -530,7 +708,13 @@ async fn get_trace_span(
     actor: Actor,
     Path((id, span_id)): Path<(Uuid, Uuid)>,
 ) -> ApiResult<Json<Value>> {
-    actor.require("trace:view")?;
+    if !actor
+        .permissions
+        .iter()
+        .any(|permission| matches!(permission.as_str(), "trace:view" | "application:invoke"))
+    {
+        return Err(ApiError::forbidden("Missing permission trace:view"));
+    }
     let detail = runtime_execution_detail(&state, &actor, id).await?;
     let request_hash = content_hash(&json!({
         "operation":"trace-span-detail","executionId":id,"spanId":span_id
@@ -561,7 +745,7 @@ async fn get_trace_span(
     let span: agentx_runtime_contracts::TraceSpanDetailV1 = observability_json(response).await?;
     Ok(Json(json!({
         "executionId":id,"traceId":detail.summary.trace_id,"span":span.span,
-        "attributes":span.attributes,"input":span.input,"output":span.output,"events":span.events
+        "contents":span.contents,"events":span.events
     })))
 }
 
@@ -730,6 +914,23 @@ async fn runtime_response_error(response: reqwest::Response) -> ApiError {
     tracing::warn!(%status, response_body=%body, "Runtime Query rejected BFF request");
     if status == reqwest::StatusCode::SERVICE_UNAVAILABLE {
         ApiError::unavailable("RUNTIME_QUERY_UNAVAILABLE", "Runtime Query is unavailable")
+    } else if status == reqwest::StatusCode::GONE {
+        ApiError::bad_request(
+            "QUERY_CURSOR_EXPIRED",
+            "Execution results expired and must be refreshed",
+        )
+    } else if status == reqwest::StatusCode::UNPROCESSABLE_ENTITY
+        && body.contains("QUERY_BUDGET_EXCEEDED")
+    {
+        ApiError::unprocessable(
+            "QUERY_BUDGET_EXCEEDED",
+            "Narrow the execution filters to at most 10000 matching rows",
+        )
+    } else if status == reqwest::StatusCode::BAD_REQUEST {
+        ApiError::bad_request(
+            "INVALID_EXECUTION_FILTER",
+            "Runtime rejected the execution filter",
+        )
     } else if status == reqwest::StatusCode::NOT_FOUND {
         ApiError::not_found("Runtime object")
     } else {
@@ -768,32 +969,199 @@ async fn summary_json(
     tenant_id: Uuid,
     summary: agentx_runtime_contracts::ExecutionSummaryV1,
 ) -> ApiResult<Value> {
-    let metadata = sqlx::query(
-        "SELECT w.name,wv.version_number FROM workflows w LEFT JOIN workflow_versions wv ON wv.tenant_id=w.tenant_id AND wv.id=? WHERE w.tenant_id=? AND w.id=?",
-    )
-    .bind(summary.workflow_version_id)
-    .bind(tenant_id)
-    .bind(summary.workflow_id)
-    .fetch_optional(&state.pool)
-    .await?;
-    let workflow_name = metadata
-        .as_ref()
-        .and_then(|row| row.try_get::<String, _>("name").ok())
-        .unwrap_or_else(|| summary.workflow_id.to_string());
-    let version = metadata
-        .as_ref()
-        .and_then(|row| row.try_get::<Option<u64>, _>("version_number").ok())
-        .flatten();
-    Ok(json!({
+    summaries_json(state, tenant_id, vec![summary])
+        .await?
+        .pop()
+        .ok_or_else(|| ApiError::internal("Execution response is missing"))
+}
+
+async fn summaries_json(
+    state: &ControlApiState,
+    tenant_id: Uuid,
+    summaries: Vec<agentx_runtime_contracts::ExecutionSummaryV1>,
+) -> ApiResult<Vec<Value>> {
+    if summaries.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut workflow_versions = summaries
+        .iter()
+        .map(|summary| summary.workflow_version_id)
+        .collect::<Vec<_>>();
+    workflow_versions.sort_unstable();
+    workflow_versions.dedup();
+    let mut workflow_query = QueryBuilder::<MySql>::new(
+        "SELECT w.id workflow_id,w.name,wv.id workflow_version_id,wv.version_number FROM workflow_versions wv JOIN workflows w ON w.tenant_id=wv.tenant_id AND w.id=wv.workflow_id WHERE w.tenant_id=",
+    );
+    workflow_query.push_bind(tenant_id).push(" AND wv.id IN (");
+    {
+        let mut separated = workflow_query.separated(",");
+        for id in workflow_versions {
+            separated.push_bind(id);
+        }
+    }
+    workflow_query.push(")");
+    let workflow_rows = workflow_query.build().fetch_all(&state.pool).await?;
+    let workflow_metadata = workflow_rows
+        .into_iter()
+        .map(|row| {
+            Ok((
+                row.try_get::<Uuid, _>("workflow_version_id")?,
+                (
+                    row.try_get::<String, _>("name")?,
+                    row.try_get::<Option<u64>, _>("version_number")?,
+                ),
+            ))
+        })
+        .collect::<Result<HashMap<_, _>, sqlx::Error>>()?;
+
+    let mut application_ids = summaries
+        .iter()
+        .filter_map(|summary| summary.application_id)
+        .collect::<Vec<_>>();
+    application_ids.sort_unstable();
+    application_ids.dedup();
+    let mut application_metadata: HashMap<Uuid, String> = HashMap::new();
+    if !application_ids.is_empty() {
+        let mut application_query =
+            QueryBuilder::<MySql>::new("SELECT id,name FROM applications WHERE tenant_id=");
+        application_query.push_bind(tenant_id).push(" AND id IN (");
+        {
+            let mut separated = application_query.separated(",");
+            for id in application_ids {
+                separated.push_bind(id);
+            }
+        }
+        application_query.push(")");
+        for row in application_query.build().fetch_all(&state.pool).await? {
+            application_metadata.insert(
+                row.try_get::<Uuid, _>("id")?,
+                row.try_get::<String, _>("name")?,
+            );
+        }
+    }
+
+    Ok(summaries
+        .into_iter()
+        .map(|summary| {
+            let (workflow_name, version) = workflow_metadata
+                .get(&summary.workflow_version_id)
+                .cloned()
+                .unwrap_or_else(|| (summary.workflow_id.to_string(), None));
+            let application_name = summary
+                .application_id
+                .and_then(|id| application_metadata.get(&id).cloned());
+            execution_summary_json(summary, workflow_name, version, application_name)
+        })
+        .collect())
+}
+
+fn execution_summary_json(
+    summary: agentx_runtime_contracts::ExecutionSummaryV1,
+    workflow_name: String,
+    version: Option<u64>,
+    application_name: Option<String>,
+) -> Value {
+    json!({
         "id":summary.execution_id,"workflowId":summary.workflow_id,"workflowName":workflow_name,
+        "applicationId":summary.application_id,"applicationName":application_name,
         "workflowVersionId":summary.workflow_version_id,"workflowVersionNumber":version,
         "invocationId":summary.invocation_id,"sessionId":summary.session_id,"traceId":summary.trace_id,
         "triggerType":summary.trigger_type,"executionType":"production","parentExecutionId":summary.parent_execution_id,
+        "initiatorUserId":summary.initiator_user_id,"initiatorUserName":summary.initiator_user_name,
+        "initiatorDepartmentId":summary.initiator_department_id,"initiatorDepartmentName":summary.initiator_department_name,
+        "triggerSourceId":summary.trigger_source_id,"triggerName":summary.trigger_name,
         "callerExecutionId":null,"forkCheckpointId":null,"status":summary.status,
-        "startedAt":summary.created_at,"endedAt":summary.completed_at,"durationMs":summary.duration_ms,
-        "costMicros":summary.cost_micros,"inputTokens":0,"outputTokens":0,
+        "startedAt":rfc3339(summary.created_at),"endedAt":summary.completed_at.and_then(rfc3339),"durationMs":summary.duration_ms,
+        "costMicros":summary.cost_micros,"costCurrency":summary.cost_currency,"inputTokens":summary.input_tokens,"outputTokens":summary.output_tokens,
         "errorCode":summary.error_code,"errorMessage":null,"bundleId":summary.bundle_id
-    }))
+    })
+}
+
+fn parse_uuid_filter(value: Option<&str>, field: &str) -> ApiResult<Vec<Uuid>> {
+    parse_filter_values(value, field)?
+        .into_iter()
+        .map(|value| {
+            Uuid::parse_str(&value).map_err(|_| {
+                ApiError::bad_request(
+                    "INVALID_EXECUTION_FILTER",
+                    format!("{field} contains an invalid UUID"),
+                )
+            })
+        })
+        .collect()
+}
+
+fn parse_enum_filter(value: Option<&str>, field: &str, allowed: &[&str]) -> ApiResult<Vec<String>> {
+    let values = parse_filter_values(value, field)?;
+    if let Some(value) = values
+        .iter()
+        .find(|value| !allowed.contains(&value.as_str()))
+    {
+        return Err(ApiError::bad_request(
+            "INVALID_EXECUTION_FILTER",
+            format!("{field} contains unsupported value {value}"),
+        ));
+    }
+    Ok(values)
+}
+
+fn parse_filter_values(value: Option<&str>, field: &str) -> ApiResult<Vec<String>> {
+    let Some(value) = value else {
+        return Ok(Vec::new());
+    };
+    let mut values = value
+        .split(',')
+        .map(str::trim)
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    if values.iter().any(String::is_empty) {
+        return Err(ApiError::bad_request(
+            "INVALID_EXECUTION_FILTER",
+            format!("{field} contains an empty value"),
+        ));
+    }
+    values.sort();
+    values.dedup();
+    if values.len() > 50 {
+        return Err(ApiError::bad_request(
+            "TOO_MANY_FILTER_VALUES",
+            format!("{field} supports at most 50 values"),
+        ));
+    }
+    Ok(values)
+}
+
+fn validate_filter_text(value: Option<String>, field: &str) -> ApiResult<Option<String>> {
+    let value = value
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty());
+    if value
+        .as_ref()
+        .is_some_and(|value| value.chars().count() > 200)
+    {
+        return Err(ApiError::bad_request(
+            "FILTER_TEXT_TOO_LONG",
+            format!("{field} supports at most 200 characters"),
+        ));
+    }
+    Ok(value)
+}
+
+fn parse_filter_time(value: Option<&str>, field: &str) -> ApiResult<Option<OffsetDateTime>> {
+    value
+        .map(|value| {
+            OffsetDateTime::parse(value, &Rfc3339).map_err(|_| {
+                ApiError::bad_request(
+                    "INVALID_EXECUTION_FILTER",
+                    format!("{field} must be an RFC 3339 timestamp"),
+                )
+            })
+        })
+        .transpose()
+}
+
+fn rfc3339(value: OffsetDateTime) -> Option<String> {
+    value.format(&Rfc3339).ok()
 }
 
 fn node_json(execution_id: Uuid, node: ExecutionNodeV1) -> Value {
@@ -803,9 +1171,147 @@ fn node_json(execution_id: Uuid, node: ExecutionNodeV1) -> Value {
         "generation":0,"activationSlot":0,"runIndex":node.run_index,
         "iterationIndex":node.iteration_index,"status":node.status,"capability":node.capability,
         "sideEffectLevel":"none","input":node.input,"output":node.output,
-        "errorCode":node.error_code,"errorMessage":node.error_message,"startedAt":node.created_at,
-        "endedAt":null,"attempts":[],"lineage":[]
+        "errorCode":node.error_code,"errorMessage":node.error_message,"startedAt":node.started_at.and_then(rfc3339),
+        "endedAt":node.ended_at.and_then(rfc3339),"costMicros":node.cost_micros,
+        "costCurrency":node.cost_currency,"attempts":[],"lineage":[]
     })
+}
+
+#[cfg(test)]
+#[allow(clippy::items_after_test_module)]
+mod tests {
+    use agentx_runtime_contracts::{ExecutionNodeV1, ExecutionSummaryV1};
+    use serde_json::json;
+    use time::{OffsetDateTime, format_description::well_known::Rfc3339};
+    use uuid::Uuid;
+
+    use super::{
+        execution_summary_json, node_json, parse_enum_filter, parse_filter_time,
+        parse_filter_values, parse_uuid_filter, rfc3339, validate_filter_text,
+    };
+
+    #[test]
+    fn execution_filter_parameters_are_normalized_and_strictly_validated() {
+        let first = Uuid::from_u128(1);
+        let second = Uuid::from_u128(2);
+        assert_eq!(
+            parse_uuid_filter(
+                Some(&format!("{second}, {first},{second}")),
+                "applicationIds"
+            )
+            .unwrap(),
+            vec![first, second]
+        );
+        assert_eq!(
+            parse_enum_filter(
+                Some("schedule, user,schedule"),
+                "triggerTypes",
+                &["user", "schedule"]
+            )
+            .unwrap(),
+            vec!["schedule", "user"]
+        );
+        assert!(parse_uuid_filter(Some("not-a-uuid"), "toolIds").is_err());
+        assert!(parse_enum_filter(Some("unknown"), "statuses", &["running", "succeeded"]).is_err());
+        assert!(parse_filter_values(Some("user,,schedule"), "triggerTypes").is_err());
+        assert!(
+            parse_filter_values(
+                Some(
+                    &(0..51)
+                        .map(|value| value.to_string())
+                        .collect::<Vec<_>>()
+                        .join(",")
+                ),
+                "statuses"
+            )
+            .is_err()
+        );
+        assert!(validate_filter_text(Some("x".repeat(201)), "search").is_err());
+        assert!(parse_filter_time(Some("2026-99-99"), "createdAfter").is_err());
+    }
+
+    #[test]
+    fn execution_timestamps_are_explicit_rfc3339_strings() {
+        let timestamp = OffsetDateTime::parse("2026-08-20T10:11:12.123456Z", &Rfc3339).unwrap();
+        let rendered = rfc3339(timestamp).unwrap();
+        assert_eq!(
+            OffsetDateTime::parse(&rendered, &Rfc3339).unwrap(),
+            timestamp
+        );
+    }
+
+    #[test]
+    fn execution_and_node_json_keep_authoritative_metrics_and_timestamps() {
+        let started = OffsetDateTime::parse("2026-08-20T10:11:12Z", &Rfc3339).unwrap();
+        let ended = started + time::Duration::seconds(2);
+        let execution_id = Uuid::now_v7();
+        let execution = execution_summary_json(
+            ExecutionSummaryV1 {
+                execution_id,
+                invocation_id: None,
+                application_id: None,
+                workflow_id: Uuid::now_v7(),
+                workflow_version_id: Uuid::now_v7(),
+                session_id: None,
+                parent_execution_id: None,
+                bundle_id: Uuid::now_v7(),
+                trace_id: Uuid::now_v7(),
+                trigger_type: "manual".into(),
+                initiator_user_id: None,
+                initiator_user_name: None,
+                initiator_department_id: None,
+                initiator_department_name: None,
+                trigger_source_id: None,
+                trigger_name: None,
+                status: "succeeded".into(),
+                duration_ms: Some(2_000),
+                cost_micros: 99,
+                cost_currency: Some("USD".into()),
+                input_tokens: 11,
+                output_tokens: 17,
+                error_code: None,
+                created_at: started,
+                completed_at: Some(ended),
+            },
+            "Trace fixture".into(),
+            Some(3),
+            None,
+        );
+        assert_eq!(execution["inputTokens"], 11);
+        assert_eq!(execution["outputTokens"], 17);
+        assert_eq!(execution["startedAt"], "2026-08-20T10:11:12Z");
+        assert_eq!(execution["endedAt"], "2026-08-20T10:11:14Z");
+
+        let node = node_json(
+            execution_id,
+            ExecutionNodeV1 {
+                node_execution_id: Uuid::now_v7(),
+                node_id: "model".into(),
+                node_name: "Model".into(),
+                node_type: "model".into(),
+                node_version: 1,
+                run_index: 2,
+                iteration_index: 4,
+                status: "succeeded".into(),
+                capability: "model".into(),
+                input: Some(json!({"main":[]})),
+                output: Some(json!({"main":[{"json":{"text":"hello"}}]})),
+                error_code: None,
+                error_message: None,
+                cost_micros: 99,
+                cost_currency: Some("USD".into()),
+                started_at: Some(started),
+                ended_at: Some(ended),
+            },
+        );
+        assert_eq!(node["startedAt"], "2026-08-20T10:11:12Z");
+        assert_eq!(node["endedAt"], "2026-08-20T10:11:14Z");
+        assert_eq!(node["runIndex"], 2);
+        assert_eq!(node["iterationIndex"], 4);
+        assert_eq!(node["costMicros"], 99);
+        assert_eq!(node["costCurrency"], "USD");
+        assert_eq!(node["output"]["main"][0]["json"]["text"], "hello");
+    }
 }
 
 fn parse_resolution(value: &str) -> ApiResult<SideEffectResolutionV1> {

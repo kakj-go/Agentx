@@ -2,6 +2,13 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "properties": {
+    "departmentId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "departmentName": {
+      "type": "string"
+    },
     "enabled": {
       "type": "boolean"
     },
@@ -20,11 +27,17 @@
     "userId": {
       "format": "uuid",
       "type": "string"
+    },
+    "userName": {
+      "type": "string"
     }
   },
   "required": [
     "tenantId",
     "userId",
+    "userName",
+    "departmentId",
+    "departmentName",
     "tokenVersion",
     "enabled",
     "tenantQueryEnabled"

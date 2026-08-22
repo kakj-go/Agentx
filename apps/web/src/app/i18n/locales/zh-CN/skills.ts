@@ -151,8 +151,11 @@ const translations = {
   "fields": {
     "name": "技能名称",
     "alias": "技能别名",
+    "aliasHint": "可输入中英文字母、数字、连字符（-）和下划线（_），英文字母会统一转为小写。",
     "description": "技能描述",
-    "descriptionPlaceholder": "说明该技能的用途和适用场景"
+    "descriptionHint": "用于技能检索和识别，并同步写入 SKILL.md 的 frontmatter。",
+    "descriptionPlaceholder": "说明该技能的用途和适用场景",
+    "characterCount": "{{count}} / {{max}}"
   }
 } as const
 

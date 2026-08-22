@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import type { Trace, TraceSpan } from '../../shared/api/types'
-import { mergeTracePages } from './use-trace'
+import { mergeTracePages, traceRefetchInterval } from './use-trace'
 
 describe('Trace pagination merge', () => {
   it('deduplicates updated spans and preserves stable tuple order', () => {
@@ -12,6 +12,13 @@ describe('Trace pagination merge', () => {
       ['b', 'succeeded'],
       ['a', 'failed'],
     ])
+  })
+})
+
+describe('Trace refresh policy', () => {
+  it('keeps polling after diagnostics fail so a recovered ClickHouse becomes visible', () => {
+    expect(traceRefetchInterval('error')).toBe(3_000)
+    expect(traceRefetchInterval('success', [page([])])).toBe(false)
   })
 })
 

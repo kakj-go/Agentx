@@ -15,6 +15,7 @@ export type EntityFormField = {
   options?: Array<{ value: string; label: string }>
   defaultValue?: string
   max?: number
+  maxLength?: number
   min?: number
   placeholder?: string
   required?: boolean
@@ -90,8 +91,8 @@ export function EntityFormDialog({ cancelLabel, fields, onClose, onSubmit, open,
           {field.type !== 'checkbox' && <span className="mb-2 block font-medium">{field.label}{field.required && <span aria-hidden="true" className="ml-1 text-danger">*</span>}</span>}
           {field.type === 'checkbox' ? <span className="flex items-start gap-3 rounded-lg border border-border/70 bg-muted/30 p-3"><input aria-describedby={fieldErrors[field.name] ? `${field.name}-error` : undefined} aria-invalid={Boolean(fieldErrors[field.name])} aria-label={field.label} aria-required={field.required} checked={values[field.name] === 'true'} className="mt-0.5 size-4 shrink-0 accent-primary" name={field.name} onChange={(event) => update(field.name, String(event.target.checked))} type="checkbox" /><span><span className="block font-medium">{field.label}{field.required && <span aria-hidden="true" className="ml-1 text-danger">*</span>}</span>{field.description && <span className="mt-1 block text-[11px] leading-5 text-muted-foreground">{field.description}</span>}</span></span>
             : field.type === 'select' ? <Select aria-describedby={fieldErrors[field.name] ? `${field.name}-error` : undefined} aria-invalid={Boolean(fieldErrors[field.name])} aria-label={field.label} aria-required={field.required} className="w-full" name={field.name} onValueChange={(value) => update(field.name, value)} options={field.options ?? []} value={values[field.name]} />
-            : field.type === 'textarea' ? <Textarea aria-describedby={fieldErrors[field.name] ? `${field.name}-error` : undefined} aria-invalid={Boolean(fieldErrors[field.name])} aria-label={field.label} name={field.name} onChange={(event) => update(field.name, event.target.value)} placeholder={field.placeholder} required={field.required} value={values[field.name]} />
-              : <Input aria-describedby={fieldErrors[field.name] ? `${field.name}-error` : undefined} aria-invalid={Boolean(fieldErrors[field.name])} aria-label={field.label} max={field.max} min={field.type === 'number' ? (field.min ?? 0) : undefined} name={field.name} onChange={(event) => update(field.name, event.target.value)} placeholder={field.placeholder} required={field.required} step={field.step} type={field.type ?? 'text'} value={values[field.name]} />}
+            : field.type === 'textarea' ? <Textarea aria-describedby={fieldErrors[field.name] ? `${field.name}-error` : undefined} aria-invalid={Boolean(fieldErrors[field.name])} aria-label={field.label} maxLength={field.maxLength} name={field.name} onChange={(event) => update(field.name, event.target.value)} placeholder={field.placeholder} required={field.required} value={values[field.name]} />
+              : <Input aria-describedby={fieldErrors[field.name] ? `${field.name}-error` : undefined} aria-invalid={Boolean(fieldErrors[field.name])} aria-label={field.label} max={field.max} maxLength={field.maxLength} min={field.type === 'number' ? (field.min ?? 0) : undefined} name={field.name} onChange={(event) => update(field.name, event.target.value)} placeholder={field.placeholder} required={field.required} step={field.step} type={field.type ?? 'text'} value={values[field.name]} />}
           {field.description && field.type !== 'checkbox' && <span className="mt-1.5 block text-[11px] text-muted-foreground">{field.description}</span>}
           {fieldErrors[field.name] && <span className="mt-1.5 block text-xs text-danger" id={`${field.name}-error`}>{fieldErrors[field.name]}</span>}
         </label>)}

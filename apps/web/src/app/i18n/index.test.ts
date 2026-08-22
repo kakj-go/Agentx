@@ -38,6 +38,7 @@ const commonAllowedRoots = new Set([
   'ready', 'degraded', 'unknown', 'succeeded', 'cancelled', 'queued', 'suspended', 'skipped',
   'timed_out', 'disabled', 'enabled', 'approved', 'rejected', 'claimed', 'unknownValue',
   'created', 'passed', 'error', 'blocked', 'terminated', 'orphaned', 'creating', 'unavailable',
+  'reserved', 'schemaForm',
 ])
 
 const dynamicRoots: Record<string, Set<string>> = {
@@ -56,6 +57,7 @@ const dynamicRoots: Record<string, Set<string>> = {
   runtime: new Set(['quota', 'capability', 'capabilityStatus', 'components', 'retentionDataType', 'retentionStatus', 'retentionReasons']),
   approvals: new Set(['resumeStatuses', 'statuses', 'actionTypes', 'auditActions', 'resourceGrantStatuses']),
   executions: new Set(['executionTypes', 'triggerTypes', 'callKinds', 'sideEffects', 'stopReasons']),
+  trace: new Set(['overview', 'events', 'raw', 'views', 'boundaries', 'kinds', 'contentKinds']),
 }
 
 const markdownEditorKeys = [
@@ -150,7 +152,7 @@ describe('locale preference', () => {
         if (!used.has(domain)) used.set(domain, new Set())
         if (root) used.get(domain)?.add(root)
       }
-      for (const match of source.matchAll(/['"]((?:common|navigation|auth|workflows|studio|applications|executions|approvals|notifications|datasets|evaluations|runtime|credentials|models|mcp|skills|knowledge|memory|sandbox|resourceGrants|organization|roles|errors)\.[A-Za-z0-9_.-]+)['"]/g)) {
+      for (const match of source.matchAll(/['"]((?:common|navigation|auth|workflows|studio|applications|executions|approvals|notifications|datasets|evaluations|runtime|trace|credentials|models|mcp|skills|knowledge|memory|sandbox|resourceGrants|organization|roles|errors)\.[A-Za-z0-9_.-]+)['"]/g)) {
         const [domain, root] = match[1].split('.')
         if (!used.has(domain)) used.set(domain, new Set())
         if (root) used.get(domain)?.add(root)

@@ -866,6 +866,28 @@ function Replace-ProfileValues {
         if ($sourceNamespace) { $result = $result.Replace($sourceNamespace, $targetNamespace) }
         $result = $result.Replace([string]$canonicalNamespaces[$plane], $targetNamespace)
     }
+    # Namespace substitution must not rename the canonical generated-local
+    # Secret objects embedded in manifests (for example,
+    # `agentx-control-secrets`). The Secret synchronizer creates the names from
+    # the profile, so restore those exact names after replacing namespace text.
+    if ($Profile.secrets.mode -eq "generated-local") {
+        $result = $result.Replace("$($Namespaces.control)-secrets", [string]$Profile.secrets.control)
+        $result = $result.Replace("$($Namespaces.runtime)-secrets", [string]$Profile.secrets.runtime)
+    }
+    # The canonical plane names are also used as stable bucket and JWT
+    # identifiers. Restore those semantic values after namespace scoping.
+    $controlBucket = [string]$Profile.components.objectStorage.domains.control.bucket
+    $runtimeBucket = [string]$Profile.components.objectStorage.domains.runtime.bucket
+    $result = $result.Replace("local/$($Namespaces.control)", "local/$controlBucket")
+    $result = $result.Replace("local/$($Namespaces.runtime)", "local/$runtimeBucket")
+    $result = $result.Replace("arn:aws:s3:::$($Namespaces.control)", "arn:aws:s3:::$controlBucket")
+    $result = $result.Replace("arn:aws:s3:::$($Namespaces.runtime)", "arn:aws:s3:::$runtimeBucket")
+    $result = $result.Replace("value: $($Namespaces.control)", "value: $controlBucket")
+    $result = $result.Replace("value: $($Namespaces.runtime)", "value: $runtimeBucket")
+    $result = $result.Replace("name: AGENTX_CONTROL_S3_BUCKET, value: $($Namespaces.control)", "name: AGENTX_CONTROL_S3_BUCKET, value: $controlBucket")
+    $result = $result.Replace("name: AGENTX_RUNTIME_S3_BUCKET, value: $($Namespaces.runtime)", "name: AGENTX_RUNTIME_S3_BUCKET, value: $runtimeBucket")
+    $result = $result.Replace("name: AGENTX_OBSERVABILITY_JWT_ISSUER, value: $($Namespaces.control)", "name: AGENTX_OBSERVABILITY_JWT_ISSUER, value: agentx-control")
+    $result = $result.Replace("name: AGENTX_RUNTIME_USER_JWT_AUDIENCE, value: $($Namespaces.runtime)-gateway", "name: AGENTX_RUNTIME_USER_JWT_AUDIENCE, value: agentx-runtime-gateway")
     $control = $Profile.components.controlMysql
     $runtime = $Profile.components.runtimeMysql
     $clickhouse = $Profile.components.clickhouse
@@ -1908,6 +1930,21 @@ try {
     }
     if ($Action -ne "Rollback" -and $applicationManifest) {
         Invoke-KubectlInput $applicationManifest @("apply", "-f", "-")
+    }
+    if ($BuildImages -and $Action -eq "Upgrade") {
+        $localBuildWorkloads = @(
+            @{ plane = "control"; namespace = $namespaces.control; name = "platform-control" },
+            @{ plane = "control"; namespace = $namespaces.control; name = "web-console" },
+            @{ plane = "runtime"; namespace = $namespaces.runtime; name = "runtime-gateway" },
+            @{ plane = "runtime"; namespace = $namespaces.runtime; name = "workflow-runtime" },
+            @{ plane = "runtime"; namespace = $namespaces.runtime; name = "workflow-worker" },
+            @{ plane = "runtime"; namespace = $namespaces.runtime; name = "sandbox-manager" },
+            @{ plane = "observability"; namespace = $namespaces.observability; name = "observability" },
+            @{ plane = "dependencies"; namespace = $namespaces.dependencies; name = "agentx-egress-gateway" }
+        )
+        foreach ($workload in $localBuildWorkloads | Where-Object { $planes -contains $_.plane }) {
+            Invoke-Kubectl -Arguments @("-n", $workload.namespace, "rollout", "restart", "deployment/$($workload.name)")
+        }
     }
     if ($planes -contains "control") { foreach ($workload in @("platform-control", "web-console")) {
         Invoke-Kubectl -Arguments @("-n", $namespaces.control, "rollout", "status", "deployment/$workload", "--timeout=300s")

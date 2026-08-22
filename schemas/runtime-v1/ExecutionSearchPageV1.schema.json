@@ -20,6 +20,12 @@
             "null"
           ]
         },
+        "costCurrency": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "costMicros": {
           "format": "uint64",
           "minimum": 0,
@@ -46,12 +52,48 @@
           "format": "uuid",
           "type": "string"
         },
+        "initiatorDepartmentId": {
+          "format": "uuid",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "initiatorDepartmentName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "initiatorUserId": {
+          "format": "uuid",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "initiatorUserName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "inputTokens": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
         "invocationId": {
           "format": "uuid",
           "type": [
             "string",
             "null"
           ]
+        },
+        "outputTokens": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
         },
         "parentExecutionId": {
           "format": "uuid",
@@ -74,6 +116,19 @@
           "format": "uuid",
           "type": "string"
         },
+        "triggerName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "triggerSourceId": {
+          "format": "uuid",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "triggerType": {
           "type": "string"
         },
@@ -95,6 +150,8 @@
         "triggerType",
         "status",
         "costMicros",
+        "inputTokens",
+        "outputTokens",
         "createdAt"
       ],
       "type": "object"

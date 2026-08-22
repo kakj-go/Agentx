@@ -50,6 +50,7 @@ CREATE TABLE api_key_admission (
     tenant_id BINARY(16) NOT NULL,
     application_id BINARY(16) NOT NULL,
     key_prefix VARCHAR(48) NOT NULL,
+    key_name VARCHAR(160) NOT NULL,
     secret_hash BINARY(32) NOT NULL,
     admission_epoch BIGINT UNSIGNED NOT NULL,
     status ENUM('active','revoked') NOT NULL,
@@ -850,6 +851,7 @@ CREATE TABLE runtime_calls (
     resource_type VARCHAR(32) NULL,
     resource_id BINARY(16) NULL,
     resource_version_id BINARY(16) NULL,
+    tool_name_snapshot VARCHAR(255) NULL,
     side_effect VARCHAR(32) NOT NULL DEFAULT 'none',
     status ENUM('reserved', 'sent', 'succeeded', 'failed', 'cancelled', 'unknown') NOT NULL,
     reserved_input_tokens BIGINT UNSIGNED NOT NULL DEFAULT 0,
@@ -858,6 +860,7 @@ CREATE TABLE runtime_calls (
     input_tokens BIGINT UNSIGNED NOT NULL DEFAULT 0,
     output_tokens BIGINT UNSIGNED NOT NULL DEFAULT 0,
     cost_micros BIGINT UNSIGNED NOT NULL DEFAULT 0,
+    cost_currency CHAR(3) NULL,
     usage_estimated BOOLEAN NOT NULL DEFAULT FALSE,
     response_artifact_id BINARY(16) NULL,
     error_code VARCHAR(128) NULL,
@@ -867,7 +870,8 @@ CREATE TABLE runtime_calls (
     PRIMARY KEY (id),
     UNIQUE KEY uq_runtime_call_idempotency (tenant_id, idempotency_key),
     KEY idx_runtime_call_node (tenant_id, node_execution_id, iteration_index, call_index),
-    KEY idx_runtime_call_resource (tenant_id, resource_type, resource_id, started_at)
+    KEY idx_runtime_call_resource (tenant_id, resource_type, resource_id, started_at),
+    KEY idx_runtime_call_tool_execution (tenant_id, call_kind, resource_id, execution_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 CREATE TABLE runtime_commands (

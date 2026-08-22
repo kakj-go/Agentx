@@ -367,6 +367,11 @@ async fn execute_inner(
                 },
                 caller_id: claim.binding_id,
                 token_version: None,
+                origin: agentx_runtime_contracts::ExecutionOriginV1 {
+                    trigger_source_id: Some(claim.binding_id),
+                    trigger_name: Some(claim.configuration.trigger_name.clone()),
+                    ..agentx_runtime_contracts::ExecutionOriginV1::system(None)
+                },
             },
             None,
             &input,

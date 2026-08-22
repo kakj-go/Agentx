@@ -3,8 +3,8 @@ use std::collections::BTreeSet;
 use agentx_bundle_builder::composite_ir_object_id;
 use agentx_domain::ResourceVersionSnapshot;
 use agentx_runtime_contracts::{
-    ContentHash, RuntimeResourceBindingV1, RuntimeResourceConfigurationV1, RuntimeResourceKindV1,
-    SandboxEgressModeV1, VaultSecretReferenceV1,
+    ContentHash, RuntimeModelPriceV1, RuntimeResourceBindingV1, RuntimeResourceConfigurationV1,
+    RuntimeResourceKindV1, SandboxEgressModeV1, VaultSecretReferenceV1,
 };
 use anyhow::{Context, Result};
 use serde_json::Value;
@@ -59,8 +59,27 @@ fn from_parts(
                 provider: required_json_string(&snapshot, "providerType")?,
                 endpoint: required_json_string(&snapshot, "endpoint")?,
                 model: required_json_string(&snapshot, "modelName")?,
-                price_version: optional_json_scalar_string(snapshot.pointer("/price/versionId"))?
-                    .unwrap_or_else(|| "unpriced".into()),
+                price: RuntimeModelPriceV1 {
+                    version_id: required_json_scalar_string(
+                        snapshot.pointer("/price/versionId"),
+                        "Model Runtime binding requires price.versionId",
+                    )?,
+                    currency: required_json_pointer_string(
+                        &snapshot,
+                        "/price/currency",
+                        "Model Runtime binding requires price.currency",
+                    )?,
+                    input_per_million: required_json_pointer_string(
+                        &snapshot,
+                        "/price/inputPerMillion",
+                        "Model Runtime binding requires price.inputPerMillion",
+                    )?,
+                    output_per_million: required_json_pointer_string(
+                        &snapshot,
+                        "/price/outputPerMillion",
+                        "Model Runtime binding requires price.outputPerMillion",
+                    )?,
+                },
                 credential: optional_vault_reference(&snapshot)?,
             },
             vec![],
@@ -182,6 +201,22 @@ fn from_parts(
     })
 }
 
+fn required_json_pointer_string(
+    value: &Value,
+    pointer: &str,
+    message: &'static str,
+) -> Result<String> {
+    value
+        .pointer(pointer)
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .context(message)
+}
+
+fn required_json_scalar_string(value: Option<&Value>, message: &'static str) -> Result<String> {
+    optional_json_scalar_string(value)?.context(message)
+}
+
 fn optional_vault_reference(snapshot: &Value) -> Result<Option<VaultSecretReferenceV1>> {
     let value = snapshot
         .get("vaultSecretRef")
@@ -258,8 +293,13 @@ fn uuid_array(value: &Value, key: &str) -> Result<Vec<Uuid>> {
 
 #[cfg(test)]
 mod tests {
-    use super::optional_json_scalar_string;
+    use agentx_runtime_contracts::{
+        ContentHash, RuntimeResourceConfigurationV1, RuntimeResourceKindV1,
+    };
     use serde_json::json;
+    use uuid::Uuid;
+
+    use super::{from_parts, optional_json_scalar_string};
 
     #[test]
     fn null_optional_versions_are_absent() {
@@ -272,6 +312,50 @@ mod tests {
         assert_eq!(
             optional_json_scalar_string(snapshot.pointer("/price/versionId")).unwrap(),
             Some("7".into())
+        );
+    }
+
+    #[test]
+    fn model_binding_freezes_the_complete_price_snapshot() {
+        let snapshot = json!({
+            "providerType":"openai_compatible",
+            "endpoint":"https://provider.test/v1",
+            "modelName":"fixture",
+            "price":{
+                "versionId":Uuid::nil(),
+                "currency":"USD",
+                "inputPerMillion":"5.00000000",
+                "outputPerMillion":"30.00000000"
+            }
+        });
+        let binding = from_parts(
+            "model",
+            Uuid::now_v7(),
+            Some(Uuid::now_v7()),
+            snapshot.clone(),
+            ContentHash::parse(format!("sha256:{}", "a".repeat(64))).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(binding.resource_kind, RuntimeResourceKindV1::Model);
+        assert!(matches!(
+            binding.configuration,
+            RuntimeResourceConfigurationV1::Model { price, .. }
+                if price.currency == "USD"
+                    && price.input_per_million == "5.00000000"
+                    && price.output_per_million == "30.00000000"
+        ));
+
+        let mut missing = snapshot;
+        missing["price"]["outputPerMillion"] = serde_json::Value::Null;
+        assert!(
+            from_parts(
+                "model",
+                Uuid::now_v7(),
+                Some(Uuid::now_v7()),
+                missing,
+                ContentHash::parse(format!("sha256:{}", "b".repeat(64))).unwrap(),
+            )
+            .is_err()
         );
     }
 }

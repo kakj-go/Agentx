@@ -215,7 +215,7 @@ export type ExpressionNode =
   | { kind: "object"; fields: Record<string, ExpressionNode> };
 export type DynamicValue =
   | { kind: "literal"; value: unknown }
-  | { kind: "reference"; selector: ValueSelector; missingPolicy: MissingValuePolicy }
+  | { kind: "reference"; selector: ValueSelector; missingPolicy: MissingValuePolicy; coerce?: "string" }
   | { kind: "template"; segments: TemplateSegment[] }
   | { kind: "expression"; root: ExpressionNode };
 export type OutputProjectionField = {
@@ -455,6 +455,8 @@ export type ReferenceEntry = {
   scope?: "execution_tree" | "session";
   example?: unknown;
   disabledReason?: string;
+  conversionNote?: string;
+  recommended?: boolean;
   children: ReferenceEntry[];
 };
 export type ReferenceCatalog = Record<

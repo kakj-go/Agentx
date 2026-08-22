@@ -6,7 +6,7 @@ or Runtime MySQL migration Job. The `workflow_trace_events` table is
 deduplicated by `event_id`/`row_version`; Runtime MySQL remains authoritative
 for execution status.
 
-`0003_trace_spans.sql` adds explicit event/span kinds, names, Runtime entity
-IDs, content roles, and redacted inline previews. The migration runner refuses
-to reinterpret a populated flat Trace table; use the explicit V2 data recreate
-flow instead of fabricating lifecycle history.
+`0002_query_and_observability.sql` destructively creates the current semantic
+Trace schema with explicit event/span kinds, Runtime entity IDs, ordered
+`content_kind` events, and redacted inline previews. Historical flat Trace data
+is not interpreted or migrated; deployment recreates the Observability domain.

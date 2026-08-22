@@ -108,6 +108,15 @@
     "owning_task": "V2G-004"
   },
   {
+    "table": "application_playground_configs",
+    "plane": "control",
+    "authoritative_writer": "platform-control application playground use cases",
+    "allowed_readers": ["platform-control API", "platform-control publisher"],
+    "cross_plane_contract": "ApplyChatMappingRequestV1 and ApplyChatMappingReceiptV1",
+    "retention_and_delete_rule": "retain the latest monotonic mapping revision with the Application Deployment",
+    "owning_task": "V2C-007"
+  },
+  {
     "table": "runtime_user_admission",
     "plane": "runtime",
     "authoritative_writer": "runtime-gateway admission command handler",
@@ -115,6 +124,15 @@
     "cross_plane_contract": "RuntimeUserAdmissionV1",
     "retention_and_delete_rule": "retain latest monotonic token version and admission epoch",
     "owning_task": "V2G-001"
+  },
+  {
+    "table": "application_chat_mappings",
+    "plane": "runtime",
+    "authoritative_writer": "runtime-gateway chat mapping command handler",
+    "allowed_readers": ["runtime-gateway invocation API", "workflow-runtime"],
+    "cross_plane_contract": "ApplyChatMappingRequestV1 and ChatMappingV1",
+    "retention_and_delete_rule": "retain the latest monotonic mapping version with its published Bundle and Deployment",
+    "owning_task": "V2C-007"
   },
   {
     "table": "runtime_user_application_grants",

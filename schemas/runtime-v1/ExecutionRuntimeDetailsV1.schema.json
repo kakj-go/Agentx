@@ -73,6 +73,12 @@
         "callKind": {
           "type": "string"
         },
+        "costCurrency": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "costMicros": {
           "format": "uint64",
           "minimum": 0,

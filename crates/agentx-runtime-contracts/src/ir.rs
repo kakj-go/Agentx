@@ -4,7 +4,7 @@ use agentx_domain::{
     ContextDefinition, ContextWrite, ExecutionOrder, NodeSettings, WorkflowEnd, WorkflowStart,
 };
 use agentx_node_protocol::{
-    ExecutionStyle, NodeCapability, PortKind, ReadinessPolicy, SideEffectLevel,
+    ExecutionStyle, NodeCapability, OutputCardinality, PortKind, ReadinessPolicy, SideEffectLevel,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -63,6 +63,8 @@ pub struct CompiledNodeV1 {
 pub struct EffectiveOutputContractV1 {
     /// Frozen per-port JSON Schemas after applying node-instance projections.
     pub port_schemas: BTreeMap<String, Value>,
+    /// Frozen per-port item cardinality from the published Node Manifest.
+    pub cardinalities: BTreeMap<String, OutputCardinality>,
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]

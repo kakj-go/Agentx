@@ -51,7 +51,7 @@ runtime-gateway / workflow-runtime / workflow-worker
 sandbox ──TLS CONNECT + TTL/并发/次数/累计时长受限 Token──> agentx-egress-gateway
 ```
 
-Runtime 不主动调用 Control。Runtime 当前状态只来自 Runtime MySQL；Control 治理页面使用按 Cursor 拉取的治理投影；Trace、成本和聚合只来自 ClickHouse。
+Runtime 不主动调用 Control。Runtime 当前状态只来自 Runtime MySQL；Control 治理页面使用按 Cursor 拉取的治理投影；Trace、成本和聚合只来自 ClickHouse。Execution 创建路径通过 `ExecutionOriginV1` 把用户、部门和触发来源的执行时审计快照送入 Runtime；这些快照用于历史展示与查询，不是当前 IAM 权威数据。应用和 Workflow 仍只保存稳定 ID，公共 BFF 对当前页 ID 向 Control MySQL 批量解析当前名称。
 
 ## 3. 当前数据边界
 
@@ -71,6 +71,7 @@ Runtime 不主动调用 Control。Runtime 当前状态只来自 Runtime MySQL；
 - V2 `runtime-gateway` 唯一实现 `/gateway/v1` 并生成 `openapi/trigger-gateway.json`。
 - Runtime Internal API 与 Observability Internal API 分别由 `openapi/runtime-internal-v1.json` 和 `openapi/observability-internal-v1.json` 冻结，不经公网 Ingress。
 - `agentx-runtime-contracts` 是跨面 Bundle、Work Package、Command/Event、Query、Worker Protocol 和 JWT DTO 的唯一共享入口。
+- Execution 查询由 Runtime Query Authority 按完整过滤条件创建 Cursor 快照；Control BFF 只计算不扩张的授权范围、转发查询并批量补充 Control 当前名称，禁止页后本地过滤或逐行名称查询。
 - `agentx-control-infrastructure` 与 `agentx-runtime-infrastructure` 分别拥有所属存储 Adapter；服务不能共享 Repository 绕过 Internal API。
 - `agentx-mysql-lease` 统一数据库时间、Owner、Lease、Heartbeat 和 Fencing；`agentx-boundary-check` 检查 Cargo、SQL、Env、Secret、NetworkPolicy、V1 残留和 2000 行限制。
 

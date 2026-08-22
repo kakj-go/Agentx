@@ -16,7 +16,8 @@ use agentx_domain::WorkflowDefinition;
 use agentx_mysql_lease::{DEFAULT_BATCH_SIZE, LeaseOwner};
 use agentx_runtime_contracts::{
     ActivateDeploymentRequestV1, ActivationManifestV1, AdmissionStatusV1, AdmissionTargetV1,
-    ApiKeyAdmissionV1, ApplicationRouteAdmissionV1, CommandEnvelopeV1, ContentHash, ControlRole,
+    ApiKeyAdmissionV1, ApplicationRouteAdmissionV1, ApplyChatMappingReceiptV1,
+    ApplyChatMappingRequestV1, ChatMappingV1, CommandEnvelopeV1, ContentHash, ControlRole,
     DisableDeploymentRequestV1, Plane, PrepareBundleRequestV1, RollbackDeploymentRequestV1,
     RuntimeAdmissionCommandV1, RuntimeAuthorizationSnapshotV1, RuntimeGrantStateV1,
     RuntimePolicyV1, RuntimeResourceBindingV1, RuntimeResourceConfigurationV1,
@@ -66,6 +67,8 @@ mod work_packages;
 mod workflow_api;
 mod workflow_operations;
 mod workflow_resources;
+
+use control_helpers::{payload_strings, payload_uuid, payload_uuids};
 
 #[cfg(test)]
 mod api_first_tests;
@@ -308,6 +311,15 @@ impl Publisher {
                         changed.rows_affected() == 1,
                         "Admission Outbox Lease was lost"
                     );
+                    if event.event_type == "ApplicationChatMappingChanged" {
+                        sqlx::query("UPDATE application_playground_configs SET publish_status='failed',last_error_code='PLAYGROUND_MAPPING_PUBLISH_FAILED',last_error_message=? WHERE tenant_id=? AND deployment_id=? AND version=?")
+                            .bind(sanitize_error(&error.to_string()))
+                            .bind(event.tenant_id)
+                            .bind(event.aggregate_id)
+                            .bind(event.payload.get("version").and_then(Value::as_u64).unwrap_or_default())
+                            .execute(&self.pool)
+                            .await?;
+                    }
                 }
             }
             progress.processed_since(started).await;
@@ -317,14 +329,14 @@ impl Publisher {
 
     async fn claim_admission(&self) -> Result<Vec<AdmissionEvent>> {
         let mut tx = self.pool.begin().await?;
-        let rows = sqlx::query("SELECT id FROM outbox WHERE aggregate_type IN ('application_admission','runtime_user_admission','workflow_admission') AND status IN ('pending','failed') AND available_at<=UTC_TIMESTAMP(6) AND (locked_until IS NULL OR locked_until<=UTC_TIMESTAMP(6)) ORDER BY occurred_at,id LIMIT ? FOR UPDATE SKIP LOCKED")
+        let rows = sqlx::query("SELECT id FROM outbox WHERE aggregate_type IN ('application_admission','runtime_user_admission','workflow_admission','application_chat_mapping') AND status IN ('pending','failed') AND available_at<=UTC_TIMESTAMP(6) AND (locked_until IS NULL OR locked_until<=UTC_TIMESTAMP(6)) ORDER BY occurred_at,id LIMIT ? FOR UPDATE SKIP LOCKED")
             .bind(DEFAULT_BATCH_SIZE).fetch_all(&mut *tx).await?;
         for row in rows {
             sqlx::query("UPDATE outbox SET status='processing',locked_by=?,locked_until=DATE_ADD(UTC_TIMESTAMP(6),INTERVAL 30 SECOND),fencing_token=fencing_token+1,attempt_count=attempt_count+1 WHERE id=? AND status IN ('pending','failed')")
                 .bind(self.owner.0).bind(row.try_get::<Uuid,_>("id")?).execute(&mut *tx).await?;
         }
         tx.commit().await?;
-        let rows = sqlx::query("SELECT id,tenant_id,event_type,aggregate_type,aggregate_id,payload_json,occurred_at,fencing_token FROM outbox WHERE aggregate_type IN ('application_admission','runtime_user_admission','workflow_admission') AND status='processing' AND locked_by=? AND locked_until>UTC_TIMESTAMP(6) ORDER BY occurred_at,id")
+        let rows = sqlx::query("SELECT id,tenant_id,event_type,aggregate_type,aggregate_id,payload_json,occurred_at,fencing_token FROM outbox WHERE aggregate_type IN ('application_admission','runtime_user_admission','workflow_admission','application_chat_mapping') AND status='processing' AND locked_by=? AND locked_until>UTC_TIMESTAMP(6) ORDER BY occurred_at,id")
             .bind(self.owner.0).fetch_all(&self.pool).await?;
         rows.into_iter()
             .map(|row| {
@@ -343,6 +355,58 @@ impl Publisher {
     }
 
     async fn project_admission(&self, event: &AdmissionEvent) -> Result<()> {
+        if event.event_type == "ApplicationChatMappingChanged" {
+            let mapping = event
+                .payload
+                .get("mapping")
+                .cloned()
+                .map(serde_json::from_value::<Option<ChatMappingV1>>)
+                .transpose()?
+                .flatten();
+            let request = ApplyChatMappingRequestV1 {
+                api_version: 1,
+                idempotency_key: format!("{}:chat-mapping", event.id),
+                tenant_id: event.tenant_id,
+                application_id: payload_uuid(&event.payload, "applicationId")?,
+                deployment_id: payload_uuid(&event.payload, "deploymentId")?,
+                bundle_id: payload_uuid(&event.payload, "bundleId")?,
+                version: event
+                    .payload
+                    .get("version")
+                    .and_then(Value::as_u64)
+                    .context("Chat Mapping version")?,
+                mapping,
+                content_hash: ContentHash::parse(
+                    event
+                        .payload
+                        .get("contentHash")
+                        .and_then(Value::as_str)
+                        .context("Chat Mapping contentHash")?,
+                )?,
+            };
+            let receipt: ApplyChatMappingReceiptV1 = self
+                .post(
+                    "runtime.chat_mappings.apply",
+                    "/internal/runtime/v1/chat-mappings:apply",
+                    &request,
+                )
+                .await?;
+            anyhow::ensure!(
+                receipt.version == request.version,
+                "Runtime applied an unexpected Chat Mapping Version"
+            );
+            let mut tx = self.pool.begin().await?;
+            sqlx::query("UPDATE application_playground_configs SET published_version=?,publish_status='active',last_error_code=NULL,last_error_message=NULL WHERE tenant_id=? AND deployment_id=? AND version=?")
+                .bind(request.version).bind(event.tenant_id).bind(request.deployment_id).bind(request.version).execute(&mut *tx).await?;
+            let changed = sqlx::query("UPDATE outbox SET status='published',published_at=UTC_TIMESTAMP(6),locked_by=NULL,locked_until=NULL,last_error=NULL WHERE id=? AND locked_by=? AND fencing_token=? AND status='processing' AND locked_until>UTC_TIMESTAMP(6)")
+                .bind(event.id).bind(self.owner.0).bind(event.fencing_token).execute(&mut *tx).await?;
+            anyhow::ensure!(
+                changed.rows_affected() == 1,
+                "Admission Outbox Lease was lost"
+            );
+            tx.commit().await?;
+            return Ok(());
+        }
         let epoch = event
             .payload
             .get("admissionEpoch")
@@ -383,10 +447,15 @@ impl Publisher {
                         .and_then(|v| Uuid::parse_str(v).ok())
                         .context("Admission Outbox userId")?;
                     if event.event_type == "RuntimeUserAdmissionChanged" {
+                        let user = sqlx::query("SELECT u.display_name,ud.department_id,d.name department_name FROM users u JOIN user_departments ud ON ud.tenant_id=u.tenant_id AND ud.user_id=u.id JOIN departments d ON d.tenant_id=ud.tenant_id AND d.id=ud.department_id WHERE u.tenant_id=? AND u.id=?")
+                            .bind(event.tenant_id).bind(user_id).fetch_one(&self.pool).await?;
                         AdmissionTargetV1::RuntimeUser {
                             state: agentx_runtime_contracts::RuntimeUserAdmissionV1 {
                                 tenant_id: event.tenant_id,
                                 user_id,
+                                user_name: user.try_get("display_name")?,
+                                department_id: user.try_get("department_id")?,
+                                department_name: user.try_get("department_name")?,
                                 token_version: event
                                     .payload
                                     .get("tokenVersion")
@@ -546,15 +615,22 @@ impl Publisher {
                 .get("status")
                 .and_then(Value::as_str)
                 .context("Admission Outbox status")?;
-            let row = sqlx::query("SELECT key_prefix,secret_hash FROM application_api_keys WHERE tenant_id=? AND application_id=? AND id=?")
+            let row = sqlx::query("SELECT name,key_prefix,secret_hash FROM application_api_keys WHERE tenant_id=? AND application_id=? AND id=?")
                 .bind(event.tenant_id).bind(event.aggregate_id).bind(key_id).fetch_optional(&self.pool).await?;
-            let (key_prefix, secret_hash) = if let Some(row) = row {
+            let (key_name, key_prefix, secret_hash) = if let Some(row) = row {
                 (
+                    row.try_get("name")?,
                     row.try_get("key_prefix")?,
                     format!("sha256:{}", hex(row.try_get::<Vec<u8>, _>("secret_hash")?)),
                 )
             } else {
                 (
+                    event
+                        .payload
+                        .get("keyName")
+                        .and_then(Value::as_str)
+                        .unwrap_or("Revoked API Key")
+                        .to_owned(),
                     event
                         .payload
                         .get("keyPrefix")
@@ -575,6 +651,7 @@ impl Publisher {
                     application_id: event.aggregate_id,
                     key_id,
                     key_prefix,
+                    key_name,
                     secret_hash,
                     status: if status == "active" {
                         AdmissionStatusV1::Active
@@ -1075,7 +1152,7 @@ impl Publisher {
             found_grants == required_grant_ids,
             "Bundle authorization references a missing Control Resource Grant"
         );
-        let key=sqlx::query("SELECT id,key_prefix,secret_hash FROM application_api_keys WHERE tenant_id=? AND application_id=? AND status='active' ORDER BY created_at DESC LIMIT 1").bind(a.tenant_id).bind(a.application_id).fetch_optional(&self.pool).await?;
+        let key=sqlx::query("SELECT id,name,key_prefix,secret_hash FROM application_api_keys WHERE tenant_id=? AND application_id=? AND status='active' ORDER BY created_at DESC LIMIT 1").bind(a.tenant_id).bind(a.application_id).fetch_optional(&self.pool).await?;
         let mut commands = vec![
             AdmissionTargetV1::Tenant { enabled: true },
             AdmissionTargetV1::ApplicationRoute {
@@ -1094,6 +1171,7 @@ impl Publisher {
                     application_id: a.application_id,
                     key_id: key.try_get("id")?,
                     key_prefix: key.try_get("key_prefix")?,
+                    key_name: key.try_get("name")?,
                     secret_hash: format!(
                         "sha256:{}",
                         hex(key.try_get::<Vec<u8>, _>("secret_hash")?)
@@ -1373,38 +1451,6 @@ impl Publisher {
             .map_err(RuntimeCallError::transport)?;
         Ok(decode_runtime_response(response).await?.json().await?)
     }
-}
-
-fn payload_uuid(payload: &Value, key: &str) -> Result<Uuid> {
-    payload
-        .get(key)
-        .and_then(Value::as_str)
-        .and_then(|value| Uuid::parse_str(value).ok())
-        .with_context(|| format!("Admission Outbox {key}"))
-}
-
-fn payload_strings(payload: &Value, key: &str) -> Result<Vec<String>> {
-    payload
-        .get(key)
-        .and_then(Value::as_array)
-        .with_context(|| format!("Admission Outbox {key}"))?
-        .iter()
-        .map(|value| {
-            value
-                .as_str()
-                .map(ToOwned::to_owned)
-                .with_context(|| format!("Admission Outbox {key} item"))
-        })
-        .collect()
-}
-
-fn payload_uuids(payload: &Value, key: &str) -> Result<Vec<Uuid>> {
-    payload_strings(payload, key)?
-        .into_iter()
-        .map(|value| {
-            Uuid::parse_str(&value).with_context(|| format!("Admission Outbox {key} UUID item"))
-        })
-        .collect()
 }
 
 fn runtime_resource_kind_from_control(value: &str) -> Result<RuntimeResourceKindV1> {

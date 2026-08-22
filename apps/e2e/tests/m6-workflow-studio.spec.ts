@@ -1,4 +1,7 @@
 import { expect, type Locator, type Page, test } from '@playwright/test'
+import { readFile } from 'node:fs/promises'
+
+import { publishCompatibleChatMapping } from './playground-helpers'
 
 const password = 'agentx-e2e-admin-password'
 const gatewayBase = process.env.AGENTX_E2E_RUNTIME_URL ?? ''
@@ -39,6 +42,22 @@ type StudioDraft = {
 }
 
 async function login(page: Page) {
+  const bootstrapStatus = await page.request.get('/api/v1/bootstrap/status')
+  if (!bootstrapStatus.ok()) throw new Error(`bootstrap status: ${bootstrapStatus.status()} ${await bootstrapStatus.text()}`)
+  if (((await bootstrapStatus.json()) as { required: boolean }).required) {
+    await page.goto('/setup')
+    await page.getByLabel('公司名称').fill('Agentx E2E')
+    await page.getByLabel('用户名').fill('admin')
+    await page.getByLabel('管理员姓名').fill('E2E Admin')
+    await page.getByLabel('密码').fill(password)
+    const response = page.waitForResponse((value) => value.url().endsWith('/api/v1/bootstrap') && value.request().method() === 'POST')
+    await page.getByRole('button', { name: '初始化并进入工作台' }).click()
+    await expect(page).toHaveURL(/\/$/)
+    const token = ((await (await response).json()) as { accessToken: string }).accessToken
+    const me = await page.request.get('/api/v1/auth/me', { headers: { Authorization: `Bearer ${token}` } })
+    expect(me.ok()).toBeTruthy()
+    return { token, userId: ((await me.json()) as { id: string }).id }
+  }
   await page.goto('/login')
   await page.getByLabel('用户名').fill('admin')
   await page.getByLabel('密码').fill(password)
@@ -191,7 +210,7 @@ async function ensureStudioResources(page: Page, token: string) {
       maxInputTokens: 8192,
       maxOutputTokens: 2048,
       defaultParameters: { temperature: 0 },
-      price: { currency: 'CNY', inputPerMillion: '0', outputPerMillion: '0' },
+      price: { currency: 'USD', inputPerMillion: '5', outputPerMillion: '30' },
     })
   }
 
@@ -206,15 +225,15 @@ async function ensureStudioResources(page: Page, token: string) {
       credentialId: credential.id,
       configuration: {},
     })
-  const tools = await api<NamedResource[]>(page, token, `/mcp/tools?pageSize=100&search=Echo`)
-  if (!tools.some((item) => item.name === 'echo' && item.serverId === server.id)) {
+  const tools = await api<PageResponse<NamedResource>>(page, token, `/mcp/tools?pageSize=100&search=Echo`)
+  if (!tools.items.some((item) => item.name === 'echo' && item.serverId === server.id)) {
     await mutate(page, token, `/mcp/servers/${server.id}/discover`, 'POST', {})
   }
   await mutate(page, token, `/mcp/servers/${server.id}`, 'PATCH', {
     name: studioMcpName,
     description: 'M6 API-first MCP fixture',
     transport: 'streamable_http',
-    endpoint: `${echoBaseUrl}/v2/runtime/mcp`,
+    endpoint: `${echoBaseUrl}/mcp`,
     credentialId: credential.id,
     configuration: {},
     status: 'active',
@@ -318,13 +337,16 @@ async function chooseReference(page: Page, scope: Locator, namespace: RegExp, la
   const picker = page.getByTestId('reference-picker')
   await expect(picker).toBeVisible()
   await picker.getByRole('button', { name: namespace }).click()
-  for (const label of labels) {
-    await picker.getByRole('button', { name: new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i') }).first().click()
+  for (const [index, label] of labels.entries()) {
+    const row = picker.getByRole('button', { name: new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i') }).first()
+    const toggle = row.locator('[data-tree-toggle]')
+    if (index < labels.length - 1 && await toggle.count()) await toggle.click()
+    else await row.click()
   }
   await expect(picker).toBeHidden()
 }
 
-async function setEndOutput(page: Page, nodeKey: string, fieldPath = 'json', port = 'main', required = true, type = 'string') {
+async function setEndOutput(page: Page, nodeKey: string, fieldPath = 'json', port = 'main', required = true, type = 'string', verifyBoundaryEditing = false) {
   await page.getByTestId('workflow-end').click()
   const panel = page.getByTestId('workflow-interface-panel')
   await expect(panel).toBeVisible()
@@ -333,12 +355,27 @@ async function setEndOutput(page: Page, nodeKey: string, fieldPath = 'json', por
   const outputName = dialog.getByLabel(/输出名称|Output name/)
   await outputName.fill('answer')
   await outputName.blur()
+  if (verifyBoundaryEditing) {
+    await dialog.getByRole('button', { name: /保存|Save/ }).click()
+    await expect(dialog.getByRole('alert')).toContainText(/输出表达式不能为空|expression is required/i)
+    await expect(dialog).toBeVisible()
+  }
   if (type !== 'string') {
     await dialog.getByLabel(/类型|Type/).click()
     await page.getByRole('option', { name: /对象|Object/ }).click()
   }
   const fields = fieldPath.split('.').filter((field) => field !== 'json')
   await chooseReference(page, dialog, /输出|Outputs/, [nodeKey, port, 'current', ...fields])
+  if (verifyBoundaryEditing) {
+    const editor = dialog.getByRole('textbox', { name: 'Value' })
+    await editor.press('ArrowLeft')
+    await editor.pressSequentially('before ')
+    await editor.press('End')
+    await editor.pressSequentially(' after')
+    await expect(editor).toContainText('before')
+    await expect(editor).toContainText('after')
+    await expect(dialog.locator('[data-agentx-variable]')).toBeVisible()
+  }
   if (required) await dialog.getByLabel(/必填|Required/).check()
   await expect(dialog.locator('[data-agentx-variable]')).toBeVisible()
   await dialog.getByRole('button', { name: /保存|Save/ }).click()
@@ -593,7 +630,7 @@ test('M6 Studio creates, debugs, versions and publishes a manifest-driven Workfl
   await connectIntoOccupiedBoundary(page, errorHandler, 'recovered', page.getByTestId('workflow-end'), 'main')
 
   const approvalKey = (await saveAndReadDraft(page, token, workflowId)).definition.nodes.find((node) => node.type === 'approval')!.key
-  await setEndOutput(page, approvalKey, 'json.decision', 'approved', false)
+  await setEndOutput(page, approvalKey, 'json.decision', 'approved', false, 'string', true)
   await setEndErrorOutput(page)
 
   await openNodeDetails(page, code)
@@ -642,7 +679,14 @@ test('M6 Studio creates, debugs, versions and publishes a manifest-driven Workfl
     'x-agentx-max-size-bytes': 1048576,
     'x-agentx-max-total-size-bytes': 2097152,
   })
-  expect(draft.definition.end.outputs.answer.value).toMatchObject({ kind: 'reference', selector: { namespace: 'outputs', port: 'approved', path: ['decision'] } })
+  expect(draft.definition.end.outputs.answer.value).toMatchObject({
+    kind: 'template',
+    segments: [
+      { kind: 'text', text: 'before ' },
+      { kind: 'reference', selector: { namespace: 'outputs', port: 'approved', path: ['decision'] } },
+      { kind: 'text', text: ' after' },
+    ],
+  })
   expect(draft.definition.end.error).toMatchObject({ strategy: 'collect', collectWindowMs: 1200, outputs: { failure_message: { value: { kind: 'reference', selector: { namespace: 'item', path: ['message'] } } } } })
   expect(draft.definition.connections).toContainEqual(expect.objectContaining({ sourceNodeId: draft.definition.nodes.find((node) => node.type === 'code')!.id, sourceHandle: 'error', targetNodeId: '__end__', targetHandle: 'error' }))
   expect(draft.editorDocument.bindingEdges).toHaveLength(2)
@@ -656,24 +700,85 @@ test('M6 Studio creates, debugs, versions and publishes a manifest-driven Workfl
   await details.getByRole('tab', { name: '输出' }).click()
   await expect(details.getByRole('textbox', { name: '输出' })).toHaveValue(/m6-studio-ok/, { timeout: 30_000 })
   await details.getByRole('tab', { name: 'Trace' }).click()
-  await expect(details.getByTestId('trace-detail')).toContainText('M6 Python Code', { timeout: 30_000 })
-  await expect(details.getByTestId('trace-detail').getByRole('tab')).toHaveCount(5)
+  await expect(details.getByRole('heading', { name: '输入与解析参数' })).toBeVisible({ timeout: 30_000 })
+  await expect(details.getByRole('heading', { name: '语义输出' })).toBeVisible()
+  await expect(details).toContainText('m6-studio-ok')
   const runtimeRail = page.getByTestId('runtime-rail')
+  type ExecutionEvent = { sequence: number; eventType: string; status: string }
+  let executionEvents: { items: ExecutionEvent[]; nextCursor?: number | null } | undefined
+  await expect.poll(async () => {
+    executionEvents = await api<{ items: ExecutionEvent[]; nextCursor?: number | null }>(page, token, `/executions/${firstExecution}/events?after=0&limit=200`)
+    return executionEvents.items.at(-1)?.eventType
+  }, { timeout: 30_000, intervals: [250, 500, 1_000] }).toBe('execution.succeeded')
+  expect(executionEvents!.items.map((event) => event.sequence)).toEqual(executionEvents!.items.map((event) => event.sequence).sort((left, right) => left - right))
+  expect(new Set(executionEvents!.items.map((event) => event.sequence)).size).toBe(executionEvents!.items.length)
+  const incrementalAfter = executionEvents!.items[Math.min(3, executionEvents!.items.length - 2)].sequence
+  const incrementalEvents = await api<{ items: ExecutionEvent[]; nextCursor?: number | null }>(page, token, `/executions/${firstExecution}/events?after=${incrementalAfter}&limit=2`)
+  expect(incrementalEvents.items).toHaveLength(2)
+  expect(incrementalEvents.items.every((event) => event.sequence > incrementalAfter)).toBe(true)
+  expect(incrementalEvents.nextCursor).toBe(incrementalEvents.items.at(-1)?.sequence)
+  await runtimeRail.getByRole('tab', { name: '事件', exact: true }).click()
+  const executionEventsPanel = runtimeRail.getByTestId('execution-events')
+  await expect(executionEventsPanel).toContainText('execution.succeeded')
+  await expect(executionEventsPanel).not.toContainText('未知（reserved）')
+  expect(await executionEventsPanel.evaluate((panel) => getComputedStyle(panel).overflowY)).toMatch(/auto|scroll/)
   await runtimeRail.getByRole('tab', { name: 'Trace' }).click()
-  await expect(runtimeRail).toHaveCSS('height', '420px')
+  await expect(runtimeRail).toHaveCSS('height', '560px')
+  const resizeHandle = runtimeRail.getByRole('button', { name: '调整运行面板高度' })
+  const [runtimeRailBoxForHandle, resizeHandleBox] = await Promise.all([runtimeRail.boundingBox(), resizeHandle.boundingBox()])
+  expect(runtimeRailBoxForHandle).toBeTruthy()
+  expect(resizeHandleBox).toBeTruthy()
+  expect(resizeHandleBox!.y).toBeLessThan(runtimeRailBoxForHandle!.y)
+  expect(await resizeHandle.evaluate((handle) => {
+    const box = handle.getBoundingClientRect()
+    const hit = document.elementFromPoint(box.x + box.width / 2, box.y + 1)
+    return hit === handle || handle.contains(hit)
+  })).toBe(true)
+  const executionToolbar = runtimeRail.getByTestId('execution-toolbar')
+  await expect(executionToolbar).toBeVisible()
+  await expect(executionToolbar).toContainText('执行记录')
+  await expect(executionToolbar).toContainText('不会筛选 Trace 状态')
+  await expect(executionToolbar).toHaveCSS('border-top-width', '1px')
+  await expect(executionToolbar).toHaveCSS('border-bottom-width', '1px')
+  const executionSelector = executionToolbar.getByRole('combobox', { name: '切换执行' })
+  await expect(executionSelector).toContainText(/成功|运行中|失败/)
+  await expect(executionSelector).not.toContainText('—')
+  const traceNodeView = runtimeRail.getByTestId('trace-node-view')
+  await expect(traceNodeView).toBeVisible({ timeout: 30_000 })
+  expect(await traceNodeView.evaluate((view) => {
+    view.scrollTop = view.scrollHeight
+    return getComputedStyle(view).overflowY === 'auto' && Math.ceil(view.scrollTop + view.clientHeight) >= view.scrollHeight
+  })).toBe(true)
+  await expect(runtimeRail.getByTestId('trace-start-boundary')).toBeVisible()
+  await expect(runtimeRail.getByTestId('trace-end-boundary')).toBeVisible()
+  await runtimeRail.getByRole('tab', { name: '高级瀑布' }).click()
   await expect(runtimeRail.getByRole('treegrid', { name: 'Trace 层级瀑布' })).toBeVisible({ timeout: 30_000 })
   type TraceSpan = { spanId: string; spanKind: string; spanName: string; status: string; inputTokens?: number; outputTokens?: number; costMicros: number; resourceType?: string }
   let traceSnapshot: { complete: boolean; spans: TraceSpan[] } | undefined
   await expect.poll(async () => {
     traceSnapshot = await api<{ complete: boolean; spans: TraceSpan[] }>(page, token, `/executions/${firstExecution}/trace?limit=200`)
     const kinds = new Set(traceSnapshot.spans.map((span) => span.spanKind))
-    return ['execution', 'node', 'attempt', 'agent_run', 'agent_iteration', 'runtime_call', 'sandbox', 'wait'].filter((kind) => !kinds.has(kind))
+    return ['execution', 'boundary', 'node', 'attempt', 'agent_run', 'agent_iteration', 'runtime_call', 'sandbox', 'wait'].filter((kind) => !kinds.has(kind))
   }, { timeout: 60_000, intervals: [500, 1_000, 2_000] }).toEqual([])
   expect(traceSnapshot?.complete).toBe(true)
   const modelCall = traceSnapshot?.spans.find((span) => span.spanKind === 'runtime_call' && span.spanName === 'Model call')
   const mcpCall = traceSnapshot?.spans.find((span) => span.spanKind === 'runtime_call' && span.spanName === 'MCP tool call')
-  expect(modelCall).toMatchObject({ status: 'succeeded', resourceType: 'model', costMicros: 0 })
+  expect(modelCall).toMatchObject({ status: 'succeeded', resourceType: 'model' })
+  expect(modelCall?.costMicros ?? 0).toBeGreaterThan(0)
   expect((modelCall?.inputTokens ?? 0) + (modelCall?.outputTokens ?? 0)).toBeGreaterThan(0)
+  let runtimeDetails: { calls: Array<{ resourceType?: string; costMicros: number; costCurrency?: string }> } | undefined
+  await expect.poll(async () => {
+    try {
+      const details = await api<{ calls: Array<{ resourceType?: string; costMicros: number; costCurrency?: string }> }>(page, token, `/executions/${firstExecution}/runtime-details`)
+      runtimeDetails = details
+      return details.calls.some((call) => call.resourceType === 'model')
+    } catch {
+      return false
+    }
+  }, { timeout: 30_000, intervals: [500, 1_000, 2_000] }).toBeTruthy()
+  const runtimeModelCall = runtimeDetails!.calls.find((call) => call.resourceType === 'model')
+  expect(runtimeModelCall).toMatchObject({ costCurrency: 'USD' })
+  expect(runtimeModelCall?.costMicros).toBe(modelCall?.costMicros)
   expect(mcpCall).toMatchObject({ status: 'succeeded', resourceType: 'mcp' })
   expect(traceSnapshot?.spans.find((span) => span.spanKind === 'sandbox')).toMatchObject({ status: 'succeeded' })
   expect(traceSnapshot?.spans.find((span) => span.spanKind === 'wait')).toMatchObject({ status: expect.stringMatching(/approved|succeeded/) })
@@ -682,6 +787,16 @@ test('M6 Studio creates, debugs, versions and publishes a manifest-driven Workfl
   await codeTraceRow.click()
   await page.screenshot({ path: testInfo.outputPath('trace-waterfall-skywalking.png'), fullPage: true })
   const waterfall = runtimeRail.getByTestId('trace-waterfall')
+  await waterfall.getByRole('tab', { name: '原始数据' }).click()
+  const rawTracePanel = waterfall.getByRole('tabpanel')
+  await expect(rawTracePanel).toBeVisible()
+  const rawTraceBox = await rawTracePanel.boundingBox()
+  const runtimeRailBox = await runtimeRail.boundingBox()
+  expect(rawTraceBox!.y + rawTraceBox!.height).toBeLessThanOrEqual(runtimeRailBox!.y + runtimeRailBox!.height + 1)
+  expect(await rawTracePanel.evaluate((panel) => {
+    panel.scrollTop = panel.scrollHeight
+    return Math.ceil(panel.scrollTop + panel.clientHeight) >= panel.scrollHeight
+  })).toBe(true)
   await waterfall.getByRole('tab', { name: '事件' }).click()
   await expect(waterfall.getByRole('tabpanel')).toContainText(/node\.(finished|completed)/)
   await runtimeRail.getByRole('button', { name: '折叠执行轨道' }).click()
@@ -692,11 +807,14 @@ test('M6 Studio creates, debugs, versions and publishes a manifest-driven Workfl
   await executionPage.goto(`/executions/${firstExecution}`)
   const executionTraceTab = executionPage.getByRole('tab', { name: 'Trace', exact: true })
   await expect(executionTraceTab).toHaveAttribute('aria-selected', 'true')
+  await expect(executionPage.getByTestId('trace-node-view')).toBeVisible({ timeout: 30_000 })
+  await executionPage.getByRole('tab', { name: '高级瀑布' }).click()
   await expect(executionPage.getByRole('treegrid', { name: 'Trace 层级瀑布' })).toBeVisible({ timeout: 30_000 })
   await executionPage.getByRole('row').filter({ hasText: 'M6 Python Code' }).first().click()
   await expect(executionPage.getByTestId('trace-detail').getByRole('tab')).toHaveCount(5)
   await executionPage.getByRole('tab', { name: '恢复', exact: true }).click()
-  await expect(executionPage.getByRole('complementary', { name: '执行节点大纲' })).toBeVisible()
+  await expect(executionPage.getByRole('complementary', { name: '执行节点大纲' })).toHaveCount(0)
+  await expect(executionPage.getByText(/检查点|Checkpoint/).first()).toBeVisible()
   await executionPage.close()
 
   const stableAgent = page.getByTestId(`rf__node-${draft.definition.nodes.find((node) => node.type === 'agent')!.id}`)
@@ -708,10 +826,10 @@ test('M6 Studio creates, debugs, versions and publishes a manifest-driven Workfl
   expect((await invalidMockResponse).ok()).toBeTruthy()
   const contractFailureId = await startDebug(page, () => studioRun(page).click())
   const contractFailure = await waitExecution(page, token, contractFailureId, ['failed'], 30_000)
-  expect(contractFailure.errorCode).toBe('NODE_OUTPUT_CONTRACT_VIOLATION')
+  expect(contractFailure.errorCode).toBe('NODE_OUTPUT_SCHEMA_VALIDATION_FAILED')
   const failedNodes = await api<{ items: Array<{ nodeId: string; status: string; errorCode?: string | null }> }>(page, token, `/executions/${contractFailureId}/nodes`)
   expect(failedNodes.items.filter((node) => node.nodeId === draft.definition.nodes.find((item) => item.type === 'agent')!.id)).toEqual([
-    expect.objectContaining({ status: 'failed', errorCode: 'NODE_OUTPUT_CONTRACT_VIOLATION' }),
+    expect.objectContaining({ status: 'failed', errorCode: 'NODE_OUTPUT_SCHEMA_VALIDATION_FAILED' }),
   ])
 
   const restoredAgentDetails = await openNodeDetails(page, stableAgent)
@@ -720,10 +838,11 @@ test('M6 Studio creates, debugs, versions and publishes a manifest-driven Workfl
     main: [{
       json: {
         text: 'm6-mock-output',
-        message: { role: 'assistant', content: 'm6-mock-output' },
-        messages: [{ role: 'assistant', content: 'm6-mock-output' }],
-        toolCalls: [], artifacts: [], citations: [],
-        usage: { inputTokens: 0, outputTokens: 0, tokens: 0, costMicros: 0 },
+        reasoningContent: null,
+        structuredOutput: null,
+        files: [],
+        citations: [],
+        usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, costMicros: 0 },
         finishReason: 'stop', partial: false,
       },
     }],
@@ -760,6 +879,17 @@ test('M6 Studio creates, debugs, versions and publishes a manifest-driven Workfl
   const overlayEvents = await api<{ items: Array<{ eventType: string }> }>(page, token, `/executions/${overlayExecution}/events?after=0&limit=200`)
   expect(overlayEvents.items.filter((item) => item.eventType === 'node.debug_overlay_applied')).toHaveLength(2)
   await expect(runtimeRail.getByRole('tab', { name: '事件', exact: true }).first()).toBeVisible()
+
+  await runtimeRail.getByRole('tab', { name: 'Trace' }).click()
+  const failedTraceRequest = page.waitForResponse((response) => response.url().includes(`/api/v1/executions/${contractFailureId}/trace?`) && response.request().method() === 'GET')
+  await executionSelector.click()
+  await page.locator(`[role="option"][data-option-value="${contractFailureId}"]`).click()
+  await failedTraceRequest
+  await expect(executionSelector).toContainText('失败')
+  await expect(runtimeRail.getByTestId('trace-node-view')).toBeVisible()
+  await expect(runtimeRail.getByTestId('trace-node-view')).toContainText('NODE_OUTPUT_SCHEMA_VALIDATION_FAILED')
+  await runtimeRail.getByRole('tab', { name: '高级瀑布' }).click()
+  await expect(runtimeRail.getByRole('treegrid', { name: 'Trace 层级瀑布' })).toBeVisible()
 
   await openNodeDetails(page, code)
   await selectDebugMode(page, 'single_node')
@@ -812,6 +942,7 @@ test('M6 Studio creates, debugs, versions and publishes a manifest-driven Workfl
   for (const locale of ['zh-CN', 'en-US'] as const) {
     await setLocale(page, locale)
     await runtimeRail.getByRole('tab', { name: 'Trace' }).click()
+    await runtimeRail.getByRole('tab', { name: locale === 'zh-CN' ? '高级瀑布' : 'Advanced waterfall' }).click()
     for (const theme of ['light', 'dark'] as const) {
       await setTheme(page, theme)
       for (const viewport of viewports) {
@@ -859,6 +990,200 @@ test('M6 Studio creates, debugs, versions and publishes a manifest-driven Workfl
 
   await concurrent.close()
   await approvalPage.close()
+})
+
+test('M6 standalone Model sends prompt and question as ordered messages and exposes text', async ({ page }) => {
+  const { token } = await login(page)
+  await ensureStudioResources(page, token)
+  const workflowName = `M6 Model Contract ${Date.now()}`
+  const workflowId = await createWorkflow(page, workflowName)
+  await grantResource(page, 'credential', studioCredentialName, undefined, workflowName)
+  await grantResource(page, 'model', studioModelName, undefined, workflowName)
+
+  await page.goto(`/workflows/${workflowId}/editor`)
+  await expect(page.getByTestId('workflow-canvas')).toBeVisible()
+  await setStartInputs(page)
+  await addFromCreator(page, 'palette-action-model')
+  await page.getByRole('button', { name: /^(适应画布|Fit View)$/ }).click({ force: true })
+  const model = page.locator('.react-flow__node-manifest').filter({ hasText: /模型|Model/ }).first()
+  const details = await openNodeDetails(page, model)
+  await choose(page, details.getByTestId('resource-selector-model'), new RegExp(studioModelName))
+  await fillNativeText(page, details.getByTestId('parameter-prompt'), '你叫 kakj\nTRACE_LARGE_RESPONSE')
+  await chooseReference(page, details.getByTestId('parameter-userQuestion'), /输入|Inputs/, ['question'])
+  const modelKey = await details.getByLabel(/引用键|Reference key/).inputValue()
+  await details.getByRole('button', { name: /^(关闭|Close)$/ }).first().click()
+
+  await connect(page, page.getByTestId('workflow-start'), 'main', model, 'main')
+  await connect(page, model, 'main', page.getByTestId('workflow-end'), 'main')
+  await setEndOutput(page, modelKey, 'json.text')
+  const draft = await saveAndReadDraft(page, token, workflowId)
+  const modelDefinition = draft.definition.nodes.find((node) => node.type === 'model')
+  expect(modelDefinition?.parameters).toMatchObject({
+    prompt: { kind: 'literal', value: '你叫 kakj\nTRACE_LARGE_RESPONSE' },
+    userQuestion: expect.objectContaining({ kind: 'reference', selector: expect.objectContaining({ namespace: 'inputs', path: ['question'] }) }),
+  })
+  expect(draft.definition.end.outputs.answer.value).toMatchObject({
+    kind: 'reference',
+    selector: expect.objectContaining({ sourceNodeId: modelDefinition?.id, path: ['text'] }),
+  })
+
+  const executionId = await startDebug(page, () => studioRun(page).click())
+  await waitExecution(page, token, executionId, ['succeeded'])
+  let modelSpan: { spanId: string } | undefined
+  await expect.poll(async () => {
+    const trace = await api<{ spans: Array<{ spanId: string; spanKind: string; spanName: string }> }>(page, token, `/executions/${executionId}/trace?limit=100`)
+    modelSpan = trace.spans.find((span) => span.spanKind === 'runtime_call' && span.spanName === 'Model call')
+    return modelSpan?.spanId
+  }, { timeout: 60_000, intervals: [500, 1_000, 2_000] }).toBeTruthy()
+  const nodeRuns = await api<{ items: Array<{ nodeId: string; costMicros: number; costCurrency?: string; startedAt?: string; endedAt?: string; output?: { main?: Array<{ json?: Record<string, unknown> }> } }> }>(page, token, `/executions/${executionId}/nodes`)
+  const modelRun = nodeRuns.items.find((node) => node.nodeId === modelDefinition?.id)
+  const modelOutput = modelRun?.output?.main?.[0].json
+  expect(modelOutput).toMatchObject({ text: expect.any(String), reasoningContent: null, structuredOutput: null, files: [], citations: [], partial: false })
+  expect(modelRun).toMatchObject({ costMicros: 390, costCurrency: 'USD', startedAt: expect.any(String), endedAt: expect.any(String) })
+  expect(modelOutput).not.toHaveProperty('message')
+  expect(modelOutput).not.toHaveProperty('messages')
+  expect(modelOutput).not.toHaveProperty('toolCalls')
+  expect(modelOutput).not.toHaveProperty('providerRawResponse')
+
+  const traceDetail = await api<{
+    contents: Array<{ kind: string; preview?: { messages?: Array<{ role: string; content: string }>; choices?: unknown[] }; contentRef?: string | null }>
+  }>(page, token, `/executions/${executionId}/trace/spans/${modelSpan!.spanId}`)
+  const requestContent = traceDetail.contents.find((content) => content.kind === 'runtime_request')
+  const responseContent = traceDetail.contents.find((content) => content.kind === 'runtime_response')
+  expect(requestContent?.preview?.messages).toEqual([
+    { role: 'system', content: '你叫 kakj\nTRACE_LARGE_RESPONSE' },
+    { role: 'user', content: 'Run the workflow from the Studio.' },
+  ])
+  expect(responseContent?.preview).toBeNull()
+  expect(responseContent?.contentRef).toMatch(/^[0-9a-f-]{36}$/)
+  const traceJson = JSON.stringify(traceDetail)
+  expect(traceJson).not.toContain('m5-model-secret')
+  expect(traceJson.toLowerCase()).not.toContain('authorization')
+
+  type ModelExecutionEvent = { sequence: number; eventType: string; status: string }
+  let modelEvents: { items: ModelExecutionEvent[]; nextCursor?: number | null } | undefined
+  await expect.poll(async () => {
+    modelEvents = await api<{ items: ModelExecutionEvent[]; nextCursor?: number | null }>(page, token, `/executions/${executionId}/events?after=0&limit=200`)
+    return modelEvents.items.at(-1)?.eventType
+  }, { timeout: 30_000, intervals: [250, 500, 1_000] }).toBe('execution.succeeded')
+  expect(modelEvents!.items.map((event) => event.sequence)).toEqual(modelEvents!.items.map((event) => event.sequence).sort((left, right) => left - right))
+  const modelIncrementalEvents = await api<{ items: ModelExecutionEvent[]; nextCursor?: number | null }>(page, token, `/executions/${executionId}/events?after=4&limit=2`)
+  expect(modelIncrementalEvents.items).toHaveLength(2)
+  expect(modelIncrementalEvents.items.every((event) => event.sequence > 4)).toBe(true)
+  expect(modelIncrementalEvents.nextCursor).toBe(modelIncrementalEvents.items.at(-1)?.sequence)
+
+  const modelRuntimeRail = page.getByTestId('runtime-rail')
+  await modelRuntimeRail.getByRole('tab', { name: '事件', exact: true }).click()
+  await expect(modelRuntimeRail.getByTestId('execution-events')).toContainText('execution.succeeded')
+  await expect(modelRuntimeRail.getByTestId('execution-events')).not.toContainText('未知（reserved）')
+  await modelRuntimeRail.getByRole('tab', { name: 'Trace' }).click()
+  await expect(modelRuntimeRail).toHaveCSS('height', '560px')
+  await expect(modelRuntimeRail.getByTestId('trace-final-output')).toContainText(/kakj/i)
+  await expect(modelRuntimeRail.getByTestId('trace-node-view')).toContainText(/text|kakj/i)
+  const modelNodeCard = modelRuntimeRail.getByTestId('trace-node-card').filter({ hasText: /模型|Model/ }).first()
+  await expect(modelNodeCard).toContainText(/\$0\.000390/)
+  expect(await modelNodeCard.locator('button').first().getAttribute('class')).toContain('grid-cols-[minmax(160px,1fr)_auto_auto]')
+  await modelRuntimeRail.getByRole('tab', { name: '高级瀑布' }).click()
+  const modelWaterfall = modelRuntimeRail.getByTestId('trace-waterfall')
+  const modelCallRow = modelWaterfall.getByRole('row').filter({ hasText: 'Model call' }).first()
+  await expect(modelCallRow).toBeVisible({ timeout: 30_000 })
+  await modelCallRow.click()
+  await modelWaterfall.getByRole('tab', { name: 'Provider / Runtime 响应' }).click()
+  const artifactDownload = page.waitForEvent('download')
+  await modelWaterfall.getByRole('button', { name: /Artifact/ }).click()
+  const artifact = await artifactDownload
+  expect(artifact.suggestedFilename()).toBe(`${responseContent!.contentRef}.json`)
+  const artifactPath = await artifact.path()
+  expect(artifactPath).toBeTruthy()
+  const artifactText = await readFile(artifactPath!, 'utf8')
+  expect(artifactText.length).toBeGreaterThan(16 * 1024)
+  expect((JSON.parse(artifactText) as { choices?: unknown[] }).choices).toHaveLength(1)
+  expect(artifactText).toContain('trace-artifact-marker')
+  expect(artifactText).not.toContain('m5-model-secret')
+  expect(artifactText.toLowerCase()).not.toContain('authorization')
+  await modelWaterfall.getByRole('tab', { name: '原始数据' }).click()
+  const modelRawPanel = modelWaterfall.getByRole('tabpanel')
+  const modelRawBox = await modelRawPanel.boundingBox()
+  const modelRailBox = await modelRuntimeRail.boundingBox()
+  expect(modelRawBox!.y + modelRawBox!.height).toBeLessThanOrEqual(modelRailBox!.y + modelRailBox!.height + 1)
+  expect(await modelRawPanel.evaluate((panel) => {
+    panel.scrollTop = panel.scrollHeight
+    return Math.ceil(panel.scrollTop + panel.clientHeight) >= panel.scrollHeight
+  })).toBe(true)
+})
+
+test('M6 standalone MCP consumes configured arguments and returns semantic fields', async ({ page }) => {
+  const { token } = await login(page)
+  await ensureStudioResources(page, token)
+  const workflowName = `M6 MCP Contract ${Date.now()}`
+  const workflowId = await createWorkflow(page, workflowName)
+  await grantResource(page, 'credential', studioCredentialName, undefined, workflowName)
+  await grantResource(page, 'mcp_server', studioMcpName, undefined, workflowName)
+  await grantResource(page, 'mcp_tool', 'Echo', studioMcpName, workflowName)
+
+  await page.goto(`/workflows/${workflowId}/editor`)
+  await expect(page.getByTestId('workflow-canvas')).toBeVisible()
+  await setStartInputs(page)
+  await addFromCreator(page, 'palette-action-mcp_tool')
+  await page.getByRole('button', { name: /^(适应画布|Fit View)$/ }).click({ force: true })
+  const mcp = page.locator('.react-flow__node-manifest').filter({ hasText: /工具|Tool/ }).first()
+  const details = await openNodeDetails(page, mcp)
+  await choose(page, details.getByTestId('resource-selector-mcp_tool'), /echo/i)
+  const argumentsField = details.getByTestId('parameter-arguments')
+  await argumentsField.getByRole('button', { name: /添加字段|Add field/ }).click()
+  const key = argumentsField.getByRole('textbox', { name: /键|Key/ }).last()
+  await key.fill('text')
+  await key.blur()
+  const argumentText = details.locator('[data-field-path="arguments.text"]').getByRole('textbox').last()
+  await expect(argumentText).toBeVisible()
+  await argumentText.fill('standalone-mcp-arguments')
+  const mcpKey = await details.getByLabel(/引用键|Reference key/).inputValue()
+  await details.getByRole('button', { name: /^(关闭|Close)$/ }).first().click()
+
+  await connect(page, page.getByTestId('workflow-start'), 'main', mcp, 'main')
+  await connect(page, mcp, 'main', page.getByTestId('workflow-end'), 'main')
+  await setEndOutput(page, mcpKey, 'json.text')
+  const draft = await saveAndReadDraft(page, token, workflowId)
+  const mcpDefinition = draft.definition.nodes.find((node) => node.type === 'mcp_tool')
+  expect(JSON.stringify(mcpDefinition?.parameters.arguments)).toContain('standalone-mcp-arguments')
+
+  const executionId = await startDebug(page, () => studioRun(page).click())
+  await waitExecution(page, token, executionId, ['succeeded'])
+  const runs = await api<{ items: Array<{ nodeId: string; output?: { main?: Array<{ json?: Record<string, unknown> }> } }> }>(page, token, `/executions/${executionId}/nodes`)
+  const output = runs.items.find((node) => node.nodeId === mcpDefinition?.id)?.output?.main?.[0].json
+  expect(output).toMatchObject({ text: expect.any(String), structuredOutput: { text: 'standalone-mcp-arguments' }, files: [] })
+  expect(Object.keys(output ?? {}).sort()).toEqual(['files', 'structuredOutput', 'text'])
+})
+
+test('M6 standalone Wait resumes a duration suspension with the stable output contract', async ({ page }) => {
+  const { token } = await login(page)
+  const workflowName = `M6 Wait Contract ${Date.now()}`
+  const workflowId = await createWorkflow(page, workflowName)
+  await page.goto(`/workflows/${workflowId}/editor`)
+  await expect(page.getByTestId('workflow-canvas')).toBeVisible()
+  await setStartInputs(page)
+  await addFromCreator(page, 'palette-action-wait')
+  await page.getByRole('button', { name: /^(适应画布|Fit View)$/ }).click({ force: true })
+  const wait = page.locator('.react-flow__node-manifest').filter({ hasText: /等待|Wait/ }).first()
+  const details = await openNodeDetails(page, wait)
+  await choose(page, details.getByTestId('parameter-kind'), /持续时间|Duration/)
+  await details.getByTestId('parameter-durationMs').getByRole('spinbutton').fill('1500')
+  const waitKey = await details.getByLabel(/引用键|Reference key/).inputValue()
+  await details.getByRole('button', { name: /^(关闭|Close)$/ }).first().click()
+
+  await connect(page, page.getByTestId('workflow-start'), 'main', wait, 'main')
+  await connect(page, wait, 'resumed', page.getByTestId('workflow-end'), 'main')
+  await setEndOutput(page, waitKey, 'json.status', 'resumed', false)
+  const draft = await saveAndReadDraft(page, token, workflowId)
+  const waitDefinition = draft.definition.nodes.find((node) => node.type === 'wait')
+  expect(waitDefinition?.parameters).toMatchObject({ kind: 'duration', durationMs: 1500 })
+
+  const executionId = await startDebug(page, () => studioRun(page).click())
+  await waitExecution(page, token, executionId, ['succeeded'])
+  const runs = await api<{ items: Array<{ nodeId: string; output?: { resumed?: Array<{ json?: Record<string, unknown> }> } }> }>(page, token, `/executions/${executionId}/nodes`)
+  const output = runs.items.find((node) => node.nodeId === waitDefinition?.id)?.output?.resumed?.[0].json
+  expect(output).toMatchObject({ status: 'resumed', payload: expect.anything(), resumedAt: expect.any(String) })
+  expect(Number.isNaN(Date.parse(String(output?.resumedAt)))).toBe(false)
 })
 
 test('M6 Studio makes dual-Agent output selection explicit across serial, parallel and Merge topologies', async ({ page }, testInfo) => {
@@ -932,15 +1257,19 @@ test('M6 Studio makes dual-Agent output selection explicit across serial, parall
   const deployment = await mutate<ApplicationDeployment>(page, token, `/applications/${application.id}/deployments`, 'POST', { workflowVersionId: primaryVersion.id, environmentId: environment!.id, sessionVersionPolicy: 'pinned' })
   expect(deployment.id).toBeTruthy()
   await waitApplicationDeployment(page, token, application.id, deployment.id)
+  await publishCompatibleChatMapping(page, token, application.id, deployment.id)
 
   await page.goto('/playground')
   await page.getByRole('combobox').click()
   await page.getByRole('option', { name: workflowName, exact: true }).click()
+  await page.getByRole('tab', { name: '对话测试' }).click()
   const sessionResponse = page.waitForResponse((value) => value.url().includes('/gateway/v1/applications/') && value.url().endsWith('/sessions') && value.request().method() === 'POST')
   await page.getByRole('button', { name: '新建会话' }).click()
   const session = await (await sessionResponse).json() as { id: string }
   const invocationResponse = page.waitForResponse((value) => value.url().includes('/gateway/v1/sessions/') && value.url().endsWith('/messages') && value.request().method() === 'POST')
-  await page.getByPlaceholder('输入消息进行测试…').fill('M6 dual Agent output')
+  const composer = page.getByPlaceholder('输入消息进行测试…')
+  await expect(composer).toHaveJSProperty('tagName', 'TEXTAREA')
+  await composer.fill('M6 dual Agent output')
   await page.getByRole('button', { name: '发送' }).click()
   const invocationHttpResponse = await invocationResponse
   if (!invocationHttpResponse.ok()) {
@@ -956,6 +1285,10 @@ test('M6 Studio makes dual-Agent output selection explicit across serial, parall
   expect(completed?.error).toBeNull()
   const messagesResponse = await page.request.get(`${gatewayBase}/gateway/v1/sessions/${session.id}/messages`, { headers: { Authorization: `Bearer ${token}` } })
   const messages = await messagesResponse.json() as GatewayMessage[]
+  const sessionTitle = page.locator('aside').getByText('M6 dual Agent output', { exact: true })
+  await expect(sessionTitle).toBeVisible({ timeout: 30_000 })
+  await sessionTitle.hover()
+  await expect(page.getByRole('tooltip')).toHaveText('M6 dual Agent output')
   const assistant = messages.find((message) => message.role === 'assistant')
   expect(assistant).toBeTruthy()
   const nodeRuns = await api<{ items: Array<{ nodeId: string; status: string; output?: { main?: Array<{ json?: { text?: string } }> } }> }>(page, token, `/executions/${completed!.executionId}/nodes`)

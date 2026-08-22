@@ -3,6 +3,7 @@ import { expect, type APIResponse, type Page, test } from '@playwright/test'
 const password = 'agentx-e2e-admin-password'
 const company = 'Agentx E2E'
 const gatewayBase = process.env.AGENTX_E2E_RUNTIME_URL ?? ''
+const echoBaseUrl = process.env.AGENTX_E2E_ECHO_BASE_URL ?? 'http://echo-mcp:8090'
 
 type Workflow = { id: string; name: string }
 type Draft = { revision: number; definition: Definition; editorDocument: Record<string, unknown> }
@@ -14,6 +15,8 @@ type TerminalError = { primaryError?: { code?: string; message?: string }; error
 type Invocation = { id: string; executionId?: string; status: string; outputs?: Record<string, unknown>; error?: TerminalError }
 type Execution = { id: string; status: string; parentExecutionId?: string; errorCode?: string }
 type ExecutionPage = { items: Execution[] }
+type Approval = { id: string; executionId: string; status: string; version: number }
+type PageResponse<T> = { items: T[] }
 type Definition = {
   schemaVersion: '5.0'
   start: { inputs: Record<string, unknown>; contexts: Record<string, unknown> }
@@ -87,6 +90,7 @@ const template = (prefix: string, value: ReturnType<typeof reference>) => ({
   kind: 'template',
   segments: [{ kind: 'text', text: prefix }, { kind: 'reference', selector: value.selector, missingPolicy: value.missingPolicy }],
 })
+const literal = (value: unknown) => ({ kind: 'literal', value })
 
 async function createWorkflow(page: Page, token: string, name: string, definition: Definition) {
   const workflow = await request<Workflow>(page, token, '/workflows', 'POST', {
@@ -230,7 +234,14 @@ test('Workflow 5.0 closes Composite, Context, Package, Multipart and cancellatio
     },
     nodes: [
       node('child', childType, { workflowVersionId: child.version.id, inputs: { question: reference('inputs', ['question']) } }),
-      node('summary', 'set', { values: { answer: reference('outputs', ['answer'], 'child'), counter: reference('contexts', ['counter']) }, keepOnlySet: true }),
+      node('summary', 'set', { values: { answer: reference('outputs', ['answer'], 'child'), counter: reference('contexts', ['counter']) }, keepOnlySet: true }, {
+        outputProjection: {
+          main: {
+            answer_text: { value: reference('item', ['answer']), schema: { type: 'string' }, sensitive: false },
+            counter_value: { value: reference('item', ['counter']), schema: { type: 'number' }, sensitive: false },
+          },
+        },
+      }),
     ],
     connections: [
       { id: 'start-child', sourceNodeId: '__start__', sourceHandle: 'main', targetNodeId: 'child', targetHandle: 'main', order: 0 },
@@ -239,8 +250,8 @@ test('Workflow 5.0 closes Composite, Context, Package, Multipart and cancellatio
     ],
     end: {
       outputs: {
-        answer: { value: reference('outputs', ['answer'], 'summary'), schema: { type: 'string' }, required: true, sensitive: false },
-        counter: { value: reference('outputs', ['counter'], 'summary'), schema: { type: 'number' }, required: true, sensitive: false },
+        answer: { value: reference('outputs', ['answer_text'], 'summary'), schema: { type: 'string' }, required: true, sensitive: false },
+        counter: { value: reference('outputs', ['counter_value'], 'summary'), schema: { type: 'number' }, required: true, sensitive: false },
         attachments: { value: reference('inputs', ['attachments']), schema: { type: 'array' }, required: true, sensitive: false },
         prefix: { value: reference('inputs', ['prefix']), schema: { type: 'string' }, required: true, sensitive: false },
       },
@@ -262,14 +273,19 @@ test('Workflow 5.0 closes Composite, Context, Package, Multipart and cancellatio
   expect(invalidInput.status()).toBe(400)
   expect(await invalidInput.json()).toMatchObject({ code: 'INPUT_SCHEMA_VALIDATION_FAILED' })
 
+  const uploadArtifact = async (id: string, file: { name: string; type: string; contents: string }, index = 0) => {
+    const response = await page.request.post(`${gatewayBase}/gateway/v1/artifacts`, {
+      headers: { Authorization: `Bearer ${application.apiKey}`, 'Idempotency-Key': `w4-artifact-${id}-${index}-${suffix}` },
+      multipart: { file: { name: file.name, mimeType: file.type, buffer: Buffer.from(file.contents) } },
+    })
+    await expectResponse(response, `Artifact upload ${id}/${index}`)
+    return { ...await response.json() as { artifactId: string; contentType: string; sizeBytes: number; sha256: string }, type: 'file', fileName: file.name }
+  }
   const rejectFiles = async (id: string, files: Array<{ name: string; type: string; contents: string }>, code: string) => {
-    const form = new FormData()
-    form.append('question', 'hello')
-    form.append('responseMode', 'async')
-    for (const file of files) form.append('attachments', new File([file.contents], file.name, { type: file.type }))
+    const attachments = await Promise.all(files.map((file, index) => uploadArtifact(id, file, index)))
     const response = await page.request.post(`${gatewayBase}/gateway/v1/workflows/${application.slug}/invoke`, {
       headers: { Authorization: `Bearer ${application.apiKey}`, 'Idempotency-Key': `w4-${id}-${suffix}` },
-      multipart: form,
+      data: { input: { question: 'hello', attachments }, responseMode: 'async' },
     })
     expect(response.status()).toBe(400)
     expect(await response.json()).toMatchObject({ code })
@@ -286,16 +302,13 @@ test('Workflow 5.0 closes Composite, Context, Package, Multipart and cancellatio
     { name: 'third.txt', type: 'text/plain', contents: '3' },
   ], 'INPUT_SCHEMA_VALIDATION_FAILED')
 
-  const multipart = await page.request.post(`${gatewayBase}/gateway/v1/workflows/${application.slug}/invoke`, {
+  const artifact = await uploadArtifact('success', { name: 'question.txt', type: 'text/plain', contents: 'workflow-4-file' })
+  const artifactInvocation = await page.request.post(`${gatewayBase}/gateway/v1/workflows/${application.slug}/invoke`, {
     headers: { Authorization: `Bearer ${application.apiKey}`, 'Idempotency-Key': `w4-multipart-${suffix}` },
-    multipart: {
-      question: 'hello',
-      responseMode: 'sync',
-      attachments: { name: 'question.txt', mimeType: 'text/plain', buffer: Buffer.from('workflow-4-file') },
-    },
+    data: { input: { question: 'hello', attachments: [artifact] }, responseMode: 'sync' },
   })
-  await expectResponse(multipart, 'multipart invoke')
-  const invocation = await multipart.json() as Invocation
+  await expectResponse(artifactInvocation, 'Artifact reference invoke')
+  const invocation = await artifactInvocation.json() as Invocation
   const completed = invocation.status === 'completed' ? invocation : await waitInvocation(page, application.apiKey, invocation.id)
   expect(completed.status).toBe('completed')
   expect(completed.outputs).toMatchObject({ answer: 'v1:hello', counter: 1, prefix: 'default-applied' })
@@ -379,14 +392,82 @@ test('Workflow 5.0 closes Composite, Context, Package, Multipart and cancellatio
   const parentExecution = await waitExecution(page, token, slowTerminal.executionId!, ['failed'])
   let childExecution: Execution | undefined
   await expect.poll(async () => {
-    const executions = await request<ExecutionPage>(page, token, '/executions?pageSize=100')
+    const executions = await request<ExecutionPage>(page, token, '/executions?limit=100')
     childExecution = executions.items.find((value) => value.parentExecutionId === parentExecution.id)
     return childExecution?.status
   }, { timeout: 60_000 }).toBe('cancelled')
 })
 
+test('Workflow 5.0 declarative HTTP consumes request parameters and canonically converts its body for End', async ({ page }) => {
+  const token = await login(page)
+  const suffix = Date.now()
+  const environment = (await request<Environment[]>(page, token, '/environments')).find((value) => value.code === 'development')!
+  const definition: Definition = {
+    schemaVersion: '5.0',
+    start: { inputs: { type: 'object', properties: {}, additionalProperties: false }, contexts: {} },
+    nodes: [node('http', 'declarative_http', {
+      method: literal('POST'),
+      url: literal(`${echoBaseUrl}/v1/chat/completions`),
+      headers: {
+        Authorization: literal('Bearer m5-model-secret'),
+        'Content-Type': literal('application/json'),
+      },
+      body: {
+        model: literal('contract-http'),
+        messages: [
+          { role: literal('system'), content: literal('Declarative HTTP contract') },
+          { role: literal('user'), content: literal('Return the fixture response') },
+        ],
+      },
+    })],
+    connections: [
+      { id: 'start-http', sourceNodeId: '__start__', sourceHandle: 'main', targetNodeId: 'http', targetHandle: 'main', order: 0 },
+      { id: 'http-end', sourceNodeId: 'http', sourceHandle: 'main', targetNodeId: '__end__', targetHandle: 'main', order: 0 },
+    ],
+    end: {
+      outputs: {
+        status_code: { value: reference('outputs', ['statusCode'], 'http'), schema: { type: 'integer' }, required: true, sensitive: false },
+        body_text: { value: reference('outputs', ['body'], 'http'), schema: { type: 'string' }, required: true, sensitive: false },
+      },
+    },
+    settings: { executionOrder: 'deterministic' },
+  }
+  const workflow = await createWorkflow(page, token, `W4 Declarative HTTP ${suffix}`, definition)
+  const application = await deployApplication(page, token, workflow.workflow, workflow.version, environment.id, `w4-http-${suffix}`)
+  const invocation = await request<Invocation>(page, application.apiKey, `/workflows/${application.slug}/invoke`, 'POST', {
+    input: {}, responseMode: 'sync',
+  }, true, { 'Idempotency-Key': `w4-http-${suffix}` })
+  const terminal = invocation.status === 'completed' ? invocation : await waitInvocation(page, application.apiKey, invocation.id)
+
+  expect(terminal.status).toBe('completed')
+  expect(terminal.outputs?.status_code).toBe(200)
+  expect(terminal.outputs?.body_text).toBe('{"choices":[{"finish_reason":"stop","index":0,"message":{"content":"M5 Agent completed after the MCP tool result","role":"assistant"}}],"id":"m5-completion","model":"contract-http","object":"chat.completion","usage":{"completion_tokens":9,"prompt_tokens":24,"total_tokens":45}}')
+  expect(terminal.executionId).toBeTruthy()
+  let endBoundary: { spanId: string } | undefined
+  await expect.poll(async () => {
+    const trace = await request<{ spans: Array<{ spanId: string; spanKind: string; spanName: string; hasDetails: boolean }> }>(page, token, `/executions/${terminal.executionId}/trace?limit=100`)
+    endBoundary = trace.spans.find((span) => span.spanKind === 'boundary' && span.spanName === 'End' && span.hasDetails)
+    return endBoundary?.spanId
+  }, { timeout: 60_000, intervals: [500, 1_000, 2_000] }).toBeTruthy()
+  const endDetail = await request<{
+    contents: Array<{ eventId: string; kind: string; preview?: { records?: Array<{ targetPath: string; sourceType: string; mode: string; resultBytes: number }> } }>
+    events: Array<{ eventId: string; attributes?: { diagnostic?: string; conversionCount?: number } }>
+  }>(page, token, `/executions/${terminal.executionId}/trace/spans/${endBoundary!.spanId}`)
+  const conversion = endDetail.contents.find((content) => content.kind === 'conversion_record')
+  expect(conversion).toBeTruthy()
+  const conversionEvent = endDetail.events.find((event) => event.eventId === conversion!.eventId)
+  expect(conversionEvent?.attributes).toMatchObject({ diagnostic: 'string_conversion', conversionCount: 1 })
+  expect(conversion?.preview?.records).toEqual([
+    expect.objectContaining({ sourceType: 'object', mode: 'reference', resultBytes: (terminal.outputs?.body_text as string).length }),
+  ])
+  const conversionJson = JSON.stringify({ content: conversion, event: conversionEvent })
+  expect(conversionJson).not.toContain('m5-model-secret')
+  expect(conversionJson).not.toContain('M5 Agent completed after the MCP tool result')
+})
+
 test('Workflow 5.0 turns concurrent Session Context CAS conflicts into a terminal failure', async ({ page }) => {
   const token = await login(page)
+  const actor = await request<{ id: string }>(page, token, '/auth/me')
   const suffix = Date.now()
   const environment = (await request<Environment[]>(page, token, '/environments')).find((value) => value.code === 'development')!
   const definition: Definition = {
@@ -401,14 +482,18 @@ test('Workflow 5.0 turns concurrent Session Context CAS conflicts into a termina
       },
     },
     nodes: [
-      node('wait', 'wait', { kind: 'duration', durationMs: 1_500 }),
+      node('approval', 'approval', {
+        title: `W4 Session CAS barrier ${suffix}`,
+        timeoutMs: 300_000,
+        candidateUserId: literal(actor.id),
+      }),
       node('write', 'set', { values: { counter: reference('contexts', ['session_counter']) }, keepOnlySet: true }, {
         contextWrites: [{ operation: 'increment', path: 'session_counter', value: { kind: 'literal', value: 1 } }],
       }),
     ],
     connections: [
-      { id: 'start-wait', sourceNodeId: '__start__', sourceHandle: 'main', targetNodeId: 'wait', targetHandle: 'main', order: 0 },
-      { id: 'wait-write', sourceNodeId: 'wait', sourceHandle: 'resumed', targetNodeId: 'write', targetHandle: 'main', order: 0 },
+      { id: 'start-approval', sourceNodeId: '__start__', sourceHandle: 'main', targetNodeId: 'approval', targetHandle: 'main', order: 0 },
+      { id: 'approval-write', sourceNodeId: 'approval', sourceHandle: 'approved', targetNodeId: 'write', targetHandle: 'main', order: 0 },
       { id: 'write-end', sourceNodeId: 'write', sourceHandle: 'main', targetNodeId: '__end__', targetHandle: 'main', order: 0 },
     ],
     end: { outputs: { counter: { value: reference('contexts', ['session_counter']), schema: { type: 'number' }, required: true, sensitive: false } } },
@@ -424,6 +509,19 @@ test('Workflow 5.0 turns concurrent Session Context CAS conflicts into a termina
     'Idempotency-Key': `w4-session-${suffix}-${invocationIndex++}`,
   })
   const [first, second] = await Promise.all([invoke(), invoke()])
+  expect(first.executionId).toBeTruthy()
+  expect(second.executionId).toBeTruthy()
+  const executionIds = new Set([first.executionId!, second.executionId!])
+  let approvals: Approval[] = []
+  await expect.poll(async () => {
+    const result = await request<PageResponse<Approval>>(page, token, '/approvals?pageSize=100')
+    approvals = result.items.filter((approval) => executionIds.has(approval.executionId))
+    return approvals.length === 2 && approvals.every((approval) => approval.status === 'pending')
+  }, { timeout: 180_000, intervals: [250, 500, 1_000, 2_000] }).toBeTruthy()
+  for (const approval of approvals) {
+    const claimed = await request<Approval>(page, token, `/approvals/${approval.id}/claim`, 'POST', { version: approval.version })
+    await request<Approval>(page, token, `/approvals/${approval.id}/approve`, 'POST', { version: claimed.version, input: null })
+  }
   const terminals = await Promise.all([waitInvocation(page, application.apiKey, first.id), waitInvocation(page, application.apiKey, second.id)])
   expect(terminals.map((value) => value.status).sort()).toEqual(['completed', 'failed'])
   expect(terminals.find((value) => value.status === 'failed')?.error?.primaryError?.code).toBe('SESSION_CONTEXT_VERSION_CONFLICT')
@@ -506,6 +604,6 @@ test('Workflow 5.0 propagates fail-fast, collected and Composite End errors', as
   const parent = await invokeFailure('Composite Error', parentDefinition)
   expect(parent.terminal).toMatchObject({ status: 'failed', error: { primaryError: { code: 'CHILD_FAILED' } } })
   const parentExecution = await waitExecution(page, token, parent.terminal.executionId!, ['failed'])
-  const executions = await request<ExecutionPage>(page, token, '/executions?pageSize=100')
+  const executions = await request<ExecutionPage>(page, token, '/executions?limit=100')
   expect(executions.items).toContainEqual(expect.objectContaining({ parentExecutionId: parentExecution.id, status: 'failed' }))
 })

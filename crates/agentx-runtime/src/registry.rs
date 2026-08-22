@@ -425,6 +425,7 @@ fn m5_manifest(
         "model" => {
             json!({"prompt":{"control":"prompt"},"userQuestion":{"control":"text"}})
         }
+        "mcp_tool" => json!({"arguments":{"control":"json"}}),
         "rag" | "memory" => json!({"operation":{"control":"select"},"input":{"control":"json"}}),
         "agent" => json!({
             "systemPrompt":{"control":"prompt"},"userQuestion":{"control":"text"},
@@ -435,8 +436,7 @@ fn m5_manifest(
         }),
         "code" => json!({
             "runner":{"control":"select"},"source":{"control":"code","languageField":"runner"},
-            "arguments":{"control":"json"},"networkPolicy":{"control":"json"},
-            "outputPaths":{"control":"json"},"credentialFiles":{"control":"json"}
+            "arguments":{"control":"json"},"networkPolicy":{"control":"json"}
         }),
         _ => json!({}),
     };
@@ -676,8 +676,8 @@ fn default_manifests() -> Vec<NodeManifestVersion> {
                 ],
                 SideEffectLevel::None,
             ),
-            json!({"type":"object","properties":{"batchSize":{"type":"integer","minimum":1,"default":1}},"additionalProperties":false}),
-            json!({"fields":{"batchSize":{"control":"number"}}}),
+            json!({"type":"object","additionalProperties":false}),
+            json!({}),
         ),
         configured(
             manifest(
@@ -775,7 +775,7 @@ fn default_manifests() -> Vec<NodeManifestVersion> {
         m5_manifest(
             "mcp_tool",
             NodeCapability::McpTool,
-            json!({"type":"object","properties":{"resourceId":{"type":"string","format":"uuid"},"arguments":{}},"additionalProperties":false}),
+            json!({"type":"object","properties":{"arguments":{}},"additionalProperties":false}),
             SideEffectLevel::Irreversible,
         ),
         m5_manifest(
@@ -787,13 +787,13 @@ fn default_manifests() -> Vec<NodeManifestVersion> {
         m5_manifest(
             "rag",
             NodeCapability::Rag,
-            json!({"type":"object","required":["operation"],"properties":{"operation":{"enum":["query","retrieve","insert","delete","health_check"]},"input":{}},"additionalProperties":false}),
+            json!({"type":"object","required":["operation"],"properties":{"operation":{"enum":["query","insert"]},"input":{}},"additionalProperties":false}),
             SideEffectLevel::Reversible,
         ),
         m5_manifest(
             "memory",
             NodeCapability::Memory,
-            json!({"type":"object","required":["operation"],"properties":{"operation":{"enum":["get","search","add","update","delete"]},"input":{}},"additionalProperties":false}),
+            json!({"type":"object","required":["operation"],"properties":{"operation":{"enum":["search","add"]},"input":{}},"additionalProperties":false}),
             SideEffectLevel::Reversible,
         ),
         {
@@ -887,7 +887,7 @@ fn default_manifests() -> Vec<NodeManifestVersion> {
             NodeCapability::Sandbox,
             json!({
                 "type":"object","required":["runner","source"],
-                "properties":{"runner":{"enum":["python","javascript","shell","browser"]},"source":{"type":"string"},"arguments":{"type":"array","items":{"type":"string"}},"networkPolicy":{"type":"object"},"outputPaths":{"type":"array","items":{"type":"string"}},"credentialFiles":{"type":"object","propertyNames":{"pattern":"^[A-Z_][A-Z0-9_]*$"},"additionalProperties":{"type":"string","format":"uuid"}}},
+                "properties":{"runner":{"enum":["python","javascript","shell","browser"]},"source":{"type":"string"},"arguments":{"type":"array","items":{"type":"string"}},"networkPolicy":{"type":"object","properties":{"egressMode":{"enum":["none","public_https"],"default":"none"}},"additionalProperties":false}},
                 "additionalProperties":false
             }),
             SideEffectLevel::Irreversible,
@@ -1006,7 +1006,6 @@ fn chinese_parameter_name(value: &str) -> String {
         "runner" => "运行器".into(),
         "source" => "源代码".into(),
         "networkPolicy" => "网络策略".into(),
-        "outputPaths" => "输出路径".into(),
         "kind" => "类型".into(),
         "durationMs" => "持续时间".into(),
         "timeoutMs" => "超时时间".into(),
@@ -1180,6 +1179,21 @@ fn configure_workflow_v4_capabilities(manifest: &mut NodeManifestVersion) {
                     agentx_node_protocol::OutputCardinality::ZeroOrOne,
                 );
             }
+            let wait_schema = json!({
+                "type":"object",
+                "properties":{
+                    "status":{"type":"string","enum":["resumed","timed_out"]},
+                    "payload":{},
+                    "resumedAt":{"type":["string","null"],"format":"date-time"}
+                },
+                "required":["status","payload","resumedAt"],
+                "additionalProperties":false
+            });
+            for port in ["resumed", "timed_out"] {
+                manifest
+                    .output_port_schemas
+                    .insert(port.into(), wait_schema.clone());
+            }
         }
         "approval" => {
             for port in &manifest.output_ports {
@@ -1188,10 +1202,7 @@ fn configure_workflow_v4_capabilities(manifest: &mut NodeManifestVersion) {
                     agentx_node_protocol::OutputCardinality::ZeroOrOne,
                 );
             }
-            for (port, decision, action) in [
-                ("approved", "approved", "approve"),
-                ("rejected", "rejected", "reject"),
-            ] {
+            for (port, decision) in [("approved", "approved"), ("rejected", "rejected")] {
                 manifest.output_port_schemas.insert(
                     port.into(),
                     json!({
@@ -1201,65 +1212,81 @@ fn configure_workflow_v4_capabilities(manifest: &mut NodeManifestVersion) {
                             "decision":{"type":"string","enum":[decision]},
                             "decidedBy":{"type":"string","format":"uuid"},
                             "reason":{"type":["string","null"]},
-                            "action":{"type":"string","enum":[action]},
                             "input":{}
                         },
-                        "required":["taskId","decision","decidedBy"],
+                        "required":["taskId","decision","decidedBy","reason","input"],
                         "additionalProperties":false
                     }),
                 );
             }
+            manifest.output_port_schemas.insert("timed_out".into(), json!({
+                "type":"object",
+                "properties":{"taskId":{"type":"string","format":"uuid"},"decision":{"type":"string","enum":["timed_out"]},"decidedBy":{"type":"null"},"reason":{"type":"null"},"input":{}},
+                "required":["taskId","decision","decidedBy","reason","input"],
+                "additionalProperties":false
+            }));
         }
         "declarative_http" | "http_request" => {
-            manifest.output_schema = json!({"type":"object","properties":{"status":{"type":"integer"},"statusCode":{"type":"integer"},"headers":{"type":"object"},"body":{},"responseArtifact":{"type":["object","null"]}},"required":["status","statusCode","headers","body"]});
+            manifest.output_schema = json!({"type":"object","properties":{"statusCode":{"type":"integer"},"headers":{"type":"object"},"body":{},"files":{"type":"array","items":artifact_ref_schema()}},"required":["statusCode","headers","body","files"],"additionalProperties":false});
             manifest.output_cardinality.insert(
                 "main".into(),
                 agentx_node_protocol::OutputCardinality::ExactlyOne,
             );
         }
         "model" => {
-            manifest.output_schema = json!({"type":"object","properties":{"text":{"type":"string"},"reasoningContent":{"type":["string","null"]},"message":{},"structuredOutput":{},"citations":{"type":"array"},"toolCalls":{"type":"array"},"files":{"type":"array"},"usage":{"type":"object"},"finishReason":{"type":["string","null"]},"partial":{"type":"boolean"}},"required":["text","toolCalls","files","usage","partial"]});
+            manifest.output_schema = ai_response_schema();
             manifest.output_cardinality.insert(
                 "main".into(),
                 agentx_node_protocol::OutputCardinality::ExactlyOne,
             );
         }
         "agent" => {
-            manifest.output_schema = json!({"type":"object","properties":{"text":{"type":"string"},"message":{},"messages":{"type":"array"},"toolCalls":{"type":"array"},"artifacts":{"type":"array"},"citations":{"type":"array"},"usage":{"type":"object"},"finishReason":{"type":["string","null"]},"partial":{"type":"boolean"}},"required":["text","messages","toolCalls","artifacts","citations","usage","partial"]});
+            manifest.output_schema = ai_response_schema();
             manifest.output_cardinality.insert(
                 "main".into(),
                 agentx_node_protocol::OutputCardinality::ExactlyOne,
             );
         }
         "mcp_tool" => {
-            manifest.output_schema = json!({"type":"object","properties":{"structuredContent":{},"textContent":{"type":"array"},"content":{"type":"array"},"isError":{"type":"boolean"}},"required":["content","textContent","isError"]});
+            manifest.output_schema = tool_response_schema();
             manifest.output_cardinality.insert(
                 "main".into(),
                 agentx_node_protocol::OutputCardinality::ExactlyOne,
             );
         }
         "rag" => {
-            manifest.output_schema = json!({"type":"object","properties":{"documents":{"type":"array"},"chunks":{"type":"array"},"citations":{"type":"array"},"text":{"type":"string"},"recordIds":{"type":"array"}},"additionalProperties":true});
+            manifest.output_schema = json!({"type":"object","properties":{"text":{"type":"string"},"documents":{"type":"array"},"citations":{"type":"array","items":citation_schema()},"recordIds":{"type":"array","items":{"type":"string"}}},"required":["text","documents","citations","recordIds"],"additionalProperties":false});
             manifest.output_cardinality.insert(
                 "main".into(),
                 agentx_node_protocol::OutputCardinality::ExactlyOne,
             );
         }
         "memory" => {
-            manifest.output_schema = json!({"type":"object","properties":{"records":{"type":"array"},"recordIds":{"type":"array"},"text":{"type":"string"}},"additionalProperties":true});
+            manifest.output_schema = json!({"type":"object","properties":{"text":{"type":"string"},"records":{"type":"array"},"recordIds":{"type":"array","items":{"type":"string"}}},"required":["text","records","recordIds"],"additionalProperties":false});
             manifest.output_cardinality.insert(
                 "main".into(),
                 agentx_node_protocol::OutputCardinality::ExactlyOne,
             );
         }
         "code" => {
-            manifest.output_schema = json!({"type":"object","properties":{"stdout":{"type":"string"},"stderr":{"type":"string"},"exitCode":{"type":"integer"},"partial":{"type":"boolean"},"sandboxId":{"type":"string"},"downloadedArtifacts":{"type":"array","items":{"type":"object"}},"structuredOutputs":{"type":"object"}},"required":["stdout","stderr","exitCode","partial","downloadedArtifacts"]});
+            manifest.output_schema = json!({"type":"object","properties":{"stdout":{"type":"string"},"stderr":{"type":"string"},"exitCode":{"type":"integer"},"structuredOutput":{"type":["object","null"]},"files":{"type":"array","items":artifact_ref_schema()},"partial":{"type":"boolean"}},"required":["stdout","stderr","exitCode","structuredOutput","files","partial"],"additionalProperties":false});
             manifest.output_cardinality.insert(
                 "main".into(),
                 agentx_node_protocol::OutputCardinality::ExactlyOne,
             );
         }
         _ => {}
+    }
+    if manifest.node_type == "skill" || manifest.node_type == "remote_action" {
+        manifest.output_schema = tool_response_schema();
+    }
+    let error_schema = error_response_schema();
+    for port in &manifest.output_ports {
+        if port.kind == PortKind::Error {
+            manifest
+                .output_port_schemas
+                .insert(port.name.clone(), error_schema.clone());
+        }
     }
     if matches!(
         manifest.node_type.as_str(),
@@ -1321,8 +1348,67 @@ fn configure_workflow_v4_capabilities(manifest: &mut NodeManifestVersion) {
     }
 }
 
+fn ai_response_schema() -> Value {
+    json!({
+        "type":"object",
+        "properties":{
+            "text":{"type":"string"},
+            "reasoningContent":{"type":["string","null"]},
+            "structuredOutput":{"type":["object","null"]},
+            "files":{"type":"array","items":artifact_ref_schema()},
+            "citations":{"type":"array","items":citation_schema()},
+            "usage":{"type":"object","properties":{"inputTokens":{"type":"integer"},"outputTokens":{"type":"integer"},"totalTokens":{"type":"integer"},"costMicros":{"type":"integer"}},"required":["inputTokens","outputTokens","totalTokens","costMicros"],"additionalProperties":false},
+            "finishReason":{"type":["string","null"]},
+            "partial":{"type":"boolean"}
+        },
+        "required":["text","reasoningContent","structuredOutput","files","citations","usage","finishReason","partial"],
+        "additionalProperties":false
+    })
+}
+
+fn tool_response_schema() -> Value {
+    json!({"type":"object","properties":{"text":{"type":"string"},"structuredOutput":{"type":["object","null"]},"files":{"type":"array","items":artifact_ref_schema()}},"required":["text","structuredOutput","files"],"additionalProperties":false})
+}
+
+fn artifact_ref_schema() -> Value {
+    json!({
+        "type":"object",
+        "properties":{
+            "artifactId":{"type":"string","format":"uuid"},
+            "fileName":{"type":"string","minLength":1},
+            "contentType":{"type":"string","minLength":1},
+            "sizeBytes":{"type":"integer","minimum":0},
+            "sha256":{"type":"string","pattern":"^[0-9a-fA-F]{64}$"}
+        },
+        "required":["artifactId","fileName","contentType","sizeBytes","sha256"],
+        "additionalProperties":false
+    })
+}
+
+fn citation_schema() -> Value {
+    json!({
+        "type":"object",
+        "properties":{
+            "sourceId":{"type":"string","minLength":1},
+            "text":{"type":"string"},
+            "title":{"type":["string","null"]},
+            "uri":{"type":["string","null"]},
+            "recordId":{"type":["string","null"]},
+            "metadata":{"type":"object"}
+        },
+        "required":["sourceId","text","metadata"],
+        "additionalProperties":false
+    })
+}
+
+fn error_response_schema() -> Value {
+    json!({"type":"object","properties":{"code":{"type":"string"},"message":{"type":"string"},"retryable":{"type":"boolean"},"details":{"type":"object"},"sourceNodeId":{"type":"string"},"nodeExecutionId":{"type":"string"}},"required":["code","message","retryable","details","sourceNodeId","nodeExecutionId"],"additionalProperties":false})
+}
+
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use super::*;
 
     #[test]
@@ -1358,11 +1444,125 @@ mod tests {
             assert_eq!(schema["properties"]["decision"]["enum"], json!([decision]));
             assert_eq!(
                 schema["required"],
-                json!(["taskId", "decision", "decidedBy"])
+                json!(["taskId", "decision", "decidedBy", "reason", "input"])
             );
         }
-        assert!(!manifest.output_port_schemas.contains_key("timed_out"));
-        assert!(!manifest.output_port_schemas.contains_key("error"));
+        assert_eq!(
+            manifest.output_port_schemas["timed_out"]["properties"]["decision"]["enum"],
+            json!(["timed_out"])
+        );
+        assert_eq!(
+            manifest.output_port_schemas["error"]["properties"]["code"]["type"],
+            "string"
+        );
+    }
+
+    #[test]
+    fn every_error_port_uses_the_standard_error_contract() {
+        let registry = NodeRegistry::m5_defaults();
+        for manifest in registry.manifests() {
+            for port in manifest
+                .output_ports
+                .iter()
+                .filter(|port| port.kind == PortKind::Error)
+            {
+                let schema = manifest
+                    .output_port_schemas
+                    .get(&port.name)
+                    .expect("error port schema");
+                assert_eq!(
+                    schema["required"],
+                    json!([
+                        "code",
+                        "message",
+                        "retryable",
+                        "details",
+                        "sourceNodeId",
+                        "nodeExecutionId"
+                    ]),
+                    "{}",
+                    manifest.node_type
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn model_and_agent_publish_only_the_ai_response_contract() {
+        let registry = NodeRegistry::m5_defaults();
+        for node_type in ["model", "agent"] {
+            let properties = registry.get(node_type, 1).unwrap().output_schema["properties"]
+                .as_object()
+                .unwrap();
+            assert_eq!(
+                properties.keys().cloned().collect::<BTreeSet<_>>(),
+                BTreeSet::from(
+                    [
+                        "text",
+                        "reasoningContent",
+                        "structuredOutput",
+                        "files",
+                        "citations",
+                        "usage",
+                        "finishReason",
+                        "partial"
+                    ]
+                    .map(str::to_owned)
+                )
+            );
+            for removed in [
+                "message",
+                "messages",
+                "toolCalls",
+                "iterations",
+                "providerRawResponse",
+            ] {
+                assert!(!properties.contains_key(removed));
+            }
+        }
+    }
+
+    #[test]
+    fn semantic_file_and_citation_outputs_use_strong_contracts() {
+        let registry = NodeRegistry::m5_defaults();
+        let ai = &registry.get("model", 1).unwrap().output_schema;
+        assert_eq!(
+            ai["properties"]["files"]["items"]["required"],
+            json!([
+                "artifactId",
+                "fileName",
+                "contentType",
+                "sizeBytes",
+                "sha256"
+            ])
+        );
+        assert_eq!(
+            ai["properties"]["citations"]["items"]["required"],
+            json!(["sourceId", "text", "metadata"])
+        );
+        let tool = &registry.get("mcp_tool", 1).unwrap().output_schema;
+        assert_eq!(
+            tool["properties"]["files"]["items"]["properties"]["artifactId"]["format"],
+            "uuid"
+        );
+    }
+
+    #[test]
+    fn every_ui_field_is_declared_by_the_parameter_contract() {
+        let registry = NodeRegistry::m5_defaults();
+        for manifest in registry.manifests() {
+            let parameters = manifest.parameter_schema["properties"]
+                .as_object()
+                .cloned()
+                .unwrap_or_default();
+            for field in manifest.ui_schema.fields.keys() {
+                assert!(
+                    parameters.contains_key(field),
+                    "{} exposes undeclared UI parameter {field}",
+                    manifest.node_type
+                );
+            }
+        }
     }
 
     #[test]

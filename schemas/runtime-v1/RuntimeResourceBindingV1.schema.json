@@ -1,5 +1,29 @@
 {
   "$defs": {
+    "RuntimeModelPriceV1": {
+      "additionalProperties": false,
+      "properties": {
+        "currency": {
+          "type": "string"
+        },
+        "inputPerMillion": {
+          "type": "string"
+        },
+        "outputPerMillion": {
+          "type": "string"
+        },
+        "versionId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "versionId",
+        "currency",
+        "inputPerMillion",
+        "outputPerMillion"
+      ],
+      "type": "object"
+    },
     "RuntimeResourceConfigurationV1": {
       "oneOf": [
         {
@@ -25,8 +49,8 @@
             "model": {
               "type": "string"
             },
-            "priceVersion": {
-              "type": "string"
+            "price": {
+              "$ref": "#/$defs/RuntimeModelPriceV1"
             },
             "provider": {
               "type": "string"
@@ -37,7 +61,7 @@
             "provider",
             "endpoint",
             "model",
-            "priceVersion"
+            "price"
           ],
           "type": "object"
         },

@@ -35,6 +35,7 @@ export function useExecutionEvents(executionId?: string) {
     }
     const poll = async () => {
       try {
+        const execution = await apiRequest<Execution>(`/executions/${executionId}`)
         const page = await loadExecutionEvents(executionId, cursor.current)
         if (cancelled) return
         if (page.items.length) {
@@ -43,7 +44,6 @@ export function useExecutionEvents(executionId?: string) {
           setEvents((current) => [...current, ...page.items.filter((item) => !current.some((value) => value.sequence === item.sequence))].sort((a, b) => a.sequence - b.sequence))
           mergeNodeStatuses(page.items)
         } else quietPolls += 1
-        const execution = await apiRequest<Execution>(`/executions/${executionId}`)
         const active = !terminal.has(execution.status)
         setRunning(active)
         if (active) timer = window.setTimeout(poll, quietPolls > 6 ? 2000 : 650)

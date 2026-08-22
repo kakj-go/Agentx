@@ -35,9 +35,7 @@ export function buildReferenceCatalog(
         id: path,
         label: name,
         path,
-        selector: schema.properties
-          ? undefined
-          : baseSelector("contexts", [name]),
+        selector: baseSelector("contexts", [name]),
         type: schema.type,
         nullable: false,
         sensitive: definition.sensitive,
@@ -88,13 +86,13 @@ export function buildReferenceCatalog(
       const path = appendSegment(nodePath, port.name);
       const cardinality = manifest.outputCardinality?.[port.name] ?? "many";
       const projectedSchema = projectedSchemaForPort(port.name);
-      const itemFields = schemaEntries(
+      const itemFields = recommendAiText(schemaEntries(
         projectedSchema,
         `${path}.current.json`,
         `${path}.current.json`,
         false,
         outputSelector(node.id, port.name, { kind: "current" }),
-      );
+      ), nodeData.nodeType);
       const selectors: ReferenceEntry[] = [];
       if (manifest.expressionCapabilities?.supportsCurrent !== false)
         selectors.push(selector("current", path, itemFields, cardinality, node.id, port.name));
@@ -139,7 +137,7 @@ export function buildReferenceCatalog(
                   path: `${nodePath}.runs["0"]`,
                   children: manifest.outputPorts.map((port) => {
                     const path = `${nodePath}.runs["0"].${port.name}[0].json`;
-                    const fields = schemaEntries(
+                    const fields = recommendAiText(schemaEntries(
                       projectedSchemaForPort(port.name),
                       path,
                       path,
@@ -150,19 +148,17 @@ export function buildReferenceCatalog(
                         { kind: "index", index: 0 },
                         { kind: "index", index: 0 },
                       ),
-                    );
+                    ), nodeData.nodeType);
                     return {
                       id: path,
                       label: port.name,
                       path,
-                      selector: fields.length
-                        ? undefined
-                        : outputSelector(
-                            node.id,
-                            port.name,
-                            { kind: "index", index: 0 },
-                            { kind: "index", index: 0 },
-                          ),
+                      selector: outputSelector(
+                        node.id,
+                        port.name,
+                        { kind: "index", index: 0 },
+                        { kind: "index", index: 0 },
+                      ),
                       type: "object",
                       cardinality:
                         manifest.outputCardinality?.[port.name] ?? "many",
@@ -184,6 +180,11 @@ export function buildReferenceCatalog(
     ];
   });
   return catalog;
+}
+
+function recommendAiText(entries: ReferenceEntry[], nodeType: string): ReferenceEntry[] {
+  if (nodeType !== "model" && nodeType !== "agent") return entries;
+  return entries.map((entry) => entry.label === "text" ? { ...entry, recommended: true } : entry);
 }
 
 function reachablePredecessors(
@@ -221,9 +222,7 @@ function selector(
     id: path,
     label: name,
     path,
-    selector: fields.length
-      ? undefined
-      : outputSelector(sourceNodeId, port, { kind: name }),
+    selector: outputSelector(sourceNodeId, port, { kind: name }),
     type: "object",
     cardinality,
     nullable: cardinality === "zero_or_one" || cardinality === "zero_or_many",
@@ -267,7 +266,7 @@ function schemaEntries(
       id,
       label: name,
       path,
-      selector: children.length ? undefined : selector,
+      selector,
       type: child.type,
       nullable: !(schema.required ?? []).includes(name),
       sensitive,

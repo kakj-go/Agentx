@@ -16,7 +16,8 @@ Trace 丢失不应改变 Workflow 结果；Checkpoint 丢失会影响恢复；�
 
 Workflow Trace 使用真实 Span 生命周期，而不是由查询端从 Runtime 明细推断调用关系。固定层级为：
 
-- Execution → Node → Attempt
+- Execution → Start Boundary / Node / End Boundary
+- Node → Attempt
 - Attempt → Agent Run → Agent Iteration → Runtime Call
 - Attempt → Sandbox
 - Node → Wait；Approval 使用 `waitKind=approval`
@@ -25,12 +26,26 @@ Workflow Trace 使用真实 Span 生命周期，而不是由查询端从 Runtime
 
 节点自动重试以状态机的 `attemptNumber` 为准；每次 Attempt 使用独立幂等键和 Span，`waitBetweenTriesMs` 映射为派发 Outbox 的 `available_at`，Node Span 在重试期间保持打开并发出 `retry_scheduled/retry_started` 更新。Worker operation deadline、Sandbox TTL、Execution 取消分别产生 `timed_out`、`sandbox.timed_out`、`sandbox.cancelled` 终止事件，后续 Reaper 清理不得把已有取消/超时终态覆盖成成功。
 
-Trace Event 记录：
+Start/End 是 `boundary` Span，不创建虚假的 Node Execution。Start Boundary 关联 Workflow 输入，End Boundary 关联最终输出和 End 字符串转换记录；Execution 根 Span 自身同样保留 `workflow_input/workflow_output`，因此高级瀑布稳定呈现 `Workflow → Start / Nodes / End`。字符串转换使用所属 Attempt 或 End Boundary 的 `conversion_record` Event，不创建额外 Span。
+
+Trace Event 使用强类型 `contentKind` 区分内容语义：
+
+- `workflow_input/workflow_output`
+- `node_input/node_output`
+- `attempt_input/attempt_output`
+- `resolved_parameters`
+- `runtime_request/runtime_response`
+- `agent_input/agent_output`
+- `iteration_input/iteration_output`
+- `sandbox_request/sandbox_response`
+- `wait_request/wait_response`
+- `conversion_record`
+
+每个 Event 另外记录：
 
 - Trace ID、Span ID、Parent Span ID
 - Execution 和 Node Execution
 - 开始和结束时间
-- 输入输出引用
 - 状态和错误
 - 模型及提供商
 - Token 和成本
@@ -39,13 +54,15 @@ Trace Event 记录：
 - Sandbox ID 和资源用量
 - Agent Iteration
 
-小型输入输出先递归脱敏，再以不超过 Envelope 预算的预览内联；大型内容复用 Runtime Artifact，通过 `contentRef + contentRole` 引用。Artifact 仍由 Runtime 授权下载，Observability 不访问 Runtime MySQL 或对象存储。Trace 入队使用事务保存点降级，任何 Trace 序列化、预算或存储错误均不得回滚执行权威状态。
+小型内容先递归脱敏，再以不超过 Envelope 预算的 Preview 内联；大型内容复用 Runtime Artifact，通过 `contentRef + contentKind` 引用。Credential、Authorization、密码、Secret、API Key 和访问 Token 必须脱敏；`inputTokens/outputTokens/totalTokens/maxTokens` 等计量字段属于安全白名单，不得被误判为访问 Token。Artifact 仍由 Runtime 按所属 Execution 和 `trace:view` 权限授权查看或下载，Studio Runtime Panel、独立执行详情和 Node Inspector 都只能使用统一的 Execution-scoped 下载端点；Observability 不访问 Runtime MySQL 或对象存储。Trace 入队使用事务保存点降级，任何 Trace 序列化、预算或存储错误均不得回滚执行权威状态。
 
 ## 3. 平台 Trace 页面
 
 不依赖 Prometheus 或 Grafana。平台直接通过内部 API 查询 MySQL 和 ClickHouse。
 
-页面使用 SkyWalking/Phoenix 风格的共享树形瀑布：左侧展示可折叠 Span 层级、状态、耗时和时间轴，右侧展示所选 Span 的概览、输入、输出、生命周期事件与原始 Envelope。页面能力：
+Studio Runtime Panel、独立执行详情和 Node Inspector 复用同一个 Trace Workspace。默认节点视图从 Runtime MySQL 读取权威 Workflow 输入、Node Execution 输入输出、错误和最终结果，按 `开始 → 节点执行 → 结束` 展示；解析参数、Provider、Agent、Tool、Sandbox 和 Wait 等内部过程再由 ClickHouse 补充。普通视图按 Port 和 Item 解包语义字段，Model/Agent 优先展示 `text/usage/finishReason`，原始 Item JSON、Provider 原始响应和 Event Envelope 只进入高级区域。Node Execution 首次离开 `ready` 时冻结 `startedAt`，终态写入 `endedAt`；节点标题左侧元信息统一展示总生命周期耗时，Model/Agent 还展示按该节点 Runtime Call 聚合的本次成本，右侧只保留状态和展开动作。
+
+高级瀑布使用 SkyWalking/Phoenix 风格的共享树形时间线：左侧展示可折叠 Span 层级、状态、耗时和时间轴，右侧按 Span 类型及 `contentKind` 动态生成内容页签，不为纯生命周期 Span伪造空输入/输出。页面能力：
 
 - 按租户、Workflow、版本、状态、时间和发起者查询
 - 在画布上显示运行路径
@@ -58,9 +75,15 @@ Trace Event 记录：
 - 从 Checkpoint 创建 Fork
 - 对比两次 Execution
 
-Trace API 按 `(startedAt, spanId)` 稳定分页，默认 200、最大 1000。ClickHouse 先按 `span_id` 计算稳定页键和总数，再只回取当前页 Span 的生命周期事件，避免把完整 Execution Trace 读入 Observability 内存。查询端按 `spanId` 聚合乱序或重复事件：最早 started 事件确定开始时间，finished 事件确定终态和结束时间；缺少 started 或 finished 时仍返回可诊断的不完整/运行中 Span。Runtime MySQL 的 `trace_watermark` 与 ClickHouse 摄取水位决定完整性：已有部分数据时返回 HTTP 200、Span 数据和 `warningCode=TRACE_DELAYED`；ClickHouse 完全不可用时返回明确 Observability 错误，但 Runtime 执行状态仍可查询。
+Trace API 按 `(startedAt, spanId)` 稳定分页，默认 200、最大 1000，并支持 `nodeExecutionId` 过滤供单节点展开按需加载；高级瀑布继续稳定分页读取全量 Span。ClickHouse 先按 `span_id` 计算稳定页键和总数，再只回取当前页 Span 的生命周期事件，避免把完整 Execution Trace 读入 Observability 内存。Span Detail 返回按 `(executionSequence,eventId)` 有序的 `contents[]` 和原始 `events[]`，不再把不同阶段压缩为可互相覆盖的 `input/output/attributes`。查询端按 `spanId` 聚合乱序或重复生命周期 Event：最早 started Event 确定开始时间，finished Event 确定终态和结束时间；缺少 started 或 finished 时仍返回可诊断的不完整/运行中 Span。
+
+Runtime MySQL 的 `trace_watermark` 与 ClickHouse 摄取水位决定诊断完整性：已有部分数据时返回 HTTP 200、Span 数据和 `warningCode=TRACE_DELAYED`；ClickHouse 完全不可用时返回明确 Observability 错误。两种情况下默认节点视图都继续展示 MySQL 权威数据，并把缺失诊断明确标记为“Trace 正在同步”或“Trace 暂不可用”，不能伪装成节点没有输入。
 
 MySQL 保存列表摘要，ClickHouse 保存详细事件，避免每次列表查询扫描 Trace 明细。
+
+执行记录列表由 Runtime Query Authority 直接按应用、Workflow、实际调用的 MCP Tool、执行时发起用户与部门、触发方式与名称、状态和创建时间筛选。单维度多值为 OR，维度之间为 AND；部门只匹配执行时记录的精确部门，不展开部门树。Tool 条件使用 `runtime_calls` 的明确 Tool ID 做 `EXISTS`，不从请求 JSON 或已配置资源推断调用事实。
+
+列表使用 15 分钟查询快照和 opaque Cursor；筛选 Hash 覆盖全部条件，任一条件变化必须创建新快照。`search` 只用于 Execution ID、Trace ID 和错误码。Control BFF 只做参数校验、权限范围、当页应用/Workflow 名称批量补充和协议转发，不允许对 Runtime 返回的一页数据再次本地筛选。
 
 ## 4. ClickHouse 首期设计
 
@@ -89,6 +112,8 @@ MySQL 保存列表摘要，ClickHouse 保存详细事件，避免每次列表查
 - error_code
 - attributes_json
 - content_ref
+- content_kind
+- content_preview_json
 
 大段 Prompt、Response、Tool Result 和文件放对象存储，ClickHouse 保存摘要或引用。
 

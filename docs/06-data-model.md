@@ -85,6 +85,9 @@ workflow_executions 主要字段：
 - execution_type
 - status
 - trigger_type
+- initiator_user_id / initiator_user_name
+- initiator_department_id / initiator_department_name
+- trigger_source_id / trigger_name
 - parent_execution_id
 - caller_node_execution_id
 - fork_checkpoint_id
@@ -95,6 +98,8 @@ workflow_executions 主要字段：
 - error_summary
 
 生产、Application 和 Evaluation Execution 的 workflow_version_id 必填；Studio Draft Debug 可空，但必须指向精确 Draft Revision。两种来源都在创建时生成不可变 Execution Snapshot，后续不读取可变 Draft 或 Resource Head。
+
+`initiator_*`、`trigger_source_id` 和 `trigger_name` 是执行创建时的不可变审计快照。Control 继续作为当前 IAM、部门和资源名称权威；用户、部门或触发器后续重命名不会改写 Runtime 历史，也不会改变按旧快照名称展示和筛选的结果。非用户触发不推断应用或 Workflow 所有者为发起人；Fork 记录本次派生操作人并指向父 Execution，Composite 继承根发起人并指向调用节点。
 
 parent_execution_id 同时用于 Fork 和 Sub-workflow 父子关联，由 execution_type 区分关系；Sub-workflow 额外保存 caller_node_execution_id，不能把子 Workflow 的节点记录混入父 Execution。
 
@@ -116,6 +121,8 @@ node_executions 主要字段：
 - waiting_reason
 
 node_executions 每行表示节点的一次逻辑激活。branch/output index 属于输入 Delivery 和 Item Lineage，不作为节点执行身份；普通图环依赖 run_index 和 activation_sequence，loop_iteration_index 只用于显式 Loop 节点。
+
+`runtime_calls` 对 MCP Tool 调用保存稳定的 `resource_id` 与执行时 `tool_name_snapshot`，并使用 `(tenant_id, call_kind, resource_id, execution_id)` 索引支持执行列表的实际调用查询。禁止对 `request_json.toolName` 做模糊匹配，也不能把 Bundle 中已配置但未调用的 Tool 当成调用事实。
 
 execution_edge_deliveries 主要字段：
 
@@ -194,11 +201,16 @@ skills 保存租户内 Skill Definition 和工作区 Revision。skill_workspace_
 
 - applications
 - application_deployments
+- application_playground_configs
 - application_api_keys
 - sessions
 - messages
 - message_parts
 - application_invocations
+
+`application_playground_configs` 以 `tenant_id + deployment_id` 为主键，保存可空 `mapping_json`、单调 `version`、`mapping_hash`、`published_version`、`active/publishing/failed` 发布状态和稳定错误信息。`mapping_json = null` 表示明确清除配置，不保留兼容字段或个人级覆盖。
+
+Runtime 的 `application_chat_mappings` 按 Deployment/Bundle 保存当前已发布映射，单调 Version 保证 Outbox 重试幂等。`application_invocations.chat_mapping_version/chat_mapping_json` 保存每轮实际使用的映射快照；参数测试 Invocation 两列为空。`workflow_executions.session_id` 是 `sessionMode=stateless|session|all` 查询隔离的权威字段。
 
 Message Part 支持：
 
@@ -262,7 +274,9 @@ Evaluation Case Result 需要引用对应的 Workflow Execution，便于直接�
 - event_time
 - execution_id
 
-常用查询字段应设置为独立列，变化频繁的扩展字段放 attributes_json。
+常用查询字段应设置为独立列，变化频繁的扩展字段放 `attributes_json`。内容使用 `content_kind/content_preview_json/content_ref` 三列：`content_kind` 是 Workflow、Node、Attempt、Provider、Agent、Iteration、Sandbox、Wait 或转换记录的强类型语义；Preview 只保存已脱敏的小内容，大内容通过 `content_ref` 指向 Runtime Artifact。Span Detail 按事件顺序返回全部 `contents[]`，不在存储或查询层聚合成会覆盖前序值的通用 `input/output`。
+
+`workflow_executions.input_json/output_json/error_json` 与 `node_executions.input_json/output_json/error_*` 是默认节点视图的权威业务数据。ClickHouse 只补充诊断；Trace 延迟或 ClickHouse 不可用时，Studio 仍必须能读取 Start 输入、节点输入输出、错误与最终结果。
 
 后续查询量增大时，可以增加物化视图：
 

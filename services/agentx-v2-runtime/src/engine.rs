@@ -13,7 +13,7 @@ use anyhow::Context;
 use object_store::ObjectStore;
 use serde_json::{Value, json};
 use sqlx::{MySql, MySqlPool, Row, Transaction};
-use time::{Duration, OffsetDateTime};
+use time::{Duration, OffsetDateTime, format_description::well_known::Rfc3339};
 use uuid::Uuid;
 
 use crate::{
@@ -24,7 +24,7 @@ use crate::{
     engine_persistence::{
         apply_context_write, authorize_resources, authorize_snapshot, finish_execution,
         initial_context_for_execution, insert_invocation_event, load_output_namespace,
-        merge_output_namespace, persist_lineage, policy_timeout_from_snapshot, single_port_output,
+        merge_output_namespace, policy_timeout_from_snapshot, single_port_output,
         upsert_activation,
     },
     engine_protocol::{
@@ -37,23 +37,23 @@ use crate::{
     output_contract::validate_node_output_contract,
 };
 
+#[path = "engine_parameter_resolution.rs"]
+mod parameter_resolution;
+#[path = "engine_persist_machine.rs"]
+mod persist_machine;
+#[path = "engine_string_conversion_trace.rs"]
+pub(super) mod string_conversion_trace;
+#[path = "engine_types.rs"]
+mod types;
+#[path = "engine_wait_payload.rs"]
+mod wait_payload;
+
 pub(crate) use crate::engine_persistence::persist_checkpoint;
 pub use crate::engine_protocol::worker_result_hash;
 pub use crate::worker_registry::{heartbeat_worker, mark_worker_draining, register_worker};
-
-#[derive(Clone, Debug)]
-pub struct ClaimedWorkerAttempt {
-    pub lease: WorkerAttemptLeaseV1,
-    pub task: WorkerTaskV1,
-    pub node_type: String,
-    pub node_version: u32,
-    pub run_index: u32,
-    pub iteration_index: u32,
-    pub node_parameters: Value,
-    pub inputs: BTreeMap<String, Vec<Item>>,
-    pub resources: Vec<RuntimeResourceBindingV1>,
-    pub context: Value,
-}
+use persist_machine::{PersistMachineRequest, persist_machine};
+pub use types::ClaimedWorkerAttempt;
+use types::ContextWriteOutcome;
 
 pub async fn start_execution(pool: &MySqlPool, claim: &RuntimeCommandClaim) -> RuntimeResult<()> {
     start_execution_resolved(pool, claim, None, None).await
@@ -336,7 +336,26 @@ pub async fn resume_execution(pool: &MySqlPool, claim: &RuntimeCommandClaim) -> 
         .and_then(Value::as_str)
         .filter(|status| matches!(*status, "resumed" | "timed_out"))
         .unwrap_or("resumed");
-    let payload = claim.payload.get("payload").cloned().unwrap_or(Value::Null);
+    let raw_payload = claim.payload.get("payload").cloned().unwrap_or(Value::Null);
+    let is_wait_node: bool = sqlx::query_scalar("SELECT node_type='wait' FROM node_executions WHERE tenant_id=? AND execution_id=? AND id=?")
+        .bind(claim.tenant_id).bind(claim.execution_id).bind(node_execution_id).fetch_one(&mut *tx).await?;
+    if is_wait_node && output_port == "resumed"
+        && let Some(schema) = sqlx::query_scalar::<_, Option<Value>>("SELECT payload_schema_json FROM wait_subscriptions WHERE tenant_id=? AND execution_id=? AND node_execution_id=? ORDER BY created_at DESC LIMIT 1")
+            .bind(claim.tenant_id).bind(claim.execution_id).bind(node_execution_id).fetch_optional(&mut *tx).await?.flatten()
+    {
+        wait_payload::validate(&schema, &raw_payload).map_err(|(code, message)| {
+            RuntimeError::InvalidRequest(code, message)
+        })?;
+    }
+    let payload = if is_wait_node && matches!(output_port, "resumed" | "timed_out") {
+        json!({
+            "status":wait_status,
+            "payload":raw_payload,
+            "resumedAt":OffsetDateTime::now_utc().format(&Rfc3339).ok(),
+        })
+    } else {
+        raw_payload
+    };
     let composite_status = claim.payload.get("childStatus").and_then(Value::as_str);
     let execution = sqlx::query(
         "SELECT e.status,e.bundle_id,e.work_package_id,e.state_version,e.invocation_id,s.policy_snapshot_json,s.worker_compatibility_json,s.resource_snapshot_json,r.context_json,r.context_version,r.machine_state_json,r.state_version runtime_state_version FROM workflow_executions e JOIN execution_snapshots s ON s.execution_id=e.id JOIN execution_runtime_state r ON r.execution_id=e.id WHERE e.tenant_id=? AND e.id=? FOR UPDATE",
@@ -493,7 +512,7 @@ pub async fn resume_execution(pool: &MySqlPool, claim: &RuntimeCommandClaim) -> 
     .execute(&mut *tx)
     .await?;
     let approval = sqlx::query(
-        "SELECT id FROM approval_tasks WHERE tenant_id=? AND execution_id=? AND node_execution_id=? AND status IN ('approved','rejected') AND resume_status='pending' FOR UPDATE",
+        "SELECT id FROM approval_tasks WHERE tenant_id=? AND execution_id=? AND node_execution_id=? AND status IN ('approved','rejected','timed_out') AND resume_status='pending' FOR UPDATE",
     )
     .bind(claim.tenant_id)
     .bind(claim.execution_id)
@@ -638,6 +657,7 @@ pub async fn fork_execution(pool: &MySqlPool, claim: &RuntimeCommandClaim) -> Ru
     let agentx_runtime_contracts::ExecutionCommandV1::Fork {
         source_execution_id,
         checkpoint_id,
+        origin,
         mode,
         node_id,
         side_effect_resolution,
@@ -708,10 +728,16 @@ pub async fn fork_execution(pool: &MySqlPool, claim: &RuntimeCommandClaim) -> Ru
         ));
     }
     sqlx::query(
-        "INSERT INTO workflow_executions(id,tenant_id,workflow_id,workflow_version_id,application_id,bundle_id,work_package_id,parent_execution_id,admission_epoch,state_version,trace_id,trigger_type,status,started_at,input_json) SELECT ?,tenant_id,workflow_id,workflow_version_id,application_id,bundle_id,work_package_id,id,admission_epoch,1,?,'fork','queued',UTC_TIMESTAMP(6),input_json FROM workflow_executions WHERE tenant_id=? AND id=?",
+        "INSERT INTO workflow_executions(id,tenant_id,workflow_id,workflow_version_id,application_id,bundle_id,work_package_id,parent_execution_id,admission_epoch,state_version,trace_id,trigger_type,initiator_user_id,initiator_user_name,initiator_department_id,initiator_department_name,trigger_source_id,trigger_name,status,started_at,input_json) SELECT ?,tenant_id,workflow_id,workflow_version_id,application_id,bundle_id,work_package_id,id,admission_epoch,1,?,'fork',?,?,?,?,?,?,'queued',UTC_TIMESTAMP(6),input_json FROM workflow_executions WHERE tenant_id=? AND id=?",
     )
     .bind(fork_execution_id)
     .bind(Uuid::now_v7())
+    .bind(origin.initiator_user_id)
+    .bind(&origin.initiator_user_name)
+    .bind(origin.initiator_department_id)
+    .bind(&origin.initiator_department_name)
+    .bind(source_execution_id)
+    .bind(&origin.trigger_name)
     .bind(claim.tenant_id)
     .bind(source_execution_id)
     .execute(&mut *tx)
@@ -856,33 +882,22 @@ pub async fn claim_worker_attempt(
         .unwrap_or_else(|| json!({}));
     let inputs: BTreeMap<String, Vec<Item>> = serde_json::from_value(row.try_get("input_json")?)
         .map_err(|error| RuntimeError::Internal(error.into()))?;
-    let current = inputs
-        .values()
-        .flat_map(|items| items.iter())
-        .next()
-        .map(|item| item.json.clone())
-        .unwrap_or(Value::Null);
-    let node_parameters = ExpressionEngine
-        .resolve_parameters(
-            &raw_parameters,
-            &ExpressionContext {
-                json: current.clone(),
-                input: current,
-                inputs: row
-                    .try_get::<Option<Value>, _>("execution_input_json")?
-                    .unwrap_or(Value::Null),
-                outputs: load_output_namespace(&mut tx, task.tenant_id, task.execution_id).await?,
-                contexts: row.try_get("context_json")?,
-                execution: json!({"id":task.execution_id}),
-                output_node_keys: compiled
-                    .nodes
-                    .iter()
-                    .map(|node| (node.id.clone(), node.key.clone()))
-                    .collect(),
-                ..ExpressionContext::default()
-            },
-        )
-        .map_err(|error| RuntimeError::Internal(error.into()))?;
+    let context: Value = row.try_get("context_json")?;
+    let (node_parameters, per_item_parameters, string_conversions) = parameter_resolution::resolve(
+        &raw_parameters,
+        &inputs,
+        row.try_get::<Option<Value>, _>("execution_input_json")?
+            .unwrap_or(Value::Null),
+        load_output_namespace(&mut tx, task.tenant_id, task.execution_id).await?,
+        context.clone(),
+        json!({"id":task.execution_id}),
+        compiled
+            .nodes
+            .iter()
+            .map(|node| (node.id.clone(), node.key.clone()))
+            .collect(),
+    )
+    .map_err(|error| RuntimeError::Internal(error.into()))?;
     tx.commit().await?;
     Ok(Some(ClaimedWorkerAttempt {
         lease: WorkerAttemptLeaseV1 {
@@ -898,9 +913,11 @@ pub async fn claim_worker_attempt(
         run_index: row.try_get("run_index")?,
         iteration_index: row.try_get("iteration_index")?,
         node_parameters,
+        per_item_parameters,
+        string_conversions,
         inputs,
         resources,
-        context: row.try_get("context_json")?,
+        context,
     }))
 }
 
@@ -1024,6 +1041,7 @@ async fn submit_worker_result_resolved(
     let mut effective_error_code = result.error_code.clone();
     let mut effective_error_message = result.error_message.clone();
     let mut effective_outputs = resolved_outputs.clone();
+    let mut string_conversions = Vec::new();
     if result.status == WorkerResultStatusV1::Succeeded {
         let activation = machine
             .activation(node_execution_id)
@@ -1042,7 +1060,7 @@ async fn submit_worker_result_resolved(
                 .is_some_and(|projection| !projection.is_empty())
         {
             let upstream = load_output_namespace(&mut tx, tenant_id, execution_id).await?;
-            if let Err(error) = crate::output_projection::apply(
+            match crate::output_projection::apply(
                 &mut effective_outputs,
                 &node.output_projection,
                 &ExpressionContext {
@@ -1064,11 +1082,22 @@ async fn submit_worker_result_resolved(
                     ..ExpressionContext::default()
                 },
             ) {
-                effective_status = WorkerResultStatusV1::Failed;
-                effective_error_code = Some("DYNAMIC_VALUE_EVALUATION_FAILED".into());
-                effective_error_message = Some(error.to_string());
-                effective_outputs.clear();
+                Ok(mut conversions) => string_conversions.append(&mut conversions),
+                Err(error) => {
+                    effective_status = WorkerResultStatusV1::Failed;
+                    effective_error_code = Some("DYNAMIC_VALUE_EVALUATION_FAILED".into());
+                    effective_error_message = Some(error.to_string());
+                    effective_outputs.clear();
+                }
             }
+        }
+        if effective_status == WorkerResultStatusV1::Succeeded
+            && let Err(message) = validate_node_output_contract(node, &effective_outputs)
+        {
+            effective_status = WorkerResultStatusV1::Failed;
+            effective_error_code = Some(crate::output_contract::violation_code(node).into());
+            effective_error_message = Some(message);
+            effective_outputs.clear();
         }
     }
     match effective_status {
@@ -1095,7 +1124,18 @@ async fn submit_worker_result_resolved(
                 Ok(ContextWriteOutcome::Applied {
                     context: updated,
                     version,
+                    conversions: mut context_conversions,
                 }) => {
+                    string_conversions.append(&mut context_conversions);
+                    string_conversion_trace::enqueue_node_records(
+                        &mut tx,
+                        tenant_id,
+                        execution_id,
+                        node_execution_id.as_uuid(),
+                        result.attempt_id,
+                        &string_conversions,
+                    )
+                    .await;
                     context = updated;
                     context_version = version;
                     machine
@@ -1252,7 +1292,7 @@ async fn submit_worker_result_resolved(
     attempt_trace.error_code = effective_error_code.clone();
     attempt_trace.error_message = effective_error_message.clone();
     attempt_trace.content_ref = result.output_object.as_ref().map(|object| object.object_id);
-    attempt_trace.content_role = Some("output".into());
+    attempt_trace.content_kind = Some(agentx_runtime_contracts::TraceContentKindV1::AttemptOutput);
     attempt_trace.content_preview = output_preview.clone();
     crate::trace_delivery::enqueue_best_effort(&mut tx, attempt_trace).await;
     let mut node_trace = crate::trace_delivery::TraceDraft::span(
@@ -1282,7 +1322,7 @@ async fn submit_worker_result_resolved(
     node_trace.error_code = effective_error_code;
     node_trace.error_message = effective_error_message;
     node_trace.content_ref = result.output_object.as_ref().map(|object| object.object_id);
-    node_trace.content_role = Some("output".into());
+    node_trace.content_kind = Some(agentx_runtime_contracts::TraceContentKindV1::NodeOutput);
     node_trace.content_preview = output_preview;
     crate::trace_delivery::enqueue_best_effort(&mut tx, node_trace).await;
     let next_version = current_version + 1;
@@ -1373,11 +1413,6 @@ async fn submit_worker_result_resolved(
     Ok(false)
 }
 
-enum ContextWriteOutcome {
-    Applied { context: Value, version: u64 },
-    SessionConflict,
-}
-
 struct ContextWriteRequest<'a> {
     tenant_id: Uuid,
     execution_id: Uuid,
@@ -1415,6 +1450,7 @@ async fn apply_context_writes(
         return Ok(ContextWriteOutcome::Applied {
             context: current_context.clone(),
             version: context_version,
+            conversions: Vec::new(),
         });
     }
     let mut outputs = load_output_namespace(tx, tenant_id, execution_id).await?;
@@ -1445,15 +1481,21 @@ async fn apply_context_writes(
     };
     let mut updated = current_context.clone();
     let mut patches = Vec::with_capacity(node.context_writes.len());
+    let mut conversions = Vec::new();
     let mut session_writes = 0_u64;
     for write in &node.context_writes {
-        let Some(value) = ExpressionEngine
-            .resolve_dynamic_optional(&write.value, &expression_context)
+        let (value, mut write_conversions) = ExpressionEngine
+            .resolve_dynamic_optional_with_conversions(
+                &write.value,
+                &expression_context,
+                format!("contextWrites.{}", write.path),
+            )
             .map_err(|error| RuntimeError::Deterministic {
                 code: "DYNAMIC_VALUE_EVALUATION_FAILED",
                 message: error.to_string(),
-            })?
-        else {
+            })?;
+        conversions.append(&mut write_conversions);
+        let Some(value) = value else {
             continue;
         };
         let before = context_value(&updated, &write.path).cloned();
@@ -1515,6 +1557,7 @@ async fn apply_context_writes(
     Ok(ContextWriteOutcome::Applied {
         context: updated,
         version: next_context_version,
+        conversions,
     })
 }
 
@@ -1793,174 +1836,5 @@ async fn schedule_ready(
         .execute(&mut **tx)
         .await?;
     }
-    Ok(())
-}
-struct PersistMachineRequest<'a> {
-    tenant_id: Uuid,
-    execution_id: Uuid,
-    bundle_id: Uuid,
-    work_package_id: Option<Uuid>,
-    state_version: u64,
-    context_version: u64,
-    context: &'a Value,
-    machine: &'a ExecutionMachine,
-    checkpoint_type: &'a str,
-}
-
-async fn persist_machine(
-    tx: &mut Transaction<'_, MySql>,
-    request: PersistMachineRequest<'_>,
-) -> RuntimeResult<()> {
-    let PersistMachineRequest {
-        tenant_id,
-        execution_id,
-        bundle_id,
-        work_package_id,
-        state_version,
-        context_version,
-        context,
-        machine,
-        checkpoint_type,
-    } = request;
-    for activation in machine.activations() {
-        let node = &machine.workflow().nodes[activation.node_index];
-        upsert_activation(tx, tenant_id, execution_id, activation, node).await?;
-    }
-    for delivery in machine.deliveries() {
-        let connection = &machine.workflow().connections[delivery.connection_index];
-        let (kind, items) = match &delivery.kind {
-            agentx_runtime::DeliveryKind::Data(items) => ("data", Some(items)),
-            agentx_runtime::DeliveryKind::ClosedWithoutData => ("closed_without_data", None),
-        };
-        let inserted = sqlx::query(
-            "INSERT IGNORE INTO execution_edge_deliveries(id,tenant_id,execution_id,sequence_number,connection_id,source_node_execution_id,source_port,target_node_id,target_port,target_generation,delivery_kind,item_count,payload_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
-        )
-        .bind(delivery.id)
-        .bind(tenant_id)
-        .bind(execution_id)
-        .bind(delivery.sequence)
-        .bind(&connection.id)
-        .bind(delivery.source_node_execution_id.as_uuid())
-        .bind(&connection.source_port)
-        .bind(&machine.workflow().nodes[connection.target_node].id)
-        .bind(&connection.target_port)
-        .bind(delivery.target_generation)
-        .bind(kind)
-        .bind(items.map_or(0, Vec::len) as u32)
-        .bind(items.map(serde_json::to_value).transpose().map_err(|error| RuntimeError::Internal(error.into()))?)
-        .execute(&mut **tx)
-        .await?
-        .rows_affected()
-            == 1;
-        if inserted && let Some(items) = items {
-            persist_lineage(tx, tenant_id, execution_id, delivery.id, items).await?;
-        }
-    }
-    for delivery in machine.end_deliveries() {
-        sqlx::query(
-            "INSERT IGNORE INTO execution_end_deliveries(tenant_id,execution_id,sequence_number,source_node_execution_id,source_node_id,source_port,target_port,payload_json) VALUES(?,?,?,?,?,?,?,?)",
-        )
-        .bind(tenant_id)
-        .bind(execution_id)
-        .bind(delivery.sequence)
-        .bind(delivery.source_node_execution_id.as_uuid())
-        .bind(&machine.workflow().nodes[delivery.source_node].id)
-        .bind(&delivery.source_port)
-        .bind(&delivery.target_port)
-        .bind(serde_json::to_value(&delivery.items).map_err(|error| RuntimeError::Internal(error.into()))?)
-        .execute(&mut **tx)
-        .await?;
-    }
-    let machine_json =
-        serde_json::to_value(machine).map_err(|error| RuntimeError::Internal(error.into()))?;
-    let machine_hash = agentx_runtime_contracts::content_hash(&machine_json)
-        .map_err(|error| RuntimeError::Internal(error.into()))?;
-    let frontier = machine
-        .activations()
-        .filter(|activation| {
-            matches!(
-                activation.status,
-                ActivationStatus::Ready | ActivationStatus::Running | ActivationStatus::Waiting
-            )
-        })
-        .map(|activation| activation.id.as_uuid())
-        .collect::<Vec<_>>();
-    let activation_count = machine.activations().count() as u64;
-    let delivery_sequence = machine
-        .deliveries()
-        .iter()
-        .map(|delivery| delivery.sequence)
-        .chain(
-            machine
-                .end_deliveries()
-                .iter()
-                .map(|delivery| delivery.sequence),
-        )
-        .max()
-        .unwrap_or(0);
-    let frontier_json =
-        serde_json::to_value(frontier).map_err(|error| RuntimeError::Internal(error.into()))?;
-    let current_version: Option<u64> = sqlx::query_scalar(
-        "SELECT state_version FROM execution_runtime_state WHERE tenant_id=? AND execution_id=? FOR UPDATE",
-    )
-    .bind(tenant_id)
-    .bind(execution_id)
-    .fetch_optional(&mut **tx)
-    .await?;
-    if let Some(current_version) = current_version {
-        if current_version.checked_add(1) != Some(state_version) {
-            return Err(lease_conflict("Execution Runtime state CAS failed"));
-        }
-        let changed = sqlx::query(
-            "UPDATE execution_runtime_state SET state_version=?,context_version=?,delivery_sequence=?,activation_count=?,activation_budget=?,current_frontier_json=?,context_json=?,machine_state_json=?,machine_state_hash=? WHERE tenant_id=? AND execution_id=? AND state_version=?",
-        )
-        .bind(state_version)
-        .bind(context_version)
-        .bind(delivery_sequence)
-        .bind(activation_count)
-        .bind(machine.workflow().activation_budget)
-        .bind(&frontier_json)
-        .bind(context)
-        .bind(&machine_json)
-        .bind(machine_hash.as_str())
-        .bind(tenant_id)
-        .bind(execution_id)
-        .bind(current_version)
-        .execute(&mut **tx)
-        .await?;
-        if changed.rows_affected() != 1 {
-            return Err(lease_conflict("Execution Runtime state CAS failed"));
-        }
-    } else {
-        sqlx::query(
-            "INSERT INTO execution_runtime_state(execution_id,tenant_id,state_version,context_version,delivery_sequence,activation_count,activation_budget,current_frontier_json,context_json,machine_state_json,machine_state_hash) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-        )
-        .bind(execution_id)
-        .bind(tenant_id)
-        .bind(state_version)
-        .bind(context_version)
-        .bind(delivery_sequence)
-        .bind(activation_count)
-        .bind(machine.workflow().activation_budget)
-        .bind(&frontier_json)
-        .bind(context)
-        .bind(&machine_json)
-        .bind(machine_hash.as_str())
-        .execute(&mut **tx)
-        .await?;
-    }
-    persist_checkpoint(
-        tx,
-        tenant_id,
-        execution_id,
-        bundle_id,
-        work_package_id,
-        state_version,
-        None,
-        machine,
-        context,
-        checkpoint_type,
-    )
-    .await?;
     Ok(())
 }

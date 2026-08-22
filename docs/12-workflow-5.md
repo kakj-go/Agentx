@@ -15,6 +15,8 @@ Workflow Definition 只接受 `schemaVersion: "5.0"`。本版本是开发期破�
 
 AST 支持 Literal、Reference、Unary、Binary、Conditional、Call、Array 和 Object。二元运算覆盖比较、算术、逻辑和 `in`；函数是固定白名单，`matches` 使用限长的线性时间 Regex。
 
+Runtime 对一次节点激活同时生成 `ResolvedParameters.common` 与按输入端口、Item 顺序展平的 `ResolvedParameters.perItem`。批量级参数消费 `common`；Filter、IF、Switch 和逐 Item 转换必须消费与当前 Item 对齐的 `perItem`，不能用首项解析结果替代整批。Trace 同时记录脱敏、限长后的两类解析结果，Remote Action 按 Node Protocol 原样接收两者。
+
 ## 3. Selector
 
 `ValueSelector` 包含 namespace、可选 stable `sourceNodeId`、port、run、item 与类型化 path。可访问命名空间仅为 `inputs`、`outputs`、`contexts`、`execution`、`item` 和 `loop`。Output 引用必须指向拓扑可达的前驱节点；显示名称不参与持久身份。
@@ -28,7 +30,15 @@ AST 支持 Literal、Reference、Unary、Binary、Conditional、Call、Array 和
 
 ## 4. 输出契约
 
-Model 固定返回 `text/message/reasoningContent/structuredOutput/citations/toolCalls/files/usage/finishReason/partial`。其他节点也必须由 Manifest 声明输出 Schema。Compiler 将基础 Schema、节点实例配置和 Projection 合成为 `EffectiveOutputContractV1` 并冻结到每个 `CompiledNodeV1`；Worker 只按此 IR 契约验证结果。
+Model 与 Agent 固定返回同一 `AiResponse`：`text/reasoningContent/structuredOutput/files/citations/usage/finishReason/partial`。`usage` 固定包含 `inputTokens/outputTokens/totalTokens/costMicros`。普通变量目录不公开 Provider message、tool calls、Agent iterations 或原始响应；这些诊断信息只进入受权 Trace，原始响应超过 16 KiB 时写入 Artifact 并由 Trace span 引用。
+
+其他节点也必须由 Manifest 声明输出 Schema。工具类返回 `text/structuredOutput/files`，HTTP 返回 `statusCode/headers/body/files`，Code 返回 `stdout/stderr/exitCode/structuredOutput/files/partial`，RAG、Memory、Approval 和 Wait 使用各自稳定语义字段。数据节点继续直接传递 Item 字段，不增加 `data` 或 `result` 包装。所有 Error Port 固定返回 `code/message/retryable/details/sourceNodeId/nodeExecutionId`。
+
+Compiler 将基础 Schema、节点实例配置和 Projection 合成为 `EffectiveOutputContractV1` 并冻结到每个 `CompiledNodeV1`；Worker 成功提交前必须逐端口验证，失败统一为 `NODE_OUTPUT_SCHEMA_VALIDATION_FAILED`。
+
+当目标 Schema 为 `string` 时，Compiler 在 IR 的 Reference 上冻结 `coerce: string`。字符串原样保留，其他 JSON 使用对象键排序、无额外空白的规范 JSON 文本；Studio 必须显式展示“自动转为文本”。未知类型只能转入字符串目标，不能进入其他强类型目标。Template 天然执行同一文本转换。
+
+Runtime 为参数、Projection、Context Write 和 End 的每次文本转换写入受权 Trace 诊断记录，包含目标路径、Selector、来源 JSON 类型、转换模式和结果字节数，不保存来源值或转换后的正文。这样可以定位“为什么可被字符串位置引用”，同时不复制业务数据或 Secret；End 转换使用独立的 `end.string_converted` span。
 
 ## 5. 失败与恢复
 

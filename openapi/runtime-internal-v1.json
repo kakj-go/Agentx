@@ -129,6 +129,132 @@
         "title": "ActivateDeploymentRequestV1",
         "type": "object"
       },
+      "ApplyChatMappingReceiptV1": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "apiVersion": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "bundleId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "deploymentId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "replayed": {
+            "type": "boolean"
+          },
+          "version": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "apiVersion",
+          "deploymentId",
+          "bundleId",
+          "version",
+          "replayed"
+        ],
+        "title": "ApplyChatMappingReceiptV1",
+        "type": "object"
+      },
+      "ApplyChatMappingRequestV1": {
+        "$defs": {
+          "ChatMappingV1": {
+            "additionalProperties": false,
+            "properties": {
+              "answerFilesOutput": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "answerOutput": {
+                "type": "string"
+              },
+              "fileInput": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "questionInput": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "questionInput",
+              "answerOutput"
+            ],
+            "type": "object"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "apiVersion": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "applicationId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "bundleId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "contentHash": {
+            "type": "string"
+          },
+          "deploymentId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "idempotencyKey": {
+            "type": "string"
+          },
+          "mapping": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ChatMappingV1"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tenantId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "version": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "apiVersion",
+          "idempotencyKey",
+          "tenantId",
+          "applicationId",
+          "deploymentId",
+          "bundleId",
+          "version",
+          "contentHash"
+        ],
+        "title": "ApplyChatMappingRequestV1",
+        "type": "object"
+      },
       "ApplyReceiptV1": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
@@ -200,6 +326,36 @@
           "idempotencyKey"
         ],
         "title": "CancelWorkPackageRequestV1",
+        "type": "object"
+      },
+      "ChatMappingV1": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "answerFilesOutput": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "answerOutput": {
+            "type": "string"
+          },
+          "fileInput": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "questionInput": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "questionInput",
+          "answerOutput"
+        ],
+        "title": "ChatMappingV1",
         "type": "object"
       },
       "CommandEnvelopeV1": {
@@ -2390,6 +2546,12 @@
                   "null"
                 ]
               },
+              "costCurrency": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "costMicros": {
                 "format": "uint64",
                 "minimum": 0,
@@ -2416,12 +2578,48 @@
                 "format": "uuid",
                 "type": "string"
               },
+              "initiatorDepartmentId": {
+                "format": "uuid",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "initiatorDepartmentName": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "initiatorUserId": {
+                "format": "uuid",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "initiatorUserName": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "inputTokens": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
               "invocationId": {
                 "format": "uuid",
                 "type": [
                   "string",
                   "null"
                 ]
+              },
+              "outputTokens": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
               },
               "parentExecutionId": {
                 "format": "uuid",
@@ -2444,6 +2642,19 @@
                 "format": "uuid",
                 "type": "string"
               },
+              "triggerName": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "triggerSourceId": {
+                "format": "uuid",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "triggerType": {
                 "type": "string"
               },
@@ -2465,6 +2676,8 @@
               "triggerType",
               "status",
               "costMicros",
+              "inputTokens",
+              "outputTokens",
               "createdAt"
             ],
             "type": "object"
@@ -2484,6 +2697,7 @@
             "type": "integer"
           },
           "error": true,
+          "input": true,
           "output": true,
           "parentExecutionId": {
             "format": "uuid",
@@ -2524,6 +2738,36 @@
         "type": "object"
       },
       "ExecutionEventPageV1": {
+        "$defs": {
+          "ExecutionEventV1": {
+            "additionalProperties": false,
+            "properties": {
+              "eventType": {
+                "type": "string"
+              },
+              "occurredAt": {
+                "type": "string"
+              },
+              "sequence": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "status": {
+                "type": "string"
+              },
+              "summary": true
+            },
+            "required": [
+              "sequence",
+              "eventType",
+              "status",
+              "summary",
+              "occurredAt"
+            ],
+            "type": "object"
+          }
+        },
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
@@ -2533,15 +2777,25 @@
             "type": "integer"
           },
           "items": {
-            "items": true,
+            "items": {
+              "$ref": "#/$defs/ExecutionEventV1"
+            },
             "type": "array"
+          },
+          "nextCursor": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
           }
         },
         "required": [
           "apiVersion",
           "items"
         ],
-        "title": "ExecutionCollectionPageV1",
+        "title": "ExecutionEventPageV1",
         "type": "object"
       },
       "ExecutionNodePageV1": {
@@ -2552,8 +2806,22 @@
               "capability": {
                 "type": "string"
               },
-              "createdAt": {
-                "type": "string"
+              "costCurrency": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "costMicros": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "endedAt": {
+                "type": [
+                  "string",
+                  "null"
+                ]
               },
               "errorCode": {
                 "type": [
@@ -2597,6 +2865,12 @@
                 "minimum": 0,
                 "type": "integer"
               },
+              "startedAt": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "status": {
                 "type": "string"
               }
@@ -2611,7 +2885,7 @@
               "iterationIndex",
               "status",
               "capability",
-              "createdAt"
+              "costMicros"
             ],
             "type": "object"
           }
@@ -2645,8 +2919,22 @@
           "capability": {
             "type": "string"
           },
-          "createdAt": {
-            "type": "string"
+          "costCurrency": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "costMicros": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "endedAt": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "errorCode": {
             "type": [
@@ -2690,6 +2978,12 @@
             "minimum": 0,
             "type": "integer"
           },
+          "startedAt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "status": {
             "type": "string"
           }
@@ -2704,7 +2998,7 @@
           "iterationIndex",
           "status",
           "capability",
-          "createdAt"
+          "costMicros"
         ],
         "title": "ExecutionNodeV1",
         "type": "object"
@@ -2783,6 +3077,12 @@
               },
               "callKind": {
                 "type": "string"
+              },
+              "costCurrency": {
+                "type": [
+                  "string",
+                  "null"
+                ]
               },
               "costMicros": {
                 "format": "uint64",
@@ -2906,6 +3206,12 @@
                   "null"
                 ]
               },
+              "costCurrency": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "costMicros": {
                 "format": "uint64",
                 "minimum": 0,
@@ -2932,12 +3238,48 @@
                 "format": "uuid",
                 "type": "string"
               },
+              "initiatorDepartmentId": {
+                "format": "uuid",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "initiatorDepartmentName": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "initiatorUserId": {
+                "format": "uuid",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "initiatorUserName": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "inputTokens": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
               "invocationId": {
                 "format": "uuid",
                 "type": [
                   "string",
                   "null"
                 ]
+              },
+              "outputTokens": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
               },
               "parentExecutionId": {
                 "format": "uuid",
@@ -2960,6 +3302,19 @@
                 "format": "uuid",
                 "type": "string"
               },
+              "triggerName": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "triggerSourceId": {
+                "format": "uuid",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "triggerType": {
                 "type": "string"
               },
@@ -2981,6 +3336,8 @@
               "triggerType",
               "status",
               "costMicros",
+              "inputTokens",
+              "outputTokens",
               "createdAt"
             ],
             "type": "object"
@@ -3030,6 +3387,16 @@
         "type": "object"
       },
       "ExecutionSearchRequestV1": {
+        "$defs": {
+          "ExecutionSessionModeV1": {
+            "enum": [
+              "all",
+              "stateless",
+              "session"
+            ],
+            "type": "string"
+          }
+        },
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
@@ -3063,6 +3430,20 @@
               "null"
             ]
           },
+          "initiatorDepartmentIds": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "initiatorUserIds": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "type": "array"
+          },
           "limit": {
             "format": "uint32",
             "minimum": 0,
@@ -3074,6 +3455,9 @@
               "null"
             ]
           },
+          "sessionMode": {
+            "$ref": "#/$defs/ExecutionSessionModeV1"
+          },
           "statuses": {
             "items": {
               "type": "string"
@@ -3083,6 +3467,25 @@
           "tenantId": {
             "format": "uuid",
             "type": "string"
+          },
+          "toolIds": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "triggerName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "triggerTypes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           },
           "workflowIds": {
             "items": {
@@ -3097,7 +3500,12 @@
           "tenantId",
           "applicationIds",
           "workflowIds",
+          "toolIds",
+          "initiatorUserIds",
+          "initiatorDepartmentIds",
+          "triggerTypes",
           "statuses",
+          "sessionMode",
           "limit"
         ],
         "title": "ExecutionSearchRequestV1",
@@ -3177,6 +3585,9 @@
                   "$ref": "#/$defs/ContextWrite"
                 },
                 "type": "array"
+              },
+              "effectiveOutputContract": {
+                "$ref": "#/$defs/EffectiveOutputContractV1"
               },
               "executionStyle": {
                 "$ref": "#/$defs/ExecutionStyle"
@@ -3259,6 +3670,7 @@
               "readiness",
               "requiredInputPorts",
               "outputPorts",
+              "effectiveOutputContract",
               "sideEffectLevel",
               "incomingConnections",
               "outgoingConnections",
@@ -3487,7 +3899,9 @@
               "path": {
                 "type": "string"
               },
-              "value": true
+              "value": {
+                "$ref": "#/$defs/DynamicValue"
+              }
             },
             "required": [
               "operation",
@@ -3571,6 +3985,96 @@
             ],
             "type": "string"
           },
+          "DynamicValue": {
+            "description": "A persisted dynamic value is always a tagged object.  It deliberately\nlives beside ordinary JSON rather than overloading strings, so business\npayloads cannot accidentally become expressions.",
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "literal",
+                    "type": "string"
+                  },
+                  "value": true
+                },
+                "required": [
+                  "kind",
+                  "value"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "coerce": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/$defs/ValueCoercion"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "kind": {
+                    "const": "reference",
+                    "type": "string"
+                  },
+                  "missingPolicy": {
+                    "$ref": "#/$defs/MissingValuePolicy",
+                    "default": {
+                      "kind": "error"
+                    }
+                  },
+                  "selector": {
+                    "$ref": "#/$defs/ValueSelector"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "selector"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "template",
+                    "type": "string"
+                  },
+                  "segments": {
+                    "items": {
+                      "$ref": "#/$defs/TemplateSegment"
+                    },
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "segments"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "expression",
+                    "type": "string"
+                  },
+                  "root": {
+                    "$ref": "#/$defs/ExpressionNode"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "root"
+                ],
+                "type": "object"
+              }
+            ]
+          },
           "Ed25519Signature": {
             "additionalProperties": false,
             "properties": {
@@ -3588,6 +4092,28 @@
               "keyId",
               "algorithm",
               "signatureBase64"
+            ],
+            "type": "object"
+          },
+          "EffectiveOutputContractV1": {
+            "additionalProperties": false,
+            "properties": {
+              "cardinalities": {
+                "additionalProperties": {
+                  "$ref": "#/$defs/OutputCardinality"
+                },
+                "description": "Frozen per-port item cardinality from the published Node Manifest.",
+                "type": "object"
+              },
+              "portSchemas": {
+                "additionalProperties": true,
+                "description": "Frozen per-port JSON Schemas after applying node-instance projections.",
+                "type": "object"
+              }
+            },
+            "required": [
+              "portSchemas",
+              "cardinalities"
             ],
             "type": "object"
           },
@@ -3722,12 +4248,293 @@
             ],
             "type": "string"
           },
+          "ExpressionBinaryOperator": {
+            "enum": [
+              "eq",
+              "ne",
+              "gt",
+              "gte",
+              "lt",
+              "lte",
+              "add",
+              "subtract",
+              "multiply",
+              "divide",
+              "modulo",
+              "and",
+              "or",
+              "in"
+            ],
+            "type": "string"
+          },
+          "ExpressionFunction": {
+            "enum": [
+              "contains",
+              "double",
+              "duration",
+              "ends_with",
+              "int",
+              "matches",
+              "max",
+              "min",
+              "size",
+              "starts_with",
+              "string",
+              "timestamp",
+              "uint"
+            ],
+            "type": "string"
+          },
+          "ExpressionNode": {
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "literal",
+                    "type": "string"
+                  },
+                  "value": true
+                },
+                "required": [
+                  "kind",
+                  "value"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "reference",
+                    "type": "string"
+                  },
+                  "missingPolicy": {
+                    "$ref": "#/$defs/MissingValuePolicy",
+                    "default": {
+                      "kind": "error"
+                    }
+                  },
+                  "selector": {
+                    "$ref": "#/$defs/ValueSelector"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "selector"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "unary",
+                    "type": "string"
+                  },
+                  "operand": {
+                    "$ref": "#/$defs/ExpressionNode"
+                  },
+                  "operator": {
+                    "$ref": "#/$defs/ExpressionUnaryOperator"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "operator",
+                  "operand"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "binary",
+                    "type": "string"
+                  },
+                  "left": {
+                    "$ref": "#/$defs/ExpressionNode"
+                  },
+                  "operator": {
+                    "$ref": "#/$defs/ExpressionBinaryOperator"
+                  },
+                  "right": {
+                    "$ref": "#/$defs/ExpressionNode"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "operator",
+                  "left",
+                  "right"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "condition": {
+                    "$ref": "#/$defs/ExpressionNode"
+                  },
+                  "else_value": {
+                    "$ref": "#/$defs/ExpressionNode"
+                  },
+                  "kind": {
+                    "const": "conditional",
+                    "type": "string"
+                  },
+                  "then_value": {
+                    "$ref": "#/$defs/ExpressionNode"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "condition",
+                  "then_value",
+                  "else_value"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "arguments": {
+                    "items": {
+                      "$ref": "#/$defs/ExpressionNode"
+                    },
+                    "type": "array"
+                  },
+                  "function": {
+                    "$ref": "#/$defs/ExpressionFunction"
+                  },
+                  "kind": {
+                    "const": "call",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "function",
+                  "arguments"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "items": {
+                    "items": {
+                      "$ref": "#/$defs/ExpressionNode"
+                    },
+                    "type": "array"
+                  },
+                  "kind": {
+                    "const": "array",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "items"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "fields": {
+                    "additionalProperties": {
+                      "$ref": "#/$defs/ExpressionNode"
+                    },
+                    "type": "object"
+                  },
+                  "kind": {
+                    "const": "object",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "fields"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "ExpressionUnaryOperator": {
+            "enum": [
+              "not",
+              "negate"
+            ],
+            "type": "string"
+          },
           "LifecycleOperationV1": {
             "enum": [
               "activate",
               "deactivate"
             ],
             "type": "string"
+          },
+          "MissingValuePolicy": {
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "error",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "null",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "default",
+                    "type": "string"
+                  },
+                  "value": {
+                    "$ref": "#/$defs/DynamicValue"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "value"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "omit",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              }
+            ]
           },
           "NodeCapability": {
             "enum": [
@@ -3795,6 +4602,15 @@
               }
             },
             "type": "object"
+          },
+          "OutputCardinality": {
+            "enum": [
+              "zero_or_one",
+              "exactly_one",
+              "zero_or_many",
+              "many"
+            ],
+            "type": "string"
           },
           "PortKind": {
             "enum": [
@@ -3921,6 +4737,30 @@
             "required": [
               "maximumBytes",
               "compareAndSwapRequired"
+            ],
+            "type": "object"
+          },
+          "RuntimeModelPriceV1": {
+            "additionalProperties": false,
+            "properties": {
+              "currency": {
+                "type": "string"
+              },
+              "inputPerMillion": {
+                "type": "string"
+              },
+              "outputPerMillion": {
+                "type": "string"
+              },
+              "versionId": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "versionId",
+              "currency",
+              "inputPerMillion",
+              "outputPerMillion"
             ],
             "type": "object"
           },
@@ -4110,8 +4950,8 @@
                   "model": {
                     "type": "string"
                   },
-                  "priceVersion": {
-                    "type": "string"
+                  "price": {
+                    "$ref": "#/$defs/RuntimeModelPriceV1"
                   },
                   "provider": {
                     "type": "string"
@@ -4122,7 +4962,7 @@
                   "provider",
                   "endpoint",
                   "model",
-                  "priceVersion"
+                  "price"
                 ],
                 "type": "object"
               },
@@ -4555,11 +5395,15 @@
               "triggerId": {
                 "format": "uuid",
                 "type": "string"
+              },
+              "triggerName": {
+                "type": "string"
               }
             },
             "required": [
               "schemaVersion",
               "triggerId",
+              "triggerName",
               "applicationId",
               "nodeId",
               "revision",
@@ -4604,6 +5448,197 @@
               "observability"
             ],
             "type": "string"
+          },
+          "TemplateSegment": {
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "text",
+                    "type": "string"
+                  },
+                  "text": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "text"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "reference",
+                    "type": "string"
+                  },
+                  "missingPolicy": {
+                    "$ref": "#/$defs/MissingValuePolicy",
+                    "default": {
+                      "kind": "error"
+                    }
+                  },
+                  "selector": {
+                    "$ref": "#/$defs/ValueSelector"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "selector"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "ValueCoercion": {
+            "enum": [
+              "string"
+            ],
+            "type": "string"
+          },
+          "ValueNamespace": {
+            "enum": [
+              "inputs",
+              "outputs",
+              "contexts",
+              "execution",
+              "item",
+              "loop"
+            ],
+            "type": "string"
+          },
+          "ValuePathSegment": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "format": "uint32",
+                "minimum": 0,
+                "type": "integer"
+              }
+            ]
+          },
+          "ValueSelection": {
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "current",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "first",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "last",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "all",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "index": {
+                    "format": "uint32",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "kind": {
+                    "const": "index",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "index"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "ValueSelector": {
+            "additionalProperties": false,
+            "properties": {
+              "item": {
+                "$ref": "#/$defs/ValueSelection",
+                "default": {
+                  "kind": "current"
+                }
+              },
+              "namespace": {
+                "$ref": "#/$defs/ValueNamespace"
+              },
+              "path": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/ValuePathSegment"
+                },
+                "type": "array"
+              },
+              "port": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "run": {
+                "$ref": "#/$defs/ValueSelection",
+                "default": {
+                  "kind": "current"
+                }
+              },
+              "sourceNodeId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "namespace"
+            ],
+            "type": "object"
           },
           "VaultSecretReferenceV1": {
             "additionalProperties": false,
@@ -4727,9 +5762,6 @@
           "WorkflowOutput": {
             "additionalProperties": false,
             "properties": {
-              "expression": {
-                "type": "string"
-              },
               "required": {
                 "default": false,
                 "type": "boolean"
@@ -4740,10 +5772,13 @@
               "sensitive": {
                 "default": false,
                 "type": "boolean"
+              },
+              "value": {
+                "$ref": "#/$defs/DynamicValue"
               }
             },
             "required": [
-              "expression"
+              "value"
             ],
             "type": "object"
           },
@@ -4790,6 +5825,7 @@
           "TraceSpanKindV1": {
             "enum": [
               "execution",
+              "boundary",
               "node",
               "attempt",
               "agent_run",
@@ -6214,6 +7250,9 @@
                 },
                 "type": "array"
               },
+              "effectiveOutputContract": {
+                "$ref": "#/$defs/EffectiveOutputContractV1"
+              },
               "executionStyle": {
                 "$ref": "#/$defs/ExecutionStyle"
               },
@@ -6295,6 +7334,7 @@
               "readiness",
               "requiredInputPorts",
               "outputPorts",
+              "effectiveOutputContract",
               "sideEffectLevel",
               "incomingConnections",
               "outgoingConnections",
@@ -6523,7 +7563,9 @@
               "path": {
                 "type": "string"
               },
-              "value": true
+              "value": {
+                "$ref": "#/$defs/DynamicValue"
+              }
             },
             "required": [
               "operation",
@@ -6607,6 +7649,96 @@
             ],
             "type": "string"
           },
+          "DynamicValue": {
+            "description": "A persisted dynamic value is always a tagged object.  It deliberately\nlives beside ordinary JSON rather than overloading strings, so business\npayloads cannot accidentally become expressions.",
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "literal",
+                    "type": "string"
+                  },
+                  "value": true
+                },
+                "required": [
+                  "kind",
+                  "value"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "coerce": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/$defs/ValueCoercion"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "kind": {
+                    "const": "reference",
+                    "type": "string"
+                  },
+                  "missingPolicy": {
+                    "$ref": "#/$defs/MissingValuePolicy",
+                    "default": {
+                      "kind": "error"
+                    }
+                  },
+                  "selector": {
+                    "$ref": "#/$defs/ValueSelector"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "selector"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "template",
+                    "type": "string"
+                  },
+                  "segments": {
+                    "items": {
+                      "$ref": "#/$defs/TemplateSegment"
+                    },
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "segments"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "expression",
+                    "type": "string"
+                  },
+                  "root": {
+                    "$ref": "#/$defs/ExpressionNode"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "root"
+                ],
+                "type": "object"
+              }
+            ]
+          },
           "Ed25519Signature": {
             "additionalProperties": false,
             "properties": {
@@ -6624,6 +7756,28 @@
               "keyId",
               "algorithm",
               "signatureBase64"
+            ],
+            "type": "object"
+          },
+          "EffectiveOutputContractV1": {
+            "additionalProperties": false,
+            "properties": {
+              "cardinalities": {
+                "additionalProperties": {
+                  "$ref": "#/$defs/OutputCardinality"
+                },
+                "description": "Frozen per-port item cardinality from the published Node Manifest.",
+                "type": "object"
+              },
+              "portSchemas": {
+                "additionalProperties": true,
+                "description": "Frozen per-port JSON Schemas after applying node-instance projections.",
+                "type": "object"
+              }
+            },
+            "required": [
+              "portSchemas",
+              "cardinalities"
             ],
             "type": "object"
           },
@@ -6778,12 +7932,293 @@
             ],
             "type": "string"
           },
+          "ExpressionBinaryOperator": {
+            "enum": [
+              "eq",
+              "ne",
+              "gt",
+              "gte",
+              "lt",
+              "lte",
+              "add",
+              "subtract",
+              "multiply",
+              "divide",
+              "modulo",
+              "and",
+              "or",
+              "in"
+            ],
+            "type": "string"
+          },
+          "ExpressionFunction": {
+            "enum": [
+              "contains",
+              "double",
+              "duration",
+              "ends_with",
+              "int",
+              "matches",
+              "max",
+              "min",
+              "size",
+              "starts_with",
+              "string",
+              "timestamp",
+              "uint"
+            ],
+            "type": "string"
+          },
+          "ExpressionNode": {
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "literal",
+                    "type": "string"
+                  },
+                  "value": true
+                },
+                "required": [
+                  "kind",
+                  "value"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "reference",
+                    "type": "string"
+                  },
+                  "missingPolicy": {
+                    "$ref": "#/$defs/MissingValuePolicy",
+                    "default": {
+                      "kind": "error"
+                    }
+                  },
+                  "selector": {
+                    "$ref": "#/$defs/ValueSelector"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "selector"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "unary",
+                    "type": "string"
+                  },
+                  "operand": {
+                    "$ref": "#/$defs/ExpressionNode"
+                  },
+                  "operator": {
+                    "$ref": "#/$defs/ExpressionUnaryOperator"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "operator",
+                  "operand"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "binary",
+                    "type": "string"
+                  },
+                  "left": {
+                    "$ref": "#/$defs/ExpressionNode"
+                  },
+                  "operator": {
+                    "$ref": "#/$defs/ExpressionBinaryOperator"
+                  },
+                  "right": {
+                    "$ref": "#/$defs/ExpressionNode"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "operator",
+                  "left",
+                  "right"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "condition": {
+                    "$ref": "#/$defs/ExpressionNode"
+                  },
+                  "else_value": {
+                    "$ref": "#/$defs/ExpressionNode"
+                  },
+                  "kind": {
+                    "const": "conditional",
+                    "type": "string"
+                  },
+                  "then_value": {
+                    "$ref": "#/$defs/ExpressionNode"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "condition",
+                  "then_value",
+                  "else_value"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "arguments": {
+                    "items": {
+                      "$ref": "#/$defs/ExpressionNode"
+                    },
+                    "type": "array"
+                  },
+                  "function": {
+                    "$ref": "#/$defs/ExpressionFunction"
+                  },
+                  "kind": {
+                    "const": "call",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "function",
+                  "arguments"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "items": {
+                    "items": {
+                      "$ref": "#/$defs/ExpressionNode"
+                    },
+                    "type": "array"
+                  },
+                  "kind": {
+                    "const": "array",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "items"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "fields": {
+                    "additionalProperties": {
+                      "$ref": "#/$defs/ExpressionNode"
+                    },
+                    "type": "object"
+                  },
+                  "kind": {
+                    "const": "object",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "fields"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "ExpressionUnaryOperator": {
+            "enum": [
+              "not",
+              "negate"
+            ],
+            "type": "string"
+          },
           "LifecycleOperationV1": {
             "enum": [
               "activate",
               "deactivate"
             ],
             "type": "string"
+          },
+          "MissingValuePolicy": {
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "error",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "null",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "default",
+                    "type": "string"
+                  },
+                  "value": {
+                    "$ref": "#/$defs/DynamicValue"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "value"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "omit",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              }
+            ]
           },
           "NodeCapability": {
             "enum": [
@@ -6851,6 +8286,15 @@
               }
             },
             "type": "object"
+          },
+          "OutputCardinality": {
+            "enum": [
+              "zero_or_one",
+              "exactly_one",
+              "zero_or_many",
+              "many"
+            ],
+            "type": "string"
           },
           "PortKind": {
             "enum": [
@@ -6977,6 +8421,30 @@
             "required": [
               "maximumBytes",
               "compareAndSwapRequired"
+            ],
+            "type": "object"
+          },
+          "RuntimeModelPriceV1": {
+            "additionalProperties": false,
+            "properties": {
+              "currency": {
+                "type": "string"
+              },
+              "inputPerMillion": {
+                "type": "string"
+              },
+              "outputPerMillion": {
+                "type": "string"
+              },
+              "versionId": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "versionId",
+              "currency",
+              "inputPerMillion",
+              "outputPerMillion"
             ],
             "type": "object"
           },
@@ -7166,8 +8634,8 @@
                   "model": {
                     "type": "string"
                   },
-                  "priceVersion": {
-                    "type": "string"
+                  "price": {
+                    "$ref": "#/$defs/RuntimeModelPriceV1"
                   },
                   "provider": {
                     "type": "string"
@@ -7178,7 +8646,7 @@
                   "provider",
                   "endpoint",
                   "model",
-                  "priceVersion"
+                  "price"
                 ],
                 "type": "object"
               },
@@ -7611,11 +9079,15 @@
               "triggerId": {
                 "format": "uuid",
                 "type": "string"
+              },
+              "triggerName": {
+                "type": "string"
               }
             },
             "required": [
               "schemaVersion",
               "triggerId",
+              "triggerName",
               "applicationId",
               "nodeId",
               "revision",
@@ -7660,6 +9132,197 @@
               "observability"
             ],
             "type": "string"
+          },
+          "TemplateSegment": {
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "text",
+                    "type": "string"
+                  },
+                  "text": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "text"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "reference",
+                    "type": "string"
+                  },
+                  "missingPolicy": {
+                    "$ref": "#/$defs/MissingValuePolicy",
+                    "default": {
+                      "kind": "error"
+                    }
+                  },
+                  "selector": {
+                    "$ref": "#/$defs/ValueSelector"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "selector"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "ValueCoercion": {
+            "enum": [
+              "string"
+            ],
+            "type": "string"
+          },
+          "ValueNamespace": {
+            "enum": [
+              "inputs",
+              "outputs",
+              "contexts",
+              "execution",
+              "item",
+              "loop"
+            ],
+            "type": "string"
+          },
+          "ValuePathSegment": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "format": "uint32",
+                "minimum": 0,
+                "type": "integer"
+              }
+            ]
+          },
+          "ValueSelection": {
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "current",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "first",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "last",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "all",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "index": {
+                    "format": "uint32",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "kind": {
+                    "const": "index",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "index"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "ValueSelector": {
+            "additionalProperties": false,
+            "properties": {
+              "item": {
+                "$ref": "#/$defs/ValueSelection",
+                "default": {
+                  "kind": "current"
+                }
+              },
+              "namespace": {
+                "$ref": "#/$defs/ValueNamespace"
+              },
+              "path": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/ValuePathSegment"
+                },
+                "type": "array"
+              },
+              "port": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "run": {
+                "$ref": "#/$defs/ValueSelection",
+                "default": {
+                  "kind": "current"
+                }
+              },
+              "sourceNodeId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "namespace"
+            ],
+            "type": "object"
           },
           "VaultSecretReferenceV1": {
             "additionalProperties": false,
@@ -7783,9 +9446,6 @@
           "WorkflowOutput": {
             "additionalProperties": false,
             "properties": {
-              "expression": {
-                "type": "string"
-              },
               "required": {
                 "default": false,
                 "type": "boolean"
@@ -7796,10 +9456,13 @@
               "sensitive": {
                 "default": false,
                 "type": "boolean"
+              },
+              "value": {
+                "$ref": "#/$defs/DynamicValue"
               }
             },
             "required": [
-              "expression"
+              "value"
             ],
             "type": "object"
           },
@@ -7918,6 +9581,9 @@
                 },
                 "type": "array"
               },
+              "effectiveOutputContract": {
+                "$ref": "#/$defs/EffectiveOutputContractV1"
+              },
               "executionStyle": {
                 "$ref": "#/$defs/ExecutionStyle"
               },
@@ -7999,6 +9665,7 @@
               "readiness",
               "requiredInputPorts",
               "outputPorts",
+              "effectiveOutputContract",
               "sideEffectLevel",
               "incomingConnections",
               "outgoingConnections",
@@ -8227,7 +9894,9 @@
               "path": {
                 "type": "string"
               },
-              "value": true
+              "value": {
+                "$ref": "#/$defs/DynamicValue"
+              }
             },
             "required": [
               "operation",
@@ -8311,6 +9980,96 @@
             ],
             "type": "string"
           },
+          "DynamicValue": {
+            "description": "A persisted dynamic value is always a tagged object.  It deliberately\nlives beside ordinary JSON rather than overloading strings, so business\npayloads cannot accidentally become expressions.",
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "literal",
+                    "type": "string"
+                  },
+                  "value": true
+                },
+                "required": [
+                  "kind",
+                  "value"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "coerce": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/$defs/ValueCoercion"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "kind": {
+                    "const": "reference",
+                    "type": "string"
+                  },
+                  "missingPolicy": {
+                    "$ref": "#/$defs/MissingValuePolicy",
+                    "default": {
+                      "kind": "error"
+                    }
+                  },
+                  "selector": {
+                    "$ref": "#/$defs/ValueSelector"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "selector"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "template",
+                    "type": "string"
+                  },
+                  "segments": {
+                    "items": {
+                      "$ref": "#/$defs/TemplateSegment"
+                    },
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "segments"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "expression",
+                    "type": "string"
+                  },
+                  "root": {
+                    "$ref": "#/$defs/ExpressionNode"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "root"
+                ],
+                "type": "object"
+              }
+            ]
+          },
           "Ed25519Signature": {
             "additionalProperties": false,
             "properties": {
@@ -8331,6 +10090,28 @@
             ],
             "type": "object"
           },
+          "EffectiveOutputContractV1": {
+            "additionalProperties": false,
+            "properties": {
+              "cardinalities": {
+                "additionalProperties": {
+                  "$ref": "#/$defs/OutputCardinality"
+                },
+                "description": "Frozen per-port item cardinality from the published Node Manifest.",
+                "type": "object"
+              },
+              "portSchemas": {
+                "additionalProperties": true,
+                "description": "Frozen per-port JSON Schemas after applying node-instance projections.",
+                "type": "object"
+              }
+            },
+            "required": [
+              "portSchemas",
+              "cardinalities"
+            ],
+            "type": "object"
+          },
           "EndErrorStrategy": {
             "enum": [
               "fail_fast",
@@ -8345,6 +10126,52 @@
             ],
             "type": "string"
           },
+          "ExecutionOriginV1": {
+            "additionalProperties": false,
+            "description": "Immutable audit context captured when an Execution is created.\n\nControl remains authoritative for current IAM and resource names. Runtime\nstores this snapshot so later renames do not rewrite execution history.",
+            "properties": {
+              "initiatorDepartmentId": {
+                "format": "uuid",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "initiatorDepartmentName": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "initiatorUserId": {
+                "format": "uuid",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "initiatorUserName": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "triggerName": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "triggerSourceId": {
+                "format": "uuid",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "type": "object"
+          },
           "ExecutionStyle": {
             "enum": [
               "action",
@@ -8353,6 +10180,287 @@
               "sub_workflow"
             ],
             "type": "string"
+          },
+          "ExpressionBinaryOperator": {
+            "enum": [
+              "eq",
+              "ne",
+              "gt",
+              "gte",
+              "lt",
+              "lte",
+              "add",
+              "subtract",
+              "multiply",
+              "divide",
+              "modulo",
+              "and",
+              "or",
+              "in"
+            ],
+            "type": "string"
+          },
+          "ExpressionFunction": {
+            "enum": [
+              "contains",
+              "double",
+              "duration",
+              "ends_with",
+              "int",
+              "matches",
+              "max",
+              "min",
+              "size",
+              "starts_with",
+              "string",
+              "timestamp",
+              "uint"
+            ],
+            "type": "string"
+          },
+          "ExpressionNode": {
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "literal",
+                    "type": "string"
+                  },
+                  "value": true
+                },
+                "required": [
+                  "kind",
+                  "value"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "reference",
+                    "type": "string"
+                  },
+                  "missingPolicy": {
+                    "$ref": "#/$defs/MissingValuePolicy",
+                    "default": {
+                      "kind": "error"
+                    }
+                  },
+                  "selector": {
+                    "$ref": "#/$defs/ValueSelector"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "selector"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "unary",
+                    "type": "string"
+                  },
+                  "operand": {
+                    "$ref": "#/$defs/ExpressionNode"
+                  },
+                  "operator": {
+                    "$ref": "#/$defs/ExpressionUnaryOperator"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "operator",
+                  "operand"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "binary",
+                    "type": "string"
+                  },
+                  "left": {
+                    "$ref": "#/$defs/ExpressionNode"
+                  },
+                  "operator": {
+                    "$ref": "#/$defs/ExpressionBinaryOperator"
+                  },
+                  "right": {
+                    "$ref": "#/$defs/ExpressionNode"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "operator",
+                  "left",
+                  "right"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "condition": {
+                    "$ref": "#/$defs/ExpressionNode"
+                  },
+                  "else_value": {
+                    "$ref": "#/$defs/ExpressionNode"
+                  },
+                  "kind": {
+                    "const": "conditional",
+                    "type": "string"
+                  },
+                  "then_value": {
+                    "$ref": "#/$defs/ExpressionNode"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "condition",
+                  "then_value",
+                  "else_value"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "arguments": {
+                    "items": {
+                      "$ref": "#/$defs/ExpressionNode"
+                    },
+                    "type": "array"
+                  },
+                  "function": {
+                    "$ref": "#/$defs/ExpressionFunction"
+                  },
+                  "kind": {
+                    "const": "call",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "function",
+                  "arguments"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "items": {
+                    "items": {
+                      "$ref": "#/$defs/ExpressionNode"
+                    },
+                    "type": "array"
+                  },
+                  "kind": {
+                    "const": "array",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "items"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "fields": {
+                    "additionalProperties": {
+                      "$ref": "#/$defs/ExpressionNode"
+                    },
+                    "type": "object"
+                  },
+                  "kind": {
+                    "const": "object",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "fields"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "ExpressionUnaryOperator": {
+            "enum": [
+              "not",
+              "negate"
+            ],
+            "type": "string"
+          },
+          "MissingValuePolicy": {
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "error",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "null",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "default",
+                    "type": "string"
+                  },
+                  "value": {
+                    "$ref": "#/$defs/DynamicValue"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "value"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "omit",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              }
+            ]
           },
           "NodeCapability": {
             "enum": [
@@ -8420,6 +10528,15 @@
               }
             },
             "type": "object"
+          },
+          "OutputCardinality": {
+            "enum": [
+              "zero_or_one",
+              "exactly_one",
+              "zero_or_many",
+              "many"
+            ],
+            "type": "string"
           },
           "PartialExecutionModeV1": {
             "enum": [
@@ -8790,6 +10907,30 @@
             ],
             "type": "object"
           },
+          "RuntimeModelPriceV1": {
+            "additionalProperties": false,
+            "properties": {
+              "currency": {
+                "type": "string"
+              },
+              "inputPerMillion": {
+                "type": "string"
+              },
+              "outputPerMillion": {
+                "type": "string"
+              },
+              "versionId": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "versionId",
+              "currency",
+              "inputPerMillion",
+              "outputPerMillion"
+            ],
+            "type": "object"
+          },
           "RuntimeObjectReferenceV1": {
             "additionalProperties": false,
             "properties": {
@@ -8976,8 +11117,8 @@
                   "model": {
                     "type": "string"
                   },
-                  "priceVersion": {
-                    "type": "string"
+                  "price": {
+                    "$ref": "#/$defs/RuntimeModelPriceV1"
                   },
                   "provider": {
                     "type": "string"
@@ -8988,7 +11129,7 @@
                   "provider",
                   "endpoint",
                   "model",
-                  "priceVersion"
+                  "price"
                 ],
                 "type": "object"
               },
@@ -9338,6 +11479,9 @@
                 },
                 "type": "array"
               },
+              "origin": {
+                "$ref": "#/$defs/ExecutionOriginV1"
+              },
               "overlay": {
                 "$ref": "#/$defs/RuntimeWorkPackageOverlayV1"
               },
@@ -9383,6 +11527,7 @@
               "schemaVersion",
               "packageId",
               "tenantId",
+              "origin",
               "purpose",
               "callPurpose",
               "spec",
@@ -9524,6 +11669,197 @@
             ],
             "type": "string"
           },
+          "TemplateSegment": {
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "text",
+                    "type": "string"
+                  },
+                  "text": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "text"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "reference",
+                    "type": "string"
+                  },
+                  "missingPolicy": {
+                    "$ref": "#/$defs/MissingValuePolicy",
+                    "default": {
+                      "kind": "error"
+                    }
+                  },
+                  "selector": {
+                    "$ref": "#/$defs/ValueSelector"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "selector"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "ValueCoercion": {
+            "enum": [
+              "string"
+            ],
+            "type": "string"
+          },
+          "ValueNamespace": {
+            "enum": [
+              "inputs",
+              "outputs",
+              "contexts",
+              "execution",
+              "item",
+              "loop"
+            ],
+            "type": "string"
+          },
+          "ValuePathSegment": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "format": "uint32",
+                "minimum": 0,
+                "type": "integer"
+              }
+            ]
+          },
+          "ValueSelection": {
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "current",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "first",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "last",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "all",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "index": {
+                    "format": "uint32",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "kind": {
+                    "const": "index",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "index"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "ValueSelector": {
+            "additionalProperties": false,
+            "properties": {
+              "item": {
+                "$ref": "#/$defs/ValueSelection",
+                "default": {
+                  "kind": "current"
+                }
+              },
+              "namespace": {
+                "$ref": "#/$defs/ValueNamespace"
+              },
+              "path": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/ValuePathSegment"
+                },
+                "type": "array"
+              },
+              "port": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "run": {
+                "$ref": "#/$defs/ValueSelection",
+                "default": {
+                  "kind": "current"
+                }
+              },
+              "sourceNodeId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "namespace"
+            ],
+            "type": "object"
+          },
           "VaultSecretReferenceV1": {
             "additionalProperties": false,
             "properties": {
@@ -9653,9 +11989,6 @@
           "WorkflowOutput": {
             "additionalProperties": false,
             "properties": {
-              "expression": {
-                "type": "string"
-              },
               "required": {
                 "default": false,
                 "type": "boolean"
@@ -9666,10 +11999,13 @@
               "sensitive": {
                 "default": false,
                 "type": "boolean"
+              },
+              "value": {
+                "$ref": "#/$defs/DynamicValue"
               }
             },
             "required": [
-              "expression"
+              "value"
             ],
             "type": "object"
           },
@@ -10456,6 +12792,9 @@
                 "format": "uuid",
                 "type": "string"
               },
+              "keyName": {
+                "type": "string"
+              },
               "keyPrefix": {
                 "type": "string"
               },
@@ -10475,6 +12814,7 @@
               "applicationId",
               "keyId",
               "keyPrefix",
+              "keyName",
               "secretHash",
               "status"
             ],
@@ -10966,6 +13306,13 @@
           "RuntimeUserAdmissionV1": {
             "additionalProperties": false,
             "properties": {
+              "departmentId": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "departmentName": {
+                "type": "string"
+              },
               "enabled": {
                 "type": "boolean"
               },
@@ -10984,11 +13331,17 @@
               "userId": {
                 "format": "uuid",
                 "type": "string"
+              },
+              "userName": {
+                "type": "string"
               }
             },
             "required": [
               "tenantId",
               "userId",
+              "userName",
+              "departmentId",
+              "departmentName",
               "tokenVersion",
               "enabled",
               "tenantQueryEnabled"
@@ -11254,6 +13607,9 @@
                       "null"
                     ]
                   },
+                  "origin": {
+                    "$ref": "#/$defs/ExecutionOriginV1"
+                  },
                   "sideEffectResolution": {
                     "$ref": "#/$defs/SideEffectResolutionV1"
                   },
@@ -11266,6 +13622,7 @@
                   "kind",
                   "sourceExecutionId",
                   "checkpointId",
+                  "origin",
                   "mode",
                   "sideEffectResolution"
                 ],
@@ -11357,6 +13714,52 @@
                 "type": "object"
               }
             ]
+          },
+          "ExecutionOriginV1": {
+            "additionalProperties": false,
+            "description": "Immutable audit context captured when an Execution is created.\n\nControl remains authoritative for current IAM and resource names. Runtime\nstores this snapshot so later renames do not rewrite execution history.",
+            "properties": {
+              "initiatorDepartmentId": {
+                "format": "uuid",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "initiatorDepartmentName": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "initiatorUserId": {
+                "format": "uuid",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "initiatorUserName": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "triggerName": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "triggerSourceId": {
+                "format": "uuid",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "type": "object"
           },
           "PartialExecutionModeV1": {
             "enum": [
@@ -12655,6 +15058,30 @@
       },
       "RuntimeResourceBindingV1": {
         "$defs": {
+          "RuntimeModelPriceV1": {
+            "additionalProperties": false,
+            "properties": {
+              "currency": {
+                "type": "string"
+              },
+              "inputPerMillion": {
+                "type": "string"
+              },
+              "outputPerMillion": {
+                "type": "string"
+              },
+              "versionId": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "versionId",
+              "currency",
+              "inputPerMillion",
+              "outputPerMillion"
+            ],
+            "type": "object"
+          },
           "RuntimeResourceConfigurationV1": {
             "oneOf": [
               {
@@ -12680,8 +15107,8 @@
                   "model": {
                     "type": "string"
                   },
-                  "priceVersion": {
-                    "type": "string"
+                  "price": {
+                    "$ref": "#/$defs/RuntimeModelPriceV1"
                   },
                   "provider": {
                     "type": "string"
@@ -12692,7 +15119,7 @@
                   "provider",
                   "endpoint",
                   "model",
-                  "priceVersion"
+                  "price"
                 ],
                 "type": "object"
               },
@@ -13544,11 +15971,15 @@
           "triggerId": {
             "format": "uuid",
             "type": "string"
+          },
+          "triggerName": {
+            "type": "string"
           }
         },
         "required": [
           "schemaVersion",
           "triggerId",
+          "triggerName",
           "applicationId",
           "nodeId",
           "revision",
@@ -13563,6 +15994,13 @@
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
+          "departmentId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "departmentName": {
+            "type": "string"
+          },
           "enabled": {
             "type": "boolean"
           },
@@ -13581,11 +16019,17 @@
           "userId": {
             "format": "uuid",
             "type": "string"
+          },
+          "userName": {
+            "type": "string"
           }
         },
         "required": [
           "tenantId",
           "userId",
+          "userName",
+          "departmentId",
+          "departmentName",
           "tokenVersion",
           "enabled",
           "tenantQueryEnabled"
@@ -13742,6 +16186,9 @@
                 },
                 "type": "array"
               },
+              "effectiveOutputContract": {
+                "$ref": "#/$defs/EffectiveOutputContractV1"
+              },
               "executionStyle": {
                 "$ref": "#/$defs/ExecutionStyle"
               },
@@ -13823,6 +16270,7 @@
               "readiness",
               "requiredInputPorts",
               "outputPorts",
+              "effectiveOutputContract",
               "sideEffectLevel",
               "incomingConnections",
               "outgoingConnections",
@@ -14051,7 +16499,9 @@
               "path": {
                 "type": "string"
               },
-              "value": true
+              "value": {
+                "$ref": "#/$defs/DynamicValue"
+              }
             },
             "required": [
               "operation",
@@ -14135,6 +16585,96 @@
             ],
             "type": "string"
           },
+          "DynamicValue": {
+            "description": "A persisted dynamic value is always a tagged object.  It deliberately\nlives beside ordinary JSON rather than overloading strings, so business\npayloads cannot accidentally become expressions.",
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "literal",
+                    "type": "string"
+                  },
+                  "value": true
+                },
+                "required": [
+                  "kind",
+                  "value"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "coerce": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/$defs/ValueCoercion"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "kind": {
+                    "const": "reference",
+                    "type": "string"
+                  },
+                  "missingPolicy": {
+                    "$ref": "#/$defs/MissingValuePolicy",
+                    "default": {
+                      "kind": "error"
+                    }
+                  },
+                  "selector": {
+                    "$ref": "#/$defs/ValueSelector"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "selector"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "template",
+                    "type": "string"
+                  },
+                  "segments": {
+                    "items": {
+                      "$ref": "#/$defs/TemplateSegment"
+                    },
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "segments"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "expression",
+                    "type": "string"
+                  },
+                  "root": {
+                    "$ref": "#/$defs/ExpressionNode"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "root"
+                ],
+                "type": "object"
+              }
+            ]
+          },
           "Ed25519Signature": {
             "additionalProperties": false,
             "properties": {
@@ -14155,6 +16695,28 @@
             ],
             "type": "object"
           },
+          "EffectiveOutputContractV1": {
+            "additionalProperties": false,
+            "properties": {
+              "cardinalities": {
+                "additionalProperties": {
+                  "$ref": "#/$defs/OutputCardinality"
+                },
+                "description": "Frozen per-port item cardinality from the published Node Manifest.",
+                "type": "object"
+              },
+              "portSchemas": {
+                "additionalProperties": true,
+                "description": "Frozen per-port JSON Schemas after applying node-instance projections.",
+                "type": "object"
+              }
+            },
+            "required": [
+              "portSchemas",
+              "cardinalities"
+            ],
+            "type": "object"
+          },
           "EndErrorStrategy": {
             "enum": [
               "fail_fast",
@@ -14169,6 +16731,52 @@
             ],
             "type": "string"
           },
+          "ExecutionOriginV1": {
+            "additionalProperties": false,
+            "description": "Immutable audit context captured when an Execution is created.\n\nControl remains authoritative for current IAM and resource names. Runtime\nstores this snapshot so later renames do not rewrite execution history.",
+            "properties": {
+              "initiatorDepartmentId": {
+                "format": "uuid",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "initiatorDepartmentName": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "initiatorUserId": {
+                "format": "uuid",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "initiatorUserName": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "triggerName": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "triggerSourceId": {
+                "format": "uuid",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "type": "object"
+          },
           "ExecutionStyle": {
             "enum": [
               "action",
@@ -14177,6 +16785,287 @@
               "sub_workflow"
             ],
             "type": "string"
+          },
+          "ExpressionBinaryOperator": {
+            "enum": [
+              "eq",
+              "ne",
+              "gt",
+              "gte",
+              "lt",
+              "lte",
+              "add",
+              "subtract",
+              "multiply",
+              "divide",
+              "modulo",
+              "and",
+              "or",
+              "in"
+            ],
+            "type": "string"
+          },
+          "ExpressionFunction": {
+            "enum": [
+              "contains",
+              "double",
+              "duration",
+              "ends_with",
+              "int",
+              "matches",
+              "max",
+              "min",
+              "size",
+              "starts_with",
+              "string",
+              "timestamp",
+              "uint"
+            ],
+            "type": "string"
+          },
+          "ExpressionNode": {
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "literal",
+                    "type": "string"
+                  },
+                  "value": true
+                },
+                "required": [
+                  "kind",
+                  "value"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "reference",
+                    "type": "string"
+                  },
+                  "missingPolicy": {
+                    "$ref": "#/$defs/MissingValuePolicy",
+                    "default": {
+                      "kind": "error"
+                    }
+                  },
+                  "selector": {
+                    "$ref": "#/$defs/ValueSelector"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "selector"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "unary",
+                    "type": "string"
+                  },
+                  "operand": {
+                    "$ref": "#/$defs/ExpressionNode"
+                  },
+                  "operator": {
+                    "$ref": "#/$defs/ExpressionUnaryOperator"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "operator",
+                  "operand"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "binary",
+                    "type": "string"
+                  },
+                  "left": {
+                    "$ref": "#/$defs/ExpressionNode"
+                  },
+                  "operator": {
+                    "$ref": "#/$defs/ExpressionBinaryOperator"
+                  },
+                  "right": {
+                    "$ref": "#/$defs/ExpressionNode"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "operator",
+                  "left",
+                  "right"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "condition": {
+                    "$ref": "#/$defs/ExpressionNode"
+                  },
+                  "else_value": {
+                    "$ref": "#/$defs/ExpressionNode"
+                  },
+                  "kind": {
+                    "const": "conditional",
+                    "type": "string"
+                  },
+                  "then_value": {
+                    "$ref": "#/$defs/ExpressionNode"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "condition",
+                  "then_value",
+                  "else_value"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "arguments": {
+                    "items": {
+                      "$ref": "#/$defs/ExpressionNode"
+                    },
+                    "type": "array"
+                  },
+                  "function": {
+                    "$ref": "#/$defs/ExpressionFunction"
+                  },
+                  "kind": {
+                    "const": "call",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "function",
+                  "arguments"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "items": {
+                    "items": {
+                      "$ref": "#/$defs/ExpressionNode"
+                    },
+                    "type": "array"
+                  },
+                  "kind": {
+                    "const": "array",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "items"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "fields": {
+                    "additionalProperties": {
+                      "$ref": "#/$defs/ExpressionNode"
+                    },
+                    "type": "object"
+                  },
+                  "kind": {
+                    "const": "object",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "fields"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "ExpressionUnaryOperator": {
+            "enum": [
+              "not",
+              "negate"
+            ],
+            "type": "string"
+          },
+          "MissingValuePolicy": {
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "error",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "null",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "default",
+                    "type": "string"
+                  },
+                  "value": {
+                    "$ref": "#/$defs/DynamicValue"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "value"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "omit",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              }
+            ]
           },
           "NodeCapability": {
             "enum": [
@@ -14244,6 +17133,15 @@
               }
             },
             "type": "object"
+          },
+          "OutputCardinality": {
+            "enum": [
+              "zero_or_one",
+              "exactly_one",
+              "zero_or_many",
+              "many"
+            ],
+            "type": "string"
           },
           "PartialExecutionModeV1": {
             "enum": [
@@ -14614,6 +17512,30 @@
             ],
             "type": "object"
           },
+          "RuntimeModelPriceV1": {
+            "additionalProperties": false,
+            "properties": {
+              "currency": {
+                "type": "string"
+              },
+              "inputPerMillion": {
+                "type": "string"
+              },
+              "outputPerMillion": {
+                "type": "string"
+              },
+              "versionId": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "versionId",
+              "currency",
+              "inputPerMillion",
+              "outputPerMillion"
+            ],
+            "type": "object"
+          },
           "RuntimeObjectReferenceV1": {
             "additionalProperties": false,
             "properties": {
@@ -14800,8 +17722,8 @@
                   "model": {
                     "type": "string"
                   },
-                  "priceVersion": {
-                    "type": "string"
+                  "price": {
+                    "$ref": "#/$defs/RuntimeModelPriceV1"
                   },
                   "provider": {
                     "type": "string"
@@ -14812,7 +17734,7 @@
                   "provider",
                   "endpoint",
                   "model",
-                  "priceVersion"
+                  "price"
                 ],
                 "type": "object"
               },
@@ -15162,6 +18084,9 @@
                 },
                 "type": "array"
               },
+              "origin": {
+                "$ref": "#/$defs/ExecutionOriginV1"
+              },
               "overlay": {
                 "$ref": "#/$defs/RuntimeWorkPackageOverlayV1"
               },
@@ -15207,6 +18132,7 @@
               "schemaVersion",
               "packageId",
               "tenantId",
+              "origin",
               "purpose",
               "callPurpose",
               "spec",
@@ -15327,6 +18253,197 @@
               "observability"
             ],
             "type": "string"
+          },
+          "TemplateSegment": {
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "text",
+                    "type": "string"
+                  },
+                  "text": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "text"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "reference",
+                    "type": "string"
+                  },
+                  "missingPolicy": {
+                    "$ref": "#/$defs/MissingValuePolicy",
+                    "default": {
+                      "kind": "error"
+                    }
+                  },
+                  "selector": {
+                    "$ref": "#/$defs/ValueSelector"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "selector"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "ValueCoercion": {
+            "enum": [
+              "string"
+            ],
+            "type": "string"
+          },
+          "ValueNamespace": {
+            "enum": [
+              "inputs",
+              "outputs",
+              "contexts",
+              "execution",
+              "item",
+              "loop"
+            ],
+            "type": "string"
+          },
+          "ValuePathSegment": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "format": "uint32",
+                "minimum": 0,
+                "type": "integer"
+              }
+            ]
+          },
+          "ValueSelection": {
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "current",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "first",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "last",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "all",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "index": {
+                    "format": "uint32",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "kind": {
+                    "const": "index",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "index"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "ValueSelector": {
+            "additionalProperties": false,
+            "properties": {
+              "item": {
+                "$ref": "#/$defs/ValueSelection",
+                "default": {
+                  "kind": "current"
+                }
+              },
+              "namespace": {
+                "$ref": "#/$defs/ValueNamespace"
+              },
+              "path": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/ValuePathSegment"
+                },
+                "type": "array"
+              },
+              "port": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "run": {
+                "$ref": "#/$defs/ValueSelection",
+                "default": {
+                  "kind": "current"
+                }
+              },
+              "sourceNodeId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "namespace"
+            ],
+            "type": "object"
           },
           "VaultSecretReferenceV1": {
             "additionalProperties": false,
@@ -15457,9 +18574,6 @@
           "WorkflowOutput": {
             "additionalProperties": false,
             "properties": {
-              "expression": {
-                "type": "string"
-              },
               "required": {
                 "default": false,
                 "type": "boolean"
@@ -15470,10 +18584,13 @@
               "sensitive": {
                 "default": false,
                 "type": "boolean"
+              },
+              "value": {
+                "$ref": "#/$defs/DynamicValue"
               }
             },
             "required": [
-              "expression"
+              "value"
             ],
             "type": "object"
           },
@@ -15866,6 +18983,29 @@
       },
       "TraceEventEnvelopeV1": {
         "$defs": {
+          "TraceContentKindV1": {
+            "enum": [
+              "workflow_input",
+              "workflow_output",
+              "node_input",
+              "node_output",
+              "attempt_input",
+              "attempt_output",
+              "resolved_parameters",
+              "runtime_request",
+              "runtime_response",
+              "agent_input",
+              "agent_output",
+              "iteration_input",
+              "iteration_output",
+              "sandbox_request",
+              "sandbox_response",
+              "wait_request",
+              "wait_response",
+              "conversion_record"
+            ],
+            "type": "string"
+          },
           "TraceEventKindV1": {
             "enum": [
               "started",
@@ -15877,6 +19017,7 @@
           "TraceSpanKindV1": {
             "enum": [
               "execution",
+              "boundary",
               "node",
               "attempt",
               "agent_run",
@@ -15916,15 +19057,19 @@
           "contentHash": {
             "type": "string"
           },
+          "contentKind": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/TraceContentKindV1"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "contentPreview": true,
           "contentRef": {
             "format": "uuid",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "contentRole": {
             "type": [
               "string",
               "null"
@@ -16097,6 +19242,29 @@
       },
       "TraceSearchPageV1": {
         "$defs": {
+          "TraceContentKindV1": {
+            "enum": [
+              "workflow_input",
+              "workflow_output",
+              "node_input",
+              "node_output",
+              "attempt_input",
+              "attempt_output",
+              "resolved_parameters",
+              "runtime_request",
+              "runtime_response",
+              "agent_input",
+              "agent_output",
+              "iteration_input",
+              "iteration_output",
+              "sandbox_request",
+              "sandbox_response",
+              "wait_request",
+              "wait_response",
+              "conversion_record"
+            ],
+            "type": "string"
+          },
           "TraceEventEnvelopeV1": {
             "additionalProperties": false,
             "properties": {
@@ -16125,15 +19293,19 @@
               "contentHash": {
                 "type": "string"
               },
+              "contentKind": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/TraceContentKindV1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "contentPreview": true,
               "contentRef": {
                 "format": "uuid",
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "contentRole": {
                 "type": [
                   "string",
                   "null"
@@ -16314,6 +19486,7 @@
           "TraceSpanKindV1": {
             "enum": [
               "execution",
+              "boundary",
               "node",
               "attempt",
               "agent_run",
@@ -16426,6 +19599,29 @@
       },
       "TraceSpanDetailV1": {
         "$defs": {
+          "TraceContentKindV1": {
+            "enum": [
+              "workflow_input",
+              "workflow_output",
+              "node_input",
+              "node_output",
+              "attempt_input",
+              "attempt_output",
+              "resolved_parameters",
+              "runtime_request",
+              "runtime_response",
+              "agent_input",
+              "agent_output",
+              "iteration_input",
+              "iteration_output",
+              "sandbox_request",
+              "sandbox_response",
+              "wait_request",
+              "wait_response",
+              "conversion_record"
+            ],
+            "type": "string"
+          },
           "TraceContentV1": {
             "additionalProperties": false,
             "properties": {
@@ -16436,13 +19632,22 @@
                   "null"
                 ]
               },
-              "preview": true,
-              "role": {
+              "eventId": {
+                "format": "uuid",
                 "type": "string"
-              }
+              },
+              "kind": {
+                "$ref": "#/$defs/TraceContentKindV1"
+              },
+              "occurredAt": {
+                "type": "string"
+              },
+              "preview": true
             },
             "required": [
-              "role"
+              "eventId",
+              "kind",
+              "occurredAt"
             ],
             "type": "object"
           },
@@ -16474,15 +19679,19 @@
               "contentHash": {
                 "type": "string"
               },
+              "contentKind": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/TraceContentKindV1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "contentPreview": true,
               "contentRef": {
                 "format": "uuid",
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "contentRole": {
                 "type": [
                   "string",
                   "null"
@@ -16663,6 +19872,7 @@
           "TraceSpanKindV1": {
             "enum": [
               "execution",
+              "boundary",
               "node",
               "attempt",
               "agent_run",
@@ -16838,7 +20048,12 @@
             "minimum": 0,
             "type": "integer"
           },
-          "attributes": true,
+          "contents": {
+            "items": {
+              "$ref": "#/$defs/TraceContentV1"
+            },
+            "type": "array"
+          },
           "events": {
             "items": {
               "$ref": "#/$defs/TraceEventEnvelopeV1"
@@ -16849,26 +20064,6 @@
             "format": "uuid",
             "type": "string"
           },
-          "input": {
-            "anyOf": [
-              {
-                "$ref": "#/$defs/TraceContentV1"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "output": {
-            "anyOf": [
-              {
-                "$ref": "#/$defs/TraceContentV1"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
           "span": {
             "$ref": "#/$defs/TraceSpanSummaryV1"
           }
@@ -16877,7 +20072,7 @@
           "apiVersion",
           "executionId",
           "span",
-          "attributes",
+          "contents",
           "events"
         ],
         "title": "TraceSpanDetailV1",
@@ -17319,6 +20514,38 @@
         "summary": "Prepare Bundle"
       }
     },
+    "/internal/runtime/v1/chat-mappings:apply": {
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApplyChatMappingRequestV1"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApplyChatMappingReceiptV1"
+                }
+              }
+            },
+            "description": "Applied"
+          }
+        },
+        "security": [
+          {
+            "serviceJwt": []
+          }
+        ],
+        "summary": "Apply Chat Mapping"
+      }
+    },
     "/internal/runtime/v1/deployments:activate": {
       "post": {
         "requestBody": {
@@ -17681,6 +20908,22 @@
             "schema": {
               "format": "uuid",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "type": "integer"
             }
           }
         ],

@@ -18,7 +18,7 @@ async function runFixture(page: Page, name: string) {
   const row = page.getByRole('row').filter({ hasText: name })
   await expect(row).toBeVisible()
   await row.getByRole('link', { name: '详情' }).click()
-  await page.getByRole('button', { name: '运行版本' }).click()
+  await page.getByRole('button', { name: '测试运行' }).click()
   await expect(page).toHaveURL(/\/executions\/[0-9a-f-]+$/)
   return page.url().split('/').at(-1) as string
 }
@@ -51,7 +51,7 @@ test('M5 Agent uses the deterministic model and authorized MCP tool with a persi
   const details = await response.json() as { agentRuns: Array<{ status: string, stopReason: string, modelCallCount: number, toolCallCount: number }>, iterations: unknown[], calls: Array<{ callKind: string, requestFingerprint: string }> }
   expect(details.agentRuns).toHaveLength(1)
   expect(details.agentRuns[0]).toMatchObject({ status: 'succeeded', stopReason: 'stop', modelCallCount: 2, toolCallCount: 1 })
-  expect(details.iterations).toHaveLength(2)
+  expect(details.iterations).toHaveLength(0)
   expect(details.calls.map((call) => call.callKind)).toEqual(['model', 'mcp_tool', 'model'])
   expect(details.calls.every((call) => call.requestFingerprint.length === 64)).toBeTruthy()
   await expect(page.getByRole('treegrid', { name: 'Trace 层级瀑布' })).toBeVisible()
@@ -75,7 +75,8 @@ test('M5 RAG and Memory nodes call the fixed Addons through Worker runtime ports
   const ragNodes = await executionNodes(page, token, ragExecution)
   const ragOutput = ragNodes.items.find((node) => node.nodeName === 'M5 RAG Query')?.output.main?.[0].json
   expect(JSON.stringify(ragOutput)).toContain('m5-worker-fixture.txt')
-  expect(ragOutput).toMatchObject({ response: expect.any(String) })
+  expect(ragOutput).toMatchObject({ text: expect.any(String), documents: expect.any(Array), citations: expect.any(Array), recordIds: expect.any(Array) })
+  expect(ragOutput).not.toHaveProperty('response')
   await expectRuntimeTrace(page, token, ragExecution, 'rag.call', 'rag')
 
   const memoryExecution = await runFixture(page, 'M5 Memory Search Fixture')
@@ -83,6 +84,7 @@ test('M5 RAG and Memory nodes call the fixed Addons through Worker runtime ports
   const memoryNodes = await executionNodes(page, token, memoryExecution)
   const memoryOutput = memoryNodes.items.find((node) => node.nodeName === 'M5 Memory Search')?.output.main?.[0].json
   expect(JSON.stringify(memoryOutput)).toContain('direct Rust OpenSandbox adapter')
+  expect(memoryOutput).toMatchObject({ text: expect.any(String), records: expect.any(Array), recordIds: expect.any(Array) })
   await expectRuntimeTrace(page, token, memoryExecution, 'memory.call', 'memory')
 })
 
@@ -100,14 +102,14 @@ test('M5 RAG write with read scope fails before reaching the Addon', async ({ pa
   }, { timeout: 30_000 }).toMatchObject({ status: 'failed', errorCode: 'RAG_WRITE_DENIED' })
 })
 
-test('M5 Code runs in OpenSandbox, stores output as an Artifact, and terminates its lease', async ({ page }) => {
+test('M5 Code runs in OpenSandbox, returns the semantic Code contract, and terminates its lease', async ({ page }) => {
   const token = await login(page)
   const execution = await runFixture(page, 'M5 Code Fixture')
   await expectExecutionSucceeded(page, 180_000)
-  const nodes = await (await page.request.get(`/api/v1/executions/${execution}/nodes`, { headers: { Authorization: `Bearer ${token}` } })).json() as { items: Array<{ nodeName: string, output: { main?: Array<{ json: { stdout?: string }, binary?: Record<string, { artifactHandle: string }> }> } }> }
+  const nodes = await (await page.request.get(`/api/v1/executions/${execution}/nodes`, { headers: { Authorization: `Bearer ${token}` } })).json() as { items: Array<{ nodeName: string, output: { main?: Array<{ json: { stdout?: string, stderr?: string, exitCode?: number, structuredOutput?: unknown, files?: unknown[], partial?: boolean } }> } }> }
   const code = nodes.items.find((node) => node.nodeName === 'M5 Python Code')
   expect(code?.output.main?.[0].json.stdout).toContain('m5-sandbox-ok')
-  expect(code?.output.main?.[0].binary?.output0.artifactHandle).toMatch(/^[0-9a-f-]{36}$/)
+  expect(code?.output.main?.[0].json).toMatchObject({ stderr: expect.any(String), exitCode: 0, files: expect.any(Array), partial: false })
   const details = await (await page.request.get(`/api/v1/executions/${execution}/runtime-details`, { headers: { Authorization: `Bearer ${token}` } })).json() as { sandboxes: Array<{ status: string, sandboxId: string, terminationAttempts: number, expiresAt: string }> }
   expect(details.sandboxes).toHaveLength(1)
   expect(details.sandboxes[0]).toMatchObject({ status: 'terminated', terminationAttempts: 0 })
@@ -128,7 +130,7 @@ test('M5 command runners, Credential files, and network policies use isolated Sa
   for (const [workflow, nodeName, stdout, hasArtifact] of fixtures) {
     const execution = await runFixture(page, workflow)
     await expectExecutionSucceeded(page, 180_000)
-    const nodes = await (await page.request.get(`/api/v1/executions/${execution}/nodes`, { headers: { Authorization: `Bearer ${token}` } })).json() as { items: Array<{ nodeName: string, output: { main?: Array<{ json: { stdout?: string }, binary?: Record<string, { artifactHandle: string }> }> } }> }
+    const nodes = await (await page.request.get(`/api/v1/executions/${execution}/nodes`, { headers: { Authorization: `Bearer ${token}` } })).json() as { items: Array<{ nodeName: string, output: { main?: Array<{ json: { stdout?: string, files?: unknown[] } }> } }> }
     const code = nodes.items.find((node) => node.nodeName === nodeName)
     expect(code?.output.main?.[0].json.stdout).toContain(stdout)
     if (workflow === 'M5 Network Deny Fixture') {
@@ -136,7 +138,7 @@ test('M5 command runners, Credential files, and network policies use isolated Sa
       expect(code?.output.main?.[0].json.stdout).toContain('m5-ipv6-denied')
     }
     expect(code?.output.main?.[0].json.stdout).not.toContain('m5-model-secret')
-    if (hasArtifact) expect(code?.output.main?.[0].binary?.output0.artifactHandle).toMatch(/^[0-9a-f-]{36}$/)
+    if (hasArtifact) expect(code?.output.main?.[0].json.files).toEqual(expect.any(Array))
   }
 })
 
@@ -144,13 +146,15 @@ test('M5 partial Sandbox output is bounded and linked to full Trace Artifacts', 
   const token = await login(page)
   const execution = await runFixture(page, 'M5 Partial Output Fixture')
   await expectExecutionSucceeded(page, 180_000)
-  const nodes = await (await page.request.get(`/api/v1/executions/${execution}/nodes`, { headers: { Authorization: `Bearer ${token}` } })).json() as { items: Array<{ nodeName: string, output: { main?: Array<{ json: { stdout?: string, stderr?: string, partial?: boolean }, binary?: Record<string, { artifactHandle: string }> }> } }> }
+  const nodes = await (await page.request.get(`/api/v1/executions/${execution}/nodes`, { headers: { Authorization: `Bearer ${token}` } })).json() as { items: Array<{ nodeName: string, output: { main?: Array<{ json: { stdout?: string, stderr?: string, files?: Array<{ artifactId: string, fileName: string, contentType: string, sizeBytes: number, sha256: string }>, partial?: boolean } }> } }> }
   const output = nodes.items.find((node) => node.nodeName === 'M5 Partial Output Code')?.output.main?.[0]
   expect(output?.json.partial).toBe(true)
   expect(output?.json.stdout?.length).toBeLessThanOrEqual(32)
   expect(output?.json.stderr?.length).toBeLessThanOrEqual(32)
-  expect(output?.binary?.stdout.artifactHandle).toMatch(/^[0-9a-f-]{36}$/)
-  expect(output?.binary?.stderr.artifactHandle).toMatch(/^[0-9a-f-]{36}$/)
+  expect(output?.json.files).toHaveLength(2)
+  for (const file of output?.json.files ?? []) {
+    expect(file).toMatchObject({ artifactId: expect.stringMatching(/^[0-9a-f-]{36}$/), fileName: expect.any(String), contentType: expect.any(String), sizeBytes: expect.any(Number), sha256: expect.stringMatching(/^[0-9a-f]{64}$/) })
+  }
 
   await expect.poll(async () => {
     const response = await page.request.get(`/api/v1/executions/${execution}/trace`, { headers: { Authorization: `Bearer ${token}` } })

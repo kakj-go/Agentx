@@ -28,3 +28,9 @@ export function RequirePermission({ permission, children }: { permission: string
   if (status !== 'authenticated') return children
   return hasPermission(permission) ? children : <Navigate replace to="/403" />
 }
+
+export function RequireAnyPermission({ permissions, children }: { permissions: string[]; children: ReactNode }) {
+  const { status, hasPermission } = useAuth()
+  if (status !== 'authenticated') return children
+  return permissions.some(hasPermission) ? children : <Navigate replace to="/403" />
+}

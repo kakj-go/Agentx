@@ -1,15 +1,43 @@
 const translations = {
   "trace": "View trace",
   "mainViews": { "trace": "Trace", "recovery": "Recovery" },
-  "runVersion": "Run version",
   "cost": "Cost",
   "title": "Executions",
   "description": "Explore Workflow executions, traces, and checkpoints.",
-  "search": "Search executions or workflows",
+  "search": "Search execution ID, Trace ID, or error code",
   "trigger": "Trigger",
   "executionIdLabel": "Execution ID",
   "startedAt": "Started",
-  "duration": "Duration"
+  "duration": "Duration",
+  "source": "Source",
+  "initiator": "Initiator",
+  "application": "Application",
+  "workflow": "Workflow",
+  "tool": "Called tool",
+  "user": "User",
+  "department": "Initiator department",
+  "moreFilters": "More filters",
+  "clearAll": "Clear all",
+  "createdAfter": "Created after",
+  "createdBefore": "Created before",
+  "dateTimePicker": {
+    "time": "Time",
+    "now": "Now",
+    "clear": "Clear",
+    "invalidTime": "Enter a valid time in HH:mm format.",
+    "outOfRange": "The selected time is outside the allowed range."
+  },
+  "triggerName": "Trigger name",
+  "triggerNamePlaceholder": "Search execution-time trigger name",
+  "selectApplication": "Select applications",
+  "selectWorkflow": "Select workflows",
+  "selectTool": "Select tools",
+  "selectUser": "Select users",
+  "selectDepartment": "Select departments",
+  "selectTriggerType": "Select trigger types",
+  "filterLoadFailed": "Failed to load filter options",
+  "resultsRefreshed": "The query cursor expired, so results were refreshed",
+  "total": "{{count}} total"
   ,"nodePanel": {
     "selectNode": "Select a node to inspect its runtime data", "ariaLabel": "Node runtime data", "outlineAriaLabel": "Execution node outline", "outline": "Execution outline", "runCount": "{{count}} runs", "noNodes": "No node runs", "run": "Run", "input": "Input", "output": "Output", "lineage": "Lineage", "attempts": "Attempts", "logs": "Logs", "noInput": "This node has no input", "noOutput": "This node has no output yet", "noLineage": "No lineage records", "noAttempts": "No attempt records", "noLogs": "No node logs", "attempt": "Attempt {{number}}", "worker": "Worker", "deadline": "Deadline", "started": "Started", "sourceSummary": "Run {{run}} · Output {{output}} · Item {{source}} → Item {{target}}"
   }
@@ -56,6 +84,14 @@ const translations = {
     "schedule": "Schedule",
     "event": "Event",
     "sub_workflow": "Sub-workflow"
+    ,"user": "User"
+    ,"api_key": "API key"
+    ,"debug": "Debug"
+    ,"evaluation": "Evaluation"
+    ,"poll": "Poll"
+    ,"lifecycle": "Lifecycle"
+    ,"fork": "Fork"
+    ,"composite": "Sub-workflow"
   }
 } as const
 

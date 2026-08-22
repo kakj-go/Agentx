@@ -1,14 +1,14 @@
 use agentx_runtime_contracts::{
     ContentHash, DelegationClaimsV1, ExecutionCheckpointV1, ExecutionCollectionPageV1,
-    ExecutionDetailV1, ExecutionNodeV1, ExecutionRuntimeDetailsV1, ExecutionSearchPageV1,
-    ExecutionSearchRequestV1, ExecutionSummaryV1, ExecutionWaitV1, InvocationDetailV1,
-    InvocationSearchPageV1, InvocationSearchRequestV1, InvocationSummaryV1, NodeAttemptV1,
-    RuntimeCallDetailV1, content_hash,
+    ExecutionDetailV1, ExecutionEventPageV1, ExecutionEventV1, ExecutionNodeV1,
+    ExecutionRuntimeDetailsV1, ExecutionSearchPageV1, ExecutionSearchRequestV1, ExecutionSummaryV1,
+    ExecutionWaitV1, InvocationDetailV1, InvocationSearchPageV1, InvocationSearchRequestV1,
+    InvocationSummaryV1, NodeAttemptV1, RuntimeCallDetailV1, content_hash,
 };
 use axum::{
     Json,
     body::Body,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{HeaderMap, HeaderValue, header},
     response::Response,
 };
@@ -45,6 +45,7 @@ pub async fn search_executions(
     Json(request): Json<ExecutionSearchRequestV1>,
 ) -> RuntimeResult<Json<ExecutionSearchPageV1>> {
     validate_page_limit(request.limit)?;
+    validate_execution_search(&request)?;
     let request_hash = query_request_hash("execution-search", &request)?;
     let claims = authorize_delegation(
         &state,
@@ -183,6 +184,7 @@ pub async fn get_execution(
         trace_watermark: row.try_get("trace_watermark")?,
         parent_execution_id: row.try_get("parent_execution_id")?,
         work_package_id: row.try_get("work_package_id")?,
+        input: row.try_get("input_json")?,
         output,
         error: row.try_get("error_json")?,
     };
@@ -232,7 +234,7 @@ pub async fn get_execution_nodes(
     Path(id): Path<Uuid>,
 ) -> RuntimeResult<Json<ExecutionCollectionPageV1<ExecutionNodeV1>>> {
     let claims = authorize_execution(&state, &headers, id, "execution_nodes").await?;
-    let rows = sqlx::query("SELECT id,node_id,node_name,node_type,node_version,run_index,iteration_index,status,capability,input_json,output_json,error_code,error_message,created_at FROM node_executions WHERE tenant_id=? AND execution_id=? ORDER BY run_index,iteration_index,created_at,id")
+    let rows = sqlx::query("SELECT id,node_id,node_name,node_type,node_version,run_index,iteration_index,status,capability,input_json,output_json,error_code,error_message,(SELECT CAST(COALESCE(SUM(rc.cost_micros),0) AS UNSIGNED) FROM runtime_calls rc WHERE rc.tenant_id=node_executions.tenant_id AND rc.node_execution_id=node_executions.id) cost_micros,(SELECT CASE WHEN COUNT(DISTINCT rc.cost_currency)=1 THEN MAX(rc.cost_currency) ELSE NULL END FROM runtime_calls rc WHERE rc.tenant_id=node_executions.tenant_id AND rc.node_execution_id=node_executions.id) cost_currency,started_at,ended_at FROM node_executions WHERE tenant_id=? AND execution_id=? ORDER BY run_index,iteration_index,created_at,id")
         .bind(claims.tenant_id).bind(id).fetch_all(&state.pool).await?;
     let items = rows
         .into_iter()
@@ -251,7 +253,7 @@ pub async fn get_execution_node(
     Path((id, node_execution_id)): Path<(Uuid, Uuid)>,
 ) -> RuntimeResult<Json<ExecutionNodeV1>> {
     let claims = authorize_execution(&state, &headers, id, "execution_node").await?;
-    let row = sqlx::query("SELECT id,node_id,node_name,node_type,node_version,run_index,iteration_index,status,capability,input_json,output_json,error_code,error_message,created_at FROM node_executions WHERE tenant_id=? AND execution_id=? AND id=?")
+    let row = sqlx::query("SELECT id,node_id,node_name,node_type,node_version,run_index,iteration_index,status,capability,input_json,output_json,error_code,error_message,(SELECT CAST(COALESCE(SUM(rc.cost_micros),0) AS UNSIGNED) FROM runtime_calls rc WHERE rc.tenant_id=node_executions.tenant_id AND rc.node_execution_id=node_executions.id) cost_micros,(SELECT CASE WHEN COUNT(DISTINCT rc.cost_currency)=1 THEN MAX(rc.cost_currency) ELSE NULL END FROM runtime_calls rc WHERE rc.tenant_id=node_executions.tenant_id AND rc.node_execution_id=node_executions.id) cost_currency,started_at,ended_at FROM node_executions WHERE tenant_id=? AND execution_id=? AND id=?")
         .bind(claims.tenant_id)
         .bind(id)
         .bind(node_execution_id)
@@ -267,27 +269,38 @@ pub async fn get_execution_events(
     State(state): State<RuntimeState>,
     headers: HeaderMap,
     Path(id): Path<Uuid>,
-) -> RuntimeResult<Json<ExecutionCollectionPageV1<Value>>> {
+    Query(query): Query<ExecutionEventsQuery>,
+) -> RuntimeResult<Json<ExecutionEventPageV1>> {
     let claims = authorize_execution(&state, &headers, id, "execution_events").await?;
-    let rows = sqlx::query("SELECT sequence_number,event_type,status,summary_json,occurred_at FROM execution_events WHERE tenant_id=? AND execution_id=? ORDER BY sequence_number")
-        .bind(claims.tenant_id).bind(id).fetch_all(&state.pool).await?;
+    let after = query.after.unwrap_or_default();
+    let limit = query.limit.unwrap_or(200).clamp(1, 1000);
+    let rows = sqlx::query("SELECT sequence_number,event_type,status,summary_json,occurred_at FROM execution_events WHERE tenant_id=? AND execution_id=? AND sequence_number>? ORDER BY sequence_number LIMIT ?")
+        .bind(claims.tenant_id).bind(id).bind(after).bind(limit).fetch_all(&state.pool).await?;
     let items = rows
         .into_iter()
-        .map(|row| -> RuntimeResult<Value> {
-            Ok(json!({
-                "sequenceNumber": row.try_get::<u64,_>("sequence_number")?,
-                "eventType": row.try_get::<String,_>("event_type")?,
-                "status": row.try_get::<String,_>("status")?,
-                "summary": row.try_get::<Value,_>("summary_json")?,
-                "occurredAt": row.try_get::<OffsetDateTime,_>("occurred_at")?,
-            }))
+        .map(|row| -> RuntimeResult<ExecutionEventV1> {
+            Ok(ExecutionEventV1 {
+                sequence: row.try_get("sequence_number")?,
+                event_type: row.try_get("event_type")?,
+                status: row.try_get("status")?,
+                summary: row.try_get("summary_json")?,
+                occurred_at: row.try_get("occurred_at")?,
+            })
         })
         .collect::<RuntimeResult<Vec<_>>>()?;
+    let next_cursor = items.last().map(|event| event.sequence);
     complete_query_receipt(&state, claims.jti, "OK").await?;
-    Ok(Json(ExecutionCollectionPageV1 {
+    Ok(Json(ExecutionEventPageV1 {
         api_version: 1,
         items,
+        next_cursor,
     }))
+}
+
+#[derive(Default, Deserialize)]
+pub struct ExecutionEventsQuery {
+    after: Option<u64>,
+    limit: Option<u32>,
 }
 
 pub async fn get_execution_waits(
@@ -354,19 +367,20 @@ pub async fn get_execution_runtime_details(
     Path(id): Path<Uuid>,
 ) -> RuntimeResult<Json<ExecutionRuntimeDetailsV1>> {
     let claims = authorize_execution(&state, &headers, id, "execution_runtime_details").await?;
-    let attempts = sqlx::query("SELECT a.id,a.node_execution_id,a.attempt_number,a.status,a.fencing_token,a.result_hash,a.error_code,a.error_message,COALESCE(a.worker_instance_id,(SELECT l.worker_id FROM worker_leases l WHERE l.tenant_id=a.tenant_id AND l.node_attempt_id=a.id ORDER BY l.fencing_token DESC LIMIT 1)) worker_id FROM node_attempts a WHERE a.tenant_id=? AND a.execution_id=? ORDER BY a.node_execution_id,a.attempt_number")
+    let attempts = sqlx::query("SELECT a.id,a.node_execution_id,a.attempt_number,a.status,a.fencing_token,a.result_hash,a.error_code,a.error_message,COALESCE(a.worker_instance_id,(SELECT BIN_TO_UUID(l.worker_id) FROM worker_leases l WHERE l.tenant_id=a.tenant_id AND l.node_attempt_id=a.id ORDER BY l.fencing_token DESC LIMIT 1)) worker_id FROM node_attempts a WHERE a.tenant_id=? AND a.execution_id=? ORDER BY a.node_execution_id,a.attempt_number")
         .bind(claims.tenant_id).bind(id).fetch_all(&state.pool).await?.into_iter().map(|row| -> RuntimeResult<_> { Ok(NodeAttemptV1 {
             attempt_id: row.try_get("id")?, node_execution_id: row.try_get("node_execution_id")?,
-            attempt_number: row.try_get("attempt_number")?, status: row.try_get("status")?, worker_id: row.try_get("worker_id")?,
+            attempt_number: row.try_get("attempt_number")?, status: row.try_get("status")?,
+            worker_id: row.try_get::<Option<String>,_>("worker_id")?.map(parse_worker_id).transpose()?,
             fencing_token: row.try_get("fencing_token")?, result_hash: row.try_get::<Option<String>,_>("result_hash")?.map(parse_hash).transpose()?,
             error_code: row.try_get("error_code")?, error_message: row.try_get("error_message")?,
         })}).collect::<RuntimeResult<Vec<_>>>()?;
-    let calls = sqlx::query("SELECT id,node_execution_id,attempt_id,call_kind,status,resource_type,resource_id,resource_version_id,input_tokens,output_tokens,cost_micros,error_code FROM runtime_calls WHERE tenant_id=? AND execution_id=? ORDER BY started_at,id")
+    let calls = sqlx::query("SELECT id,node_execution_id,attempt_id,call_kind,status,resource_type,resource_id,resource_version_id,input_tokens,output_tokens,cost_micros,cost_currency,error_code FROM runtime_calls WHERE tenant_id=? AND execution_id=? ORDER BY started_at,id")
         .bind(claims.tenant_id).bind(id).fetch_all(&state.pool).await?.into_iter().map(|row| -> RuntimeResult<_> { Ok(RuntimeCallDetailV1 {
             call_id: row.try_get("id")?, node_execution_id: row.try_get("node_execution_id")?, attempt_id: row.try_get("attempt_id")?,
             call_kind: row.try_get("call_kind")?, status: row.try_get("status")?, resource_type: row.try_get("resource_type")?,
             resource_id: row.try_get("resource_id")?, resource_version: row.try_get("resource_version_id")?,
-            input_tokens: row.try_get("input_tokens")?, output_tokens: row.try_get("output_tokens")?, cost_micros: row.try_get("cost_micros")?, error_code: row.try_get("error_code")?,
+            input_tokens: row.try_get("input_tokens")?, output_tokens: row.try_get("output_tokens")?, cost_micros: row.try_get("cost_micros")?, cost_currency: row.try_get("cost_currency")?, error_code: row.try_get("error_code")?,
         })}).collect::<RuntimeResult<Vec<_>>>()?;
     let agent_runs = json_rows(&state, "SELECT JSON_OBJECT('id',BIN_TO_UUID(id),'status',status,'iterationCount',iteration_count,'modelCallCount',model_call_count,'toolCallCount',tool_call_count,'stopReason',stop_reason) value FROM agent_runs WHERE tenant_id=? AND execution_id=? ORDER BY started_at,id", claims.tenant_id, id).await?;
     let sandboxes = json_rows(&state, "SELECT JSON_OBJECT('id',BIN_TO_UUID(id),'status',status,'sandboxId',sandbox_id,'expiresAt',DATE_FORMAT(expires_at,'%Y-%m-%dT%H:%i:%s.%fZ'),'terminationAttempts',termination_attempts,'outcomeUnknown',outcome_unknown) value FROM sandbox_leases WHERE tenant_id=? AND execution_id=? ORDER BY created_at,id", claims.tenant_id, id).await?;
@@ -427,19 +441,36 @@ async fn create_execution_snapshot(
 ) -> RuntimeResult<(Uuid, String, u64, u64)> {
     let apps = serde_json::to_string(&request.application_ids)?;
     let workflows = serde_json::to_string(&request.workflow_ids)?;
+    let authorized_apps = serde_json::to_string(&claims.application_ids)?;
+    let authorized_workflows = serde_json::to_string(&claims.workflow_ids)?;
+    let tools = serde_json::to_string(&request.tool_ids)?;
+    let users = serde_json::to_string(&request.initiator_user_ids)?;
+    let departments = serde_json::to_string(&request.initiator_department_ids)?;
+    let trigger_types = serde_json::to_string(&request.trigger_types)?;
     let statuses = serde_json::to_string(&request.statuses)?;
+    let session_mode = match request.session_mode {
+        agentx_runtime_contracts::ExecutionSessionModeV1::All => "all",
+        agentx_runtime_contracts::ExecutionSessionModeV1::Stateless => "stateless",
+        agentx_runtime_contracts::ExecutionSessionModeV1::Session => "session",
+    };
+    let trigger_name = request
+        .trigger_name
+        .as_ref()
+        .map(|value| format!("%{}%", escape_like(&value.trim().to_lowercase())));
     let search = request
         .search
         .as_ref()
-        .map(|value| format!("%{}%", value.trim()));
+        .map(|value| format!("%{}%", escape_like(value.trim())));
     let mut tx = state.pool.begin().await?;
-    let rows = sqlx::query("SELECT /*+ MAX_EXECUTION_TIME(5000) */ id,invocation_id,application_id,workflow_id,workflow_version_id,session_id,parent_execution_id,bundle_id,trace_id,trigger_type,status,duration_ms,cost_micros,error_code,created_at,ended_at FROM workflow_executions WHERE tenant_id=? AND retention_deleted_at IS NULL AND (JSON_LENGTH(?)=0 OR JSON_CONTAINS(?,JSON_QUOTE(BIN_TO_UUID(application_id)))) AND (JSON_LENGTH(?)=0 OR JSON_CONTAINS(?,JSON_QUOTE(BIN_TO_UUID(workflow_id)))) AND (JSON_LENGTH(?)=0 OR JSON_CONTAINS(?,JSON_QUOTE(status))) AND (? IS NULL OR created_at>=?) AND (? IS NULL OR created_at<=?) AND (? IS NULL OR BIN_TO_UUID(id) LIKE ? OR error_code LIKE ?) ORDER BY created_at DESC,id DESC LIMIT 10001")
-        .bind(request.tenant_id).bind(&apps).bind(&apps).bind(&workflows).bind(&workflows).bind(&statuses).bind(&statuses)
+    let rows = sqlx::query("SELECT /*+ MAX_EXECUTION_TIME(5000) */ id,invocation_id,application_id,workflow_id,workflow_version_id,session_id,parent_execution_id,bundle_id,trace_id,trigger_type,initiator_user_id,initiator_user_name,initiator_department_id,initiator_department_name,trigger_source_id,trigger_name,status,duration_ms,(SELECT CAST(COALESCE(SUM(rc.cost_micros),0) AS UNSIGNED) FROM runtime_calls rc WHERE rc.tenant_id=workflow_executions.tenant_id AND rc.execution_id=workflow_executions.id) cost_micros,(SELECT CASE WHEN COUNT(DISTINCT rc.cost_currency)=1 THEN MAX(rc.cost_currency) ELSE NULL END FROM runtime_calls rc WHERE rc.tenant_id=workflow_executions.tenant_id AND rc.execution_id=workflow_executions.id) cost_currency,(SELECT CAST(COALESCE(SUM(rc.input_tokens),0) AS UNSIGNED) FROM runtime_calls rc WHERE rc.tenant_id=workflow_executions.tenant_id AND rc.execution_id=workflow_executions.id) input_tokens,(SELECT CAST(COALESCE(SUM(rc.output_tokens),0) AS UNSIGNED) FROM runtime_calls rc WHERE rc.tenant_id=workflow_executions.tenant_id AND rc.execution_id=workflow_executions.id) output_tokens,error_code,created_at,ended_at FROM workflow_executions WHERE tenant_id=? AND (?=TRUE OR (JSON_CONTAINS(?,JSON_QUOTE(BIN_TO_UUID(application_id))) AND EXISTS(SELECT 1 FROM runtime_user_application_grants scope_app WHERE scope_app.tenant_id=workflow_executions.tenant_id AND scope_app.user_id=? AND scope_app.application_id=workflow_executions.application_id AND scope_app.status='active' AND scope_app.can_query=TRUE)) OR (JSON_CONTAINS(?,JSON_QUOTE(BIN_TO_UUID(workflow_id))) AND EXISTS(SELECT 1 FROM runtime_user_workflow_grants scope_workflow WHERE scope_workflow.tenant_id=workflow_executions.tenant_id AND scope_workflow.user_id=? AND scope_workflow.workflow_id=workflow_executions.workflow_id AND scope_workflow.status='active'))) AND retention_deleted_at IS NULL AND (?='all' OR (?='stateless' AND session_id IS NULL) OR (?='session' AND session_id IS NOT NULL)) AND (JSON_LENGTH(?)=0 OR JSON_CONTAINS(?,JSON_QUOTE(BIN_TO_UUID(application_id)))) AND (JSON_LENGTH(?)=0 OR JSON_CONTAINS(?,JSON_QUOTE(BIN_TO_UUID(workflow_id)))) AND (JSON_LENGTH(?)=0 OR EXISTS(SELECT 1 FROM runtime_calls tool_call WHERE tool_call.tenant_id=workflow_executions.tenant_id AND tool_call.execution_id=workflow_executions.id AND tool_call.call_kind='mcp_tool' AND JSON_CONTAINS(?,JSON_QUOTE(BIN_TO_UUID(tool_call.resource_id))))) AND (JSON_LENGTH(?)=0 OR JSON_CONTAINS(?,JSON_QUOTE(BIN_TO_UUID(initiator_user_id)))) AND (JSON_LENGTH(?)=0 OR JSON_CONTAINS(?,JSON_QUOTE(BIN_TO_UUID(initiator_department_id)))) AND (JSON_LENGTH(?)=0 OR JSON_CONTAINS(?,JSON_QUOTE(trigger_type))) AND (JSON_LENGTH(?)=0 OR JSON_CONTAINS(?,JSON_QUOTE(status))) AND (? IS NULL OR LOWER(trigger_name) LIKE ?) AND (? IS NULL OR created_at>=?) AND (? IS NULL OR created_at<=?) AND (? IS NULL OR BIN_TO_UUID(id) LIKE ? OR BIN_TO_UUID(trace_id) LIKE ? OR error_code LIKE ?) ORDER BY created_at DESC,id DESC LIMIT 10001")
+        .bind(request.tenant_id).bind(claims.tenant_wide).bind(&authorized_apps).bind(claims.sub).bind(&authorized_workflows).bind(claims.sub)
+        .bind(session_mode).bind(session_mode).bind(session_mode).bind(&apps).bind(&apps).bind(&workflows).bind(&workflows)
+        .bind(&tools).bind(&tools).bind(&users).bind(&users).bind(&departments).bind(&departments)
+        .bind(&trigger_types).bind(&trigger_types).bind(&statuses).bind(&statuses)
+        .bind(&trigger_name).bind(&trigger_name)
         .bind(request.created_after).bind(request.created_after).bind(request.created_before).bind(request.created_before)
-        .bind(&search).bind(&search).bind(&search).fetch_all(&mut *tx).await?;
-    if rows.len() > QUERY_SNAPSHOT_LIMIT {
-        return Err(RuntimeError::QueryBudgetExceeded);
-    }
+        .bind(&search).bind(&search).bind(&search).bind(&search).fetch_all(&mut *tx).await?;
+    enforce_snapshot_budget(rows.len())?;
     let snapshot_id = Uuid::now_v7();
     let upper_bound = upper_bound();
     sqlx::query("INSERT INTO runtime_query_snapshots(id,tenant_id,subject_id,query_kind,filter_hash,upper_bound,total_count,expires_at) VALUES(?,?,?,'execution',?,?,?,DATE_ADD(UTC_TIMESTAMP(6),INTERVAL 15 MINUTE))")
@@ -465,9 +496,7 @@ async fn create_invocation_snapshot(
     let rows = sqlx::query("SELECT /*+ MAX_EXECUTION_TIME(5000) */ id,application_id,session_id,execution_id,bundle_id,admission_epoch,caller_type,status,created_at,completed_at FROM application_invocations WHERE tenant_id=? AND (JSON_LENGTH(?)=0 OR JSON_CONTAINS(?,JSON_QUOTE(BIN_TO_UUID(application_id)))) AND (JSON_LENGTH(?)=0 OR JSON_CONTAINS(?,JSON_QUOTE(status))) AND (? IS NULL OR created_at>=?) AND (? IS NULL OR created_at<=?) ORDER BY created_at DESC,id DESC LIMIT 10001")
         .bind(request.tenant_id).bind(&apps).bind(&apps).bind(&statuses).bind(&statuses)
         .bind(request.created_after).bind(request.created_after).bind(request.created_before).bind(request.created_before).fetch_all(&mut *tx).await?;
-    if rows.len() > QUERY_SNAPSHOT_LIMIT {
-        return Err(RuntimeError::QueryBudgetExceeded);
-    }
+    enforce_snapshot_budget(rows.len())?;
     let snapshot_id = Uuid::now_v7();
     let upper_bound = upper_bound();
     sqlx::query("INSERT INTO runtime_query_snapshots(id,tenant_id,subject_id,query_kind,filter_hash,upper_bound,total_count,expires_at) VALUES(?,?,?,'invocation',?,?,?,DATE_ADD(UTC_TIMESTAMP(6),INTERVAL 15 MINUTE))")
@@ -576,9 +605,6 @@ async fn authorize_list_scope(
     applications: &[Uuid],
     workflows: &[Uuid],
 ) -> RuntimeResult<()> {
-    if applications.is_empty() && workflows.is_empty() && !claims.tenant_wide {
-        return Err(RuntimeError::Unauthorized);
-    }
     for application in applications {
         if !claims.tenant_wide && !claims.application_ids.contains(application) {
             return Err(RuntimeError::Unauthorized);
@@ -695,7 +721,7 @@ pub(crate) async fn authorize_execution_command(
 }
 
 async fn execution_row(state: &RuntimeState, id: Uuid) -> RuntimeResult<sqlx::mysql::MySqlRow> {
-    sqlx::query("SELECT id,tenant_id,invocation_id,application_id,workflow_id,workflow_version_id,session_id,parent_execution_id,bundle_id,trace_id,trigger_type,status,duration_ms,cost_micros,error_code,created_at,ended_at,state_version,admission_epoch,trace_watermark,work_package_id,output_json,error_json,terminal_result_object_id,terminal_result_hash FROM workflow_executions WHERE id=? AND retention_deleted_at IS NULL")
+    sqlx::query("SELECT id,tenant_id,invocation_id,application_id,workflow_id,workflow_version_id,session_id,parent_execution_id,bundle_id,trace_id,trigger_type,initiator_user_id,initiator_user_name,initiator_department_id,initiator_department_name,trigger_source_id,trigger_name,status,duration_ms,(SELECT CAST(COALESCE(SUM(rc.cost_micros),0) AS UNSIGNED) FROM runtime_calls rc WHERE rc.tenant_id=workflow_executions.tenant_id AND rc.execution_id=workflow_executions.id) cost_micros,(SELECT CASE WHEN COUNT(DISTINCT rc.cost_currency)=1 THEN MAX(rc.cost_currency) ELSE NULL END FROM runtime_calls rc WHERE rc.tenant_id=workflow_executions.tenant_id AND rc.execution_id=workflow_executions.id) cost_currency,(SELECT CAST(COALESCE(SUM(rc.input_tokens),0) AS UNSIGNED) FROM runtime_calls rc WHERE rc.tenant_id=workflow_executions.tenant_id AND rc.execution_id=workflow_executions.id) input_tokens,(SELECT CAST(COALESCE(SUM(rc.output_tokens),0) AS UNSIGNED) FROM runtime_calls rc WHERE rc.tenant_id=workflow_executions.tenant_id AND rc.execution_id=workflow_executions.id) output_tokens,error_code,created_at,ended_at,state_version,admission_epoch,trace_watermark,work_package_id,input_json,output_json,error_json,terminal_result_object_id,terminal_result_hash FROM workflow_executions WHERE id=? AND retention_deleted_at IS NULL")
         .bind(id).fetch_optional(&state.pool).await?.ok_or(RuntimeError::NotFound)
 }
 
@@ -713,9 +739,18 @@ fn execution_summary(row: &sqlx::mysql::MySqlRow) -> RuntimeResult<ExecutionSumm
             .ok_or_else(|| RuntimeError::Internal(anyhow::anyhow!("Execution has no Bundle")))?,
         trace_id: row.try_get("trace_id")?,
         trigger_type: row.try_get("trigger_type")?,
+        initiator_user_id: row.try_get("initiator_user_id")?,
+        initiator_user_name: row.try_get("initiator_user_name")?,
+        initiator_department_id: row.try_get("initiator_department_id")?,
+        initiator_department_name: row.try_get("initiator_department_name")?,
+        trigger_source_id: row.try_get("trigger_source_id")?,
+        trigger_name: row.try_get("trigger_name")?,
         status: row.try_get("status")?,
         duration_ms: row.try_get("duration_ms")?,
         cost_micros: row.try_get("cost_micros")?,
+        cost_currency: row.try_get("cost_currency")?,
+        input_tokens: row.try_get("input_tokens")?,
+        output_tokens: row.try_get("output_tokens")?,
         error_code: row.try_get("error_code")?,
         created_at: row.try_get("created_at")?,
         completed_at: row.try_get("ended_at")?,
@@ -754,7 +789,10 @@ fn node_from_row(row: sqlx::mysql::MySqlRow) -> RuntimeResult<ExecutionNodeV1> {
         output: row.try_get("output_json")?,
         error_code: row.try_get("error_code")?,
         error_message: row.try_get("error_message")?,
-        created_at: row.try_get("created_at")?,
+        cost_micros: row.try_get("cost_micros")?,
+        cost_currency: row.try_get("cost_currency")?,
+        started_at: row.try_get("started_at")?,
+        ended_at: row.try_get("ended_at")?,
     })
 }
 
@@ -796,7 +834,7 @@ async fn json_rows(
 }
 
 fn execution_filter_hash(request: &ExecutionSearchRequestV1) -> RuntimeResult<ContentHash> {
-    content_hash(&json!({"tenantId":request.tenant_id,"applicationIds":request.application_ids,"workflowIds":request.workflow_ids,"statuses":request.statuses,"createdAfter":request.created_after,"createdBefore":request.created_before,"search":request.search}))
+    content_hash(&json!({"tenantId":request.tenant_id,"applicationIds":request.application_ids,"workflowIds":request.workflow_ids,"toolIds":request.tool_ids,"initiatorUserIds":request.initiator_user_ids,"initiatorDepartmentIds":request.initiator_department_ids,"triggerTypes":request.trigger_types,"triggerName":request.trigger_name,"statuses":request.statuses,"sessionMode":request.session_mode,"createdAfter":request.created_after,"createdBefore":request.created_before,"search":request.search}))
         .map_err(|error| RuntimeError::Internal(error.into()))
 }
 
@@ -850,8 +888,57 @@ fn validate_page_limit(limit: u32) -> RuntimeResult<()> {
     Ok(())
 }
 
+fn enforce_snapshot_budget(row_count: usize) -> RuntimeResult<()> {
+    if row_count > QUERY_SNAPSHOT_LIMIT {
+        return Err(RuntimeError::QueryBudgetExceeded);
+    }
+    Ok(())
+}
+
+fn validate_execution_search(request: &ExecutionSearchRequestV1) -> RuntimeResult<()> {
+    for values in [
+        request.application_ids.len(),
+        request.workflow_ids.len(),
+        request.tool_ids.len(),
+        request.initiator_user_ids.len(),
+        request.initiator_department_ids.len(),
+        request.trigger_types.len(),
+        request.statuses.len(),
+    ] {
+        if values > 50 {
+            return Err(RuntimeError::InvalidRequest(
+                "TOO_MANY_FILTER_VALUES",
+                "Each execution filter supports at most 50 values".into(),
+            ));
+        }
+    }
+    for value in [request.search.as_deref(), request.trigger_name.as_deref()]
+        .into_iter()
+        .flatten()
+    {
+        if value.chars().count() > 200 {
+            return Err(RuntimeError::InvalidRequest(
+                "FILTER_TEXT_TOO_LONG",
+                "Execution filter text supports at most 200 characters".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn escape_like(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
+}
+
 fn parse_hash(value: String) -> RuntimeResult<ContentHash> {
     ContentHash::parse(value).map_err(|error| RuntimeError::Internal(error.into()))
+}
+
+fn parse_worker_id(value: String) -> RuntimeResult<Uuid> {
+    Uuid::parse_str(&value).map_err(|error| RuntimeError::Internal(error.into()))
 }
 
 async fn complete_query_receipt(state: &RuntimeState, jti: Uuid, code: &str) -> RuntimeResult<()> {
@@ -863,5 +950,93 @@ async fn complete_query_receipt(state: &RuntimeState, jti: Uuid, code: &str) -> 
 impl From<serde_json::Error> for RuntimeError {
     fn from(error: serde_json::Error) -> Self {
         Self::Internal(error.into())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeSet;
+
+    use agentx_runtime_contracts::ExecutionSearchRequestV1;
+    use time::OffsetDateTime;
+    use uuid::Uuid;
+
+    use super::{enforce_snapshot_budget, execution_filter_hash, validate_execution_search};
+
+    fn request() -> ExecutionSearchRequestV1 {
+        ExecutionSearchRequestV1 {
+            api_version: 1,
+            tenant_id: Uuid::from_u128(1),
+            application_ids: vec![],
+            workflow_ids: vec![],
+            tool_ids: vec![],
+            initiator_user_ids: vec![],
+            initiator_department_ids: vec![],
+            trigger_types: vec![],
+            trigger_name: None,
+            statuses: vec![],
+            session_mode: agentx_runtime_contracts::ExecutionSessionModeV1::All,
+            created_after: None,
+            created_before: None,
+            search: None,
+            cursor: None,
+            limit: 8,
+        }
+    }
+
+    #[test]
+    fn execution_snapshot_hash_covers_every_filter_but_not_pagination() {
+        let base = request();
+        let mut variants = Vec::new();
+        let id = Uuid::from_u128(2);
+        macro_rules! variant {
+            ($field:ident, $value:expr) => {{
+                let mut value = base.clone();
+                value.$field = $value;
+                variants.push(value);
+            }};
+        }
+        variant!(application_ids, vec![id]);
+        variant!(workflow_ids, vec![id]);
+        variant!(tool_ids, vec![id]);
+        variant!(initiator_user_ids, vec![id]);
+        variant!(initiator_department_ids, vec![id]);
+        variant!(trigger_types, vec!["schedule".into()]);
+        variant!(trigger_name, Some("nightly".into()));
+        variant!(statuses, vec!["succeeded".into()]);
+        variant!(
+            session_mode,
+            agentx_runtime_contracts::ExecutionSessionModeV1::Session
+        );
+        variant!(created_after, Some(OffsetDateTime::UNIX_EPOCH));
+        variant!(created_before, Some(OffsetDateTime::UNIX_EPOCH));
+        variant!(search, Some("TRACE_FAILURE".into()));
+
+        let base_hash = execution_filter_hash(&base).unwrap();
+        let hashes = variants
+            .iter()
+            .map(|request| execution_filter_hash(request).unwrap().to_string())
+            .collect::<BTreeSet<_>>();
+        assert_eq!(hashes.len(), variants.len());
+        assert!(!hashes.contains(&base_hash.to_string()));
+
+        let mut paged = base.clone();
+        paged.cursor = Some("opaque".into());
+        paged.limit = 100;
+        assert_eq!(execution_filter_hash(&paged).unwrap(), base_hash);
+    }
+
+    #[test]
+    fn execution_filter_budget_rejects_oversized_dimensions_and_text() {
+        let mut oversized = request();
+        oversized.tool_ids = (1..=51).map(Uuid::from_u128).collect();
+        assert!(validate_execution_search(&oversized).is_err());
+
+        let mut text = request();
+        text.trigger_name = Some("触".repeat(201));
+        assert!(validate_execution_search(&text).is_err());
+
+        assert!(enforce_snapshot_budget(10_000).is_ok());
+        assert!(enforce_snapshot_budget(10_001).is_err());
     }
 }

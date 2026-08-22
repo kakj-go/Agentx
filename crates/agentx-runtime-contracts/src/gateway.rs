@@ -81,6 +81,7 @@ pub struct RuntimeTriggerSpecV1 {
     #[serde(deserialize_with = "crate::deserialize_v1")]
     pub schema_version: u32,
     pub trigger_id: Uuid,
+    pub trigger_name: String,
     pub application_id: Uuid,
     pub node_id: String,
     pub revision: u64,
@@ -94,6 +95,9 @@ pub struct RuntimeTriggerSpecV1 {
 pub struct RuntimeUserAdmissionV1 {
     pub tenant_id: Uuid,
     pub user_id: Uuid,
+    pub user_name: String,
+    pub department_id: Uuid,
+    pub department_name: String,
     pub token_version: u64,
     pub enabled: bool,
     pub tenant_query_enabled: bool,
@@ -242,6 +246,41 @@ pub struct InvocationResponseV1 {
     #[schemars(with = "String")]
     #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ChatMappingV1 {
+    pub question_input: String,
+    pub file_input: Option<String>,
+    pub answer_output: String,
+    pub answer_files_output: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ApplyChatMappingRequestV1 {
+    #[serde(deserialize_with = "crate::deserialize_v1")]
+    pub api_version: u32,
+    pub idempotency_key: String,
+    pub tenant_id: Uuid,
+    pub application_id: Uuid,
+    pub deployment_id: Uuid,
+    pub bundle_id: Uuid,
+    pub version: u64,
+    pub mapping: Option<ChatMappingV1>,
+    pub content_hash: crate::ContentHash,
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ApplyChatMappingReceiptV1 {
+    #[serde(deserialize_with = "crate::deserialize_v1")]
+    pub api_version: u32,
+    pub deployment_id: Uuid,
+    pub bundle_id: Uuid,
+    pub version: u64,
+    pub replayed: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]

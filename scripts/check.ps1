@@ -72,9 +72,9 @@ try {
     }
     Remove-Item -LiteralPath $typeScriptTemp -Force
     $gatewayOpenApiTemp = Join-Path ([System.IO.Path]::GetTempPath()) "agentx-trigger-gateway-$PID.json"
-    Invoke-Native "gateway OpenAPI generation" { cargo run --quiet -p agentx-runtime --bin runtime-gateway -- openapi $gatewayOpenApiTemp }
+    Invoke-Native "gateway OpenAPI generation" { cargo run --quiet -p agentx-v2-runtime --bin runtime-gateway -- openapi $gatewayOpenApiTemp }
     if ((Get-NormalizedText $gatewayOpenApiTemp) -cne (Get-NormalizedText "$root/openapi/trigger-gateway.json")) {
-        throw "Gateway OpenAPI schema drift detected. Run: cargo run -p agentx-runtime --bin runtime-gateway -- openapi openapi/trigger-gateway.json"
+        throw "Gateway OpenAPI schema drift detected. Run: cargo run -p agentx-v2-runtime --bin runtime-gateway -- openapi openapi/trigger-gateway.json"
     }
     Remove-Item -LiteralPath $gatewayOpenApiTemp -Force
     $gatewayTypeScriptTemp = Join-Path ([System.IO.Path]::GetTempPath()) "agentx-trigger-gateway-$PID.ts"

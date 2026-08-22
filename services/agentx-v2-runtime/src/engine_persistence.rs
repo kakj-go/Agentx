@@ -149,8 +149,9 @@ pub(super) async fn upsert_activation(
     activation: &agentx_runtime::NodeActivation,
     node: &agentx_runtime::CompiledNode,
 ) -> RuntimeResult<()> {
+    let status = activation_status(activation.status);
     sqlx::query(
-        "INSERT INTO node_executions(id,tenant_id,execution_id,node_id,node_key,node_name,node_type,node_version,generation,activation_slot,run_index,iteration_index,status,capability,side_effect_level,input_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE status=VALUES(status),input_json=VALUES(input_json),updated_at=UTC_TIMESTAMP(6)",
+        "INSERT INTO node_executions(id,tenant_id,execution_id,node_id,node_key,node_name,node_type,node_version,generation,activation_slot,run_index,iteration_index,status,capability,side_effect_level,input_json,started_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,IF(?='ready',NULL,UTC_TIMESTAMP(6))) ON DUPLICATE KEY UPDATE status=VALUES(status),input_json=VALUES(input_json),started_at=IF(started_at IS NULL AND VALUES(status)<>'ready',UTC_TIMESTAMP(6),started_at),updated_at=UTC_TIMESTAMP(6)",
     )
     .bind(activation.id.as_uuid())
     .bind(tenant_id)
@@ -164,10 +165,11 @@ pub(super) async fn upsert_activation(
     .bind(activation.slot)
     .bind(activation.run_index)
     .bind(0_u32)
-    .bind(activation_status(activation.status))
+    .bind(status)
     .bind(node.capability.as_str())
     .bind(side_effect_name(&node.side_effect_level))
     .bind(serde_json::to_value(&activation.inputs).map_err(|error| RuntimeError::Internal(error.into()))?)
+    .bind(status)
     .execute(&mut **tx)
     .await?;
     Ok(())
@@ -213,15 +215,18 @@ pub(super) async fn finish_execution(
     machine: &ExecutionMachine,
     context: &Value,
 ) -> RuntimeResult<()> {
-    let (status, output, error) =
+    let (status, output, error, string_conversions) =
         match materialize_result(tx, tenant_id, execution_id, machine, context).await {
-            Ok((output, error)) => (machine_status(machine.status()), output, error),
+            Ok((output, error, conversions)) => {
+                (machine_status(machine.status()), output, error, conversions)
+            }
             // Definition/value errors are terminal workflow data. Storage errors
             // must still abort the transaction so recovery can retry them.
             Err(RuntimeError::Deterministic { code, message }) => (
                 "failed",
                 json!({}),
                 Some(json!({"code":code,"message":message})),
+                Vec::new(),
             ),
             Err(
                 RuntimeError::BadRequest(_, message) | RuntimeError::InvalidRequest(_, message),
@@ -232,9 +237,17 @@ pub(super) async fn finish_execution(
                     "code":"END_OUTPUT_EVALUATION_FAILED",
                     "message":message,
                 })),
+                Vec::new(),
             ),
             Err(error) => return Err(error),
         };
+    super::engine::string_conversion_trace::enqueue_end_records(
+        tx,
+        tenant_id,
+        execution_id,
+        &string_conversions,
+    )
+    .await;
     let error_code = error
         .as_ref()
         .and_then(|value| value.get("code"))
@@ -368,6 +381,27 @@ pub(super) async fn finish_execution(
         .and_then(|value| value.get("message"))
         .and_then(Value::as_str)
         .map(str::to_owned);
+    trace.content_kind = Some(agentx_runtime_contracts::TraceContentKindV1::WorkflowOutput);
+    trace.content_preview = crate::trace_delivery::bounded_preview(&output);
+    let mut end = crate::trace_delivery::TraceDraft::span(
+        tenant_id,
+        execution_id,
+        crate::trace_delivery::boundary_entity_id(execution_id, "end"),
+        Some((
+            execution_id,
+            agentx_runtime_contracts::TraceSpanKindV1::Execution,
+        )),
+        agentx_runtime_contracts::TraceSpanKindV1::Boundary,
+        "End",
+        agentx_runtime_contracts::TraceEventKindV1::Finished,
+        "boundary.end.finished",
+        status,
+    );
+    end.error_code = trace.error_code.clone();
+    end.error_message = trace.error_message.clone();
+    end.content_kind = Some(agentx_runtime_contracts::TraceContentKindV1::WorkflowOutput);
+    end.content_preview = crate::trace_delivery::bounded_preview(&output);
+    crate::trace_delivery::enqueue_best_effort(tx, end).await;
     crate::trace_delivery::enqueue_best_effort(tx, trace).await;
     Ok(())
 }
@@ -378,15 +412,26 @@ async fn append_session_assistant_message(
     invocation_id: Uuid,
     output: &Value,
 ) -> RuntimeResult<()> {
-    let session_id = sqlx::query_scalar::<_, Option<Uuid>>(
-        "SELECT session_id FROM application_invocations WHERE tenant_id=? AND id=? FOR UPDATE",
+    let invocation = sqlx::query(
+        "SELECT session_id,chat_mapping_json FROM application_invocations WHERE tenant_id=? AND id=? FOR UPDATE",
     )
     .bind(tenant_id)
     .bind(invocation_id)
     .fetch_optional(&mut **tx)
-    .await?
-    .flatten();
+    .await?;
+    let Some(invocation) = invocation else {
+        return Ok(());
+    };
+    let session_id: Option<Uuid> = invocation.try_get("session_id")?;
     let Some(session_id) = session_id else {
+        return Ok(());
+    };
+    let mapping = invocation
+        .try_get::<Option<Value>, _>("chat_mapping_json")?
+        .map(serde_json::from_value::<agentx_runtime_contracts::ChatMappingV1>)
+        .transpose()
+        .map_err(|error| RuntimeError::Internal(error.into()))?;
+    let Some(mapping) = mapping else {
         return Ok(());
     };
     let exists: bool = sqlx::query_scalar(
@@ -418,17 +463,21 @@ async fn append_session_assistant_message(
     .bind(sequence)
     .execute(&mut **tx)
     .await?;
-    let (part_type, content) = crate::output_projection::assistant_message_content(output);
-    sqlx::query(
-        "INSERT INTO application_message_parts(id,tenant_id,message_id,part_index,part_type,content_json) VALUES(?,?,?,0,?,?)",
-    )
-    .bind(Uuid::now_v7())
-    .bind(tenant_id)
-    .bind(message_id)
-    .bind(part_type)
-    .bind(content)
-    .execute(&mut **tx)
-    .await?;
+    let parts = crate::output_projection::assistant_message_parts(output, &mapping)?;
+    for (index, part) in parts.into_iter().enumerate() {
+        sqlx::query(
+            "INSERT INTO application_message_parts(id,tenant_id,message_id,part_index,part_type,content_json,artifact_id) VALUES(?,?,?,?,?,?,?)",
+        )
+        .bind(Uuid::now_v7())
+        .bind(tenant_id)
+        .bind(message_id)
+        .bind(index as u32)
+        .bind(part.part_type)
+        .bind(part.content)
+        .bind(part.artifact_id)
+        .execute(&mut **tx)
+        .await?;
+    }
     sqlx::query(
         "UPDATE application_sessions SET next_message_sequence=next_message_sequence+1,version=version+1 WHERE tenant_id=? AND id=?",
     )
@@ -445,7 +494,11 @@ async fn materialize_result(
     execution_id: Uuid,
     machine: &ExecutionMachine,
     context: &Value,
-) -> RuntimeResult<(Value, Option<Value>)> {
+) -> RuntimeResult<(
+    Value,
+    Option<Value>,
+    Vec<agentx_runtime::StringConversionRecord>,
+)> {
     let execution =
         sqlx::query("SELECT input_json FROM workflow_executions WHERE tenant_id=? AND id=?")
             .bind(tenant_id)
@@ -469,6 +522,7 @@ async fn materialize_result(
         ..ExpressionContext::default()
     };
     let engine = ExpressionEngine;
+    let mut string_conversions = Vec::new();
     if machine.status() != RuntimeExecutionStatus::Succeeded {
         let mut errors = machine
             .end_deliveries()
@@ -496,12 +550,17 @@ async fn materialize_result(
         error_context.json = primary.clone();
         let mut error_outputs = Map::new();
         for (name, output) in &machine.workflow().end.error.outputs {
-            let value = engine
-                .resolve_dynamic_optional(&output.value, &error_context)
+            let (value, mut conversions) = engine
+                .resolve_dynamic_optional_with_conversions(
+                    &output.value,
+                    &error_context,
+                    format!("end.error.outputs.{name}"),
+                )
                 .map_err(|error| RuntimeError::Deterministic {
                     code: "END_OUTPUT_EVALUATION_FAILED",
                     message: error.to_string(),
                 })?;
+            string_conversions.append(&mut conversions);
             let Some(value) = value else {
                 if output.required {
                     return Err(RuntimeError::Deterministic {
@@ -546,16 +605,22 @@ async fn materialize_result(
                 "errors":errors,
                 "outputs":error_outputs
             })),
+            string_conversions,
         ));
     }
     let mut result = Map::new();
     for (name, output) in &machine.workflow().end.outputs {
-        let value = engine
-            .resolve_dynamic_optional(&output.value, &expression_context)
+        let (value, mut conversions) = engine
+            .resolve_dynamic_optional_with_conversions(
+                &output.value,
+                &expression_context,
+                format!("end.outputs.{name}"),
+            )
             .map_err(|error| RuntimeError::Deterministic {
                 code: "END_OUTPUT_EVALUATION_FAILED",
                 message: error.to_string(),
             })?;
+        string_conversions.append(&mut conversions);
         let Some(value) = value else {
             if output.required {
                 return Err(RuntimeError::Deterministic {
@@ -591,9 +656,9 @@ async fn materialize_result(
             .flat_map(|delivery| &delivery.items)
             .next()
     {
-        return Ok((item.json.clone(), None));
+        return Ok((item.json.clone(), None, string_conversions));
     }
-    Ok((Value::Object(result), None))
+    Ok((Value::Object(result), None, string_conversions))
 }
 
 pub(super) async fn load_output_namespace(

@@ -14,7 +14,7 @@ use crate::{
 
 pub async fn externalize_one(state: &RuntimeState) -> RuntimeResult<bool> {
     if let Some(row) = sqlx::query(
-        "SELECT id,tenant_id,input_json FROM workflow_executions e WHERE input_json IS NOT NULL AND JSON_STORAGE_SIZE(input_json)>? AND NOT EXISTS(SELECT 1 FROM artifact_references r WHERE r.tenant_id=e.tenant_id AND r.owner_type='execution' AND r.owner_id=CAST(BIN_TO_UUID(e.id) AS CHAR) COLLATE utf8mb4_0900_ai_ci AND r.reference_role='trace_input') ORDER BY created_at,id LIMIT 1",
+        "SELECT id,tenant_id,input_json FROM workflow_executions e WHERE input_json IS NOT NULL AND JSON_STORAGE_SIZE(input_json)>? AND NOT EXISTS(SELECT 1 FROM artifact_references r WHERE r.tenant_id=e.tenant_id AND r.owner_type='execution' AND r.owner_id=CAST(BIN_TO_UUID(e.id) AS CHAR) COLLATE utf8mb4_0900_ai_ci AND r.reference_role='workflow_input') ORDER BY created_at,id LIMIT 1",
     )
     .bind(16 * 1024_u64)
     .fetch_optional(&state.pool)
@@ -33,20 +33,20 @@ pub async fn externalize_one(state: &RuntimeState) -> RuntimeResult<bool> {
         .await?;
         let mut tx = state.pool.begin().await?;
         insert_artifact_rows(&mut tx, tenant_id, &artifact).await?;
-        sqlx::query("INSERT IGNORE INTO artifact_references(tenant_id,artifact_id,owner_type,owner_id,reference_role) VALUES(?,?,'execution',?,'trace_input')")
+        sqlx::query("INSERT IGNORE INTO artifact_references(tenant_id,artifact_id,owner_type,owner_id,reference_role) VALUES(?,?,'execution',?,'workflow_input')")
             .bind(tenant_id).bind(artifact.object_id).bind(execution_id.to_string()).execute(&mut *tx).await?;
         let mut trace = crate::trace_delivery::TraceDraft::execution(
             tenant_id, execution_id, "execution.input_externalized", "running",
         );
         trace.content_ref = Some(artifact.object_id);
-        trace.content_role = Some("input".into());
+        trace.content_kind = Some(agentx_runtime_contracts::TraceContentKindV1::WorkflowInput);
         trace.attributes = serde_json::json!({"contentExternalized":true,"encodedBytes":artifact.size_bytes});
         crate::trace_delivery::enqueue_best_effort(&mut tx, trace).await;
         tx.commit().await?;
         return Ok(true);
     }
     if let Some(row) = sqlx::query(
-        "SELECT a.id,a.tenant_id,a.execution_id,a.node_execution_id,a.attempt_number,a.input_json,n.node_name FROM node_attempts a JOIN node_executions n ON n.id=a.node_execution_id WHERE a.input_json IS NOT NULL AND JSON_STORAGE_SIZE(a.input_json)>? AND NOT EXISTS(SELECT 1 FROM artifact_references r WHERE r.tenant_id=a.tenant_id AND r.owner_type='node_execution' AND r.owner_id=CAST(BIN_TO_UUID(a.node_execution_id) AS CHAR) COLLATE utf8mb4_0900_ai_ci AND r.reference_role=CONCAT('trace_input:',LOWER(BIN_TO_UUID(a.id)))) ORDER BY a.created_at,a.id LIMIT 1",
+        "SELECT a.id,a.tenant_id,a.execution_id,a.node_execution_id,a.attempt_number,a.input_json,n.node_name FROM node_attempts a JOIN node_executions n ON n.id=a.node_execution_id WHERE a.input_json IS NOT NULL AND JSON_STORAGE_SIZE(a.input_json)>? AND NOT EXISTS(SELECT 1 FROM artifact_references r WHERE r.tenant_id=a.tenant_id AND r.owner_type='node_attempt' AND r.owner_id=CAST(BIN_TO_UUID(a.id) AS CHAR) COLLATE utf8mb4_0900_ai_ci AND r.reference_role='attempt_input') ORDER BY a.created_at,a.id LIMIT 1",
     )
     .bind(16 * 1024_u64)
     .fetch_optional(&state.pool)
@@ -65,11 +65,13 @@ pub async fn externalize_one(state: &RuntimeState) -> RuntimeResult<bool> {
             &format!("trace:{attempt_id}:input"),
         )
         .await?;
-        let role = format!("trace_input:{attempt_id}");
+        let role = "attempt_input";
         let mut tx = state.pool.begin().await?;
         insert_artifact_rows(&mut tx, tenant_id, &artifact).await?;
         sqlx::query("INSERT IGNORE INTO artifact_references(tenant_id,artifact_id,owner_type,owner_id,reference_role) VALUES(?,?,'node_execution',?,?)")
-            .bind(tenant_id).bind(artifact.object_id).bind(node_execution_id.to_string()).bind(&role).execute(&mut *tx).await?;
+            .bind(tenant_id).bind(artifact.object_id).bind(node_execution_id.to_string()).bind(role).execute(&mut *tx).await?;
+        sqlx::query("INSERT IGNORE INTO artifact_references(tenant_id,artifact_id,owner_type,owner_id,reference_role) VALUES(?,?,'node_attempt',?,?)")
+            .bind(tenant_id).bind(artifact.object_id).bind(attempt_id.to_string()).bind(role).execute(&mut *tx).await?;
         let mut node = crate::trace_delivery::TraceDraft::span(
             tenant_id, execution_id, node_execution_id,
             Some((execution_id, agentx_runtime_contracts::TraceSpanKindV1::Execution)),
@@ -79,7 +81,7 @@ pub async fn externalize_one(state: &RuntimeState) -> RuntimeResult<bool> {
         node.node_execution_id = Some(node_execution_id);
         node.attempt_id = Some(attempt_id);
         node.content_ref = Some(artifact.object_id);
-        node.content_role = Some("input".into());
+        node.content_kind = Some(agentx_runtime_contracts::TraceContentKindV1::NodeInput);
         node.attributes = serde_json::json!({"contentExternalized":true});
         crate::trace_delivery::enqueue_best_effort(&mut tx, node).await;
         let mut attempt = crate::trace_delivery::TraceDraft::span(
@@ -92,7 +94,7 @@ pub async fn externalize_one(state: &RuntimeState) -> RuntimeResult<bool> {
         attempt.node_execution_id = Some(node_execution_id);
         attempt.attempt_id = Some(attempt_id);
         attempt.content_ref = Some(artifact.object_id);
-        attempt.content_role = Some("input".into());
+        attempt.content_kind = Some(agentx_runtime_contracts::TraceContentKindV1::AttemptInput);
         attempt.attributes = serde_json::json!({"contentExternalized":true,"encodedBytes":artifact.size_bytes});
         crate::trace_delivery::enqueue_best_effort(&mut tx, attempt).await;
         tx.commit().await?;

@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 
+import { ToastProvider } from '../../../shared/ui/toast'
 import type { NodeManifest } from '../model/types'
 import { NodeInspector } from './node-inspector'
 
@@ -27,10 +28,17 @@ const modelManifest: NodeManifest = {
   contextWriteCapability: true,
 }
 
+const filterManifest: NodeManifest = {
+  ...manifest,
+  nodeType: 'filter',
+  parameterSchema: { type: 'object', properties: { condition: { "x-agentx-dynamicValue": { modes: ['literal', 'reference', 'expression'], allowedNamespaces: ['inputs', 'outputs', 'contexts', 'item'], acceptedCardinality: ['single'], missingPolicies: ['error'], recursive: false } } } },
+  uiSchema: { canvas: { role: 'default' }, fields: { condition: { control: 'expression' } } },
+}
+
 describe('NodeInspector details view', () => {
   it('provides the fixed Parameters, Input, Output and Trace views', () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-    render(<QueryClientProvider client={client}><NodeInspector data={{ editorKind: 'action', nodeType: 'set', typeVersion: 1, label: 'Set', key: 'set', parameters: {}, outputProjection: {}, contextWrites: [], resourceReferences: [], settings: {}, disabled: false }} manifest={manifest} nodeId="node-1" onChange={vi.fn()} onDelete={vi.fn()} onRun={vi.fn()} resources={{}} /></QueryClientProvider>)
+    render(<QueryClientProvider client={client}><ToastProvider><NodeInspector data={{ editorKind: 'action', nodeType: 'set', typeVersion: 1, label: 'Set', key: 'set', parameters: {}, outputProjection: {}, contextWrites: [], resourceReferences: [], settings: {}, disabled: false }} manifest={manifest} nodeId="node-1" onChange={vi.fn()} onDelete={vi.fn()} onRun={vi.fn()} resources={{}} /></ToastProvider></QueryClientProvider>)
 
     expect(screen.getByTestId('node-details-view')).toHaveClass('w-[480px]')
     const tabs = [/Parameters|参数/, /Input|输入/, /Output|输出/, /Trace/]
@@ -41,7 +49,7 @@ describe('NodeInspector details view', () => {
 
   it('presents Agent prompt and one user question before an inline advanced section', () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-    render(<QueryClientProvider client={client}><NodeInspector data={{ editorKind: 'action', nodeType: 'agent', typeVersion: 1, label: 'Agent', key: 'agent', parameters: {}, outputProjection: {}, contextWrites: [], resourceReferences: [], settings: {}, disabled: false }} manifest={agentManifest} nodeId="agent-1" onChange={vi.fn()} onDelete={vi.fn()} resources={{}} /></QueryClientProvider>)
+    render(<QueryClientProvider client={client}><ToastProvider><NodeInspector data={{ editorKind: 'action', nodeType: 'agent', typeVersion: 1, label: 'Agent', key: 'agent', parameters: {}, outputProjection: {}, contextWrites: [], resourceReferences: [], settings: {}, disabled: false }} manifest={agentManifest} nodeId="agent-1" onChange={vi.fn()} onDelete={vi.fn()} resources={{}} /></ToastProvider></QueryClientProvider>)
 
     expect(screen.getByTestId('parameter-systemPrompt')).toBeInTheDocument()
     expect(screen.getByTestId('parameter-userQuestion').querySelectorAll('input')).toHaveLength(1)
@@ -53,7 +61,7 @@ describe('NodeInspector details view', () => {
   it('moves node disablement into the more menu and shows disabled status in the header', () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     const onChange = vi.fn()
-    render(<QueryClientProvider client={client}><NodeInspector data={{ editorKind: 'action', nodeType: 'set', typeVersion: 1, label: 'Set', key: 'set', parameters: {}, outputProjection: {}, contextWrites: [], resourceReferences: [], settings: {}, disabled: true }} manifest={manifest} nodeId="node-1" onChange={onChange} onDelete={vi.fn()} resources={{}} /></QueryClientProvider>)
+    render(<QueryClientProvider client={client}><ToastProvider><NodeInspector data={{ editorKind: 'action', nodeType: 'set', typeVersion: 1, label: 'Set', key: 'set', parameters: {}, outputProjection: {}, contextWrites: [], resourceReferences: [], settings: {}, disabled: true }} manifest={manifest} nodeId="node-1" onChange={onChange} onDelete={vi.fn()} resources={{}} /></ToastProvider></QueryClientProvider>)
 
     expect(screen.getByText(/Disabled|禁用/)).toBeInTheDocument()
     expect(screen.queryByRole('checkbox', { name: /Disabled|禁用/ })).not.toBeInTheDocument()
@@ -64,7 +72,7 @@ describe('NodeInspector details view', () => {
 
   it('shows Model prompt and one user question without the raw parameters field', () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-    render(<QueryClientProvider client={client}><NodeInspector data={{ editorKind: 'action', nodeType: 'model', typeVersion: 1, label: 'Model', key: 'model', parameters: {}, outputProjection: {}, contextWrites: [], resourceReferences: [], settings: {}, disabled: false }} manifest={modelManifest} nodeId="model-1" onChange={vi.fn()} onDelete={vi.fn()} resources={{}} /></QueryClientProvider>)
+    render(<QueryClientProvider client={client}><ToastProvider><NodeInspector data={{ editorKind: 'action', nodeType: 'model', typeVersion: 1, label: 'Model', key: 'model', parameters: {}, outputProjection: {}, contextWrites: [], resourceReferences: [], settings: {}, disabled: false }} manifest={modelManifest} nodeId="model-1" onChange={vi.fn()} onDelete={vi.fn()} resources={{}} /></ToastProvider></QueryClientProvider>)
 
     const prompt = screen.getByTestId('parameter-prompt')
     const question = screen.getByTestId('parameter-userQuestion')
@@ -73,11 +81,22 @@ describe('NodeInspector details view', () => {
     expect(screen.queryByTestId('parameter-parameters')).not.toBeInTheDocument()
   })
 
+  it('exposes the current input item to node parameter expressions', () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const referenceCatalog = { inputs: [], outputs: [], contexts: [], item: [] }
+    const condition = { kind: 'expression', root: { kind: 'reference', selector: { namespace: 'inputs', run: { kind: 'current' }, item: { kind: 'current' }, path: [] }, missingPolicy: { kind: 'error' } } }
+    render(<QueryClientProvider client={client}><ToastProvider><NodeInspector data={{ editorKind: 'action', nodeType: 'filter', typeVersion: 1, label: 'Filter', key: 'filter', parameters: { condition }, outputProjection: {}, contextWrites: [], resourceReferences: [], settings: {}, disabled: false }} manifest={filterManifest} nodeId="filter-1" onChange={vi.fn()} onDelete={vi.fn()} referenceCatalog={referenceCatalog} resources={{}} /></ToastProvider></QueryClientProvider>)
+
+    fireEvent.click(screen.getByRole('button', { name: /inputs|选择变量/i }))
+
+    expect(screen.getByRole('button', { name: /Current data|当前数据/ })).toBeInTheDocument()
+  })
+
   it('configures custom outputs and context writes through dialogs', () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     const onChange = vi.fn()
     const referenceCatalog = { inputs: [], outputs: [], contexts: [{ id: 'contexts.session', label: 'session', path: 'contexts.session', type: 'object', children: [{ id: 'contexts.session.answer', label: 'answer', path: 'contexts.session.answer', selector: { namespace: 'contexts' as const, run: { kind: 'current' as const }, item: { kind: 'current' as const }, path: ['session', 'answer'] }, type: 'string', children: [] }] }] }
-    render(<QueryClientProvider client={client}><NodeInspector data={{ editorKind: 'action', nodeType: 'model', typeVersion: 1, label: 'Model', key: 'model', parameters: {}, outputProjection: {}, contextWrites: [], resourceReferences: [], settings: {}, disabled: false }} manifest={modelManifest} nodeId="model-1" onChange={onChange} onDelete={vi.fn()} referenceCatalog={referenceCatalog} resources={{}} /></QueryClientProvider>)
+    render(<QueryClientProvider client={client}><ToastProvider><NodeInspector data={{ editorKind: 'action', nodeType: 'model', typeVersion: 1, label: 'Model', key: 'model', parameters: {}, outputProjection: {}, contextWrites: [], resourceReferences: [], settings: {}, disabled: false }} manifest={modelManifest} nodeId="model-1" onChange={onChange} onDelete={vi.fn()} referenceCatalog={referenceCatalog} resources={{}} /></ToastProvider></QueryClientProvider>)
 
     fireEvent.click(screen.getByRole('button', { name: /Add custom output|添加自定义输出/ }))
     expect(screen.getByRole('dialog')).toBeInTheDocument()
@@ -97,7 +116,7 @@ describe('NodeInspector details view', () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     const onChange = vi.fn()
     const outputProjection = { main: { answer: { value: { kind: 'literal' as const, value: '' }, schema: { type: 'string' }, sensitive: false } } }
-    render(<QueryClientProvider client={client}><NodeInspector data={{ editorKind: 'action', nodeType: 'model', typeVersion: 1, label: 'Model', key: 'model', parameters: {}, outputProjection, contextWrites: [], resourceReferences: [], settings: {}, disabled: false }} manifest={modelManifest} nodeId="model-1" onChange={onChange} onDelete={vi.fn()} resources={{}} /></QueryClientProvider>)
+    render(<QueryClientProvider client={client}><ToastProvider><NodeInspector data={{ editorKind: 'action', nodeType: 'model', typeVersion: 1, label: 'Model', key: 'model', parameters: {}, outputProjection, contextWrites: [], resourceReferences: [], settings: {}, disabled: false }} manifest={modelManifest} nodeId="model-1" onChange={onChange} onDelete={vi.fn()} resources={{}} /></ToastProvider></QueryClientProvider>)
 
     fireEvent.click(screen.getByRole('button', { name: /Add custom output|添加自定义输出/ }))
     fireEvent.change(screen.getByLabelText(/Output name|输出名称/), { target: { value: 'answer' } })
@@ -108,19 +127,27 @@ describe('NodeInspector details view', () => {
   })
 
   it('uses the shared Span query to show the selected node Trace detail', async () => {
+    const nativeUrl = URL
+    class DownloadUrl extends nativeUrl {
+      static createObjectURL = vi.fn(() => 'blob:node-trace-artifact')
+      static revokeObjectURL = vi.fn()
+    }
+    vi.stubGlobal('URL', DownloadUrl)
+    const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined)
     const fetchMock = vi.fn(async (input: string | URL | Request) => {
       const url = String(input)
+      if (url.includes('/artifacts/artifact-1')) return new Response('{"trace":"large"}', { headers: { 'Content-Type': 'application/json' } })
       const body = url.endsWith('/nodes')
-        ? { items: [{ id: 'node-execution-1', nodeId: 'node-1', input: {}, output: {} }] }
-        : url.includes('/trace/spans/span-node-1')
-          ? { span: {}, attributes: {}, events: [] }
-          : { executionId: 'execution-1', traceId: 'trace-1', expectedWatermark: 3, ingestedWatermark: 3, complete: true, degraded: false, warningCode: null, totalSpans: 1, nextCursor: null, spans: [{ spanId: 'span-node-1', parentSpanId: null, spanKind: 'node', spanName: 'Selected Set node', status: 'succeeded', startedAt: '2026-08-19T00:00:00Z', endedAt: '2026-08-19T00:00:01Z', durationMs: 1000, costMicros: 0, hasDetails: true, nodeExecutionId: 'node-execution-1' }] }
+        ? { items: [{ id: 'node-execution-1', executionId: 'execution-1', nodeId: 'node-1', nodeName: 'Selected Set node', nodeType: 'set', nodeVersion: 1, runIndex: 0, iterationIndex: 0, status: 'succeeded', capability: 'builtin', sideEffectLevel: 'none', input: { main: [{ json: { source: true } }] }, output: { main: [{ json: { value: 1 } }] }, startedAt: '2026-08-19T00:00:00Z', endedAt: '2026-08-19T00:00:01Z', attempts: [], lineage: [] }] }
+        : url.includes('/trace/spans/span-attempt-1')
+          ? { executionId: 'execution-1', traceId: 'trace-1', span: { spanId: 'span-attempt-1', parentSpanId: 'span-node-1', spanKind: 'attempt', spanName: 'Attempt 1', status: 'succeeded', startedAt: '2026-08-19T00:00:00Z', endedAt: '2026-08-19T00:00:01Z', durationMs: 1000, costMicros: 0, hasDetails: true, nodeExecutionId: 'node-execution-1' }, contents: [{ eventId: 'event-1', kind: 'resolved_parameters', preview: { value: 1 }, contentRef: 'artifact-1', occurredAt: '2026-08-19T00:00:00Z' }], events: [] }
+          : { executionId: 'execution-1', traceId: 'trace-1', expectedWatermark: 3, ingestedWatermark: 3, complete: true, degraded: false, warningCode: null, totalSpans: 2, nextCursor: null, spans: [{ spanId: 'span-node-1', parentSpanId: null, spanKind: 'node', spanName: 'Selected Set node', status: 'succeeded', startedAt: '2026-08-19T00:00:00Z', endedAt: '2026-08-19T00:00:01Z', durationMs: 1000, costMicros: 0, hasDetails: false, nodeExecutionId: 'node-execution-1' }, { spanId: 'span-attempt-1', parentSpanId: 'span-node-1', spanKind: 'attempt', spanName: 'Attempt 1', status: 'succeeded', startedAt: '2026-08-19T00:00:00Z', endedAt: '2026-08-19T00:00:01Z', durationMs: 1000, costMicros: 0, hasDetails: true, nodeExecutionId: 'node-execution-1' }] }
       return new Response(JSON.stringify(body), { headers: { 'Content-Type': 'application/json' } })
     })
     vi.stubGlobal('fetch', fetchMock)
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     const data = { editorKind: 'action' as const, nodeType: 'set', typeVersion: 1, label: 'Set', key: 'set', parameters: {}, outputProjection: {}, contextWrites: [], resourceReferences: [], settings: {}, disabled: false }
-    render(<QueryClientProvider client={client}><NodeInspector data={data} executionId="execution-1" manifest={manifest} nodeId="node-1" onChange={vi.fn()} onDelete={vi.fn()} resources={{}} /></QueryClientProvider>)
+    render(<QueryClientProvider client={client}><ToastProvider><NodeInspector data={data} executionId="execution-1" manifest={manifest} nodeId="node-1" onChange={vi.fn()} onDelete={vi.fn()} resources={{}} /></ToastProvider></QueryClientProvider>)
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/nodes'), expect.anything()))
     const traceTab = screen.getByRole('tab', { name: 'Trace' })
@@ -128,7 +155,14 @@ describe('NodeInspector details view', () => {
     fireEvent.keyDown(screen.getByRole('tablist'), { key: 'End' })
     fireEvent.keyDown(traceTab, { key: 'Enter' })
     await waitFor(() => expect(traceTab).toHaveAttribute('data-state', 'active'))
-    expect(await screen.findByTestId('trace-detail')).toHaveTextContent('Selected Set node')
+    expect(await screen.findByText(/Input and resolved parameters|输入与解析参数/)).toBeInTheDocument()
+    expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('nodeExecutionId=node-execution-1'), expect.anything())
+    fireEvent.click(await screen.findByRole('button', { name: /Attempt 1/ }))
+    fireEvent.click(await screen.findByRole('button', { name: /artifact/i }))
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/executions/execution-1/artifacts/artifact-1'), expect.anything()))
+    expect(DownloadUrl.createObjectURL).toHaveBeenCalled()
+    expect(anchorClick).toHaveBeenCalled()
+    anchorClick.mockRestore()
     vi.unstubAllGlobals()
   })
 
@@ -148,14 +182,14 @@ describe('NodeInspector details view', () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     const agentData = { editorKind: 'action' as const, nodeType: 'agent', typeVersion: 1, label: 'Agent', key: 'agent', parameters: {}, outputProjection: {}, contextWrites: [], resourceReferences: [], settings: {}, disabled: false }
     const codeData = { ...agentData, nodeType: 'set', label: 'Code', key: 'code' }
-    const view = render(<QueryClientProvider client={client}><NodeInspector data={agentData} executionId="execution-1" manifest={agentManifest} nodeId="agent-1" onChange={vi.fn()} onDelete={vi.fn()} resources={{}} workflowId="workflow-1" /></QueryClientProvider>)
+    const view = render(<QueryClientProvider client={client}><ToastProvider><NodeInspector data={agentData} executionId="execution-1" manifest={agentManifest} nodeId="agent-1" onChange={vi.fn()} onDelete={vi.fn()} resources={{}} workflowId="workflow-1" /></ToastProvider></QueryClientProvider>)
 
     await waitFor(() => expect(client.getQueryData(['studio-node-inspector', 'execution-1', 'agent-1'])).toBeTruthy())
     let outputTab = screen.getByRole('tab', { name: /Output|输出/ })
     outputTab.focus()
     fireEvent.keyDown(outputTab, { key: 'Enter' })
     await waitFor(() => expect((screen.getByRole('textbox', { name: /Output|输出/ }) as HTMLTextAreaElement).value).toContain('agent-output'))
-    view.rerender(<QueryClientProvider client={client}><NodeInspector data={codeData} executionId="execution-1" manifest={manifest} nodeId="code-1" onChange={vi.fn()} onDelete={vi.fn()} resources={{}} workflowId="workflow-1" /></QueryClientProvider>)
+    view.rerender(<QueryClientProvider client={client}><ToastProvider><NodeInspector data={codeData} executionId="execution-1" manifest={manifest} nodeId="code-1" onChange={vi.fn()} onDelete={vi.fn()} resources={{}} workflowId="workflow-1" /></ToastProvider></QueryClientProvider>)
 
     await waitFor(() => expect(screen.getByRole('tab', { name: /Output|输出/ })).toHaveAttribute('data-state', 'inactive'))
     outputTab = screen.getByRole('tab', { name: /Output|输出/ })
@@ -182,7 +216,7 @@ describe('NodeInspector details view', () => {
     vi.stubGlobal('fetch', fetchMock)
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     const codeData = { editorKind: 'action' as const, nodeType: 'set', typeVersion: 1, label: 'Code', key: 'code', parameters: {}, outputProjection: {}, contextWrites: [], resourceReferences: [], settings: {}, disabled: false }
-    const view = render(<QueryClientProvider client={client}><NodeInspector data={codeData} executionId="execution-1" manifest={manifest} nodeId="code-1" onChange={vi.fn()} onDelete={vi.fn()} resources={{}} workflowId="workflow-1" /></QueryClientProvider>)
+    const view = render(<QueryClientProvider client={client}><ToastProvider><NodeInspector data={codeData} executionId="execution-1" manifest={manifest} nodeId="code-1" onChange={vi.fn()} onDelete={vi.fn()} resources={{}} workflowId="workflow-1" /></ToastProvider></QueryClientProvider>)
 
     const outputTab = screen.getByRole('tab', { name: /Output|输出/ })
     outputTab.focus()

@@ -162,6 +162,7 @@ pub struct ApiKeyAdmissionV1 {
     pub application_id: Uuid,
     pub key_id: Uuid,
     pub key_prefix: String,
+    pub key_name: String,
     pub secret_hash: String,
     pub status: AdmissionStatusV1,
     #[schemars(with = "Option<String>")]

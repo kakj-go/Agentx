@@ -150,6 +150,12 @@ export interface components {
             password: string;
             token: string;
         };
+        ChatMappingV1: {
+            answerFilesOutput: string | null;
+            answerOutput: string;
+            fileInput: string | null;
+            questionInput: string;
+        };
         CheckpointListResponse: {
             items: components["schemas"]["CheckpointResponse"][];
         };
@@ -285,7 +291,7 @@ export interface components {
             maxOutputTokens?: number;
             modelName?: string;
             ownerDepartmentId: string;
-            price?: null | components["schemas"]["CreateModelPriceRequest"];
+            price: components["schemas"]["CreateModelPriceRequest"];
             providerType: string;
         };
         CreateResourceGrantRequest: {
@@ -593,24 +599,46 @@ export interface components {
             status: string;
             summary: unknown;
         };
+        ExecutionListResponse: {
+            items: components["schemas"]["ExecutionResponse"][];
+            limit: number;
+            nextCursor?: string | null;
+            snapshotId: string;
+            total: number;
+        };
         ExecutionResponse: {
+            admissionEpoch?: number;
+            applicationId?: string | null;
+            applicationName?: string | null;
             callerExecutionId?: string | null;
+            costCurrency?: string | null;
             costMicros: number;
             durationMs?: number | null;
             endedAt?: string | null;
+            error?: unknown;
             errorCode?: string | null;
             errorMessage?: string | null;
             executionType: string;
             forkCheckpointId?: string | null;
             id: string;
+            initiatorDepartmentId?: string | null;
+            initiatorDepartmentName?: string | null;
+            initiatorUserId?: string | null;
+            initiatorUserName?: string | null;
+            input?: unknown;
             inputTokens: number;
             invocationId?: string | null;
+            output?: unknown;
             outputTokens: number;
             parentExecutionId?: string | null;
             sessionId?: string | null;
             startedAt: string;
+            stateVersion?: number;
             status: string;
             traceId: string;
+            traceWatermark?: number;
+            triggerName?: string | null;
+            triggerSourceId?: string | null;
             triggerType: string;
             workflowId: string;
             workflowName: string;
@@ -870,6 +898,8 @@ export interface components {
             activationSlot: number;
             attempts: components["schemas"]["NodeAttemptResponse"][];
             capability: string;
+            costCurrency?: string | null;
+            costMicros: number;
             endedAt?: string | null;
             errorCode?: string | null;
             errorMessage?: string | null;
@@ -928,6 +958,18 @@ export interface components {
             key: string;
             name: string;
         };
+        PlaygroundConfigResponse: {
+            applicationId: string;
+            deploymentId: string;
+            deploymentVersion: number;
+            errorCode: string | null;
+            errorMessage: string | null;
+            mapping: components["schemas"]["ChatMappingV1"] | null;
+            /** @enum {string} */
+            publishStatus: "active" | "publishing" | "failed";
+            publishedVersion: number | null;
+            version: number;
+        };
         PublishAttemptResponse: {
             activationSequence: number;
             bundleId?: string | null;
@@ -947,6 +989,10 @@ export interface components {
         PublishWorkflowRequest: {
             environmentId: string;
             workflowVersionId: string;
+        };
+        PutPlaygroundConfigRequest: {
+            expectedVersion: number;
+            mapping: components["schemas"]["ChatMappingV1"] | null;
         };
         QueuedWorkflowRunResponse: {
             commandId: string;
@@ -1116,6 +1162,7 @@ export interface components {
             attemptId: string;
             callIndex: number;
             callKind: string;
+            costCurrency?: string | null;
             costMicros: number;
             endedAt?: string | null;
             errorCode?: string | null;
@@ -1144,6 +1191,7 @@ export interface components {
         RuntimeDetailsResponse: {
             agentRuns: components["schemas"]["AgentRunDetail"][];
             calls: components["schemas"]["RuntimeCallDetail"][];
+            costCurrency?: string | null;
             costMicros: number;
             executionId: string;
             inputTokens: number;
@@ -1314,43 +1362,29 @@ export interface components {
             version: number;
         };
         TraceContent: {
-            contentRef?: string | null;
-            preview?: unknown;
-            role: string;
+            contentRef: string | null;
+            eventId: string;
+            /** @enum {string} */
+            kind: "workflow_input" | "workflow_output" | "node_input" | "node_output" | "attempt_input" | "attempt_output" | "resolved_parameters" | "runtime_request" | "runtime_response" | "agent_input" | "agent_output" | "iteration_input" | "iteration_output" | "sandbox_request" | "sandbox_response" | "wait_request" | "wait_response" | "conversion_record";
+            occurredAt: string;
+            preview: unknown;
         };
         TraceEventResponse: {
-            agentRunId?: string | null;
-            attemptId?: string | null;
             attributes: unknown;
-            contentRef?: string | null;
-            costMicros: number;
+            /** @enum {unknown} */
+            contentKind: "workflow_input" | "workflow_output" | "node_input" | "node_output" | "attempt_input" | "attempt_output" | "resolved_parameters" | "runtime_request" | "runtime_response" | "agent_input" | "agent_output" | "iteration_input" | "iteration_output" | "sandbox_request" | "sandbox_response" | "wait_request" | "wait_response" | "conversion_record" | null;
+            contentPreview: unknown;
+            contentRef: string | null;
+            costMicros?: number;
             durationMs?: number | null;
             errorCode?: string | null;
             errorMessage?: string | null;
             eventId: string;
-            eventTime: string;
+            /** @enum {string} */
+            eventKind: "started" | "updated" | "finished";
             eventType: string;
-            executionId: string;
-            inputTokens?: number | null;
-            iterationIndex: number;
-            mcpToolName?: string | null;
-            modelName?: string | null;
-            nodeExecutionId?: string | null;
-            nodeId?: string | null;
-            outputTokens?: number | null;
-            parentSpanId?: string | null;
-            partial: boolean;
-            providerName?: string | null;
-            resourceId?: string | null;
-            resourceType?: string | null;
-            resourceVersionId?: string | null;
-            runIndex: number;
-            runtimeCallId?: string | null;
-            sandboxId?: string | null;
-            spanId: string;
+            occurredAt: string;
             status: string;
-            stopReason?: string | null;
-            traceId: string;
         };
         TraceResponse: {
             complete: boolean;
@@ -1365,15 +1399,9 @@ export interface components {
             warningCode?: string | null;
         };
         TraceSpanDetailResponse: {
-            attributes: {
-                [key: string]: unknown;
-            };
-            events: {
-                [key: string]: unknown;
-            }[];
+            contents: components["schemas"]["TraceContent"][];
+            events: components["schemas"]["TraceEventResponse"][];
             executionId: string;
-            input?: components["schemas"]["TraceContent"] | null;
-            output?: components["schemas"]["TraceContent"] | null;
             span: components["schemas"]["TraceSpanSummary"];
             traceId: string;
         };
@@ -1398,7 +1426,7 @@ export interface components {
             sandboxLeaseId?: string | null;
             spanId: string;
             /** @enum {string} */
-            spanKind: "execution" | "node" | "attempt" | "agent_run" | "agent_iteration" | "runtime_call" | "sandbox" | "wait";
+            spanKind: "execution" | "boundary" | "node" | "attempt" | "agent_run" | "agent_iteration" | "runtime_call" | "sandbox" | "wait";
             spanName: string;
             startedAt: string;
             status: string;
@@ -1475,7 +1503,7 @@ export interface components {
             maxOutputTokens: number;
             modelName: string;
             ownerDepartmentId: string;
-            price?: null | components["schemas"]["CreateModelPriceRequest"];
+            price: components["schemas"]["CreateModelPriceRequest"];
             providerType: string;
             status: string;
         };

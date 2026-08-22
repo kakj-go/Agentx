@@ -255,7 +255,9 @@ spec:
       - { key: app.kubernetes.io/name, operator: In, values: [ingress-nginx] }
   policyTypes: [Egress]
   egress:
-    - ports: [{ protocol: TCP, port: 443 }]
+    # NetworkPolicy implementations may evaluate traffic after the
+    # kubernetes.default Service DNAT, where the API server listens on 6443.
+    - ports: [{ protocol: TCP, port: 443 }, { protocol: TCP, port: 6443 }]
     - to: [{ namespaceSelector: {}, podSelector: { matchLabels: { k8s-app: kube-dns } } }]
       ports: [{ protocol: UDP, port: 53 }, { protocol: TCP, port: 53 }]
 ---

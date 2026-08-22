@@ -1,4 +1,4 @@
-use agentx_api_types::PageResponse;
+use agentx_api_types::{PageRequest, PageResponse};
 use agentx_runtime_contracts::{RuntimeResourceOperationV1, RuntimeResourceProbeV1};
 use axum::{
     Json, Router,
@@ -309,19 +309,52 @@ async fn list_tools(
 async fn list_all_tools(
     State(state): State<ControlApiState>,
     actor: Actor,
-) -> ApiResult<Json<Vec<ToolResponse>>> {
+    Query(query): Query<ListQuery>,
+) -> ApiResult<Json<PageResponse<ToolResponse>>> {
     actor.require("mcp:view")?;
-    let tools = load_tools(&state, actor.tenant_id, None).await?;
-    if actor.roles.iter().any(|role| role == "company_admin") {
-        return Ok(Json(tools));
-    }
+    let administrator = actor.roles.iter().any(|role| role == "company_admin");
+    let needle = query.search.unwrap_or_default().trim().to_lowercase();
+    let status = query.status.unwrap_or_default();
     let mut visible = Vec::new();
-    for tool in tools {
-        if require_server(&state, &actor, tool.server_id).await.is_ok() {
-            visible.push(tool);
+    for tool in load_tools(&state, actor.tenant_id, None).await? {
+        if !administrator
+            && require_server(&state, &actor, tool.server_id)
+                .await
+                .is_err()
+        {
+            continue;
         }
+        if !status.is_empty() && tool.availability != status {
+            continue;
+        }
+        if !needle.is_empty()
+            && !tool.name.to_lowercase().contains(&needle)
+            && !tool
+                .title
+                .as_deref()
+                .is_some_and(|value| value.to_lowercase().contains(&needle))
+        {
+            continue;
+        }
+        visible.push(tool);
     }
-    Ok(Json(visible))
+    let spec = PageRequest {
+        page: query.page,
+        page_size: query.page_size,
+    }
+    .normalized();
+    let total = visible.len() as u64;
+    let start = (spec.offset() as usize).min(visible.len());
+    Ok(Json(PageResponse {
+        items: visible
+            .into_iter()
+            .skip(start)
+            .take(spec.page_size as usize)
+            .collect(),
+        page: spec.page,
+        page_size: spec.page_size,
+        total,
+    }))
 }
 
 async fn test_connection(

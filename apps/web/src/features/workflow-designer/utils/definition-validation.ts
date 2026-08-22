@@ -1,4 +1,4 @@
-import type { DefinitionConnection, ResourceReference, StudioDocument } from "../model/types";
+import type { DefinitionConnection, DynamicValue, ResourceReference, StudioDocument } from "../model/types";
 import { serializeStudio } from "../model/serializer";
 
 import type { StudioIssue } from "./configuration";
@@ -10,6 +10,12 @@ const END_NODE_ID = "__end__";
 
 export function isReferenceKey(value: string) {
   return REFERENCE_KEY_PATTERN.test(value);
+}
+
+export function isDynamicValueEmpty(value: DynamicValue) {
+  if (value.kind === "literal") return value.value == null || (typeof value.value === "string" && !value.value.trim());
+  if (value.kind === "template") return value.segments.every((segment) => segment.kind === "text" && !segment.text.trim());
+  return false;
 }
 
 export function definitionIssues(document: StudioDocument): StudioIssue[] {
@@ -75,6 +81,7 @@ function validateOutputs(outputs: StudioDocument["end"]["outputs"], path: string
   for (const [name, output] of Object.entries(outputs)) {
     if (!isReferenceKey(name)) issues.push(workflowIssue("INVALID_END_OUTPUT_KEY", `${path}.${name}`, "End output names may contain only lowercase letters, digits, and underscores."));
     if (!isObject(output.schema)) issues.push(workflowIssue("INVALID_END_OUTPUT_SCHEMA", `${path}.${name}.schema`, "End output schema must be an object."));
+    if (isDynamicValueEmpty(output.value)) issues.push(workflowIssue("END_OUTPUT_EXPRESSION_REQUIRED", `${path}.${name}.value`, "End output expressions are required."));
   }
 }
 

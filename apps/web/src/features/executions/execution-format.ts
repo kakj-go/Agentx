@@ -7,6 +7,5 @@ export function executionStatus(status: string): 'success' | 'running' | 'waitin
   return 'pending'
 }
 
-export function formatCost(micros: number) {
-  return `¥${(micros / 1_000_000).toFixed(4)}`
-}
+export const formatCost = formatCurrencyCost
+import { formatCost as formatCurrencyCost } from '../../shared/lib/cost-format'

@@ -6,6 +6,8 @@ let refreshPromise: Promise<boolean> | undefined
 let apiErrorTranslator: ((detail: ApiError, status: number) => string) | undefined
 const runtimeBaseUrl = (window as Window & { __AGENTX_RUNTIME__?: { runtimeBaseUrl?: string } }).__AGENTX_RUNTIME__?.runtimeBaseUrl?.replace(/\/$/, '') ?? ''
 
+export function runtimePublicBaseUrl() { return runtimeBaseUrl || window.location.origin }
+
 export class ApiClientError extends Error {
   status: number
   detail: ApiError

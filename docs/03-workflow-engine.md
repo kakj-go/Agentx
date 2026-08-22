@@ -333,6 +333,8 @@ Worker 必须容忍：
 - Redis 短暂不可用
 - Trace 写入延迟
 
+Redis Stream 只承载可重建的派发事实。Worker 的每个 capability 使用独立连接；队列读取必须有界，连接错误或读取超时后主动重建连接，`FLUSHALL`、Consumer Group 丢失或 Redis Pod 替换后由 MySQL Outbox/Recovery 与 `ensure_group` 自恢复。依赖错误重试属于调度器仍在推进，不能把它误报为进程 liveness stalled，也不能依赖 Kubernetes 重启来恢复队列消费。
+
 ## 11. 错误和重试
 
 节点错误策略：
@@ -393,3 +395,11 @@ Node Action 请求至少携带 protocol/node version、executionId、nodeExecuti
 Node API 至少分为 Action Execute、动态 Provider 和 Lifecycle 三组版本化 Endpoint。接入文档必须说明认证、租户/运行身份、协议协商、幂等、超时取消、Artifact、Credential、错误分类、重试责任和 Fixture 验证方式。
 
 首期不发布 Rust、Python 或 JavaScript Node SDK。平台提供 OpenAPI/JSON Schema、认证和幂等规范、接入文档、Fixture 与协议一致性测试；内部 Rust `NodeRunner` 只是 builtin Adapter。外部启动生命周期属于 Trigger Binding 和 Trigger Gateway，不进入 Node Catalog；完整节点配置 UI 使用同一 Node Manifest，不再定义第二套节点描述。
+
+## 14. 节点返回值与可观测边界
+
+运行时统一 Item、Port、Cardinality 和 Error Port 协议，Studio 则只公开 Manifest 中稳定、强类型的语义叶子字段。不得为了表面统一给所有节点增加万能 `result/payload` 对象；Model/Agent 共享 `AiResponse`，数据节点保持 Item 形态，HTTP、Code、Approval、Wait 等按领域输出。
+
+Provider 原始响应、Agent Iteration 和 Tool Call 属于诊断数据，只能通过 Trace/Artifact 查询，不参与普通变量引用。节点成功结果在推进下游前按 IR 冻结的端口 Schema 校验，避免错误直到 End 才暴露。
+
+引用目录按 Manifest 输出树生成，并优先推荐 Model/Agent 的 `text`。对象、数组、数字、布尔值和 null 只有在目标 Schema 为 string 时才允许确定性文本化；该决策冻结到 IR，并在 Trace 中留下不含原值的转换元数据。

@@ -23,11 +23,11 @@ use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
 
 use agentx_runtime_contracts::{
-    ContentHash, DELEGATION_TOKEN_TTL_SECONDS, DelegationClaimsV1, RuntimeTriggerConfigurationV1,
-    RuntimeTriggerSpecV1, ScheduleMisfirePolicyV1, SessionDetailV1, SessionSearchPageV1,
-    SessionSearchRequestV1, SessionUpgradeCommandV1, UserAccessClaimsV1, VaultSecretReferenceV1,
-    content_hash, issue_delegation_token, issue_user_access_token, now_unix,
-    verify_user_access_token,
+    ContentHash, DELEGATION_TOKEN_TTL_SECONDS, DelegationClaimsV1, ExecutionOriginV1,
+    RuntimeTriggerConfigurationV1, RuntimeTriggerSpecV1, ScheduleMisfirePolicyV1, SessionDetailV1,
+    SessionSearchPageV1, SessionSearchRequestV1, SessionUpgradeCommandV1, UserAccessClaimsV1,
+    VaultSecretReferenceV1, content_hash, issue_delegation_token, issue_user_access_token,
+    now_unix, verify_user_access_token,
 };
 
 use crate::api_error::{ApiError, ApiResult, invalid_credentials};
@@ -37,6 +37,8 @@ use crate::control_helpers::{
 };
 
 const REFRESH_COOKIE: &str = "agentx_refresh";
+mod playground_config;
+
 #[derive(Clone)]
 pub struct ControlApiState {
     pub(crate) pool: MySqlPool,
@@ -197,6 +199,10 @@ fn routes() -> Router<ControlApiState> {
             get(list_deployments).post(create_deployment),
         )
         .route(
+            "/api/v1/applications/{id}/deployments/{deployment_id}/playground-config",
+            get(playground_config::get).put(playground_config::put),
+        )
+        .route(
             "/api/v1/applications/{id}/publish-attempts/{action}",
             get(get_publish_attempt).post(retry_publish_attempt),
         )
@@ -296,6 +302,26 @@ impl Actor {
     }
 }
 
+pub(crate) async fn execution_origin(
+    state: &ControlApiState,
+    actor: &Actor,
+) -> ApiResult<ExecutionOriginV1> {
+    let department_name: String =
+        sqlx::query_scalar("SELECT name FROM departments WHERE tenant_id=? AND id=?")
+            .bind(actor.tenant_id)
+            .bind(actor.department_id)
+            .fetch_one(&state.pool)
+            .await?;
+    Ok(ExecutionOriginV1 {
+        initiator_user_id: Some(actor.user_id),
+        initiator_user_name: Some(actor.display_name.clone()),
+        initiator_department_id: Some(actor.department_id),
+        initiator_department_name: Some(department_name),
+        trigger_source_id: None,
+        trigger_name: None,
+    })
+}
+
 impl FromRequestParts<ControlApiState> for Actor {
     type Rejection = ApiError;
 
@@ -378,7 +404,7 @@ async fn login(
                 access_token: None,
                 expires_in: None,
                 password_change_required: true,
-                change_password_token: Some(issue_token(
+                change_password_token: Some(issue_control_token(
                     &state.auth,
                     user_id,
                     tenant_id,
@@ -448,17 +474,11 @@ pub(crate) async fn create_session(
         },
     )
     .await?;
-    let access = issue_token(
-        &state.auth,
-        user_id,
-        tenant_id,
-        version,
-        "access",
-        900,
-        None,
-    )?;
+    let me = load_me(state, &actor).await?;
+    let origin = execution_origin(state, &actor).await?;
+    let access = issue_access_token(&state.auth, user_id, tenant_id, version, 900, origin)?;
     let family = Uuid::now_v7();
-    let refresh = issue_token(
+    let refresh = issue_control_token(
         &state.auth,
         user_id,
         tenant_id,
@@ -481,12 +501,40 @@ pub(crate) async fn create_session(
             expires_in: Some(900),
             password_change_required: false,
             change_password_token: None,
-            user: Some(load_me(state, &actor).await?),
+            user: Some(me),
         }),
     ))
 }
 
-pub(crate) fn issue_token(
+fn issue_access_token(
+    settings: &AuthSettings,
+    user_id: Uuid,
+    tenant_id: Uuid,
+    version: u64,
+    ttl: i64,
+    origin: ExecutionOriginV1,
+) -> ApiResult<String> {
+    let now = OffsetDateTime::now_utc().unix_timestamp();
+    issue_user_access_token(
+        &settings.access_kid,
+        settings.access_private_key.expose_secret().as_bytes(),
+        &UserAccessClaimsV1 {
+            iss: settings.issuer.clone(),
+            aud: "agentx-runtime-gateway".into(),
+            sub: user_id,
+            tenant_id,
+            token_version: version,
+            kind: "access".into(),
+            origin,
+            iat: now,
+            exp: now + ttl,
+            jti: Uuid::now_v7(),
+        },
+    )
+    .map_err(ApiError::internal)
+}
+
+pub(crate) fn issue_control_token(
     settings: &AuthSettings,
     user_id: Uuid,
     tenant_id: Uuid,
@@ -496,24 +544,6 @@ pub(crate) fn issue_token(
     family: Option<Uuid>,
 ) -> ApiResult<String> {
     let now = OffsetDateTime::now_utc().unix_timestamp();
-    if kind == "access" {
-        return issue_user_access_token(
-            &settings.access_kid,
-            settings.access_private_key.expose_secret().as_bytes(),
-            &UserAccessClaimsV1 {
-                iss: settings.issuer.clone(),
-                aud: "agentx-runtime-gateway".into(),
-                sub: user_id,
-                tenant_id,
-                token_version: version,
-                kind: "access".into(),
-                iat: now,
-                exp: now + ttl,
-                jti: Uuid::now_v7(),
-            },
-        )
-        .map_err(ApiError::internal);
-    }
     encode(
         &Header::new(Algorithm::HS256),
         &Claims {
@@ -983,7 +1013,13 @@ async fn create_deployment(
         .bind(actor.tenant_id).bind(id).bind(trigger_revision).fetch_optional(&mut *tx).await?;
     let sequence: u64 = sqlx::query_scalar("SELECT CAST(COALESCE(MAX(sequence_number),0)+1 AS UNSIGNED) FROM application_deployments WHERE tenant_id=? AND application_id=? FOR UPDATE")
         .bind(actor.tenant_id).bind(id).fetch_one(&mut *tx).await?;
-    let output = json!({"type":"object","properties":definition.end.outputs.iter().map(|(name,value)|(name.clone(),value.schema.clone())).collect::<serde_json::Map<_,_>>(),"required":definition.end.outputs.iter().filter(|(_,value)|value.required).map(|(name,_)|name.clone()).collect::<Vec<_>>(),"additionalProperties":false});
+    let output = json!({"type":"object","properties":definition.end.outputs.iter().map(|(name,value)| {
+        let mut schema = value.schema.clone();
+        if let Some(object) = schema.as_object_mut() {
+            object.insert("x-agentx-sensitive".into(), json!(value.sensitive));
+        }
+        (name.clone(), schema)
+    }).collect::<serde_json::Map<_,_>>(),"required":definition.end.outputs.iter().filter(|(_,value)|value.required).map(|(name,_)|name.clone()).collect::<Vec<_>>(),"additionalProperties":false});
     sqlx::query("INSERT INTO application_deployments(id,tenant_id,application_id,workflow_version_id,environment_id,sequence_number,input_schema_json,output_schema_json,session_version_policy,trigger_revision,trigger_manifest_hash,status,created_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,'building',?)")
         .bind(deployment_id).bind(actor.tenant_id).bind(id).bind(input.workflow_version_id).bind(input.environment_id).bind(sequence)
         .bind(serde_json::to_value(&definition.start.inputs).map_err(ApiError::internal)?).bind(output).bind(input.session_version_policy).bind(trigger_revision).bind(trigger_manifest_hash).bind(actor.user_id).execute(&mut *tx).await?;
@@ -1381,7 +1417,7 @@ async fn rebuild_trigger_revision(
     .ok_or_else(|| ApiError::not_found("Application"))?;
     let revision = current + 1;
     let mut triggers = Vec::new();
-    let webhooks = sqlx::query("SELECT id,public_id,secret_ref_json,status,configuration_revision FROM application_webhooks WHERE tenant_id=? AND application_id=? ORDER BY id")
+    let webhooks = sqlx::query("SELECT id,name,public_id,secret_ref_json,status,configuration_revision FROM application_webhooks WHERE tenant_id=? AND application_id=? ORDER BY id")
         .bind(actor.tenant_id).bind(application_id).fetch_all(&mut **tx).await?;
     for row in webhooks {
         let configuration = RuntimeTriggerConfigurationV1::Webhook {
@@ -1403,6 +1439,7 @@ async fn rebuild_trigger_revision(
         triggers.push(RuntimeTriggerSpecV1 {
             schema_version: 1,
             trigger_id,
+            trigger_name: row.try_get("name")?,
             application_id,
             node_id: format!("webhook:{trigger_id}"),
             revision: row.try_get("configuration_revision")?,
@@ -1411,7 +1448,7 @@ async fn rebuild_trigger_revision(
             configuration,
         });
     }
-    let schedules = sqlx::query("SELECT id,cron_expression,timezone,input_json,misfire_policy,status,configuration_revision FROM application_schedules WHERE tenant_id=? AND application_id=? ORDER BY id")
+    let schedules = sqlx::query("SELECT id,name,cron_expression,timezone,input_json,misfire_policy,status,configuration_revision FROM application_schedules WHERE tenant_id=? AND application_id=? ORDER BY id")
         .bind(actor.tenant_id).bind(application_id).fetch_all(&mut **tx).await?;
     for row in schedules {
         let policy = match row.try_get::<String, _>("misfire_policy")?.as_str() {
@@ -1440,6 +1477,7 @@ async fn rebuild_trigger_revision(
         triggers.push(RuntimeTriggerSpecV1 {
             schema_version: 1,
             trigger_id,
+            trigger_name: row.try_get("name")?,
             application_id,
             node_id: format!("schedule:{trigger_id}"),
             revision: row.try_get("configuration_revision")?,
@@ -1828,7 +1866,7 @@ async fn create_api_key(
     let mut tx = state.pool.begin().await?;
     sqlx::query("INSERT INTO application_api_keys(id,tenant_id,application_id,family_id,name,key_prefix,secret_hash,created_by) VALUES(?,?,?,?,?,?,?,?)")
         .bind(key).bind(actor.tenant_id).bind(id).bind(family).bind(input.name.trim()).bind(&prefix).bind(hash.as_slice()).bind(actor.user_id).execute(&mut *tx).await?;
-    admission_outbox(&mut tx, &actor, id, "ApiKeyAdmissionChanged", json!({"applicationId":id,"keyId":key,"status":"active","keyPrefix":prefix,"secretHash":format!("sha256:{}",hex(&hash))})).await?;
+    admission_outbox(&mut tx, &actor, id, "ApiKeyAdmissionChanged", json!({"applicationId":id,"keyId":key,"keyName":input.name.trim(),"status":"active","keyPrefix":prefix,"secretHash":format!("sha256:{}",hex(&hash))})).await?;
     tx.commit().await?;
     let mut response = load_api_key(&state, actor.tenant_id, key).await?;
     response.secret = Some(secret);
@@ -1853,8 +1891,8 @@ async fn rotate_api_key(
     .await?;
     sqlx::query("INSERT INTO application_api_keys(id,tenant_id,application_id,family_id,name,key_prefix,secret_hash,created_by) VALUES(?,?,?,?,?,?,?,?)")
         .bind(new_key).bind(actor.tenant_id).bind(id).bind(old.try_get::<Uuid,_>("family_id")?).bind(old.try_get::<String,_>("name")?).bind(&prefix).bind(hash.as_slice()).bind(actor.user_id).execute(&mut *tx).await?;
-    admission_outbox(&mut tx, &actor, id, "ApiKeyAdmissionChanged", json!({"applicationId":id,"keyId":key,"status":"revoked","keyPrefix":old.try_get::<String,_>("key_prefix")?,"secretHash":format!("sha256:{}",hex(&old.try_get::<Vec<u8>,_>("secret_hash")?))})).await?;
-    admission_outbox(&mut tx, &actor, id, "ApiKeyAdmissionChanged", json!({"applicationId":id,"keyId":new_key,"status":"active","keyPrefix":prefix,"secretHash":format!("sha256:{}",hex(&hash))})).await?;
+    admission_outbox(&mut tx, &actor, id, "ApiKeyAdmissionChanged", json!({"applicationId":id,"keyId":key,"keyName":old.try_get::<String,_>("name")?,"status":"revoked","keyPrefix":old.try_get::<String,_>("key_prefix")?,"secretHash":format!("sha256:{}",hex(&old.try_get::<Vec<u8>,_>("secret_hash")?))})).await?;
+    admission_outbox(&mut tx, &actor, id, "ApiKeyAdmissionChanged", json!({"applicationId":id,"keyId":new_key,"keyName":old.try_get::<String,_>("name")?,"status":"active","keyPrefix":prefix,"secretHash":format!("sha256:{}",hex(&hash))})).await?;
     tx.commit().await?;
     let mut response = load_api_key(&state, actor.tenant_id, new_key).await?;
     response.secret = Some(secret);
@@ -1868,7 +1906,7 @@ async fn revoke_api_key(
 ) -> ApiResult<StatusCode> {
     actor.require("application:manage_key")?;
     let mut tx = state.pool.begin().await?;
-    let row = sqlx::query("SELECT key_prefix,secret_hash FROM application_api_keys WHERE id=? AND application_id=? AND tenant_id=? AND status='active' FOR UPDATE")
+    let row = sqlx::query("SELECT name,key_prefix,secret_hash FROM application_api_keys WHERE id=? AND application_id=? AND tenant_id=? AND status='active' FOR UPDATE")
         .bind(key).bind(id).bind(actor.tenant_id).fetch_optional(&mut *tx).await?.ok_or_else(|| ApiError::not_found("API key"))?;
     sqlx::query(
         "UPDATE application_api_keys SET status='revoked',revoked_at=UTC_TIMESTAMP(6) WHERE id=?",

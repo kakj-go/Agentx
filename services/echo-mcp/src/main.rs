@@ -259,6 +259,19 @@ async fn chat_completions(headers: HeaderMap, AxumJson(request): AxumJson<Value>
         .iter()
         .filter_map(|message| message.get("content").and_then(Value::as_str))
         .any(|content| content.contains("m5-loop"));
+    let kakj_identity = messages.iter().any(|message| {
+        message.get("role").and_then(Value::as_str) == Some("system")
+            && message
+                .get("content")
+                .and_then(Value::as_str)
+                .is_some_and(|content| content.contains("你叫 kakj"))
+    });
+    let large_trace_response = messages.iter().any(|message| {
+        message
+            .get("content")
+            .and_then(Value::as_str)
+            .is_some_and(|content| content.contains("TRACE_LARGE_RESPONSE"))
+    });
     let tool = request
         .pointer("/tools/0/function/name")
         .and_then(Value::as_str);
@@ -276,9 +289,11 @@ async fn chat_completions(headers: HeaderMap, AxumJson(request): AxumJson<Value>
     } else {
         "stop"
     };
-    let content = tool_call
-        .is_none()
-        .then_some("M5 Agent completed after the MCP tool result");
+    let content = tool_call.is_none().then_some(if kakj_identity {
+        "你好，我叫 kakj。"
+    } else {
+        "M5 Agent completed after the MCP tool result"
+    });
     let usage = json!({"prompt_tokens": 24 + tool_messages, "completion_tokens": if tool_call.is_some() { 12 } else { 9 }, "total_tokens": 45 + tool_messages});
     if request
         .get("stream")
@@ -305,14 +320,17 @@ async fn chat_completions(headers: HeaderMap, AxumJson(request): AxumJson<Value>
     if let Some(call) = tool_call {
         message["tool_calls"] = json!([call]);
     }
-    AxumJson(json!({
+    let mut response = json!({
         "id":"m5-completion",
         "object":"chat.completion",
         "model":request.get("model").cloned().unwrap_or_else(||json!("echo-model")),
         "choices":[{"index":0,"message":message,"finish_reason":finish_reason}],
         "usage":usage
-    }))
-    .into_response()
+    });
+    if large_trace_response {
+        response["fixture_trace_payload"] = Value::String("trace-artifact-marker|".repeat(1_024));
+    }
+    AxumJson(response).into_response()
 }
 
 #[cfg(test)]
@@ -336,6 +354,64 @@ mod tests {
         );
         let response = chat_completions(headers, Json(json!({"messages":[{"role":"tool","content":"ok"}],"tools":[{"function":{"name":"echo"}}]}))).await.into_response();
         assert_eq!(response.status(), 200);
+    }
+
+    #[tokio::test]
+    async fn model_fixture_applies_the_system_identity_prompt() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer m5-model-secret"),
+        );
+        let response = chat_completions(
+            headers,
+            Json(json!({"messages":[
+                {"role":"system","content":"你叫 kakj"},
+                {"role":"user","content":"你是谁？"}
+            ]})),
+        )
+        .await
+        .into_response();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            value.pointer("/choices/0/message/content"),
+            Some(&json!("你好，我叫 kakj。"))
+        );
+    }
+
+    #[tokio::test]
+    async fn model_fixture_can_emit_a_large_trace_only_provider_response() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer m5-model-secret"),
+        );
+        let response = chat_completions(
+            headers,
+            Json(json!({"messages":[{
+                "role":"system",
+                "content":"你叫 kakj\nTRACE_LARGE_RESPONSE"
+            }]})),
+        )
+        .await
+        .into_response();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert!(body.len() > 16 * 1024);
+        let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(
+            value["fixture_trace_payload"]
+                .as_str()
+                .is_some_and(|payload| payload.contains("trace-artifact-marker"))
+        );
+        assert_eq!(
+            value.pointer("/choices/0/message/content"),
+            Some(&json!("你好，我叫 kakj。"))
+        );
     }
 
     #[tokio::test]

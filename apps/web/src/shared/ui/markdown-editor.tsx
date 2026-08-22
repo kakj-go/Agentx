@@ -22,25 +22,37 @@ import {
   type Translation,
 } from '@mdxeditor/editor'
 import '@mdxeditor/editor/style.css'
+import { Link2 } from 'lucide-react'
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
+
+type ToolbarAction = {
+  disabled?: boolean
+  label: string
+  onClick: () => void
+}
 
 type Props = {
   onChange: (value: string) => void
   readOnly?: boolean
+  toolbarAction?: ToolbarAction
   value: string
 }
 export type MarkdownEditorHandle = { insertText: (value: string) => void }
 
-export const MarkdownEditor = forwardRef<MarkdownEditorHandle, Props>(function MarkdownEditor({ onChange, readOnly = false, value }, ref) {
+export const MarkdownEditor = forwardRef<MarkdownEditorHandle, Props>(function MarkdownEditor({ onChange, readOnly = false, toolbarAction, value }, ref) {
   const { i18n, t } = useTranslation()
   const editor = useRef<MDXEditorMethods>(null)
   const externalValue = useRef(value)
   const onChangeRef = useRef(onChange)
+  const toolbarActionRef = useRef(toolbarAction)
   const initialValue = useRef(value)
   onChangeRef.current = onChange
+  toolbarActionRef.current = toolbarAction
   externalValue.current = value
-  useImperativeHandle(ref, () => ({ insertText: (text) => editor.current?.insertMarkdown(text) }), [])
+  useImperativeHandle(ref, () => ({
+    insertText: (text) => editor.current?.focus(() => editor.current?.insertMarkdown(text), { preventScroll: true }),
+  }), [])
 
   const translate = useCallback<Translation>((key, defaultValue, interpolations) => (
     t(`skills.markdownEditor.${key}`, {
@@ -50,6 +62,8 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, Props>(function M
       ...interpolations,
     })
   ), [i18n.resolvedLanguage, t])
+  const toolbarActionDisabled = toolbarAction?.disabled
+  const toolbarActionLabel = toolbarAction?.label
   const plugins = useMemo(() => [
     headingsPlugin(),
     quotePlugin(),
@@ -74,9 +88,10 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, Props>(function M
         <Separator />
         <CreateLink />
         <InsertTable />
+        {toolbarActionLabel && <><Separator /><ToolbarActionButton disabled={toolbarActionDisabled} label={toolbarActionLabel} onClick={() => toolbarActionRef.current?.onClick()} /></>}
       </>,
     })] : []),
-  ], [readOnly])
+  ], [readOnly, toolbarActionDisabled, toolbarActionLabel])
 
   useEffect(() => {
     const instance = editor.current
@@ -95,3 +110,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, Props>(function M
     translation={translate}
   />
 })
+
+function ToolbarActionButton({ disabled, label, onClick }: { disabled?: boolean; label: string; onClick: () => void }) {
+  return <button aria-label={label} className="agentx-markdown-toolbar-action" disabled={disabled} onClick={onClick} title={label} type="button"><Link2 className="size-3.5" /><span>{label}</span></button>
+}

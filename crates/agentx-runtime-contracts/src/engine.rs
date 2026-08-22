@@ -160,7 +160,7 @@ pub enum RuntimeResourceConfigurationV1 {
         provider: String,
         endpoint: String,
         model: String,
-        price_version: String,
+        price: RuntimeModelPriceV1,
         credential: Option<crate::VaultSecretReferenceV1>,
     },
     Mcp {
@@ -205,6 +205,15 @@ pub enum RuntimeResourceConfigurationV1 {
         definition_object_id: Uuid,
         ir_object_id: Uuid,
     },
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RuntimeModelPriceV1 {
+    pub version_id: String,
+    pub currency: String,
+    pub input_per_million: String,
+    pub output_per_million: String,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
@@ -553,6 +562,7 @@ pub enum ExecutionCommandV1 {
     Fork {
         source_execution_id: Uuid,
         checkpoint_id: Uuid,
+        origin: crate::ExecutionOriginV1,
         mode: PartialExecutionModeV1,
         node_id: Option<String>,
         side_effect_resolution: SideEffectResolutionV1,

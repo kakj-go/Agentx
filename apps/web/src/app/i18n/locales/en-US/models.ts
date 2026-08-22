@@ -14,7 +14,6 @@ const translations = {
   "healthy": "Healthy",
   "unhealthy": "Unhealthy",
   "invalidJson": "Invalid JSON",
-  "pricePairRequired": "Input and output prices must be provided together",
   "openaiCompatible": "OpenAI Chat Completions",
   "created": "Created",
   "noCredential": "No credential",

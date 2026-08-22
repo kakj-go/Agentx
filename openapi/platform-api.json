@@ -676,6 +676,36 @@
         ],
         "type": "object"
       },
+      "ChatMappingV1": {
+        "additionalProperties": false,
+        "properties": {
+          "answerFilesOutput": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "answerOutput": {
+            "type": "string"
+          },
+          "fileInput": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "questionInput": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "questionInput",
+          "fileInput",
+          "answerOutput",
+          "answerFilesOutput"
+        ],
+        "type": "object"
+      },
       "CheckpointListResponse": {
         "properties": {
           "items": {
@@ -1251,14 +1281,7 @@
             "type": "string"
           },
           "price": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/CreateModelPriceRequest"
-              }
-            ]
+            "$ref": "#/components/schemas/CreateModelPriceRequest"
           },
           "providerType": {
             "type": "string"
@@ -1268,7 +1291,8 @@
           "connectionName",
           "providerType",
           "endpoint",
-          "ownerDepartmentId"
+          "ownerDepartmentId",
+          "price"
         ],
         "type": "object"
       },
@@ -2604,6 +2628,7 @@
           },
           "limit": {
             "format": "int32",
+            "maximum": 1000,
             "minimum": 0,
             "type": [
               "integer",
@@ -2641,10 +2666,71 @@
         ],
         "type": "object"
       },
+      "ExecutionListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ExecutionResponse"
+            },
+            "type": "array"
+          },
+          "limit": {
+            "maximum": 100,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "snapshotId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "total": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "limit",
+          "total",
+          "snapshotId"
+        ],
+        "type": "object"
+      },
       "ExecutionResponse": {
         "properties": {
+          "admissionEpoch": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "applicationId": {
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "applicationName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "callerExecutionId": {
             "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "costCurrency": {
             "type": [
               "string",
               "null"
@@ -2670,6 +2756,7 @@
               "null"
             ]
           },
+          "error": {},
           "errorCode": {
             "type": [
               "string",
@@ -2696,6 +2783,33 @@
             "format": "uuid",
             "type": "string"
           },
+          "initiatorDepartmentId": {
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "initiatorDepartmentName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "initiatorUserId": {
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "initiatorUserName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "input": {},
           "inputTokens": {
             "format": "int64",
             "minimum": 0,
@@ -2708,6 +2822,7 @@
               "null"
             ]
           },
+          "output": {},
           "outputTokens": {
             "format": "int64",
             "minimum": 0,
@@ -2731,12 +2846,35 @@
             "format": "date-time",
             "type": "string"
           },
+          "stateVersion": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
           "status": {
             "type": "string"
           },
           "traceId": {
             "format": "uuid",
             "type": "string"
+          },
+          "traceWatermark": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "triggerName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "triggerSourceId": {
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "triggerType": {
             "type": "string"
@@ -3927,6 +4065,17 @@
           "capability": {
             "type": "string"
           },
+          "costCurrency": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "costMicros": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
           "endedAt": {
             "format": "date-time",
             "type": [
@@ -4019,6 +4168,7 @@
           "status",
           "capability",
           "sideEffectLevel",
+          "costMicros",
           "attempts",
           "lineage"
         ],
@@ -4192,6 +4342,78 @@
         ],
         "type": "object"
       },
+      "PlaygroundConfigResponse": {
+        "properties": {
+          "applicationId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "deploymentId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "deploymentVersion": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "errorCode": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "errorMessage": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "mapping": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ChatMappingV1"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "publishStatus": {
+            "enum": [
+              "active",
+              "publishing",
+              "failed"
+            ],
+            "type": "string"
+          },
+          "publishedVersion": {
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "version": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "applicationId",
+          "deploymentId",
+          "deploymentVersion",
+          "version",
+          "mapping",
+          "publishedVersion",
+          "publishStatus",
+          "errorCode",
+          "errorMessage"
+        ],
+        "type": "object"
+      },
       "PublishAttemptResponse": {
         "properties": {
           "activationSequence": {
@@ -4287,6 +4509,31 @@
         "required": [
           "environmentId",
           "workflowVersionId"
+        ],
+        "type": "object"
+      },
+      "PutPlaygroundConfigRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "expectedVersion": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "mapping": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ChatMappingV1"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "expectedVersion",
+          "mapping"
         ],
         "type": "object"
       },
@@ -5079,6 +5326,12 @@
           "callKind": {
             "type": "string"
           },
+          "costCurrency": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "costMicros": {
             "format": "int64",
             "minimum": 0,
@@ -5231,6 +5484,12 @@
               "$ref": "#/components/schemas/RuntimeCallDetail"
             },
             "type": "array"
+          },
+          "costCurrency": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "costMicros": {
             "format": "int64",
@@ -6032,32 +6291,77 @@
               "null"
             ]
           },
-          "preview": {},
-          "role": {
+          "eventId": {
+            "format": "uuid",
             "type": "string"
-          }
+          },
+          "kind": {
+            "enum": [
+              "workflow_input",
+              "workflow_output",
+              "node_input",
+              "node_output",
+              "attempt_input",
+              "attempt_output",
+              "resolved_parameters",
+              "runtime_request",
+              "runtime_response",
+              "agent_input",
+              "agent_output",
+              "iteration_input",
+              "iteration_output",
+              "sandbox_request",
+              "sandbox_response",
+              "wait_request",
+              "wait_response",
+              "conversion_record"
+            ],
+            "type": "string"
+          },
+          "occurredAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "preview": {}
         },
         "required": [
-          "role"
+          "eventId",
+          "kind",
+          "preview",
+          "contentRef",
+          "occurredAt"
         ],
         "type": "object"
       },
       "TraceEventResponse": {
         "properties": {
-          "agentRunId": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "attemptId": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
           "attributes": {},
+          "contentKind": {
+            "enum": [
+              "workflow_input",
+              "workflow_output",
+              "node_input",
+              "node_output",
+              "attempt_input",
+              "attempt_output",
+              "resolved_parameters",
+              "runtime_request",
+              "runtime_response",
+              "agent_input",
+              "agent_output",
+              "iteration_input",
+              "iteration_output",
+              "sandbox_request",
+              "sandbox_response",
+              "wait_request",
+              "wait_response",
+              "conversion_record",
+              null
+            ]
+          },
+          "contentPreview": {},
           "contentRef": {
+            "format": "uuid",
             "type": [
               "string",
               "null"
@@ -6089,141 +6393,38 @@
             ]
           },
           "eventId": {
+            "format": "uuid",
             "type": "string"
           },
-          "eventTime": {
+          "eventKind": {
+            "enum": [
+              "started",
+              "updated",
+              "finished"
+            ],
             "type": "string"
           },
           "eventType": {
             "type": "string"
           },
-          "executionId": {
-            "type": "string"
-          },
-          "inputTokens": {
-            "format": "int64",
-            "minimum": 0,
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
-          "iterationIndex": {
-            "format": "int32",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "mcpToolName": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "modelName": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "nodeExecutionId": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "nodeId": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "outputTokens": {
-            "format": "int64",
-            "minimum": 0,
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
-          "parentSpanId": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "partial": {
-            "type": "boolean"
-          },
-          "providerName": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "resourceId": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "resourceType": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "resourceVersionId": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "runIndex": {
-            "format": "int32",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "runtimeCallId": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "sandboxId": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "spanId": {
+          "occurredAt": {
+            "format": "date-time",
             "type": "string"
           },
           "status": {
-            "type": "string"
-          },
-          "stopReason": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "traceId": {
             "type": "string"
           }
         },
         "required": [
           "eventId",
-          "traceId",
-          "spanId",
-          "executionId",
+          "eventKind",
           "eventType",
           "status",
-          "eventTime",
-          "runIndex",
-          "iterationIndex",
-          "costMicros",
-          "partial",
-          "attributes"
+          "attributes",
+          "contentRef",
+          "contentKind",
+          "contentPreview",
+          "occurredAt"
         ],
         "type": "object"
       },
@@ -6291,40 +6492,21 @@
       },
       "TraceSpanDetailResponse": {
         "properties": {
-          "attributes": {
-            "additionalProperties": true,
-            "type": "object"
+          "contents": {
+            "items": {
+              "$ref": "#/components/schemas/TraceContent"
+            },
+            "type": "array"
           },
           "events": {
             "items": {
-              "additionalProperties": true,
-              "type": "object"
+              "$ref": "#/components/schemas/TraceEventResponse"
             },
             "type": "array"
           },
           "executionId": {
             "format": "uuid",
             "type": "string"
-          },
-          "input": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/TraceContent"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "output": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/TraceContent"
-              },
-              {
-                "type": "null"
-              }
-            ]
           },
           "span": {
             "$ref": "#/components/schemas/TraceSpanSummary"
@@ -6338,7 +6520,7 @@
           "executionId",
           "traceId",
           "span",
-          "attributes",
+          "contents",
           "events"
         ],
         "type": "object"
@@ -6471,6 +6653,7 @@
           "spanKind": {
             "enum": [
               "execution",
+              "boundary",
               "node",
               "attempt",
               "agent_run",
@@ -6827,14 +7010,7 @@
             "type": "string"
           },
           "price": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/CreateModelPriceRequest"
-              }
-            ]
+            "$ref": "#/components/schemas/CreateModelPriceRequest"
           },
           "providerType": {
             "type": "string"
@@ -6854,7 +7030,8 @@
           "maxInputTokens",
           "maxOutputTokens",
           "defaultParameters",
-          "expectedAliasVersion"
+          "expectedAliasVersion",
+          "price"
         ],
         "type": "object"
       },
@@ -8287,6 +8464,94 @@
         ]
       }
     },
+    "/api/v1/applications/{id}/deployments/{deployment_id}/playground-config": {
+      "get": {
+        "operationId": "get_playground_config",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "deployment_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlaygroundConfigResponse"
+                }
+              }
+            },
+            "description": "Deployment Playground mapping"
+          }
+        },
+        "tags": [
+          "applications"
+        ]
+      },
+      "put": {
+        "operationId": "put_playground_config",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "deployment_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PutPlaygroundConfigRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlaygroundConfigResponse"
+                }
+              }
+            },
+            "description": "Mapping accepted for reliable Runtime publication"
+          }
+        },
+        "tags": [
+          "applications"
+        ]
+      }
+    },
     "/api/v1/applications/{id}/deployments/{deployment_id}:rollback": {
       "post": {
         "operationId": "rollback_deployment",
@@ -9190,6 +9455,53 @@
         ]
       }
     },
+    "/api/v1/departments/search": {
+      "get": {
+        "operationId": "search_departments",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "pageSize",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {},
+        "tags": [
+          "iam"
+        ]
+      }
+    },
     "/api/v1/departments/{id}": {
       "delete": {
         "operationId": "delete_department",
@@ -9486,7 +9798,150 @@
     "/api/v1/executions": {
       "get": {
         "operationId": "list_executions",
-        "responses": {},
+        "parameters": [
+          {
+            "in": "query",
+            "name": "applicationIds",
+            "required": false,
+            "schema": {
+              "maxLength": 1849,
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "workflowIds",
+            "required": false,
+            "schema": {
+              "maxLength": 1849,
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "toolIds",
+            "required": false,
+            "schema": {
+              "maxLength": 1849,
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "initiatorUserIds",
+            "required": false,
+            "schema": {
+              "maxLength": 1849,
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "initiatorDepartmentIds",
+            "required": false,
+            "schema": {
+              "maxLength": 1849,
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "triggerTypes",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "triggerName",
+            "required": false,
+            "schema": {
+              "maxLength": 200,
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "statuses",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sessionMode",
+            "required": false,
+            "schema": {
+              "default": "all",
+              "enum": [
+                "all",
+                "stateless",
+                "session"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "createdAfter",
+            "required": false,
+            "schema": {
+              "format": "date-time",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "createdBefore",
+            "required": false,
+            "schema": {
+              "format": "date-time",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "maxLength": 200,
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 8,
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecutionListResponse"
+                }
+              }
+            },
+            "description": "Cursor-paginated execution records"
+          }
+        },
         "tags": [
           "operations"
         ]
@@ -9557,9 +10012,9 @@
             }
           },
           {
-            "in": "path",
+            "in": "query",
             "name": "after",
-            "required": true,
+            "required": false,
             "schema": {
               "format": "int64",
               "minimum": 0,
@@ -9570,11 +10025,12 @@
             }
           },
           {
-            "in": "path",
+            "in": "query",
             "name": "limit",
-            "required": true,
+            "required": false,
             "schema": {
               "format": "int32",
+              "maximum": 1000,
               "minimum": 0,
               "type": [
                 "integer",
@@ -9735,6 +10191,14 @@
           {
             "in": "query",
             "name": "cursor",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "nodeExecutionId",
             "required": false,
             "schema": {
               "format": "uuid",
@@ -10160,6 +10624,44 @@
     "/api/v1/mcp/tools": {
       "get": {
         "operationId": "list_all_tools",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "pageSize",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {},
         "tags": [
           "mcp_control"
@@ -10611,7 +11113,7 @@
           },
           {
             "in": "path",
-            "name": "pageSize",
+            "name": "limit",
             "required": true,
             "schema": {
               "format": "int32",

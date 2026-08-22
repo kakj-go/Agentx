@@ -4,22 +4,27 @@ import { useMemo } from 'react'
 import { apiRequest } from '../../shared/api/client'
 import type { Trace, TraceSpan } from '../../shared/api/types'
 
-export function useExecutionTrace(executionId: string | undefined, enabled = true) {
+export function useExecutionTrace(executionId: string | undefined, enabled = true, nodeExecutionId?: string) {
   const query = useInfiniteQuery({
-    queryKey: ['execution-trace-spans', executionId],
-    queryFn: ({ pageParam }) => apiRequest<Trace>(`/executions/${executionId}/trace?limit=200${pageParam ? `&cursor=${encodeURIComponent(pageParam)}` : ''}`),
+    queryKey: ['execution-trace-spans', executionId, nodeExecutionId ?? 'all'],
+    queryFn: ({ pageParam }) => apiRequest<Trace>(`/executions/${executionId}/trace?limit=200${nodeExecutionId ? `&nodeExecutionId=${encodeURIComponent(nodeExecutionId)}` : ''}${pageParam ? `&cursor=${encodeURIComponent(pageParam)}` : ''}`),
     initialPageParam: '',
     enabled: enabled && Boolean(executionId),
     getNextPageParam: (last) => last.nextCursor ?? undefined,
     refetchInterval: (current) => {
       const pages = current.state.data?.pages
-      return pages?.at(-1)?.complete === false || pages?.some((page) => page.spans?.some((span) => !terminal.has(span.status))) ? 3_000 : false
+      return traceRefetchInterval(current.state.status, pages)
     },
     retry: false,
   })
   const spans = useMemo(() => mergeTracePages(query.data?.pages ?? []), [query.data])
   const latest = query.data?.pages.at(-1)
   return { ...query, spans, trace: latest }
+}
+
+export function traceRefetchInterval(status: string, pages?: Trace[]) {
+  if (status === 'error') return 3_000
+  return pages?.at(-1)?.complete === false || pages?.some((page) => page.spans?.some((span) => !terminal.has(span.status))) ? 3_000 : false
 }
 
 export function mergeTracePages(pages: Trace[]) {

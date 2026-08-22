@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArchiveRestore, Download, File, FilePlus2, FileText, Folder, FolderPlus, Image, Link2, Move, Pencil, Power, Save, Trash2, Upload } from 'lucide-react'
+import { ArchiveRestore, Download, File, FilePlus2, FileText, Folder, FolderPlus, Image, Move, Pencil, Power, Save, Trash2, Upload } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type DragEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useParams } from 'react-router-dom'
@@ -14,10 +14,11 @@ import { PrerequisiteAction } from '../../shared/components/prerequisite-action'
 import { StatusBadge } from '../../shared/components/status-badge'
 import { Button } from '../../shared/ui/button'
 import { Dialog, DialogContent } from '../../shared/ui/dialog'
-import { Input } from '../../shared/ui/input'
-import { MarkdownEditor } from '../../shared/ui/markdown-editor'
+import { MarkdownEditor, type MarkdownEditorHandle } from '../../shared/ui/markdown-editor'
+import { Textarea } from '../../shared/ui/textarea'
 import { useToast } from '../../shared/ui/toast'
 import { parseSkillMarkdown } from './skill-markdown'
+import { skillReferenceMarkdown, WORKSPACE_ROOT_PARENT, workspaceParentId, workspaceParentValue } from './skill-workspace'
 
 type DialogKind = 'create' | 'move' | 'reference' | 'publish' | 'edit' | undefined
 
@@ -29,6 +30,7 @@ export function SkillDetailPage() {
   const { showToast } = useToast()
   const fileInput = useRef<HTMLInputElement>(null)
   const importInput = useRef<HTMLInputElement>(null)
+  const markdownEditor = useRef<MarkdownEditorHandle>(null)
   const [dialog, setDialog] = useState<DialogKind>()
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [createKind, setCreateKind] = useState<'directory' | 'file'>('file')
@@ -61,12 +63,12 @@ export function SkillDetailPage() {
     queryClient.invalidateQueries({ queryKey: ['skill-versions', id] }),
   ])
   const createEntry = async (values: Record<string, string>) => {
-    await apiRequest(`/skills/${id}/entries`, { method: 'POST', body: jsonBody({ parentId: values.parent || null, name: values.name, entryType: createKind, expectedRevision: workspace.data?.revision }) })
+    await apiRequest(`/skills/${id}/entries`, { method: 'POST', body: jsonBody({ parentId: workspaceParentId(values.parent), name: values.name, entryType: createKind, expectedRevision: workspace.data?.revision }) })
     await refresh()
   }
   const moveEntry = async (values: Record<string, string>) => {
     if (!selected) return
-    await apiRequest(`/skills/${id}/entries/${selected.id}`, { method: 'PATCH', body: jsonBody({ parentId: values.parent || null, name: values.name, expectedRevision: workspace.data?.revision }) })
+    await apiRequest(`/skills/${id}/entries/${selected.id}`, { method: 'PATCH', body: jsonBody({ parentId: workspaceParentId(values.parent), name: values.name, expectedRevision: workspace.data?.revision }) })
     await refresh()
     showToast(t('skills.referencesUpdated'))
   }
@@ -131,10 +133,7 @@ export function SkillDetailPage() {
   const insertReference = (values: Record<string, string>) => {
     const target = files.find((entry) => entry.id === values.file)
     if (!selected || !target) return Promise.resolve()
-    const path = relativePath(selected.path, target.path)
-    const markdown = target.mimeType?.startsWith('image/') ? `![${target.name}](${path})` : `[${target.name}](${path})`
-    setContent((value) => `${value}${value.endsWith('\n') ? '' : '\n'}${markdown}\n`)
-    setDirty(true)
+    markdownEditor.current?.insertText(skillReferenceMarkdown(selected.path, target.path, target.name, target.mimeType))
     return Promise.resolve()
   }
   const onDrop = (event: DragEvent<HTMLDivElement>) => { event.preventDefault(); const file = event.dataTransfer.files[0]; if (file) void upload(file).catch((error: Error) => showToast(error.message)) }
@@ -160,13 +159,14 @@ export function SkillDetailPage() {
         <div className="border-t border-border p-3 text-[10px] leading-4 text-muted-foreground">{t('skills.dropUpload')}</div>
       </aside>
       <main className="flex min-h-0 min-w-0 flex-col">
-        <div className="flex h-12 items-center gap-2 border-b border-border px-4"><FileText className="size-4 text-primary" /><span className="truncate text-xs font-semibold">{selected?.path ?? t('skills.selectFile')}</span><div className="flex-1" />{selected && selected.path !== 'SKILL.md' && auth.hasPermission('skill:manage') && <><Button onClick={() => setDialog('move')} size="sm" variant="ghost"><Move className="size-3.5" />{t('skills.moveRename')}</Button><Button aria-label={t('skills.deleteEntry')} onClick={() => setDeleteOpen(true)} size="icon" variant="ghost"><Trash2 className="size-3.5" /></Button></>}{selected?.editable && auth.hasPermission('skill:manage') && <><Button onClick={() => setDialog('reference')} size="sm" variant="secondary"><Link2 className="size-3.5" />{t('skills.insertReference')}</Button><Button disabled={!dirty || save.isPending || (selected.path === 'SKILL.md' && !description.trim())} onClick={() => save.mutate()} size="sm"><Save className="size-3.5" />{t('common.save')}</Button></>}</div>
+        <div className="flex h-12 items-center gap-2 border-b border-border px-4"><FileText className="size-4 text-primary" /><span className="truncate text-xs font-semibold">{selected?.path ?? t('skills.selectFile')}</span><div className="flex-1" />{selected && selected.path !== 'SKILL.md' && auth.hasPermission('skill:manage') && <><Button onClick={() => setDialog('move')} size="sm" variant="ghost"><Move className="size-3.5" />{t('skills.moveRename')}</Button><Button aria-label={t('skills.deleteEntry')} onClick={() => setDeleteOpen(true)} size="icon" variant="ghost"><Trash2 className="size-3.5" /></Button></>}{selected?.editable && auth.hasPermission('skill:manage') && <Button disabled={!dirty || save.isPending || (selected.path === 'SKILL.md' && !description.trim())} onClick={() => save.mutate()} size="sm"><Save className="size-3.5" />{t('common.save')}</Button>}</div>
         <div className="flex min-h-0 flex-1 flex-col">
           {selected?.path === 'SKILL.md' && selected.editable && <div className="shrink-0 border-b border-border bg-canvas/30 px-5 py-3">
             <label className="text-xs font-medium text-foreground" htmlFor="skill-description">{t('skills.fields.description')}</label>
-            <Input className="mt-2" id="skill-description" maxLength={1000} onChange={(event) => { setDescription(event.target.value); setDirty(true) }} placeholder={t('skills.fields.descriptionPlaceholder')} value={description} />
+            <Textarea aria-describedby="skill-description-help skill-description-count" aria-required="true" className="mt-2 min-h-20 resize-y" id="skill-description" maxLength={1000} onChange={(event) => { setDescription(event.target.value); setDirty(true) }} placeholder={t('skills.fields.descriptionPlaceholder')} value={description} />
+            <div className="mt-1.5 flex items-start justify-between gap-4 text-[10px] text-muted-foreground"><span id="skill-description-help">{t('skills.fields.descriptionHint')}</span><span className="shrink-0 tabular-nums" id="skill-description-count">{t('skills.fields.characterCount', { count: description.length, max: 1000 })}</span></div>
           </div>}
-          <div className="min-h-0 flex-1">{selected?.editable ? <MarkdownEditor onChange={(value) => { setContent(value); setDirty(true) }} value={content} /> : selected?.entryType === 'file' ? <FilePreview entry={selected} skillId={id} /> : <div className="grid h-full place-items-center text-xs text-muted-foreground">{t('skills.directorySelected')}</div>}</div>
+          <div className="min-h-0 flex-1">{selected?.editable ? <MarkdownEditor onChange={(value) => { setContent(value); setDirty(true) }} ref={markdownEditor} toolbarAction={auth.hasPermission('skill:manage') ? { disabled: files.length === 0, label: t('skills.insertReference'), onClick: () => setDialog('reference') } : undefined} value={content} /> : selected?.entryType === 'file' ? <FilePreview entry={selected} skillId={id} /> : <div className="grid h-full place-items-center text-xs text-muted-foreground">{t('skills.directorySelected')}</div>}</div>
         </div>
       </main>
       <aside className="min-h-0 overflow-y-auto border-l border-border bg-canvas/40 p-4">
@@ -178,7 +178,7 @@ export function SkillDetailPage() {
     {dialog === 'move' && selected && <EntityFormDialog cancelLabel={t('common.cancel')} fields={[{ name: 'name', label: t('common.name'), defaultValue: selected.name, required: true }, parentField(directories.filter((entry) => !entry.path.startsWith(`${selected.path}/`) && entry.id !== selected.id), t, selected.parentId)]} onClose={() => setDialog(undefined)} onSubmit={moveEntry} open submitLabel={t('common.save')} title={t('skills.moveRename')} />}
     {dialog === 'reference' && <EntityFormDialog cancelLabel={t('common.cancel')} fields={[{ name: 'file', label: t('skills.referenceTarget'), type: 'select', required: true, options: files.map((entry) => ({ value: entry.id, label: entry.path })) }]} onClose={() => setDialog(undefined)} onSubmit={insertReference} open submitLabel={t('skills.insertReference')} title={t('skills.insertReference')} />}
     {dialog === 'publish' && <EntityFormDialog cancelLabel={t('common.cancel')} fields={[{ name: 'dependencies', label: t('skills.dependencies'), type: 'textarea', defaultValue: '[]' }]} onClose={() => setDialog(undefined)} onSubmit={publish} open submitLabel={t('skills.publish')} title={t('skills.publishWorkspace')} />}
-    {dialog === 'edit' && <EntityFormDialog cancelLabel={t('common.cancel')} fields={[{ name: 'name', label: t('skills.fields.name'), defaultValue: skill.data.name, required: true }, { name: 'alias', label: t('skills.fields.alias'), defaultValue: skill.data.alias, required: true }]} onClose={() => setDialog(undefined)} onSubmit={editSkill} open submitLabel={t('common.save')} title={t('skills.editSkill')} />}
+    {dialog === 'edit' && <EntityFormDialog cancelLabel={t('common.cancel')} fields={[{ name: 'name', label: t('skills.fields.name'), defaultValue: skill.data.name, maxLength: 160, required: true }, { name: 'alias', label: t('skills.fields.alias'), defaultValue: skill.data.alias, description: t('skills.fields.aliasHint'), maxLength: 160, required: true }]} onClose={() => setDialog(undefined)} onSubmit={editSkill} open submitLabel={t('common.save')} title={t('skills.editSkill')} />}
     <Dialog onOpenChange={setDeleteOpen} open={deleteOpen}><DialogContent title={t('skills.deleteEntry')}><div className="p-5"><h2 className="text-sm font-semibold">{t('skills.deleteEntry')}</h2><p className="mt-2 text-xs text-muted-foreground">{t('skills.deleteEntryConfirm', { path: selected?.path })}</p><div className="mt-5 flex justify-end gap-2"><Button onClick={() => setDeleteOpen(false)} variant="ghost">{t('common.cancel')}</Button><Button disabled={remove.isPending} onClick={() => remove.mutate()} variant="danger">{t('skills.deleteEntry')}</Button></div></div></DialogContent></Dialog>
   </PageContainer>
 }
@@ -211,6 +211,5 @@ function FilePreview({ entry, skillId }: { entry: SkillWorkspaceEntry; skillId: 
 }
 
 function Detail({ label, value }: { label: string; value: string }) { return <div><dt className="text-[10px] text-muted-foreground">{label}</dt><dd className="mt-1 break-all font-mono text-[11px]">{value}</dd></div> }
-function parentField(entries: SkillWorkspaceEntry[], t: (key: string) => string, current?: string | null): EntityFormField { return { name: 'parent', label: t('skills.parentFolder'), type: 'select', defaultValue: current ?? '', options: [{ value: '', label: t('skills.workspaceRoot') }, ...entries.map((entry) => ({ value: entry.id, label: entry.path }))] } }
+function parentField(entries: SkillWorkspaceEntry[], t: (key: string) => string, current?: string | null): EntityFormField { return { name: 'parent', label: t('skills.parentFolder'), type: 'select', defaultValue: workspaceParentValue(current), options: [{ value: WORKSPACE_ROOT_PARENT, label: t('skills.workspaceRoot') }, ...entries.map((entry) => ({ value: entry.id, label: entry.path }))] } }
 function isCode(name: string) { return /\.(json|ya?ml|toml|rs|ts|tsx|js|jsx|py|sh|sql|css|html|xml)$/i.test(name) }
-function relativePath(source: string, target: string) { const from = source.split('/').slice(0, -1); const to = target.split('/'); let common = 0; while (from[common] === to[common] && common < from.length && common < to.length) common += 1; return [...Array.from({ length: from.length - common }, () => '..'), ...to.slice(common)].join('/') }

@@ -3,13 +3,14 @@ use std::collections::BTreeSet;
 use agentx_domain::{ContextDefinition, ExecutionOrder, WorkflowEnd, WorkflowStart};
 use agentx_runtime_contracts::{
     ApplyReceiptV1, BUNDLE_SCHEMA_VERSION, CompiledNodeV1, CompiledWorkflowV1, DependencyClosureV1,
-    ExecutionDetailV1, ExecutionResult, ExecutionSearchPageV1, ExecutionSpecBundleV1,
-    ExecutionSpecPayloadV1, ExecutionSummaryV1, IR_SCHEMA_VERSION, PublishReceiptStatusV1,
-    PublishReceiptV1, RuntimeAuthorizationSnapshotV1, RuntimeCallPurposeV1, RuntimeCommand,
-    RuntimeCommandType, RuntimeEventEnvelope, RuntimeEventPayloadV1, RuntimeObjectReferenceV1,
-    RuntimePolicyV1, RuntimeRetentionItemV1, RuntimeWorkPackageOverlayV1,
-    RuntimeWorkPackagePayloadV1, RuntimeWorkPackageV1, StorageDomain, WorkPackagePurpose,
-    WorkerCompatibilityV1,
+    ExecutionDetailV1, ExecutionOriginV1, ExecutionResult, ExecutionSearchPageV1,
+    ExecutionSearchRequestV1, ExecutionSpecBundleV1, ExecutionSpecPayloadV1, ExecutionSummaryV1,
+    IR_SCHEMA_VERSION, PublishReceiptStatusV1, PublishReceiptV1, RuntimeAuthorizationSnapshotV1,
+    RuntimeCallPurposeV1, RuntimeCommand, RuntimeCommandType, RuntimeEventEnvelope,
+    RuntimeEventPayloadV1, RuntimeObjectReferenceV1, RuntimePolicyV1, RuntimeRetentionItemV1,
+    RuntimeWorkPackageOverlayV1, RuntimeWorkPackagePayloadV1, RuntimeWorkPackageV1, StorageDomain,
+    TraceContentKindV1, TraceContentV1, TraceEventEnvelopeV1, TraceEventKindV1, TraceSpanDetailV1,
+    TraceSpanKindV1, TraceSpanSummaryV1, WorkPackagePurpose, WorkerCompatibilityV1,
 };
 use ed25519_dalek::SigningKey;
 use rand::rngs::OsRng;
@@ -61,6 +62,7 @@ fn runtime_trigger_contract_rejects_unknown_fields_and_version_two() {
     let trigger = json!({
         "schemaVersion":1,
         "triggerId":Uuid::now_v7(),
+        "triggerName":"Nightly schedule",
         "applicationId":Uuid::now_v7(),
         "nodeId":"schedule",
         "revision":1,
@@ -82,6 +84,55 @@ fn runtime_trigger_contract_rejects_unknown_fields_and_version_two() {
     assert!(
         serde_json::from_value::<agentx_runtime_contracts::RuntimeTriggerSpecV1>(unknown).is_err()
     );
+}
+
+#[test]
+fn execution_origin_and_search_filters_round_trip_without_compatibility_fields() {
+    let user_id = Uuid::now_v7();
+    let department_id = Uuid::now_v7();
+    let trigger_source_id = Uuid::now_v7();
+    let origin = ExecutionOriginV1 {
+        initiator_user_id: Some(user_id),
+        initiator_user_name: Some("Historical user".into()),
+        initiator_department_id: Some(department_id),
+        initiator_department_name: Some("Historical department".into()),
+        trigger_source_id: Some(trigger_source_id),
+        trigger_name: Some("Historical trigger".into()),
+    };
+    let encoded = serde_json::to_value(&origin).unwrap();
+    assert_eq!(encoded["initiatorUserId"], user_id.to_string());
+    assert_eq!(encoded["triggerName"], "Historical trigger");
+    assert!(serde_json::from_value::<ExecutionOriginV1>(encoded.clone()).is_ok());
+    let mut unknown = encoded;
+    unknown["currentUserName"] = json!("compatibility alias");
+    assert!(serde_json::from_value::<ExecutionOriginV1>(unknown).is_err());
+
+    let request = ExecutionSearchRequestV1 {
+        api_version: 1,
+        tenant_id: Uuid::now_v7(),
+        application_ids: vec![Uuid::now_v7()],
+        workflow_ids: vec![Uuid::now_v7()],
+        tool_ids: vec![Uuid::now_v7()],
+        initiator_user_ids: vec![user_id],
+        initiator_department_ids: vec![department_id],
+        trigger_types: vec!["schedule".into()],
+        trigger_name: Some("nightly".into()),
+        statuses: vec!["succeeded".into()],
+        session_mode: agentx_runtime_contracts::ExecutionSessionModeV1::All,
+        created_after: Some(OffsetDateTime::UNIX_EPOCH),
+        created_before: None,
+        search: Some("TRACE_FAILURE".into()),
+        cursor: None,
+        limit: 8,
+    };
+    let encoded = serde_json::to_value(&request).unwrap();
+    let decoded: ExecutionSearchRequestV1 = serde_json::from_value(encoded.clone()).unwrap();
+    assert_eq!(decoded.tool_ids, request.tool_ids);
+    assert_eq!(decoded.initiator_department_ids, vec![department_id]);
+    assert_eq!(decoded.trigger_name.as_deref(), Some("nightly"));
+    let mut unknown = encoded;
+    unknown["departmentIds"] = json!([]);
+    assert!(serde_json::from_value::<ExecutionSearchRequestV1>(unknown).is_err());
 }
 
 #[test]
@@ -167,9 +218,18 @@ fn internal_api_response_wrappers_reject_version_two() {
         bundle_id: Uuid::now_v7(),
         trace_id: Uuid::now_v7(),
         trigger_type: "application".into(),
+        initiator_user_id: None,
+        initiator_user_name: None,
+        initiator_department_id: None,
+        initiator_department_name: None,
+        trigger_source_id: None,
+        trigger_name: None,
         status: "running".into(),
         duration_ms: None,
         cost_micros: 0,
+        cost_currency: None,
+        input_tokens: 0,
+        output_tokens: 0,
         error_code: None,
         created_at: OffsetDateTime::UNIX_EPOCH,
         completed_at: None,
@@ -183,6 +243,7 @@ fn internal_api_response_wrappers_reject_version_two() {
             trace_watermark: 0,
             parent_execution_id: None,
             work_package_id: None,
+            input: None,
             output: None,
             error: None,
         },
@@ -208,6 +269,123 @@ fn internal_api_response_wrappers_reject_version_two() {
         },
         "apiVersion",
     );
+}
+
+#[test]
+fn trace_content_contract_is_strongly_typed_and_has_no_legacy_aggregates() {
+    let kinds = [
+        (TraceContentKindV1::WorkflowInput, "workflow_input"),
+        (TraceContentKindV1::WorkflowOutput, "workflow_output"),
+        (TraceContentKindV1::NodeInput, "node_input"),
+        (TraceContentKindV1::NodeOutput, "node_output"),
+        (TraceContentKindV1::AttemptInput, "attempt_input"),
+        (TraceContentKindV1::AttemptOutput, "attempt_output"),
+        (
+            TraceContentKindV1::ResolvedParameters,
+            "resolved_parameters",
+        ),
+        (TraceContentKindV1::RuntimeRequest, "runtime_request"),
+        (TraceContentKindV1::RuntimeResponse, "runtime_response"),
+        (TraceContentKindV1::AgentInput, "agent_input"),
+        (TraceContentKindV1::AgentOutput, "agent_output"),
+        (TraceContentKindV1::IterationInput, "iteration_input"),
+        (TraceContentKindV1::IterationOutput, "iteration_output"),
+        (TraceContentKindV1::SandboxRequest, "sandbox_request"),
+        (TraceContentKindV1::SandboxResponse, "sandbox_response"),
+        (TraceContentKindV1::WaitRequest, "wait_request"),
+        (TraceContentKindV1::WaitResponse, "wait_response"),
+        (TraceContentKindV1::ConversionRecord, "conversion_record"),
+    ];
+    for (kind, expected) in kinds {
+        assert_eq!(serde_json::to_value(kind).unwrap(), expected);
+    }
+
+    let event = trace_fixture_event(TraceContentKindV1::RuntimeRequest);
+    let detail = TraceSpanDetailV1 {
+        api_version: 1,
+        execution_id: event.execution_id,
+        span: TraceSpanSummaryV1 {
+            span_id: event.span_id,
+            parent_span_id: None,
+            span_kind: TraceSpanKindV1::Boundary,
+            span_name: "Start".into(),
+            status: "succeeded".into(),
+            started_at: event.occurred_at,
+            ended_at: Some(event.occurred_at),
+            duration_ms: Some(0),
+            node_execution_id: None,
+            attempt_id: None,
+            agent_run_id: None,
+            agent_iteration_id: None,
+            runtime_call_id: None,
+            sandbox_lease_id: None,
+            wait_id: None,
+            resource_type: None,
+            resource_id: None,
+            resource_version: None,
+            input_tokens: None,
+            output_tokens: None,
+            cost_micros: 0,
+            error_code: None,
+            error_message: None,
+            has_details: true,
+        },
+        contents: vec![TraceContentV1 {
+            event_id: event.event_id,
+            kind: TraceContentKindV1::RuntimeRequest,
+            preview: event.content_preview.clone(),
+            content_ref: None,
+            occurred_at: event.occurred_at,
+        }],
+        events: vec![event],
+    };
+    let mut encoded = serde_json::to_value(detail).unwrap();
+    assert!(encoded.get("input").is_none());
+    assert!(encoded.get("output").is_none());
+    assert!(encoded.get("attributes").is_none());
+    encoded["input"] = json!({"legacy":true});
+    assert!(serde_json::from_value::<TraceSpanDetailV1>(encoded).is_err());
+}
+
+fn trace_fixture_event(content_kind: TraceContentKindV1) -> TraceEventEnvelopeV1 {
+    let occurred_at = OffsetDateTime::UNIX_EPOCH;
+    TraceEventEnvelopeV1 {
+        schema_version: 1,
+        event_id: Uuid::now_v7(),
+        tenant_id: Uuid::now_v7(),
+        execution_id: Uuid::now_v7(),
+        execution_sequence: 1,
+        trace_id: Uuid::now_v7(),
+        span_id: Uuid::now_v7(),
+        parent_span_id: None,
+        event_kind: TraceEventKindV1::Started,
+        span_kind: TraceSpanKindV1::Boundary,
+        span_name: "Start".into(),
+        node_execution_id: None,
+        attempt_id: None,
+        agent_run_id: None,
+        agent_iteration_id: None,
+        runtime_call_id: None,
+        sandbox_lease_id: None,
+        wait_id: None,
+        resource_type: None,
+        resource_id: None,
+        resource_version: None,
+        event_type: "boundary.started".into(),
+        status: "succeeded".into(),
+        duration_ms: Some(0),
+        input_tokens: None,
+        output_tokens: None,
+        cost_micros: 0,
+        error_code: None,
+        error_message: None,
+        attributes: json!({}),
+        content_ref: None,
+        content_kind: Some(content_kind),
+        content_preview: Some(json!({"question":"hello"})),
+        occurred_at,
+        content_hash: agentx_runtime_contracts::content_hash(&json!({"question":"hello"})).unwrap(),
+    }
 }
 
 fn assert_version_rejected<T>(value: T, field: &str)
@@ -245,6 +423,7 @@ fn work_package_uses_an_independent_key_and_rejects_payload_tampering() {
             schema_version: BUNDLE_SCHEMA_VERSION,
             package_id: Uuid::now_v7(),
             tenant_id,
+            origin: agentx_runtime_contracts::ExecutionOriginV1::system(None),
             purpose: WorkPackagePurpose::Debug,
             call_purpose: RuntimeCallPurposeV1::Debug,
             spec: agentx_runtime_contracts::RuntimeWorkPackageSpecV1::Debug {
@@ -440,13 +619,19 @@ fn evaluation_work_package_payload() -> RuntimeWorkPackagePayloadV1 {
         provider: "fixture".into(),
         endpoint: "https://model.fixture/v1".into(),
         model: "evaluator-v1".into(),
-        price_version: "price:1".into(),
+        price: agentx_runtime_contracts::RuntimeModelPriceV1 {
+            version_id: "price:1".into(),
+            currency: "USD".into(),
+            input_per_million: "1".into(),
+            output_per_million: "2".into(),
+        },
         credential: None,
     };
     RuntimeWorkPackagePayloadV1 {
         schema_version: 1,
         package_id: Uuid::now_v7(),
         tenant_id,
+        origin: agentx_runtime_contracts::ExecutionOriginV1::system(None),
         purpose: WorkPackagePurpose::Evaluation,
         call_purpose: RuntimeCallPurposeV1::Evaluation,
         spec: agentx_runtime_contracts::RuntimeWorkPackageSpecV1::Evaluation {

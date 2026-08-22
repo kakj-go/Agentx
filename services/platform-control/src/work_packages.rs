@@ -35,7 +35,7 @@ use uuid::Uuid;
 
 use crate::{
     api_error::{ApiError, ApiResult},
-    control_api::{Actor, ControlApiState},
+    control_api::{Actor, ControlApiState, execution_origin},
 };
 
 #[derive(Clone)]
@@ -308,6 +308,7 @@ pub(crate) async fn start_version_execution(
         WorkPackageBuildSource {
             package_id,
             tenant_id: actor.tenant_id,
+            origin: execution_origin(state, actor).await?,
             purpose: WorkPackagePurpose::Debug,
             call_purpose: RuntimeCallPurposeV1::Debug,
             spec: RuntimeWorkPackageSpecV1::Debug {
@@ -508,6 +509,7 @@ pub(crate) async fn start_debug_run(
         WorkPackageBuildSource {
             package_id,
             tenant_id: actor.tenant_id,
+            origin: execution_origin(&state, &actor).await?,
             purpose: WorkPackagePurpose::Debug,
             call_purpose: RuntimeCallPurposeV1::Debug,
             spec: agentx_runtime_contracts::RuntimeWorkPackageSpecV1::Debug {
@@ -1221,7 +1223,7 @@ async fn load_model_binding(
     tenant_id: Uuid,
     model_id: Uuid,
 ) -> ApiResult<RuntimeResourceBindingV1> {
-    let row = sqlx::query("SELECT a.version alias_version,d.id deployment_id,d.version deployment_version,d.provider_type,d.endpoint,d.model_name,d.credential_id,(SELECT p.id FROM model_price_versions p WHERE p.tenant_id=d.tenant_id AND p.deployment_id=d.id ORDER BY p.version_number DESC LIMIT 1) price_version_id FROM model_aliases a JOIN model_deployments d ON d.tenant_id=a.tenant_id AND d.id=a.deployment_id WHERE a.tenant_id=? AND a.id=? AND a.status='active' AND d.status='active'")
+    let row = sqlx::query("SELECT a.version alias_version,d.id deployment_id,d.version deployment_version,d.provider_type,d.endpoint,d.model_name,d.credential_id,p.id price_version_id,p.currency,CAST(p.input_per_million AS CHAR) input_per_million,CAST(p.output_per_million AS CHAR) output_per_million FROM model_aliases a JOIN model_deployments d ON d.tenant_id=a.tenant_id AND d.id=a.deployment_id JOIN model_price_versions p ON p.tenant_id=d.tenant_id AND p.deployment_id=d.id AND p.id=(SELECT latest.id FROM model_price_versions latest WHERE latest.tenant_id=d.tenant_id AND latest.deployment_id=d.id ORDER BY latest.version_number DESC LIMIT 1) WHERE a.tenant_id=? AND a.id=? AND a.status='active' AND d.status='active'")
         .bind(tenant_id)
         .bind(model_id)
         .fetch_optional(&state.pool)
@@ -1251,9 +1253,12 @@ async fn load_model_binding(
         provider: row.try_get("provider_type")?,
         endpoint: row.try_get("endpoint")?,
         model: row.try_get("model_name")?,
-        price_version: row
-            .try_get::<Option<Uuid>, _>("price_version_id")?
-            .map_or_else(|| "unpriced".into(), |id| id.to_string()),
+        price: agentx_runtime_contracts::RuntimeModelPriceV1 {
+            version_id: row.try_get::<Uuid, _>("price_version_id")?.to_string(),
+            currency: row.try_get("currency")?,
+            input_per_million: row.try_get("input_per_million")?,
+            output_per_million: row.try_get("output_per_million")?,
+        },
         credential,
     };
     Ok(RuntimeResourceBindingV1 {
@@ -1415,6 +1420,7 @@ pub(crate) async fn start_evaluation(
         WorkPackageBuildSource {
             package_id,
             tenant_id: actor.tenant_id,
+            origin: execution_origin(state, actor).await?,
             purpose: WorkPackagePurpose::Evaluation,
             call_purpose: RuntimeCallPurposeV1::Evaluation,
             spec: RuntimeWorkPackageSpecV1::Evaluation {

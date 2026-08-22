@@ -13,7 +13,9 @@ pub use agentx_runtime_contracts::{
 pub use compiler::{
     COMPILER_VERSION, CompileContext, CompileError, CompileIssue, WorkflowCompiler,
 };
-pub use expression::{ExpressionContext, ExpressionEngine, ExpressionError};
+pub use expression::{
+    ExpressionContext, ExpressionEngine, ExpressionError, StringConversionRecord,
+};
 pub use input::{StartInputError, materialize_and_validate_start_input};
 pub use registry::{NodeRegistry, RegistryError};
 pub use state::{

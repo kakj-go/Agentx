@@ -3,6 +3,7 @@
     "TraceSpanKindV1": {
       "enum": [
         "execution",
+        "boundary",
         "node",
         "attempt",
         "agent_run",

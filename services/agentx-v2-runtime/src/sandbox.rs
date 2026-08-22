@@ -200,7 +200,7 @@ async fn execute(
         trace.sandbox_lease_id = Some(lease_id);
         trace.resource_type = Some("sandbox_profile".into());
         trace.resource_id = Some(request.profile.resource_id);
-        trace.content_role = Some("input".into());
+        trace.content_kind = Some(agentx_runtime_contracts::TraceContentKindV1::SandboxRequest);
         trace.content_preview = crate::trace_delivery::bounded_preview(&request.input);
         crate::trace_delivery::enqueue_best_effort(&mut tx, trace).await;
         tx.commit().await?;
@@ -1304,7 +1304,7 @@ fn sandbox_command(parameters: &Value, idempotency_key: &str) -> Result<String, 
     let encoded = STANDARD.encode(source.as_bytes());
     let (path, executable) = match runner {
         "python" => ("/tmp/agentx-v2.py", "python3"),
-        "javascript" => ("/tmp/agentx-v2.js", "node"),
+        "javascript" | "browser" => ("/tmp/agentx-v2.js", "node"),
         "shell" => ("/tmp/agentx-v2.sh", "sh"),
         other => {
             return Err(ProviderError {
@@ -1312,6 +1312,27 @@ fn sandbox_command(parameters: &Value, idempotency_key: &str) -> Result<String, 
                 outcome_unknown: false,
             });
         }
+    };
+    let arguments = parameters
+        .get("arguments")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .map(|value| {
+            value
+                .as_str()
+                .map(shell_quote)
+                .ok_or_else(|| ProviderError {
+                    message: "Sandbox arguments must contain only strings".into(),
+                    outcome_unknown: false,
+                })
+        })
+        .collect::<Result<Vec<_>, _>>()?
+        .join(" ");
+    let invocation = if arguments.is_empty() {
+        format!("{executable} '{path}'")
+    } else {
+        format!("{executable} '{path}' {arguments}")
     };
     let operation_hash = raw_hash(idempotency_key.as_bytes());
     Ok(format!(
@@ -1325,12 +1346,16 @@ fn sandbox_command(parameters: &Value, idempotency_key: &str) -> Result<String, 
            fi; \
          done; \
          if [ \"$AGENTX_ACQUIRED\" -eq 1 ]; then \
-           set +e; (printf '%s' '{encoded}' | base64 -d > '{path}' && {executable} '{path}') > \"${{AGENTX_STATE}}.stdout.tmp\" 2> \"${{AGENTX_STATE}}.stderr.tmp\"; AGENTX_EXIT=$?; \
+           set +e; (printf '%s' '{encoded}' | base64 -d > '{path}' && {invocation}) > \"${{AGENTX_STATE}}.stdout.tmp\" 2> \"${{AGENTX_STATE}}.stderr.tmp\"; AGENTX_EXIT=$?; \
            mv \"${{AGENTX_STATE}}.stdout.tmp\" \"${{AGENTX_STATE}}.stdout\"; mv \"${{AGENTX_STATE}}.stderr.tmp\" \"${{AGENTX_STATE}}.stderr\"; \
            printf '%s' \"$AGENTX_EXIT\" > \"${{AGENTX_STATE}}.exit.tmp\"; mv \"${{AGENTX_STATE}}.exit.tmp\" \"${{AGENTX_STATE}}.exit\"; rm -rf \"${{AGENTX_STATE}}.lock\"; \
          fi; \
          cat \"${{AGENTX_STATE}}.stdout\"; cat \"${{AGENTX_STATE}}.stderr\" >&2; exit $(cat \"${{AGENTX_STATE}}.exit\")"
     ))
+}
+
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
 
 #[derive(Debug)]
@@ -1553,7 +1578,7 @@ async fn emit_sandbox_finished(
     trace.error_message = error.map(|value| value.chars().take(1000).collect());
     trace.attributes =
         json!({"error":error.map(|value| value.chars().take(500).collect::<String>())});
-    trace.content_role = Some("output".into());
+    trace.content_kind = Some(agentx_runtime_contracts::TraceContentKindV1::SandboxResponse);
     trace.content_preview = row
         .try_get::<Option<Value>, _>("result_json")
         .ok()
@@ -1625,6 +1650,16 @@ mod tests {
         .unwrap();
         assert!(command.contains("python3 '/tmp/agentx-v2.py'"));
         assert!(!command.contains(" python '/tmp/agentx-v2.py'"));
+    }
+
+    #[test]
+    fn sandbox_command_consumes_arguments_and_browser_runner() {
+        let command = sandbox_command(
+            &json!({"runner":"browser","source":"console.log(process.argv)","arguments":["plain","a'b"]}),
+            "sandbox:arguments",
+        )
+        .unwrap();
+        assert!(command.contains("node '/tmp/agentx-v2.js' 'plain' 'a'\"'\"'b'"));
     }
 
     #[test]

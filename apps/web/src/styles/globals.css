@@ -55,8 +55,10 @@
   --ui-canvas-dot: #343d49;
 }
 
-* {
-  border-color: var(--ui-border);
+@layer base {
+  * {
+    border-color: var(--ui-border);
+  }
 }
 
 html,
@@ -265,6 +267,9 @@ button:disabled {
   --baseText: var(--ui-muted-foreground);
   --baseTextContrast: var(--ui-foreground);
   height: 100%;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 0;
   background: var(--ui-surface);
   color: var(--ui-foreground);
   font-family: var(--font-sans);
@@ -274,16 +279,71 @@ button:disabled {
   min-height: 44px;
   border-bottom: 1px solid var(--ui-border);
   border-radius: 0;
-  padding-inline: 12px;
+  gap: 2px;
+  padding: 6px 12px;
+  background: color-mix(in srgb, var(--ui-canvas) 72%, var(--ui-surface));
+}
+
+.agentx-markdown-editor .agentx-markdown-toolbar button,
+.agentx-markdown-editor .agentx-markdown-toolbar [role='radio'] {
+  min-width: 30px;
+  min-height: 30px;
+  border-radius: 6px;
+  color: var(--ui-muted-foreground);
+}
+
+.agentx-markdown-editor .agentx-markdown-toolbar button:hover,
+.agentx-markdown-editor .agentx-markdown-toolbar [role='radio']:hover,
+.agentx-markdown-editor .agentx-markdown-toolbar [data-state='on'] {
+  background: color-mix(in srgb, var(--ui-primary) 10%, var(--ui-surface));
+  color: var(--ui-primary);
+}
+
+.agentx-markdown-editor .agentx-markdown-toolbar button:focus-visible,
+.agentx-markdown-editor .agentx-markdown-toolbar [role='radio']:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--ui-primary) 35%, transparent);
+  outline-offset: 1px;
+}
+
+.agentx-markdown-editor .agentx-markdown-toolbar-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 9px;
+  border: 1px solid var(--ui-border);
+  background: var(--ui-surface);
+  color: var(--ui-foreground);
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.agentx-markdown-editor .agentx-markdown-toolbar-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.agentx-markdown-editor .mdxeditor-contenteditable-wrapper {
+  min-height: 0;
+  overflow-y: auto;
+  background: var(--ui-surface);
+  cursor: text;
 }
 
 .agentx-markdown-editor .agentx-markdown-content {
+  flex: 1 0 auto;
   min-height: 100%;
-  padding: 24px 28px 120px;
+  width: 100%;
+  margin: 0;
+  padding: 32px 48px 120px;
+  background: var(--ui-surface);
   color: var(--ui-foreground);
+  cursor: text;
   font-family: var(--font-sans);
   font-size: 14px;
   line-height: 1.75;
+  box-shadow: none;
 }
 
 .agentx-markdown-editor .agentx-markdown-content h1 {
@@ -326,6 +386,26 @@ button:disabled {
 .agentx-markdown-editor .agentx-markdown-content td {
   border: 1px solid var(--ui-border);
   padding: 8px 10px;
+}
+
+.agentx-markdown-editor .agentx-markdown-content pre {
+  overflow-x: auto;
+  border: 1px solid var(--ui-border);
+  border-radius: 8px;
+  background: var(--ui-canvas);
+  padding: 14px 16px;
+}
+
+.agentx-markdown-editor .agentx-markdown-content a {
+  color: var(--ui-primary);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+@media (max-width: 1440px) {
+  .agentx-markdown-editor .agentx-markdown-content {
+    padding-inline: 32px;
+  }
 }
 
 .studio-field-located {

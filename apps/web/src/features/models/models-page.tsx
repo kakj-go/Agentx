@@ -34,7 +34,6 @@ export function ModelsPage() {
       try { defaults = values.parameters ? JSON.parse(values.parameters) as unknown : {} } catch { throw new Error(t('models.invalidJson')) }
       const inputPrice = values.input.trim()
       const outputPrice = values.output.trim()
-      if (Boolean(inputPrice) !== Boolean(outputPrice)) throw new Error(t('models.pricePairRequired'))
       return apiRequest<Model>('/models/aliases', {
         method: 'POST',
         body: jsonBody({
@@ -48,7 +47,7 @@ export function ModelsPage() {
           maxOutputTokens: Number(values.maxOutputTokens),
           ownerDepartmentId: values.department,
           defaultParameters: defaults,
-          price: inputPrice ? { currency: values.currency.trim() || 'USD', inputPerMillion: inputPrice, outputPerMillion: outputPrice } : null,
+          price: { currency: values.currency.trim(), inputPerMillion: inputPrice, outputPerMillion: outputPrice },
         }),
       })
     },
@@ -72,9 +71,9 @@ export function ModelsPage() {
     { name: 'modelName', label: t('models.fields.upstreamModelId'), defaultValue: 'gpt-5.6-sol', required: true },
     { name: 'maxInputTokens', label: t('models.maxInputTokens'), type: 'number', defaultValue: '1050000', min: 1, required: true, step: 1 },
     { name: 'maxOutputTokens', label: t('models.maxOutputTokens'), type: 'number', defaultValue: '128000', min: 1, required: true, step: 1 },
-    { name: 'currency', label: t('models.currency'), defaultValue: 'USD' },
-    { name: 'input', label: t('models.inputPrice'), type: 'number', step: 'any' },
-    { name: 'output', label: t('models.outputPrice'), type: 'number', step: 'any' },
+    { name: 'currency', label: t('models.currency'), defaultValue: 'USD', required: true },
+    { name: 'input', label: t('models.inputPrice'), type: 'number', min: 0, required: true, step: 'any' },
+    { name: 'output', label: t('models.outputPrice'), type: 'number', min: 0, required: true, step: 'any' },
     { name: 'department', apiName: 'ownerDepartmentId', label: t('models.department'), type: 'select', required: true, options: (departments.data ?? []).map((item) => ({ value: item.id, label: item.name })) },
     { name: 'parameters', label: t('models.defaultParameters'), type: 'textarea', defaultValue: '{}' },
   ]

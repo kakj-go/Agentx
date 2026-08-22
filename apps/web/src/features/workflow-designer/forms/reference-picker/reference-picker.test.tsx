@@ -31,7 +31,7 @@ describe('ReferencePicker', () => {
     const open = vi.fn()
     const treeCatalog: ReferenceCatalog = {
       ...catalog,
-      outputs: [{ id: 'outputs.model', label: 'model', path: 'outputs.model', children: [{ id: 'outputs.model.main', label: 'main', path: 'outputs.model.main', children: [{ id: 'outputs.model.main.first', label: 'first', path: 'outputs.model.main.first', children: [{ id: 'outputs.model.main.first.json.text', label: 'text', path: 'outputs.model.main.first.json.text', selector: { namespace: 'outputs', sourceNodeId: 'model', port: 'main', run: { kind: 'current' }, item: { kind: 'first' }, path: ['text'] }, type: 'string', children: [] }] }] }] }],
+      outputs: [{ id: 'outputs.model', label: 'model', path: 'outputs.model', children: [{ id: 'outputs.model.main', label: 'main', path: 'outputs.model.main', children: [{ id: 'outputs.model.main.first', label: 'first', path: 'outputs.model.main.first', children: [{ id: 'outputs.model.main.first.json.text', label: 'text', path: 'outputs.model.main.first.json.text', selector: { namespace: 'outputs', sourceNodeId: 'model', port: 'main', run: { kind: 'current' }, item: { kind: 'first' }, path: ['text'] }, type: 'string', recommended: true, children: [] }] }] }] }],
     }
     render(<ReferencePicker catalog={treeCatalog} onInsert={insert} onOpenChange={open} open />)
 
@@ -42,6 +42,7 @@ describe('ReferencePicker', () => {
     expect(model).toHaveAttribute('aria-expanded', 'true')
     fireEvent.click(screen.getByRole('button', { name: /main/ }))
     fireEvent.click(screen.getByRole('button', { name: /first/ }))
+    expect(screen.getByText(/Recommended|推荐/)).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /text/ }))
 
     expect(screen.queryByRole('button', { name: /Back|返回/ })).not.toBeInTheDocument()
@@ -90,5 +91,41 @@ describe('ReferencePicker', () => {
     render(<ReferencePicker anchorRef={{ current: anchor }} catalog={catalog} onInsert={vi.fn()} onOpenChange={vi.fn()} open />)
 
     expect(screen.getByTestId('reference-picker')).toHaveStyle({ height: '300px', left: '400px', top: '394px', width: '420px' })
+  })
+
+  it('allows unknown values for string targets with an explicit conversion marker', () => {
+    const insert = vi.fn()
+    const unknownCatalog: ReferenceCatalog = { ...catalog, inputs: [{ ...catalog.inputs[0], type: undefined }] }
+    render(<ReferencePicker catalog={unknownCatalog} expectedType="string" onInsert={insert} onOpenChange={vi.fn()} open />)
+    fireEvent.click(screen.getByText('Inputs'))
+    const field = screen.getByRole('button', { name: /question/ })
+    expect(field).not.toBeDisabled()
+    expect(screen.getByText(/Convert to text|自动转为文本/)).toBeInTheDocument()
+    fireEvent.click(field)
+    expect(insert).toHaveBeenCalled()
+  })
+
+  it('allows selecting a whole object for a string target while its arrow still expands children', () => {
+    const insert = vi.fn()
+    const selector = { namespace: 'contexts' as const, run: { kind: 'current' as const }, item: { kind: 'current' as const }, path: ['profile'] }
+    const objectCatalog: ReferenceCatalog = {
+      ...catalog,
+      contexts: [{ id: 'contexts.profile', label: 'profile', path: 'contexts.profile', selector, type: 'object', children: [{ id: 'contexts.profile.name', label: 'name', path: 'contexts.profile.name', selector: { ...selector, path: ['profile', 'name'] }, type: 'string', children: [] }] }],
+    }
+    render(<ReferencePicker catalog={objectCatalog} expectedType="string" onInsert={insert} onOpenChange={vi.fn()} open />)
+    fireEvent.click(screen.getByRole('button', { name: /Global variables|Contexts|全局变量/ }))
+    const object = screen.getByRole('button', { name: /profile/ })
+    fireEvent.click(object.querySelector('[data-tree-toggle]')!)
+    expect(object).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByText('name')).toBeInTheDocument()
+    fireEvent.click(screen.getByText('profile'))
+    expect(insert).toHaveBeenCalledWith(selector, expect.objectContaining({ type: 'object' }))
+  })
+
+  it('rejects unknown values for non-string targets', () => {
+    const unknownCatalog: ReferenceCatalog = { ...catalog, inputs: [{ ...catalog.inputs[0], type: undefined }] }
+    render(<ReferencePicker catalog={unknownCatalog} expectedType="integer" onInsert={vi.fn()} onOpenChange={vi.fn()} open />)
+    fireEvent.click(screen.getByText('Inputs'))
+    expect(screen.getByRole('button', { name: /question/ })).toBeDisabled()
   })
 })

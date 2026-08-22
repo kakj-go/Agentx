@@ -387,7 +387,7 @@ async fn insert_evaluator_execution(
     }))
     .map_err(|error| RuntimeError::Internal(error.into()))?;
     sqlx::query(
-        "INSERT INTO workflow_executions(id,tenant_id,workflow_id,workflow_version_id,bundle_id,work_package_id,parent_execution_id,parent_node_execution_id,admission_epoch,state_version,trace_id,trigger_type,status,started_at,input_json) VALUES(?,?,?,?,?,?,?,?,1,1,?,'evaluation','queued',UTC_TIMESTAMP(6),?)",
+        "INSERT INTO workflow_executions(id,tenant_id,workflow_id,workflow_version_id,bundle_id,work_package_id,parent_execution_id,parent_node_execution_id,admission_epoch,state_version,trace_id,trigger_type,initiator_user_id,initiator_user_name,initiator_department_id,initiator_department_name,trigger_source_id,trigger_name,status,started_at,input_json) VALUES(?,?,?,?,?,?,?,?,1,1,?,'evaluation',?,?,?,?,?,?,'queued',UTC_TIMESTAMP(6),?)",
     )
     .bind(execution_id)
     .bind(package.tenant_id)
@@ -398,6 +398,12 @@ async fn insert_evaluator_execution(
     .bind(target_execution_id)
     .bind(rule_id)
     .bind(Uuid::now_v7())
+    .bind(package.origin.initiator_user_id)
+    .bind(&package.origin.initiator_user_name)
+    .bind(package.origin.initiator_department_id)
+    .bind(&package.origin.initiator_department_name)
+    .bind(target_execution_id)
+    .bind(&package.origin.trigger_name)
     .bind(input)
     .execute(&mut **tx)
     .await?;
@@ -869,7 +875,7 @@ async fn insert_execution(
         agentx_runtime_contracts::content_hash(&json!({"status":"queued","input":input}))
             .map_err(|error| RuntimeError::Internal(error.into()))?;
     sqlx::query(
-        "INSERT INTO workflow_executions(id,tenant_id,workflow_id,workflow_version_id,bundle_id,work_package_id,admission_epoch,state_version,trace_id,trigger_type,status,started_at,input_json) VALUES(?,?,?,?,?,?,1,1,?,?, 'queued',UTC_TIMESTAMP(6),?)",
+        "INSERT INTO workflow_executions(id,tenant_id,workflow_id,workflow_version_id,bundle_id,work_package_id,admission_epoch,state_version,trace_id,trigger_type,initiator_user_id,initiator_user_name,initiator_department_id,initiator_department_name,trigger_source_id,trigger_name,status,started_at,input_json) VALUES(?,?,?,?,?,?,1,1,?,?,?,?,?,?,?,?,'queued',UTC_TIMESTAMP(6),?)",
     )
     .bind(execution_id)
     .bind(package.tenant_id)
@@ -879,6 +885,12 @@ async fn insert_execution(
     .bind(package.package_id)
     .bind(Uuid::now_v7())
     .bind(trigger_type)
+    .bind(package.origin.initiator_user_id)
+    .bind(&package.origin.initiator_user_name)
+    .bind(package.origin.initiator_department_id)
+    .bind(&package.origin.initiator_department_name)
+    .bind(package.origin.trigger_source_id)
+    .bind(&package.origin.trigger_name)
     .bind(input)
     .execute(&mut **tx)
     .await?;

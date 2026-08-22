@@ -14,6 +14,7 @@ use axum::{
     routing::{get, post},
 };
 use reqwest::Url;
+use rust_decimal::Decimal;
 use secrecy::ExposeSecret;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -103,7 +104,7 @@ struct CreateRequest {
     max_output_tokens: u64,
     #[serde(default = "default_parameters")]
     default_parameters: Value,
-    price: Option<PriceRequest>,
+    price: PriceRequest,
 }
 
 #[derive(Deserialize)]
@@ -121,7 +122,7 @@ struct UpdateRequest {
     max_output_tokens: u64,
     default_parameters: Value,
     expected_alias_version: u64,
-    price: Option<PriceRequest>,
+    price: PriceRequest,
 }
 
 #[derive(Clone, Serialize)]
@@ -222,7 +223,7 @@ async fn create_model(
         &input.endpoint,
         input.max_input_tokens,
         input.max_output_tokens,
-        input.price.as_ref(),
+        &input.price,
     )?;
     require_department_scope(&state, &actor, input.owner_department_id).await?;
     require_credential(&state, actor.tenant_id, input.credential_id).await?;
@@ -255,9 +256,7 @@ async fn create_model(
         .await
         .map_err(map_alias_error)?;
     insert_history(&mut tx, &actor, id, None, deployment).await?;
-    if let Some(price) = input.price {
-        insert_price(&mut tx, &actor, deployment, 1, &price).await?;
-    }
+    insert_price(&mut tx, &actor, deployment, 1, &input.price).await?;
     tx.commit().await?;
     Ok((
         StatusCode::CREATED,
@@ -284,7 +283,7 @@ async fn update_model(
         &input.endpoint,
         input.max_input_tokens,
         input.max_output_tokens,
-        input.price.as_ref(),
+        &input.price,
     )?;
     require_department_scope(&state, &actor, input.owner_department_id).await?;
     require_credential(&state, actor.tenant_id, input.credential_id).await?;
@@ -319,9 +318,7 @@ async fn update_model(
         &input.default_parameters,
     )
     .await?;
-    if let Some(price) = input.price {
-        insert_price(&mut tx, &actor, deployment, 1, &price).await?;
-    }
+    insert_price(&mut tx, &actor, deployment, 1, &input.price).await?;
     let changed=sqlx::query("UPDATE model_aliases SET alias=?,status=?,deployment_id=?,version=version+1 WHERE tenant_id=? AND id=? AND version=?").bind(validate_alias(&input.alias)?).bind(input.status).bind(deployment).bind(actor.tenant_id).bind(id).bind(input.expected_alias_version).execute(&mut *tx).await.map_err(map_alias_error)?;
     if changed.rows_affected() != 1 {
         return Err(ApiError::conflict(
@@ -795,7 +792,7 @@ fn validate_model_input(
     endpoint: &str,
     max_input: u64,
     max_output: u64,
-    price: Option<&PriceRequest>,
+    price: &PriceRequest,
 ) -> ApiResult<()> {
     if !matches!(provider, "openai_compatible" | "custom_http") {
         return Err(ApiError::bad_request(
@@ -817,17 +814,24 @@ fn validate_model_input(
             "Model token limits must be positive",
         ));
     }
-    if let Some(price) = price {
-        validate_price(price)?;
-    }
+    validate_price(price)?;
     Ok(())
 }
 fn validate_price(input: &PriceRequest) -> ApiResult<()> {
-    let input_price = input.input_per_million.parse::<f64>();
-    let output_price = input.output_per_million.parse::<f64>();
-    if input.currency.len() != 3
-        || !input_price.is_ok_and(|value| value.is_finite() && value >= 0.0)
-        || !output_price.is_ok_and(|value| value.is_finite() && value >= 0.0)
+    let input_price = input.input_per_million.parse::<Decimal>();
+    let output_price = input.output_per_million.parse::<Decimal>();
+    let valid_decimal = |value: &Decimal| {
+        !value.is_sign_negative()
+            && value.scale() <= 8
+            && value.mantissa().unsigned_abs() < 10_u128.pow(20)
+    };
+    if input.currency.trim().len() != 3
+        || !input
+            .currency
+            .chars()
+            .all(|value| value.is_ascii_alphabetic())
+        || !input_price.as_ref().is_ok_and(valid_decimal)
+        || !output_price.as_ref().is_ok_and(valid_decimal)
     {
         Err(ApiError::bad_request(
             "INVALID_MODEL_PRICE",
@@ -885,12 +889,46 @@ mod tests {
                 "http://provider.test/v1",
                 100,
                 10,
-                None
+                &PriceRequest {
+                    currency: "USD".into(),
+                    input_per_million: "1.25".into(),
+                    output_per_million: "2.5".into(),
+                }
             )
             .is_ok()
         );
-        assert!(validate_model_input("unknown", "http://provider.test", 100, 10, None).is_err());
+        let price = PriceRequest {
+            currency: "USD".into(),
+            input_per_million: "1.25".into(),
+            output_per_million: "2.5".into(),
+        };
+        assert!(validate_model_input("unknown", "http://provider.test", 100, 10, &price).is_err());
         assert!(validate_alias(" GPT-5 ").is_ok());
+    }
+
+    #[test]
+    fn create_and_update_contracts_require_a_complete_price() {
+        let base = json!({
+            "connectionName":"fixture",
+            "providerType":"openai_compatible",
+            "endpoint":"https://provider.test/v1",
+            "credentialId":null,
+            "ownerDepartmentId":Uuid::now_v7(),
+            "alias":"fixture",
+            "modelName":"fixture",
+            "maxInputTokens":100,
+            "maxOutputTokens":10,
+            "defaultParameters":{}
+        });
+        assert!(serde_json::from_value::<CreateRequest>(base.clone()).is_err());
+        let mut create = base.clone();
+        create["price"] = json!({"currency":"USD","inputPerMillion":"1","outputPerMillion":"2"});
+        assert!(serde_json::from_value::<CreateRequest>(create).is_ok());
+
+        let mut update = base;
+        update["status"] = json!("active");
+        update["expectedAliasVersion"] = json!(1);
+        assert!(serde_json::from_value::<UpdateRequest>(update).is_err());
     }
 
     #[test]

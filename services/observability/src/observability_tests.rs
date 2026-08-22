@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use agentx_runtime_contracts::{
     ObservabilityAggregateRequestV1, ObservabilityDimensionV1, ObservabilityMetricV1,
-    TraceEventEnvelopeV1, TraceEventKindV1, TraceSpanKindV1, content_hash,
+    TraceContentKindV1, TraceEventEnvelopeV1, TraceEventKindV1, TraceSpanKindV1, content_hash,
 };
 use clickhouse::Client;
 use serde_json::json;
@@ -17,7 +17,7 @@ use uuid::Uuid;
 use super::{
     AggregateRow, TraceConflictRow, TraceRow, TraceSpanKeyRow, aggregate_query_sql,
     aggregate_spans, existing_trace_hash, parse_span_cursor, span_cursor, span_page_sql,
-    timestamp_micros,
+    timestamp_micros, trace_contents,
 };
 
 #[test]
@@ -113,6 +113,65 @@ fn span_cursor_round_trips_the_stable_sort_tuple() {
     assert!(parse_span_cursor("broken").is_err());
 }
 
+#[test]
+fn span_detail_keeps_every_semantic_content_in_event_order() {
+    let execution_id = Uuid::now_v7();
+    let span_id = Uuid::now_v7();
+    let started = OffsetDateTime::from_unix_timestamp(200).unwrap();
+    let mut request = trace_event(
+        execution_id,
+        span_id,
+        1,
+        TraceEventKindV1::Started,
+        "running",
+        started,
+    );
+    request.content_kind = Some(TraceContentKindV1::RuntimeRequest);
+    request.content_preview = Some(json!({"messages":[{"role":"system","content":"你叫 kakj"}]}));
+    let request_id = request.event_id;
+    let mut response = trace_event(
+        execution_id,
+        span_id,
+        2,
+        TraceEventKindV1::Finished,
+        "succeeded",
+        started + time::Duration::seconds(1),
+    );
+    response.content_kind = Some(TraceContentKindV1::RuntimeResponse);
+    response.content_preview = Some(json!({"text":"你好，我叫 kakj。"}));
+    let response_id = response.event_id;
+
+    let contents = trace_contents(&[request, response]);
+    assert_eq!(contents.len(), 2);
+    assert_eq!(contents[0].event_id, request_id);
+    assert_eq!(contents[0].kind, TraceContentKindV1::RuntimeRequest);
+    assert_eq!(
+        contents[0].preview.as_ref().unwrap()["messages"][0]["role"],
+        "system"
+    );
+    assert_eq!(contents[1].event_id, response_id);
+    assert_eq!(contents[1].kind, TraceContentKindV1::RuntimeResponse);
+    assert_eq!(
+        contents[1].preview.as_ref().unwrap()["text"],
+        "你好，我叫 kakj。"
+    );
+}
+
+#[test]
+fn boundary_span_and_node_filter_are_part_of_the_strong_contract() {
+    assert_eq!(
+        super::parse_trace_span_kind("boundary").unwrap(),
+        TraceSpanKindV1::Boundary
+    );
+    assert_eq!(
+        super::trace_span_kind_name(TraceSpanKindV1::Boundary),
+        "boundary"
+    );
+    let filtered = span_page_sql(false, true);
+    assert!(filtered.contains("node_execution_id=?"));
+    assert!(!span_page_sql(false, false).contains("node_execution_id=?"));
+}
+
 fn trace_event(
     execution_id: Uuid,
     span_id: Uuid,
@@ -153,7 +212,7 @@ fn trace_event(
         error_message: (status == "failed").then(|| "Model request failed".into()),
         attributes: json!({}),
         content_ref: None,
-        content_role: None,
+        content_kind: None,
         content_preview: None,
         occurred_at,
         content_hash: content_hash(&json!({"sequence":sequence})).unwrap(),
@@ -182,11 +241,6 @@ async fn clickhouse_trace_queries_decode_aggregate_and_exclude_conflicts() {
     execute_migration(
         &admin,
         include_str!("../../../migrations/observability/0002_query_and_observability.sql"),
-    )
-    .await;
-    execute_migration(
-        &admin,
-        include_str!("../../../migrations/observability/0003_trace_spans.sql"),
     )
     .await;
 
@@ -305,7 +359,7 @@ async fn clickhouse_trace_queries_decode_aggregate_and_exclude_conflicts() {
     extra.end().await.unwrap();
 
     let first_page = admin
-        .query(span_page_sql(false))
+        .query(span_page_sql(false, false))
         .bind(tenant_id)
         .bind(execution_id)
         .bind(tenant_id)
@@ -316,7 +370,7 @@ async fn clickhouse_trace_queries_decode_aggregate_and_exclude_conflicts() {
     assert_eq!(first_page.len(), 2);
     let first_cursor = first_page.last().unwrap();
     let second_page = admin
-        .query(span_page_sql(true))
+        .query(span_page_sql(true, false))
         .bind(tenant_id)
         .bind(execution_id)
         .bind(tenant_id)
@@ -338,7 +392,7 @@ async fn clickhouse_trace_queries_decode_aggregate_and_exclude_conflicts() {
     );
     let second_cursor = second_page.last().unwrap();
     let exhausted = admin
-        .query(span_page_sql(true))
+        .query(span_page_sql(true, false))
         .bind(tenant_id)
         .bind(execution_id)
         .bind(tenant_id)
@@ -396,7 +450,7 @@ fn trace_row(
         cost_micros,
         attributes_json: json!({"provider":"fixture"}).to_string(),
         content_ref: None,
-        content_role: None,
+        content_kind: None,
         content_preview_json: None,
         content_hash: hash('a'),
         occurred_at,

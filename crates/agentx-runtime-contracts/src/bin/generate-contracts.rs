@@ -3,11 +3,12 @@
 use std::{fs, path::Path};
 
 use agentx_runtime_contracts::{
-    ActivateDeploymentRequestV1, ApplyReceiptV1, CancelWorkPackageRequestV1, CommandEnvelopeV1,
+    ActivateDeploymentRequestV1, ApplyChatMappingReceiptV1, ApplyChatMappingRequestV1,
+    ApplyReceiptV1, CancelWorkPackageRequestV1, ChatMappingV1, CommandEnvelopeV1,
     DelegationScopeV1, DisableDeploymentRequestV1, EgressConnectClaimsV1, EventEnvelopeV1,
     EventExportPageV1, EventExportRequestV1, ExecuteWorkPackageRequestV1, ExecutionArtifactV1,
-    ExecutionCheckpointV1, ExecutionCollectionPageV1, ExecutionDetailV1, ExecutionNodeV1,
-    ExecutionRuntimeDetailsV1, ExecutionSearchPageV1, ExecutionSearchRequestV1,
+    ExecutionCheckpointV1, ExecutionCollectionPageV1, ExecutionDetailV1, ExecutionEventPageV1,
+    ExecutionNodeV1, ExecutionRuntimeDetailsV1, ExecutionSearchPageV1, ExecutionSearchRequestV1,
     ExecutionSpecBundleV1, ExecutionTraceV1, ExecutionWaitV1, GovernanceSnapshotPageV1,
     GovernanceSnapshotRequestV1, InvocationDetailV1, InvocationSearchPageV1,
     InvocationSearchRequestV1, ObservabilityAggregatePageV1, ObservabilityAggregateRequestV1,
@@ -87,6 +88,9 @@ fn contract_schemas() -> Result<Map<String, Value>> {
     insert::<CommandEnvelopeV1>(&mut schemas, "CommandEnvelopeV1")?;
     insert::<EventEnvelopeV1>(&mut schemas, "EventEnvelopeV1")?;
     insert::<RuntimeAdmissionCommandV1>(&mut schemas, "RuntimeAdmissionCommandV1")?;
+    insert::<ChatMappingV1>(&mut schemas, "ChatMappingV1")?;
+    insert::<ApplyChatMappingRequestV1>(&mut schemas, "ApplyChatMappingRequestV1")?;
+    insert::<ApplyChatMappingReceiptV1>(&mut schemas, "ApplyChatMappingReceiptV1")?;
     insert::<RuntimeObjectUploadMetadataV1>(&mut schemas, "RuntimeObjectUploadMetadataV1")?;
     insert::<RuntimeObjectUploadReceiptV1>(&mut schemas, "RuntimeObjectUploadReceiptV1")?;
     insert::<PrepareBundleRequestV1>(&mut schemas, "PrepareBundleRequestV1")?;
@@ -120,7 +124,7 @@ fn contract_schemas() -> Result<Map<String, Value>> {
     insert::<ExecutionRuntimeDetailsV1>(&mut schemas, "ExecutionRuntimeDetailsV1")?;
     insert::<ExecutionArtifactV1>(&mut schemas, "ExecutionArtifactV1")?;
     insert::<ExecutionCollectionPageV1<ExecutionNodeV1>>(&mut schemas, "ExecutionNodePageV1")?;
-    insert::<ExecutionCollectionPageV1<Value>>(&mut schemas, "ExecutionEventPageV1")?;
+    insert::<ExecutionEventPageV1>(&mut schemas, "ExecutionEventPageV1")?;
     insert::<ExecutionCollectionPageV1<ExecutionWaitV1>>(&mut schemas, "ExecutionWaitPageV1")?;
     insert::<ExecutionCollectionPageV1<ExecutionCheckpointV1>>(
         &mut schemas,
@@ -188,6 +192,7 @@ fn internal_openapi(schemas: Map<String, Value>) -> Value {
             },
             "/internal/runtime/v1/governance-snapshots:export": post("Export Governance Snapshot", "GovernanceSnapshotRequestV1", "GovernanceSnapshotPageV1"),
             "/internal/runtime/v1/query/executions:search": post("Search Executions", "ExecutionSearchRequestV1", "ExecutionSearchPageV1"),
+            "/internal/runtime/v1/chat-mappings:apply": post("Apply Chat Mapping", "ApplyChatMappingRequestV1", "ApplyChatMappingReceiptV1"),
             "/internal/runtime/v1/query/invocations:search": post("Search Invocations", "InvocationSearchRequestV1", "InvocationSearchPageV1"),
             "/internal/runtime/v1/query/invocations/{id}": get_with_id("Get Invocation", "InvocationDetailV1", "runtime.query.invocation"),
             "/internal/runtime/v1/query/executions/{id}": {
@@ -204,7 +209,7 @@ fn internal_openapi(schemas: Map<String, Value>) -> Value {
             "/internal/runtime/v1/query/sessions:search": post("Search Sessions", "SessionSearchRequestV1", "SessionSearchPageV1"),
             "/internal/runtime/v1/query/executions/{id}/nodes": get_with_id("List Execution Nodes", "ExecutionNodePageV1", "runtime.query.execution"),
             "/internal/runtime/v1/query/executions/{id}/nodes/{node_execution_id}": get_execution_node(),
-            "/internal/runtime/v1/query/executions/{id}/events": get_with_id("List Execution Events", "ExecutionEventPageV1", "runtime.query.execution"),
+            "/internal/runtime/v1/query/executions/{id}/events": get_execution_events(),
             "/internal/runtime/v1/query/executions/{id}/waits": get_with_id("List Execution Waits", "ExecutionWaitPageV1", "runtime.query.execution"),
             "/internal/runtime/v1/query/executions/{id}/checkpoints": get_with_id("List Execution Checkpoints", "ExecutionCheckpointPageV1", "runtime.query.execution"),
             "/internal/runtime/v1/query/executions/{id}/runtime-details": get_with_id("Get Execution Runtime Details", "ExecutionRuntimeDetailsV1", "runtime.query.execution"),
@@ -240,7 +245,7 @@ fn observability_openapi(schemas: Map<String, Value>) -> Value {
             "description": "Cluster-internal, tenant-scoped trace and aggregate queries."
         },
         "paths": {
-            "/internal/observability/v1/executions/{id}/trace": observability_get("Get Execution Trace", "ExecutionTraceV1", "observability.trace.read"),
+            "/internal/observability/v1/executions/{id}/trace": observability_trace_get(),
             "/internal/observability/v1/executions/{id}/trace/spans/{span_id}": observability_span_get(),
             "/internal/observability/v1/traces:search": observability_post("Search Traces", "TraceSearchRequestV1", "TraceSearchPageV1", "observability.trace.read"),
             "/internal/observability/v1/aggregates:query": observability_post("Query Aggregates", "ObservabilityAggregateRequestV1", "ObservabilityAggregatePageV1", "observability.aggregate.read")
@@ -266,19 +271,25 @@ fn observability_span_get() -> Value {
     }})
 }
 
+fn observability_trace_get() -> Value {
+    json!({"get": {
+        "summary": "Get Execution Trace",
+        "parameters": [
+            {"name":"id","in":"path","required":true,"schema":{"type":"string","format":"uuid"}},
+            {"name":"expectedWatermark","in":"query","required":true,"schema":{"type":"integer","format":"uint64"}},
+            {"name":"limit","in":"query","required":false,"schema":{"type":"integer","minimum":1,"maximum":1000}},
+            {"name":"cursor","in":"query","required":false,"schema":{"type":"string"}},
+            {"name":"nodeExecutionId","in":"query","required":false,"schema":{"type":"string","format":"uuid"}}
+        ],
+        "responses": response("ExecutionTraceV1"),
+        "security": [{"delegationJwt": ["observability.trace.read"]}]
+    }})
+}
+
 fn observability_post(summary: &str, request: &str, response_schema: &str, scope: &str) -> Value {
     json!({"post": {
         "summary": summary,
         "requestBody": body(request),
-        "responses": response(response_schema),
-        "security": [{"delegationJwt": [scope]}]
-    }})
-}
-
-fn observability_get(summary: &str, response_schema: &str, scope: &str) -> Value {
-    json!({"get": {
-        "summary": summary,
-        "parameters": [{"name":"id","in":"path","required":true,"schema":{"type":"string","format":"uuid"}}],
         "responses": response(response_schema),
         "security": [{"delegationJwt": [scope]}]
     }})
@@ -371,6 +382,19 @@ fn get_execution_node() -> Value {
     }})
 }
 
+fn get_execution_events() -> Value {
+    json!({"get": {
+        "summary": "List Execution Events",
+        "parameters": [
+            {"name":"id","in":"path","required":true,"schema":{"type":"string","format":"uuid"}},
+            query_parameter("after", "integer", false),
+            query_parameter("limit", "integer", false)
+        ],
+        "responses": response("ExecutionEventPageV1"),
+        "security": [{"serviceJwt": ["runtime.query.execution"]}]
+    }})
+}
+
 fn body(schema: &str) -> Value {
     json!({
         "required": true,
@@ -425,5 +449,19 @@ mod tests {
         assert!(paths.contains_key("/internal/runtime/v1/runtime-commands:apply"));
         assert!(paths.contains_key("/internal/runtime/v1/references:check"));
         assert!(paths.contains_key("/internal/runtime/v1/retention-commands:apply"));
+        let event_parameters =
+            paths["/internal/runtime/v1/query/executions/{id}/events"]["get"]["parameters"]
+                .as_array()
+                .unwrap();
+        assert!(
+            event_parameters
+                .iter()
+                .any(|parameter| { parameter["name"] == "after" && parameter["in"] == "query" })
+        );
+        assert!(
+            event_parameters
+                .iter()
+                .any(|parameter| { parameter["name"] == "limit" && parameter["in"] == "query" })
+        );
     }
 }

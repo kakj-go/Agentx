@@ -179,11 +179,15 @@
     "triggerId": {
       "format": "uuid",
       "type": "string"
+    },
+    "triggerName": {
+      "type": "string"
     }
   },
   "required": [
     "schemaVersion",
     "triggerId",
+    "triggerName",
     "applicationId",
     "nodeId",
     "revision",

@@ -151,8 +151,11 @@ const translations = {
   "fields": {
     "name": "Skill name",
     "alias": "Skill alias",
+    "aliasHint": "Use letters in any language, numbers, hyphens (-), or underscores (_). English letters are normalized to lowercase.",
     "description": "Skill description",
-    "descriptionPlaceholder": "Describe what this Skill does and when to use it"
+    "descriptionHint": "Used for Skill discovery and identification, and synchronized to the SKILL.md frontmatter.",
+    "descriptionPlaceholder": "Describe what this Skill does and when to use it",
+    "characterCount": "{{count}} / {{max}}"
   }
 } as const
 

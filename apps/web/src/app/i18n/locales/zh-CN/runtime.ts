@@ -10,7 +10,6 @@ const translations = {
   "noHeartbeat": "无心跳",
   "activeSandboxes": "活跃沙箱",
   "sandboxCompatibility": "OpenSandbox 协议兼容状态",
-  "noMessages": "暂无消息",
   "runtimeQuotas": "运行配额",
   "workerCapabilities": "Worker 能力",
   "retention": "数据保留",

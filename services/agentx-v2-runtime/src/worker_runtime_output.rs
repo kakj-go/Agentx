@@ -1,4 +1,9 @@
-use agentx_runtime_contracts::{RuntimeResourceConfigurationV1, WorkerResultStatusV1};
+use std::str::FromStr;
+
+use agentx_runtime_contracts::{
+    RuntimeModelPriceV1, RuntimeResourceConfigurationV1, WorkerResultStatusV1,
+};
+use rust_decimal::{Decimal, RoundingStrategy, prelude::ToPrimitive as _};
 use serde_json::{Value, json};
 
 use super::{ClaimedWorkerAttempt, WorkerExecution, mcp_tool_binding, successful_value};
@@ -6,16 +11,11 @@ use super::{ClaimedWorkerAttempt, WorkerExecution, mcp_tool_binding, successful_
 pub(super) fn openai_chat_request(
     claim: &ClaimedWorkerAttempt,
     model: &str,
-    price_version: &str,
+    price: &RuntimeModelPriceV1,
     input: &Value,
 ) -> Value {
     let mut messages = Vec::new();
-    if let Some(system) = claim
-        .node_parameters
-        .get("systemPrompt")
-        .and_then(Value::as_str)
-        .filter(|value| !value.is_empty())
-    {
+    if let Some(system) = system_prompt(&claim.node_parameters, &claim.node_type) {
         messages.push(json!({"role":"system","content":system}));
     }
     let content = claim
@@ -36,7 +36,7 @@ pub(super) fn openai_chat_request(
         "model":model,
         "messages":messages,
         "stream":false,
-        "metadata":{"priceVersion":price_version},
+        "metadata":{"priceVersion":price.version_id},
     });
     if let Some(tool) = mcp_tool_binding(&claim.resources)
         && let RuntimeResourceConfigurationV1::Mcp { tool_name, .. } = &tool.configuration
@@ -51,6 +51,17 @@ pub(super) fn openai_chat_request(
         }]);
     }
     request
+}
+
+pub(super) fn system_prompt<'a>(parameters: &'a Value, node_type: &str) -> Option<&'a str> {
+    parameters
+        .get(if node_type == "model" {
+            "prompt"
+        } else {
+            "systemPrompt"
+        })
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
 }
 
 pub(super) fn openai_execution_output(execution: WorkerExecution) -> WorkerExecution {
@@ -75,7 +86,7 @@ pub(super) fn openai_execution_output(execution: WorkerExecution) -> WorkerExecu
     let normalized_usage = json!({
         "inputTokens":usage.get("prompt_tokens").and_then(Value::as_u64).unwrap_or(0),
         "outputTokens":usage.get("completion_tokens").and_then(Value::as_u64).unwrap_or(0),
-        "tokens":usage.get("total_tokens").and_then(Value::as_u64).unwrap_or(0),
+        "totalTokens":usage.get("total_tokens").and_then(Value::as_u64).unwrap_or(0),
         "costMicros":usage.get("costMicros").and_then(Value::as_u64).unwrap_or(0),
     });
     if let Some(arguments) = message
@@ -103,12 +114,10 @@ pub(super) fn openai_execution_output(execution: WorkerExecution) -> WorkerExecu
     // `answer` and `finalAnswer` turn a successful provider call into an
     // unresolvable End value.
     WorkerExecution::succeeded(json!({
-        "text":content,
-        "message":message,
+        "text":json_text(&content),
         "reasoningContent":Value::Null,
         "structuredOutput":structured_output,
         "citations":[],
-        "toolCalls":[],
         "files":[],
         "usage":normalized_usage,
         "finishReason":response.get("choices").and_then(|choices| choices.get(0)).and_then(|choice| choice.get("finish_reason")).cloned().unwrap_or(Value::Null),
@@ -127,8 +136,8 @@ pub(super) fn provider_usage(value: &Value) -> (u64, u64) {
     let (input, output, cost) = provider_usage_detail(value);
     let usage = value.get("usage").unwrap_or(value);
     let total = usage
-        .get("tokens")
-        .or_else(|| usage.get("totalTokens"))
+        .get("totalTokens")
+        .or_else(|| usage.get("tokens"))
         .or_else(|| usage.get("total_tokens"))
         .and_then(Value::as_u64)
         .unwrap_or_else(|| input.saturating_add(output));
@@ -159,19 +168,65 @@ pub(super) fn provider_usage_detail(value: &Value) -> (u64, u64, u64) {
     (input, output, cost)
 }
 
+pub(super) fn apply_model_price(
+    value: &mut Value,
+    price: &RuntimeModelPriceV1,
+) -> Result<(u64, u64, u64), String> {
+    let (input_tokens, output_tokens, _) = provider_usage_detail(value);
+    let input_price = Decimal::from_str(&price.input_per_million)
+        .map_err(|error| format!("Invalid frozen input price: {error}"))?;
+    let output_price = Decimal::from_str(&price.output_per_million)
+        .map_err(|error| format!("Invalid frozen output price: {error}"))?;
+    if input_price.is_sign_negative() || output_price.is_sign_negative() {
+        return Err("Frozen Model price cannot be negative".into());
+    }
+    // A per-million-token price expressed in currency units has the same
+    // numeric multiplier as micro-currency per token. Round once after both
+    // token classes are summed so the persisted result is deterministic.
+    let cost = (Decimal::from(input_tokens) * input_price
+        + Decimal::from(output_tokens) * output_price)
+        .round_dp_with_strategy(0, RoundingStrategy::MidpointAwayFromZero)
+        .to_u64()
+        .ok_or_else(|| "Calculated Model cost exceeds u64 micro-units".to_owned())?;
+    let usage = value
+        .as_object_mut()
+        .ok_or_else(|| "Provider response must be a JSON object".to_owned())?
+        .entry("usage")
+        .or_insert_with(|| json!({}));
+    let usage = usage
+        .as_object_mut()
+        .ok_or_else(|| "Provider usage must be a JSON object".to_owned())?;
+    usage.insert("costMicros".into(), json!(cost));
+    Ok((input_tokens, output_tokens, cost))
+}
+
 pub(super) fn effective_agent_budget(parameters: &Value) -> Value {
     let nested = parameters.get("budget");
     let maximum_iterations = nested
         .and_then(|budget| budget.get("maxIterations"))
         .or_else(|| parameters.get("maxIterations"))
         .and_then(Value::as_u64)
-        .unwrap_or(1)
-        .clamp(1, 100);
+        .unwrap_or(12)
+        .clamp(1, 12);
+    let maximum_model_calls = parameters
+        .get("maxModelCalls")
+        .and_then(Value::as_u64)
+        .unwrap_or(12)
+        .clamp(1, 12);
+    let maximum_tool_calls = parameters
+        .get("maxToolCalls")
+        .and_then(Value::as_u64)
+        .unwrap_or(32)
+        .clamp(0, 32);
     let maximum_tokens = nested
         .and_then(|budget| budget.get("maxTokens"))
         .or_else(|| parameters.get("maxTotalTokens"))
         .and_then(Value::as_u64)
-        .unwrap_or(4096);
+        .unwrap_or(64_000);
+    let maximum_output_tokens = parameters
+        .get("maxOutputTokens")
+        .and_then(Value::as_u64)
+        .unwrap_or(4_096);
     let maximum_cost = nested
         .and_then(|budget| budget.get("maxCostMicros"))
         .or_else(|| parameters.get("maxCostMicros"))
@@ -179,8 +234,13 @@ pub(super) fn effective_agent_budget(parameters: &Value) -> Value {
         .unwrap_or(1_000_000);
     json!({
         "maxIterations": maximum_iterations,
+        "maxModelCalls": maximum_model_calls,
+        "maxToolCalls": maximum_tool_calls,
         "maxTokens": maximum_tokens,
+        "maxOutputTokens": maximum_output_tokens,
         "maxCostMicros": maximum_cost,
+        "maxDurationMs":parameters.get("maxDurationMs").and_then(Value::as_u64).unwrap_or(300_000),
+        "limitAction":parameters.get("limitAction").and_then(Value::as_str).unwrap_or("error_output"),
     })
 }
 
@@ -206,5 +266,165 @@ pub(super) fn sandbox_execution_output(execution: WorkerExecution) -> WorkerExec
             false,
         );
     };
-    WorkerExecution::succeeded(output)
+    WorkerExecution::succeeded(json!({
+        "stdout":output.get("stdout").and_then(Value::as_str).unwrap_or_default(),
+        "stderr":output.get("stderr").and_then(Value::as_str).unwrap_or_default(),
+        "exitCode":output.get("exitCode").and_then(Value::as_i64).unwrap_or_default(),
+        "structuredOutput":output.get("structuredOutput").or_else(|| output.get("structuredOutputs")).cloned().unwrap_or(Value::Null),
+        "files":output.get("files").or_else(|| output.get("downloadedArtifacts")).cloned().unwrap_or_else(|| json!([])),
+        "partial":output.get("partial").and_then(Value::as_bool).unwrap_or(false),
+    }))
+}
+
+pub(super) fn tool_execution_output(execution: WorkerExecution) -> WorkerExecution {
+    normalize_semantic_output(execution, "structuredContent")
+}
+
+pub(super) fn rag_execution_output(execution: WorkerExecution) -> WorkerExecution {
+    if execution.status != WorkerResultStatusV1::Succeeded {
+        return execution;
+    }
+    let Some(value) = successful_value(&execution) else {
+        return invalid_empty();
+    };
+    let documents = value
+        .get("documents")
+        .or_else(|| value.get("chunks"))
+        .or_else(|| value.get("data"))
+        .cloned()
+        .unwrap_or_else(|| json!([]));
+    let text = value
+        .get("text")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .unwrap_or_else(|| json_text(&documents));
+    let record_ids = string_ids(value.get("recordIds").or_else(|| value.get("record_ids")));
+    WorkerExecution::succeeded(
+        json!({"text":text,"documents":documents,"citations":value.get("citations").cloned().unwrap_or_else(|| json!([])),"recordIds":record_ids}),
+    )
+}
+
+pub(super) fn memory_execution_output(execution: WorkerExecution) -> WorkerExecution {
+    if execution.status != WorkerResultStatusV1::Succeeded {
+        return execution;
+    }
+    let Some(value) = successful_value(&execution) else {
+        return invalid_empty();
+    };
+    let records = value
+        .get("records")
+        .or_else(|| value.get("results"))
+        .or_else(|| value.get("memories"))
+        .cloned()
+        .unwrap_or_else(|| json!([]));
+    let text = value
+        .get("text")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .unwrap_or_else(|| json_text(&records));
+    let record_ids = string_ids(value.get("recordIds").or_else(|| value.get("record_ids")));
+    WorkerExecution::succeeded(json!({"text":text,"records":records,"recordIds":record_ids}))
+}
+
+fn normalize_semantic_output(execution: WorkerExecution, structured_key: &str) -> WorkerExecution {
+    if execution.status != WorkerResultStatusV1::Succeeded {
+        return execution;
+    }
+    let Some(value) = successful_value(&execution) else {
+        return invalid_empty();
+    };
+    let text = value
+        .get("text")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .or_else(|| {
+            value
+                .get("content")
+                .and_then(Value::as_array)
+                .map(|content| {
+                    content
+                        .iter()
+                        .filter_map(|item| item.get("text").and_then(Value::as_str))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                })
+        })
+        .unwrap_or_default();
+    let structured = value
+        .get(structured_key)
+        .or_else(|| value.get("structuredOutput"))
+        .cloned()
+        .filter(Value::is_object)
+        .unwrap_or(Value::Null);
+    WorkerExecution::succeeded(
+        json!({"text":text,"structuredOutput":structured,"files":value.get("files").cloned().unwrap_or_else(|| json!([]))}),
+    )
+}
+
+fn invalid_empty() -> WorkerExecution {
+    WorkerExecution::failed(
+        "PROVIDER_RESPONSE_INVALID",
+        "Provider response is empty",
+        false,
+    )
+}
+
+fn string_ids(value: Option<&Value>) -> Value {
+    Value::Array(
+        value
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .map(|value| {
+                Value::String(
+                    value
+                        .as_str()
+                        .map(str::to_owned)
+                        .unwrap_or_else(|| json_text(value)),
+                )
+            })
+            .collect(),
+    )
+}
+
+#[cfg(test)]
+mod pricing_tests {
+    use agentx_runtime_contracts::RuntimeModelPriceV1;
+    use serde_json::json;
+
+    use super::apply_model_price;
+
+    #[test]
+    fn calculates_micro_cost_from_the_frozen_price_snapshot() {
+        let mut response =
+            json!({"usage":{"prompt_tokens":4784,"completion_tokens":10,"total_tokens":4794}});
+        let usage = apply_model_price(
+            &mut response,
+            &RuntimeModelPriceV1 {
+                version_id: "price-1".into(),
+                currency: "USD".into(),
+                input_per_million: "5".into(),
+                output_per_million: "30".into(),
+            },
+        )
+        .unwrap();
+        assert_eq!(usage, (4784, 10, 24_220));
+        assert_eq!(response["usage"]["costMicros"], 24_220);
+    }
+
+    #[test]
+    fn rounds_fractional_micro_units_once() {
+        let mut response = json!({"usage":{"input_tokens":3,"output_tokens":1}});
+        let usage = apply_model_price(
+            &mut response,
+            &RuntimeModelPriceV1 {
+                version_id: "price-2".into(),
+                currency: "USD".into(),
+                input_per_million: "0.15".into(),
+                output_per_million: "0.25".into(),
+            },
+        )
+        .unwrap();
+        assert_eq!(usage.2, 1);
+    }
 }

@@ -101,7 +101,7 @@ API 格式描述供应商接受的模型调用协议，不等同于内部 Provid
 - 延迟
 - 错误
 
-价格必须有版本，历史执行按调用发生时的价格快照计算。
+模型创建和 Deployment Revision 切换时，币种、输入单价/百万 Token、输出单价/百万 Token 都是必填项；允许显式填写零价，但不允许创建无价格的 Model Deployment。发布 Bundle 冻结价格版本 ID、币种和两类单价，Runtime 使用 Provider 返回的输入/输出 Token 与该快照确定性计算微货币单位成本，不依赖 Provider 私有的成本字段。当前未单独配置缓存 Token 单价时，缓存输入仍按普通输入 Token 计价；历史执行始终按调用发生时的价格快照计算。
 
 ## 4. MCP Server 与 Tool
 
@@ -117,7 +117,7 @@ Sandbox 与 MCP 完全分离。Python、JavaScript、Shell 和其他动态代码
 
 Skill 是 Agent 可加载的版本化能力资源，用于封装稳定的指令、资产引用和依赖声明，而不是绕过平台执行权限的新节点。
 
-Skill Definition 描述业务身份和生命周期；新建时自动创建不可删除的根文件 `SKILL.md`。根文件必须包含 `name` 和 `description` frontmatter，前端将 Skill 描述作为正文上方的独立必填输入展示，后端统一生成 frontmatter 并与 Skill 元数据同步。用户可在线创建目录和 Markdown 文件、移动或重命名条目，并把图片、PDF、文本、代码或其他二进制拖拽上传到目录。只有 Markdown 可在线编辑；其他文件只读预览或显示元数据。
+Skill Definition 描述业务身份和生命周期；Alias 是租户内唯一的稳定可读标识，允许 Unicode 字母、数字、连字符和下划线，英文字母统一为小写。新建时自动创建不可删除的根文件 `SKILL.md`。根文件必须包含 `name` 和 `description` frontmatter，前端将 Skill 描述作为正文上方的独立必填多行文本框展示，后端统一生成 frontmatter 并与 Skill 元数据同步。用户可在线创建目录和 Markdown 文件、移动或重命名条目，并把图片、PDF、文本、代码或其他二进制拖拽上传到目录。只有 Markdown 可在线编辑；其他文件只读预览或显示元数据。
 
 Markdown 使用开源 MDXEditor/Lexical 富文本界面编辑，用户通过标题、加粗、列表、链接和表格等可视化控件生成标准 Markdown，不需要掌握 Markdown 语法。编辑器可从当前 Skill 文件树选择目标并插入标准相对链接。移动或重命名文件时服务端同步重写内部相对链接；删除被引用文件会被拒绝。发布前通过 Markdown AST 校验引用，Skill Version 固化每个文件的路径、Artifact、Content Hash、引用目标 Hash，以及 Model、MCP Tool、Credential、Skill、RAG 和 Memory 依赖。ZIP 只用于当前工作区导入导出，不是 Skill 的持久化模型。
 
@@ -206,9 +206,13 @@ Session 默认固定 Workflow Version，保证长会话行为稳定。Applicatio
 
 Playground 使用相同的 Application API，不维护另一套运行路径。
 
-Application 的 Request/Response Contract 由不可变 Workflow Version 决定：Start Inputs 生成 Request Schema，End Outputs 生成 Response Schema。Deployment 不保存第二套输入 Schema、输出 Schema 或输出表达式；没有 End Output 的 Version 不能部署为 Application。
+Application 的 Request/Response Contract 由不可变 Workflow Version 决定：Deployment 固化发布时的 Start Input Schema 和 End Output Schema；没有 End Output 的 Version 不能部署为 Application。Playground 的参数测试根据该 Schema 渲染完整表单，通过正式 Application Invocation API 创建无 Session 的 Invocation，历史查询使用 `sessionMode=stateless`。
 
-Invocation 只读取 `ExecutionResult.outputs`，不按画布位置、完成时间、终点节点或 Item 顺序猜测回答。Chatbox 默认使用 `answer`、`attachments`、`citations` 和 `metadata` 字段；字段不存在或 Schema 不合法时返回稳定的公开错误，不隐式拼接多个 Agent 结果。
+对话测试只提供 question 和 files 两个 Composer 能力。`ChatMappingV1` 把它们显式映射到顶层 string 与 Artifact 输入，并把 Assistant 文本和附件映射到顶层非敏感 string 与 Artifact 输出；未映射的必填输入必须有 Schema 默认值。映射按 Application Deployment 共享，Control 用乐观锁保存修订并经 Outbox 发布到 Runtime；发布未完成时禁止发送。
+
+每轮消息根据 Session 实际选择的 Bundle 读取最新映射，并把映射 Version 和完整内容写入 Invocation 快照。Execution 完成后只按该快照提取 Message Parts，不按 `message`、`answer`、`text` 或其他字段名猜测。修改映射只影响当前会话的下一轮，历史 Invocation 与消息不重算；清除映射后立即回到未配置状态。
+
+Playground 新建 Session 不预先写入通用标题。Runtime 在首条用户文本消息与 Message 同一事务内为空标题 Session 补全会话名称，后续消息不再覆盖；标题合并空白并限制为 255 个字符。
 
 Session Context 按 `tenantId + applicationDeploymentId + sessionId` 隔离，用于历史和连续会话；没有 Session ID 时不创建持久上下文。外部调用默认只能写 Start Inputs，只有 Context Contract 显式标记 `clientWritable` 的字段才可由 Adapter 开放。
 

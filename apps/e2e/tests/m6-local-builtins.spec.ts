@@ -126,9 +126,15 @@ async function setFilterCondition(page: Page) {
   await scope.getByRole('button', { name: /inputs|选择变量/i }).click()
   const picker = page.getByTestId('reference-picker')
   await picker.getByRole('button', { name: /当前数据|Current data/ }).click()
-  await picker.getByRole('button', { name: /当前节点原始输出|Current node raw output/ }).click()
+  await picker.getByRole('button', { name: /当前节点输入|Current node input/ }).click()
   await scope.getByRole('textbox', { name: 'Reference path' }).fill('score')
   await scope.getByRole('textbox', { name: 'Expression' }).fill('2')
+}
+
+async function setExpressionLiteral(page: Page, name: string, value: string) {
+  const scope = field(page, name)
+  await scope.getByRole('textbox', { name: 'Expression' }).fill(value)
+  await page.keyboard.press('Escape')
 }
 
 type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue }
@@ -174,8 +180,14 @@ async function fillStructuredJson(page: Page, scope: Locator, value: JsonValue):
   }
   if (typeof value === 'boolean') {
     const checkbox = scope.getByRole('checkbox')
-    if (value) await checkbox.check(); else await checkbox.uncheck()
-  } else if (typeof value === 'number') await scope.getByRole('spinbutton').fill(String(value))
+    if (await checkbox.count()) {
+      if (value) await checkbox.check(); else await checkbox.uncheck()
+    } else await scope.getByRole('textbox', { name: 'Value' }).fill(String(value))
+  } else if (typeof value === 'number') {
+    const spinbutton = scope.getByRole('spinbutton')
+    if (await spinbutton.count()) await spinbutton.fill(String(value))
+    else await scope.getByRole('textbox', { name: 'Value' }).fill(String(value))
+  }
   else await scope.getByRole('textbox').last().fill(value === null ? '' : value)
 }
 
@@ -184,27 +196,29 @@ async function addCollectionItem(page: Page, name: string, value: string | Recor
   await scope.getByRole('button').last().click()
   if (typeof value === 'string') await scope.getByRole('textbox').last().fill(value)
   else {
-    const labels: Record<string, RegExp> = {
-      direction: /^(排序方向|Direction)$/,
-      field: /^(字段|Field)$/,
-      from: /^(来源字段|From)$/,
-      nulls: /^(空值位置|Nulls)$/,
-      operation: /^(操作|Operation)$/,
-      outputField: /^(输出字段|Output field)$/,
-      to: /^(目标字段|To)$/,
-    }
-    const optionLabels: Record<string, RegExp> = {
-      count: /^(计数|Count)$/,
-      desc: /^(降序|Descending|Desc)$/,
-      last: /^(最后一个|Last)$/,
-    }
-    const object = scope.getByTestId('json-object').last()
     for (const [key, child] of Object.entries(value)) {
-      const control = object.getByLabel(labels[key] ?? new RegExp(`^${key}$`, 'i')).last()
-      if (await control.getAttribute('role') === 'combobox') {
-        await control.click()
-        await page.getByRole('option', { name: optionLabels[String(child)] ?? new RegExp(`^${String(child)}$`, 'i') }).click()
-      } else await control.fill(String(child))
+      const childScope = scope.locator(`[data-field-path="${name}[].${key}"]`).last()
+      await expect(childScope).toBeVisible()
+      const checkbox = childScope.getByRole('checkbox')
+      if (await checkbox.count()) {
+        if (child) await checkbox.check(); else await checkbox.uncheck()
+        continue
+      }
+      const input = childScope.getByRole(typeof child === 'number' ? 'spinbutton' : 'textbox').last()
+      if (await input.count()) {
+        await input.fill(String(child))
+        continue
+      }
+      const valueSelect = childScope.getByRole('combobox').last()
+      await expect(valueSelect).toBeVisible()
+      await valueSelect.click()
+      const labels: Record<string, RegExp> = {
+        asc: /升序|asc/i,
+        count: /计数|count/i,
+        desc: /降序|desc/i,
+        last: /最后|last/i,
+      }
+      await page.getByRole('option', { name: labels[String(child)] ?? new RegExp(`^${String(child)}$`, 'i') }).click()
     }
   }
   await page.keyboard.press('Escape')
@@ -310,7 +324,7 @@ test('M6 local built-ins execute transform, multi-input and validation/error wor
   const validationSource = await addNode(page, 'item_generator'); await setEditor(page, 'items', JSON.stringify([{ id: 1, name: 'valid' }, { id: 2 }]))
   const validator = await addNode(page, 'structured_validator'); await setEditor(page, 'schema', JSON.stringify({ type: 'object', required: ['name'], properties: { name: { type: 'string' } } }))
   const validPass = await addNode(page, 'no_op')
-  const stop = await addNode(page, 'stop_and_error'); await setEditor(page, 'code', 'E2E_VALIDATION_STOP'); await setEditor(page, 'message', 'Invalid local item')
+  const stop = await addNode(page, 'stop_and_error'); await setExpressionLiteral(page, 'code', 'E2E_VALIDATION_STOP'); await setExpressionLiteral(page, 'message', 'Invalid local item')
   await fit(page)
   await connect(page, page.getByTestId('workflow-start'), 'main', validationSource.node, 'main')
   await connect(page, validationSource.node, 'main', validator.node, 'main')

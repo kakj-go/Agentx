@@ -1461,38 +1461,6 @@
               "schema": {
                 "$ref": "#/components/schemas/InvocationRequest"
               }
-            },
-            "multipart/form-data": {
-              "schema": {
-                "properties": {
-                  "attachments": {
-                    "items": {
-                      "format": "binary",
-                      "type": "string"
-                    },
-                    "type": "array"
-                  },
-                  "input": {
-                    "description": "Optional JSON object containing Workflow input fields",
-                    "type": "string"
-                  },
-                  "question": {
-                    "type": "string"
-                  },
-                  "responseMode": {
-                    "enum": [
-                      "async",
-                      "sync"
-                    ],
-                    "type": "string"
-                  },
-                  "sessionId": {
-                    "format": "uuid",
-                    "type": "string"
-                  }
-                },
-                "type": "object"
-              }
             }
           },
           "required": true

@@ -30,7 +30,7 @@ use redis::{
 };
 use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{Value, json};
 use time::OffsetDateTime;
 use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore};
 use uuid::Uuid;
@@ -107,7 +107,7 @@ struct TraceRow {
     attributes_json: String,
     #[serde(with = "clickhouse::serde::uuid::option")]
     content_ref: Option<Uuid>,
-    content_role: Option<String>,
+    content_kind: Option<String>,
     content_preview_json: Option<String>,
     content_hash: String,
     #[serde(with = "clickhouse::serde::time::datetime64::micros")]
@@ -157,7 +157,11 @@ impl From<TraceEventEnvelopeV1> for TraceRow {
             cost_micros: value.cost_micros,
             attributes_json: value.attributes.to_string(),
             content_ref: value.content_ref,
-            content_role: value.content_role,
+            content_kind: value.content_kind.and_then(|kind| {
+                serde_json::to_value(kind)
+                    .ok()
+                    .and_then(|value| value.as_str().map(str::to_owned))
+            }),
             content_preview_json: value.content_preview.map(|preview| preview.to_string()),
             content_hash: value.content_hash.to_string(),
             occurred_at: value.occurred_at,
@@ -201,7 +205,10 @@ impl TryFrom<TraceRow> for TraceEventEnvelopeV1 {
             error_message: value.error_message,
             attributes: serde_json::from_str(&value.attributes_json)?,
             content_ref: value.content_ref,
-            content_role: value.content_role,
+            content_kind: value
+                .content_kind
+                .map(|kind| serde_json::from_value(Value::String(kind)))
+                .transpose()?,
             content_preview: value
                 .content_preview_json
                 .map(|preview| serde_json::from_str(&preview))
@@ -232,6 +239,7 @@ fn parse_trace_event_kind(value: &str) -> Result<TraceEventKindV1> {
 fn trace_span_kind_name(kind: TraceSpanKindV1) -> &'static str {
     match kind {
         TraceSpanKindV1::Execution => "execution",
+        TraceSpanKindV1::Boundary => "boundary",
         TraceSpanKindV1::Node => "node",
         TraceSpanKindV1::Attempt => "attempt",
         TraceSpanKindV1::AgentRun => "agent_run",
@@ -245,6 +253,7 @@ fn trace_span_kind_name(kind: TraceSpanKindV1) -> &'static str {
 fn parse_trace_span_kind(value: &str) -> Result<TraceSpanKindV1> {
     match value {
         "execution" => Ok(TraceSpanKindV1::Execution),
+        "boundary" => Ok(TraceSpanKindV1::Boundary),
         "node" => Ok(TraceSpanKindV1::Node),
         "attempt" => Ok(TraceSpanKindV1::Attempt),
         "agent_run" => Ok(TraceSpanKindV1::AgentRun),
@@ -674,6 +683,7 @@ struct ExecutionTraceQuery {
     expected_watermark: u64,
     limit: Option<u32>,
     cursor: Option<String>,
+    node_execution_id: Option<Uuid>,
 }
 
 async fn execution_trace(
@@ -685,7 +695,8 @@ async fn execution_trace(
     let limit = query.limit.unwrap_or(200).clamp(1, 1000);
     let request_hash = content_hash(&json!({
         "operation":"execution-trace","executionId":execution_id,
-        "expectedWatermark":query.expected_watermark,"limit":limit,"cursor":query.cursor
+        "expectedWatermark":query.expected_watermark,"limit":limit,"cursor":query.cursor,
+        "nodeExecutionId":query.node_execution_id
     }))
     .map_err(|error| ApiError::unavailable(error.to_string()))?;
     let claims = authorize(&state, &headers, "observability.trace.read", &request_hash).await?;
@@ -696,7 +707,7 @@ async fn execution_trace(
     let query_id = Uuid::now_v7();
     let query_id_text = query_id.to_string();
     let cursor = query.cursor.as_deref().map(parse_span_cursor).transpose()?;
-    let span_query = span_page_sql(cursor.is_some());
+    let span_query = span_page_sql(cursor.is_some(), query.node_execution_id.is_some());
     let mut page_query = state
         .clickhouse_query
         .query(span_query)
@@ -705,6 +716,9 @@ async fn execution_trace(
         .bind(claims.tenant_id)
         .bind(execution_id)
         .bind(claims.tenant_id);
+    if let Some(node_execution_id) = query.node_execution_id {
+        page_query = page_query.bind(node_execution_id);
+    }
     if let Some((started_at, span_id)) = cursor {
         page_query = page_query.bind(timestamp_micros(started_at)?).bind(span_id);
     }
@@ -748,7 +762,7 @@ async fn execution_trace(
         .map_err(|error| ApiError::budget(error.to_string()))?;
         state
             .clickhouse_query
-            .query("SELECT event_id,tenant_id,execution_id,execution_sequence,trace_id,span_id,parent_span_id,event_kind,span_kind,span_name,node_execution_id,attempt_id,agent_run_id,agent_iteration_id,runtime_call_id,sandbox_lease_id,wait_id,workflow_id,application_id,resource_type,resource_id,resource_version,event_type,status,error_code,error_message,duration_ms,input_tokens,output_tokens,cost_micros,attributes_json,content_ref,content_role,content_preview_json,content_hash,occurred_at FROM workflow_trace_events FINAL WHERE tenant_id=? AND execution_id=? AND has(JSONExtract(?, 'Array(String)'),toString(span_id)) AND event_id NOT IN (SELECT event_id FROM trace_ingest_conflicts WHERE tenant_id=?) ORDER BY execution_sequence,event_id")
+            .query("SELECT event_id,tenant_id,execution_id,execution_sequence,trace_id,span_id,parent_span_id,event_kind,span_kind,span_name,node_execution_id,attempt_id,agent_run_id,agent_iteration_id,runtime_call_id,sandbox_lease_id,wait_id,workflow_id,application_id,resource_type,resource_id,resource_version,event_type,status,error_code,error_message,duration_ms,input_tokens,output_tokens,cost_micros,attributes_json,content_ref,content_kind,content_preview_json,content_hash,occurred_at FROM workflow_trace_events FINAL WHERE tenant_id=? AND execution_id=? AND has(JSONExtract(?, 'Array(String)'),toString(span_id)) AND event_id NOT IN (SELECT event_id FROM trace_ingest_conflicts WHERE tenant_id=?) ORDER BY execution_sequence,event_id")
             .with_option("query_id", format!("{query_id_text}-events"))
             .with_option("max_execution_time", "5")
             .bind(claims.tenant_id)
@@ -771,14 +785,23 @@ async fn execution_trace(
         .await
         .map_err(|error| ApiError::unavailable(error.to_string()))?;
     let degraded = has_conflicts(&state, claims.tenant_id, Some(execution_id)).await?;
-    let total_spans = state
+    let total_spans_sql = if query.node_execution_id.is_some() {
+        "SELECT uniqExact(span_id) FROM workflow_trace_events FINAL WHERE tenant_id=? AND execution_id=? AND event_id NOT IN (SELECT event_id FROM trace_ingest_conflicts WHERE tenant_id=?) AND node_execution_id=?"
+    } else {
+        "SELECT uniqExact(span_id) FROM workflow_trace_events FINAL WHERE tenant_id=? AND execution_id=? AND event_id NOT IN (SELECT event_id FROM trace_ingest_conflicts WHERE tenant_id=?)"
+    };
+    let mut total_spans_query = state
         .clickhouse_query
-        .query("SELECT uniqExact(span_id) FROM workflow_trace_events FINAL WHERE tenant_id=? AND execution_id=? AND event_id NOT IN (SELECT event_id FROM trace_ingest_conflicts WHERE tenant_id=?)")
+        .query(total_spans_sql)
         .with_option("query_id", format!("{query_id_text}-count"))
         .with_option("max_execution_time", "5")
         .bind(claims.tenant_id)
         .bind(execution_id)
-        .bind(claims.tenant_id)
+        .bind(claims.tenant_id);
+    if let Some(node_execution_id) = query.node_execution_id {
+        total_spans_query = total_spans_query.bind(node_execution_id);
+    }
+    let total_spans = total_spans_query
         .fetch_one::<u64>()
         .await
         .map_err(|error| ApiError::unavailable(error.to_string()))?;
@@ -805,11 +828,20 @@ async fn execution_trace(
     Ok((StatusCode::OK, Json(trace)).into_response())
 }
 
-fn span_page_sql(has_cursor: bool) -> &'static str {
-    if has_cursor {
-        "SELECT span_id,if(countIf(event_kind='started')>0,minIf(occurred_at,event_kind='started'),min(occurred_at)) started_at FROM workflow_trace_events FINAL WHERE tenant_id=? AND execution_id=? AND event_id NOT IN (SELECT event_id FROM trace_ingest_conflicts WHERE tenant_id=?) GROUP BY span_id HAVING (started_at,span_id)>(fromUnixTimestamp64Micro(?),?) ORDER BY started_at,span_id LIMIT ?"
-    } else {
-        "SELECT span_id,if(countIf(event_kind='started')>0,minIf(occurred_at,event_kind='started'),min(occurred_at)) started_at FROM workflow_trace_events FINAL WHERE tenant_id=? AND execution_id=? AND event_id NOT IN (SELECT event_id FROM trace_ingest_conflicts WHERE tenant_id=?) GROUP BY span_id ORDER BY started_at,span_id LIMIT ?"
+fn span_page_sql(has_cursor: bool, has_node_filter: bool) -> &'static str {
+    match (has_cursor, has_node_filter) {
+        (true, true) => {
+            "SELECT span_id,if(countIf(event_kind='started')>0,minIf(occurred_at,event_kind='started'),min(occurred_at)) started_at FROM workflow_trace_events FINAL WHERE tenant_id=? AND execution_id=? AND event_id NOT IN (SELECT event_id FROM trace_ingest_conflicts WHERE tenant_id=?) AND node_execution_id=? GROUP BY span_id HAVING (started_at,span_id)>(fromUnixTimestamp64Micro(?),?) ORDER BY started_at,span_id LIMIT ?"
+        }
+        (true, false) => {
+            "SELECT span_id,if(countIf(event_kind='started')>0,minIf(occurred_at,event_kind='started'),min(occurred_at)) started_at FROM workflow_trace_events FINAL WHERE tenant_id=? AND execution_id=? AND event_id NOT IN (SELECT event_id FROM trace_ingest_conflicts WHERE tenant_id=?) GROUP BY span_id HAVING (started_at,span_id)>(fromUnixTimestamp64Micro(?),?) ORDER BY started_at,span_id LIMIT ?"
+        }
+        (false, true) => {
+            "SELECT span_id,if(countIf(event_kind='started')>0,minIf(occurred_at,event_kind='started'),min(occurred_at)) started_at FROM workflow_trace_events FINAL WHERE tenant_id=? AND execution_id=? AND event_id NOT IN (SELECT event_id FROM trace_ingest_conflicts WHERE tenant_id=?) AND node_execution_id=? GROUP BY span_id ORDER BY started_at,span_id LIMIT ?"
+        }
+        (false, false) => {
+            "SELECT span_id,if(countIf(event_kind='started')>0,minIf(occurred_at,event_kind='started'),min(occurred_at)) started_at FROM workflow_trace_events FINAL WHERE tenant_id=? AND execution_id=? AND event_id NOT IN (SELECT event_id FROM trace_ingest_conflicts WHERE tenant_id=?) GROUP BY span_id ORDER BY started_at,span_id LIMIT ?"
+        }
     }
 }
 
@@ -955,7 +987,7 @@ async fn trace_span_detail(
     if !claims.execution_ids.contains(&execution_id) {
         return Err(ApiError::unauthorized());
     }
-    let rows = state.clickhouse_query.query("SELECT event_id,tenant_id,execution_id,execution_sequence,trace_id,span_id,parent_span_id,event_kind,span_kind,span_name,node_execution_id,attempt_id,agent_run_id,agent_iteration_id,runtime_call_id,sandbox_lease_id,wait_id,workflow_id,application_id,resource_type,resource_id,resource_version,event_type,status,error_code,error_message,duration_ms,input_tokens,output_tokens,cost_micros,attributes_json,content_ref,content_role,content_preview_json,content_hash,occurred_at FROM workflow_trace_events FINAL WHERE tenant_id=? AND execution_id=? AND span_id=? AND event_id NOT IN (SELECT event_id FROM trace_ingest_conflicts WHERE tenant_id=?) ORDER BY execution_sequence,event_id")
+    let rows = state.clickhouse_query.query("SELECT event_id,tenant_id,execution_id,execution_sequence,trace_id,span_id,parent_span_id,event_kind,span_kind,span_name,node_execution_id,attempt_id,agent_run_id,agent_iteration_id,runtime_call_id,sandbox_lease_id,wait_id,workflow_id,application_id,resource_type,resource_id,resource_version,event_type,status,error_code,error_message,duration_ms,input_tokens,output_tokens,cost_micros,attributes_json,content_ref,content_kind,content_preview_json,content_hash,occurred_at FROM workflow_trace_events FINAL WHERE tenant_id=? AND execution_id=? AND span_id=? AND event_id NOT IN (SELECT event_id FROM trace_ingest_conflicts WHERE tenant_id=?) ORDER BY execution_sequence,event_id")
         .with_option("max_execution_time", "5")
         .bind(claims.tenant_id)
         .bind(execution_id)
@@ -976,37 +1008,29 @@ async fn trace_span_detail(
             "Trace Span was not found",
         )
     })?;
-    let attributes = events
-        .iter()
-        .rev()
-        .find(|event| {
-            event
-                .attributes
-                .as_object()
-                .is_some_and(|value| !value.is_empty())
-        })
-        .map(|event| event.attributes.clone())
-        .unwrap_or_else(|| json!({}));
-    let content = |role: &str| {
-        events
-            .iter()
-            .rev()
-            .find(|event| event.content_role.as_deref() == Some(role))
-            .map(|event| TraceContentV1 {
-                role: role.into(),
-                preview: event.content_preview.clone(),
-                content_ref: event.content_ref,
-            })
-    };
+    let contents = trace_contents(&events);
     Ok(Json(TraceSpanDetailV1 {
         api_version: 1,
         execution_id,
         span,
-        attributes,
-        input: content("input"),
-        output: content("output"),
+        contents,
         events,
     }))
+}
+
+fn trace_contents(events: &[TraceEventEnvelopeV1]) -> Vec<TraceContentV1> {
+    events
+        .iter()
+        .filter_map(|event| {
+            event.content_kind.map(|kind| TraceContentV1 {
+                event_id: event.event_id,
+                kind,
+                preview: event.content_preview.clone(),
+                content_ref: event.content_ref,
+                occurred_at: event.occurred_at,
+            })
+        })
+        .collect()
 }
 
 async fn search_traces(
@@ -1032,7 +1056,7 @@ async fn search_traces(
     let statuses = serde_json::to_string(&request.statuses)
         .map_err(|error| ApiError::budget(error.to_string()))?;
     let query_id_text = query_id.to_string();
-    let query_result = tokio::time::timeout(Duration::from_secs(5), state.clickhouse_query.query("SELECT event_id,tenant_id,execution_id,execution_sequence,trace_id,span_id,parent_span_id,event_kind,span_kind,span_name,node_execution_id,attempt_id,agent_run_id,agent_iteration_id,runtime_call_id,sandbox_lease_id,wait_id,workflow_id,application_id,resource_type,resource_id,resource_version,event_type,status,error_code,error_message,duration_ms,input_tokens,output_tokens,cost_micros,attributes_json,content_ref,content_role,content_preview_json,content_hash,occurred_at FROM workflow_trace_events FINAL WHERE tenant_id=? AND occurred_at>=fromUnixTimestamp64Micro(?) AND occurred_at<=fromUnixTimestamp64Micro(?) AND (? IS NULL OR execution_id=?) AND (JSONLength(?)=0 OR has(JSONExtract(?, 'Array(String)'),event_type)) AND (JSONLength(?)=0 OR has(JSONExtract(?, 'Array(String)'),status)) AND event_id NOT IN (SELECT event_id FROM trace_ingest_conflicts WHERE tenant_id=?) ORDER BY occurred_at,event_id LIMIT ?")
+    let query_result = tokio::time::timeout(Duration::from_secs(5), state.clickhouse_query.query("SELECT event_id,tenant_id,execution_id,execution_sequence,trace_id,span_id,parent_span_id,event_kind,span_kind,span_name,node_execution_id,attempt_id,agent_run_id,agent_iteration_id,runtime_call_id,sandbox_lease_id,wait_id,workflow_id,application_id,resource_type,resource_id,resource_version,event_type,status,error_code,error_message,duration_ms,input_tokens,output_tokens,cost_micros,attributes_json,content_ref,content_kind,content_preview_json,content_hash,occurred_at FROM workflow_trace_events FINAL WHERE tenant_id=? AND occurred_at>=fromUnixTimestamp64Micro(?) AND occurred_at<=fromUnixTimestamp64Micro(?) AND (? IS NULL OR execution_id=?) AND (JSONLength(?)=0 OR has(JSONExtract(?, 'Array(String)'),event_type)) AND (JSONLength(?)=0 OR has(JSONExtract(?, 'Array(String)'),status)) AND event_id NOT IN (SELECT event_id FROM trace_ingest_conflicts WHERE tenant_id=?) ORDER BY occurred_at,event_id LIMIT ?")
         .with_option("query_id", &query_id_text)
         .with_option("max_execution_time", "5")
         .bind(request.tenant_id).bind(timestamp_micros(request.from)?).bind(timestamp_micros(request.to)?).bind(request.execution_id).bind(request.execution_id).bind(&event_types).bind(&event_types).bind(&statuses).bind(&statuses).bind(request.tenant_id).bind(request.limit).fetch_all::<TraceRow>()).await;

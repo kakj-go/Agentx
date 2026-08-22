@@ -51,6 +51,8 @@ describe('resource page uniqueness field errors', () => {
     const form = await screen.findByRole('dialog')
     fireEvent.change(within(form).getByLabelText('连接名称'), { target: { value: 'connection' } })
     fireEvent.change(within(form).getByLabelText('Endpoint'), { target: { value: 'https://example.test/v1' } })
+    fireEvent.change(within(form).getByLabelText('输入单价/百万 Token'), { target: { value: '1' } })
+    fireEvent.change(within(form).getByLabelText('输出单价/百万 Token'), { target: { value: '2' } })
     choose(form, '所属部门', '公司')
     fireEvent.click(within(form).getByRole('button', { name: '保存' }))
     const input = await within(form).findByLabelText('模型名称')

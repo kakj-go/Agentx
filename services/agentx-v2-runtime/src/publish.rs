@@ -1,7 +1,8 @@
 use agentx_runtime_contracts::{
-    ActivateDeploymentRequestV1, AdmissionStatusV1, AdmissionTargetV1, ApplyReceiptV1,
-    DisableDeploymentRequestV1, PrepareBundleRequestV1, PublishReceiptStatusV1, PublishReceiptV1,
-    RollbackDeploymentRequestV1, RuntimeAdmissionCommandV1, RuntimePublishErrorCodeV1,
+    ActivateDeploymentRequestV1, AdmissionStatusV1, AdmissionTargetV1, ApplyChatMappingReceiptV1,
+    ApplyChatMappingRequestV1, ApplyReceiptV1, DisableDeploymentRequestV1, PrepareBundleRequestV1,
+    PublishReceiptStatusV1, PublishReceiptV1, RollbackDeploymentRequestV1,
+    RuntimeAdmissionCommandV1, RuntimePublishErrorCodeV1,
 };
 use axum::{Json, extract::State, http::HeaderMap};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
@@ -15,6 +16,85 @@ use crate::{
     RuntimeState,
     error::{RuntimeError, RuntimeResult},
 };
+
+pub async fn apply_chat_mapping(
+    State(state): State<RuntimeState>,
+    headers: HeaderMap,
+    Json(request): Json<ApplyChatMappingRequestV1>,
+) -> RuntimeResult<Json<ApplyChatMappingReceiptV1>> {
+    state
+        .trust
+        .publisher(&headers, "runtime.chat_mappings.apply")?;
+    let expected_hash = agentx_runtime_contracts::content_hash(&request.mapping)
+        .map_err(|error| RuntimeError::Internal(error.into()))?;
+    if expected_hash != request.content_hash {
+        return Err(RuntimeError::BadRequest(
+            RuntimePublishErrorCodeV1::ContentHashMismatch,
+            "Chat Mapping Content Hash does not match".into(),
+        ));
+    }
+    let mut tx = state.pool.begin().await?;
+    let bundle = sqlx::query("SELECT application_id,deployment_id FROM deployment_bundles WHERE tenant_id=? AND id=? AND status IN ('active','superseded','retained') FOR SHARE")
+        .bind(request.tenant_id)
+        .bind(request.bundle_id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or(RuntimeError::NotFound)?;
+    if bundle.try_get::<Uuid, _>("application_id")? != request.application_id
+        || bundle.try_get::<Uuid, _>("deployment_id")? != request.deployment_id
+    {
+        return Err(RuntimeError::Unauthorized);
+    }
+    let existing = sqlx::query("SELECT version,content_hash FROM application_chat_mappings WHERE tenant_id=? AND deployment_id=? FOR UPDATE")
+        .bind(request.tenant_id)
+        .bind(request.deployment_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+    if let Some(existing) = existing {
+        let version: u64 = existing.try_get("version")?;
+        let content_hash: String = existing.try_get("content_hash")?;
+        if version > request.version {
+            return Err(RuntimeError::Conflict(
+                RuntimePublishErrorCodeV1::HeadVersionConflict,
+                "A newer Chat Mapping is already active".into(),
+            ));
+        }
+        if version == request.version {
+            if content_hash != request.content_hash.as_str() {
+                return Err(RuntimeError::Conflict(
+                    RuntimePublishErrorCodeV1::IdempotencyConflict,
+                    "Chat Mapping Version was reused with different content".into(),
+                ));
+            }
+            tx.commit().await?;
+            return Ok(Json(ApplyChatMappingReceiptV1 {
+                api_version: 1,
+                deployment_id: request.deployment_id,
+                bundle_id: request.bundle_id,
+                version: request.version,
+                replayed: true,
+            }));
+        }
+    }
+    sqlx::query("INSERT INTO application_chat_mappings(tenant_id,application_id,deployment_id,bundle_id,version,mapping_json,content_hash) VALUES(?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE application_id=VALUES(application_id),bundle_id=VALUES(bundle_id),version=VALUES(version),mapping_json=VALUES(mapping_json),content_hash=VALUES(content_hash)")
+        .bind(request.tenant_id)
+        .bind(request.application_id)
+        .bind(request.deployment_id)
+        .bind(request.bundle_id)
+        .bind(request.version)
+        .bind(serde_json::to_value(&request.mapping).map_err(|error| RuntimeError::Internal(error.into()))?)
+        .bind(request.content_hash.as_str())
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(Json(ApplyChatMappingReceiptV1 {
+        api_version: 1,
+        deployment_id: request.deployment_id,
+        bundle_id: request.bundle_id,
+        version: request.version,
+        replayed: false,
+    }))
+}
 
 pub async fn prepare_bundle(
     State(state): State<RuntimeState>,
@@ -359,8 +439,8 @@ async fn apply_admission_inner(
         AdmissionTargetV1::ApiKey { state: key } => {
             ensure_tenant(tenant_id, key.tenant_id)?;
             let hash = parse_sha256(&key.secret_hash)?;
-            sqlx::query("INSERT INTO api_key_admission(key_id,tenant_id,application_id,key_prefix,secret_hash,admission_epoch,status,expires_at) VALUES(?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE key_prefix=IF(admission_epoch<=VALUES(admission_epoch),VALUES(key_prefix),key_prefix),secret_hash=IF(admission_epoch<=VALUES(admission_epoch),VALUES(secret_hash),secret_hash),status=IF(admission_epoch<=VALUES(admission_epoch),VALUES(status),status),expires_at=IF(admission_epoch<=VALUES(admission_epoch),VALUES(expires_at),expires_at),admission_epoch=GREATEST(admission_epoch,VALUES(admission_epoch))")
-                .bind(key.key_id).bind(key.tenant_id).bind(key.application_id).bind(&key.key_prefix).bind(hash).bind(request.admission_epoch).bind(if key.status == AdmissionStatusV1::Active { "active" } else { "revoked" }).bind(key.expires_at).execute(&mut *tx).await?;
+            sqlx::query("INSERT INTO api_key_admission(key_id,tenant_id,application_id,key_prefix,key_name,secret_hash,admission_epoch,status,expires_at) VALUES(?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE key_prefix=IF(admission_epoch<=VALUES(admission_epoch),VALUES(key_prefix),key_prefix),key_name=IF(admission_epoch<=VALUES(admission_epoch),VALUES(key_name),key_name),secret_hash=IF(admission_epoch<=VALUES(admission_epoch),VALUES(secret_hash),secret_hash),status=IF(admission_epoch<=VALUES(admission_epoch),VALUES(status),status),expires_at=IF(admission_epoch<=VALUES(admission_epoch),VALUES(expires_at),expires_at),admission_epoch=GREATEST(admission_epoch,VALUES(admission_epoch))")
+                .bind(key.key_id).bind(key.tenant_id).bind(key.application_id).bind(&key.key_prefix).bind(&key.key_name).bind(hash).bind(request.admission_epoch).bind(if key.status == AdmissionStatusV1::Active { "active" } else { "revoked" }).bind(key.expires_at).execute(&mut *tx).await?;
         }
         AdmissionTargetV1::ServiceIdentity { state: identity } => {
             ensure_tenant(tenant_id, identity.tenant_id)?;
@@ -374,8 +454,8 @@ async fn apply_admission_inner(
         }
         AdmissionTargetV1::RuntimeUser { state: user } => {
             ensure_tenant(tenant_id, user.tenant_id)?;
-            sqlx::query("INSERT INTO runtime_user_admission(tenant_id,user_id,token_version,status,tenant_query_enabled,admission_epoch) VALUES(?,?,?,?,?,?) ON DUPLICATE KEY UPDATE token_version=IF(admission_epoch<=VALUES(admission_epoch),VALUES(token_version),token_version),status=IF(admission_epoch<=VALUES(admission_epoch),VALUES(status),status),tenant_query_enabled=IF(admission_epoch<=VALUES(admission_epoch),VALUES(tenant_query_enabled),tenant_query_enabled),admission_epoch=GREATEST(admission_epoch,VALUES(admission_epoch))")
-                .bind(user.tenant_id).bind(user.user_id).bind(user.token_version).bind(if user.enabled{"active"}else{"disabled"}).bind(user.tenant_query_enabled).bind(request.admission_epoch).execute(&mut *tx).await?;
+            sqlx::query("INSERT INTO runtime_user_admission(tenant_id,user_id,user_name,department_id,department_name,token_version,status,tenant_query_enabled,admission_epoch) VALUES(?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE user_name=IF(admission_epoch<=VALUES(admission_epoch),VALUES(user_name),user_name),department_id=IF(admission_epoch<=VALUES(admission_epoch),VALUES(department_id),department_id),department_name=IF(admission_epoch<=VALUES(admission_epoch),VALUES(department_name),department_name),token_version=IF(admission_epoch<=VALUES(admission_epoch),VALUES(token_version),token_version),status=IF(admission_epoch<=VALUES(admission_epoch),VALUES(status),status),tenant_query_enabled=IF(admission_epoch<=VALUES(admission_epoch),VALUES(tenant_query_enabled),tenant_query_enabled),admission_epoch=GREATEST(admission_epoch,VALUES(admission_epoch))")
+                .bind(user.tenant_id).bind(user.user_id).bind(&user.user_name).bind(user.department_id).bind(&user.department_name).bind(user.token_version).bind(if user.enabled{"active"}else{"disabled"}).bind(user.tenant_query_enabled).bind(request.admission_epoch).execute(&mut *tx).await?;
         }
         AdmissionTargetV1::RuntimeUserApplicationGrant { state: grant } => {
             ensure_tenant(tenant_id, grant.tenant_id)?;
@@ -424,7 +504,7 @@ async fn apply_admission_inner(
             }
         }
         AdmissionTargetV1::ApprovalDecision { state: decision } => {
-            let task = sqlx::query("SELECT execution_id,node_execution_id,status,version,decision_idempotency_key FROM approval_tasks WHERE tenant_id=? AND id=? FOR UPDATE")
+            let task = sqlx::query("SELECT execution_id,node_execution_id,status,version,decision_idempotency_key,request_payload_json FROM approval_tasks WHERE tenant_id=? AND id=? FOR UPDATE")
                 .bind(tenant_id).bind(decision.task_id).fetch_optional(&mut *tx).await?.ok_or(RuntimeError::NotFound)?;
             if task.try_get::<u64, _>("version")? != decision.task_version {
                 return Err(RuntimeError::Conflict(
@@ -442,7 +522,7 @@ async fn apply_admission_inner(
                 decision.decision == agentx_runtime_contracts::ApprovalDecisionValueV1::Approved;
             let execution_id: Uuid = task.try_get("execution_id")?;
             let node_execution_id: Uuid = task.try_get("node_execution_id")?;
-            let decision_result = json!({"taskId":decision.task_id,"decision":decision.decision,"decidedBy":decision.decided_by,"reason":decision.reason});
+            let decision_result = json!({"taskId":decision.task_id,"decision":decision.decision,"decidedBy":decision.decided_by,"reason":decision.reason,"input":task.try_get::<Option<Value>,_>("request_payload_json")?.unwrap_or(Value::Null)});
             sqlx::query("UPDATE approval_tasks SET status=?,version=version+1,decision_idempotency_key=?,decision_receipt_json=?,decided_by=?,decision_reason=?,decided_at=UTC_TIMESTAMP(6),resume_status='pending' WHERE tenant_id=? AND id=? AND version=? AND status='pending'")
                 .bind(if approved{"approved"}else{"rejected"}).bind(&request.command.idempotency_key).bind(&decision_result).bind(decision.decided_by).bind(&decision.reason).bind(tenant_id).bind(decision.task_id).bind(decision.task_version).execute(&mut *tx).await?;
             sqlx::query("INSERT INTO runtime_commands(id,tenant_id,command_type,aggregate_type,aggregate_id,idempotency_key,payload_json,status) VALUES(?,?,'resume_execution','execution',?,?,?,'pending')")
@@ -527,7 +607,7 @@ async fn apply_approval_action(
 ) -> RuntimeResult<()> {
     use agentx_runtime_contracts::ApprovalActionValueV1;
 
-    let task = sqlx::query("SELECT execution_id,node_execution_id,status,claimed_by,deadline_at,version FROM approval_tasks WHERE tenant_id=? AND id=? FOR UPDATE")
+    let task = sqlx::query("SELECT execution_id,node_execution_id,status,claimed_by,deadline_at,version,request_payload_json FROM approval_tasks WHERE tenant_id=? AND id=? FOR UPDATE")
         .bind(tenant_id)
         .bind(action.task_id)
         .fetch_optional(&mut **tx)
@@ -582,7 +662,10 @@ async fn apply_approval_action(
         ApprovalActionValueV1::Release => None,
         _ => claimed_by,
     };
-    let decision = approval_action_result(action);
+    let original_input = task
+        .try_get::<Option<Value>, _>("request_payload_json")?
+        .unwrap_or(Value::Null);
+    let decision = approval_action_result(action, &original_input);
     let changed = sqlx::query("UPDATE approval_tasks SET status=?,claimed_by=?,claimed_at=IF(?='claimed',UTC_TIMESTAMP(6),NULL),version=version+1,decision_idempotency_key=IF(? IN ('approved','rejected'),?,decision_idempotency_key),decision_receipt_json=IF(? IN ('approved','rejected'),?,decision_receipt_json),decided_by=IF(? IN ('approved','rejected'),?,decided_by),decided_at=IF(? IN ('approved','rejected'),UTC_TIMESTAMP(6),decided_at),resume_status=IF(? IN ('approved','rejected'),'pending',resume_status) WHERE tenant_id=? AND id=? AND version=?")
         .bind(target_status)
         .bind(next_claimed_by)
@@ -629,6 +712,7 @@ async fn apply_approval_action(
 
 fn approval_action_result(
     action: &agentx_runtime_contracts::RuntimeApprovalActionV1,
+    original_input: &Value,
 ) -> Option<Value> {
     use agentx_runtime_contracts::{ApprovalActionValueV1, ApprovalDecisionValueV1};
 
@@ -640,9 +724,9 @@ fn approval_action_result(
     Some(json!({
         "taskId": action.task_id,
         "decision": decision,
-        "action": action.action,
         "decidedBy": action.actor_id,
-        "input": action.input,
+        "reason": action.input.as_ref().and_then(|input| input.get("reason").or_else(|| input.get("comment"))).cloned().unwrap_or(Value::Null),
+        "input": original_input,
     }))
 }
 
@@ -1369,7 +1453,7 @@ fn code_string(code: RuntimePublishErrorCodeV1) -> String {
 #[cfg(test)]
 mod tests {
     use agentx_runtime_contracts::{ApprovalActionValueV1, RuntimeApprovalActionV1};
-    use serde_json::json;
+    use serde_json::{Value, json};
     use uuid::Uuid;
 
     use super::approval_action_result;
@@ -1378,33 +1462,40 @@ mod tests {
     fn approval_action_result_uses_the_frozen_decision_output_shape() {
         let task_id = Uuid::now_v7();
         let actor_id = Uuid::now_v7();
-        let approved = approval_action_result(&RuntimeApprovalActionV1 {
-            task_id,
-            task_version: 2,
-            action: ApprovalActionValueV1::Approve,
-            actor_id,
-            target_user_id: None,
-            input: Some(json!({"comment":"ship it"})),
-        })
+        let original_input = json!({"request":"deploy"});
+        let approved = approval_action_result(
+            &RuntimeApprovalActionV1 {
+                task_id,
+                task_version: 2,
+                action: ApprovalActionValueV1::Approve,
+                actor_id,
+                target_user_id: None,
+                input: Some(json!({"comment":"ship it"})),
+            },
+            &original_input,
+        )
         .expect("approve is a decision");
 
         assert_eq!(approved["taskId"], json!(task_id));
         assert_eq!(approved["decision"], "approved");
-        assert_eq!(approved["action"], "approve");
         assert_eq!(approved["decidedBy"], json!(actor_id));
-        assert_eq!(approved["input"], json!({"comment":"ship it"}));
+        assert_eq!(approved["reason"], "ship it");
+        assert_eq!(approved["input"], original_input);
 
-        let rejected = approval_action_result(&RuntimeApprovalActionV1 {
-            task_id,
-            task_version: 3,
-            action: ApprovalActionValueV1::Reject,
-            actor_id,
-            target_user_id: None,
-            input: None,
-        })
+        let rejected = approval_action_result(
+            &RuntimeApprovalActionV1 {
+                task_id,
+                task_version: 3,
+                action: ApprovalActionValueV1::Reject,
+                actor_id,
+                target_user_id: None,
+                input: None,
+            },
+            &json!({"request":"reject"}),
+        )
         .expect("reject is a decision");
         assert_eq!(rejected["decision"], "rejected");
-        assert_eq!(rejected["action"], "reject");
+        assert!(rejected["reason"].is_null());
     }
 
     #[test]
@@ -1417,6 +1508,6 @@ mod tests {
             target_user_id: None,
             input: None,
         };
-        assert!(approval_action_result(&action).is_none());
+        assert!(approval_action_result(&action, &Value::Null).is_none());
     }
 }

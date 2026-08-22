@@ -1,14 +1,15 @@
 use super::{
-    WorkerExecution, effective_agent_budget, execute_builtin_node, mcp_tool_binding,
-    openai_chat_completions_endpoint, openai_execution_output, provider_secret_header,
-    provider_usage_detail, runtime_call_fingerprint, runtime_call_is_replayable,
-    sandbox_execution_output,
+    WorkerExecution, declarative_http_request, effective_agent_budget, mcp_arguments,
+    mcp_tool_binding, openai_chat_completions_endpoint, openai_execution_output,
+    provider_secret_header, provider_usage_detail, runtime_call_fingerprint,
+    runtime_call_is_replayable, sandbox_execution_output, system_prompt,
 };
 use agentx_runtime_contracts::{
     ContentHash, RuntimeResourceBindingV1, RuntimeResourceConfigurationV1, RuntimeResourceKindV1,
     WorkerResultStatusV1,
 };
 use serde_json::json;
+use std::collections::{BTreeMap, BTreeSet};
 use uuid::Uuid;
 
 #[tokio::test]
@@ -61,18 +62,38 @@ fn mcp_server_closure_never_shadows_the_executable_tool_binding() {
 }
 
 #[test]
+fn standalone_mcp_uses_resolved_arguments_instead_of_node_input() {
+    assert_eq!(
+        mcp_arguments(&json!({"arguments":{"city":"杭州","days":2}})),
+        json!({"city":"杭州","days":2})
+    );
+    assert_eq!(mcp_arguments(&json!({})), json!({}));
+}
+
+#[test]
+fn declarative_http_parameters_build_the_actual_request() {
+    assert_eq!(
+        declarative_http_request(
+            &json!({"method":"PATCH","headers":{"x-agentx":"contract"},"body":{"enabled":true}}),
+            Some(json!({"ignored":"input"})),
+        ),
+        json!({"method":"PATCH","headers":{"x-agentx":"contract"},"body":{"enabled":true}})
+    );
+}
+
+#[test]
 fn current_agent_manifest_budget_fields_override_defaults() {
     assert_eq!(
         effective_agent_budget(
             &json!({"maxIterations":3,"maxTotalTokens":1000,"maxCostMicros":1000})
         ),
-        json!({"maxIterations":3,"maxTokens":1000,"maxCostMicros":1000})
+        json!({"maxIterations":3,"maxModelCalls":12,"maxToolCalls":32,"maxTokens":1000,"maxOutputTokens":4096,"maxCostMicros":1000,"maxDurationMs":300000,"limitAction":"error_output"})
     );
 }
 
 #[test]
 fn stop_and_error_is_a_failed_worker_result_with_frozen_parameters() {
-    let result = execute_builtin_node(
+    let result = super::builtin::execute_single(
         "stop_and_error",
         &json!({"code":"EXPECTED_STOP","message":"expected message"}),
         json!({"ignored":true}),
@@ -84,7 +105,7 @@ fn stop_and_error_is_a_failed_worker_result_with_frozen_parameters() {
 
 #[test]
 fn set_builtin_uses_resolved_values_and_keep_only_set() {
-    let result = execute_builtin_node(
+    let result = super::builtin::execute_single(
         "set",
         &json!({"values":{"answer":"resolved"},"keepOnlySet":true}),
         json!({"input":"not copied"}),
@@ -99,7 +120,7 @@ fn explicit_nested_agent_budget_takes_precedence() {
         effective_agent_budget(
             &json!({"budget":{"maxIterations":4,"maxTokens":2000,"maxCostMicros":3000},"maxIterations":2,"maxTotalTokens":500,"maxCostMicros":700})
         ),
-        json!({"maxIterations":4,"maxTokens":2000,"maxCostMicros":3000})
+        json!({"maxIterations":4,"maxModelCalls":12,"maxToolCalls":32,"maxTokens":2000,"maxOutputTokens":4096,"maxCostMicros":3000,"maxDurationMs":300000,"limitAction":"error_output"})
     );
 }
 
@@ -136,7 +157,7 @@ fn sandbox_manager_envelope_is_not_exposed_as_node_output() {
     assert_eq!(execution.status, WorkerResultStatusV1::Succeeded);
     assert_eq!(
         execution.outputs["main"][0].json,
-        json!({"stdout":"agentx-v2-04","exitCode":0})
+        json!({"stdout":"agentx-v2-04","stderr":"","exitCode":0,"structuredOutput":null,"files":[],"partial":false})
     );
 }
 
@@ -149,6 +170,22 @@ fn openai_compatible_endpoint_targets_chat_completions_once() {
     assert_eq!(
         openai_chat_completions_endpoint("https://provider.example/v1/chat/completions/"),
         "https://provider.example/v1/chat/completions"
+    );
+}
+
+#[test]
+fn model_prompt_and_agent_system_prompt_use_their_manifest_names() {
+    assert_eq!(
+        system_prompt(&json!({"prompt":"你叫 kakj"}), "model"),
+        Some("你叫 kakj")
+    );
+    assert_eq!(
+        system_prompt(&json!({"systemPrompt":"agent rules"}), "agent"),
+        Some("agent rules")
+    );
+    assert_eq!(
+        system_prompt(&json!({"prompt":"wrong field"}), "agent"),
+        None
     );
 }
 
@@ -179,7 +216,7 @@ fn openai_tool_call_is_normalized_for_the_agent_loop() {
     ));
     assert_eq!(
         execution.outputs["main"][0].json,
-        json!({"toolCall":{"text":"hello"},"usage":{"inputTokens":11,"outputTokens":7,"tokens":18,"costMicros":0}})
+        json!({"toolCall":{"text":"hello"},"usage":{"inputTokens":11,"outputTokens":7,"totalTokens":18,"costMicros":0}})
     );
 }
 
@@ -190,7 +227,7 @@ fn openai_model_output_matches_the_manifest_contract() {
     ));
     assert_eq!(
         execution.outputs["main"][0].json,
-        json!({"text":"complete","message":{"role":"assistant","content":"complete"},"reasoningContent":null,"structuredOutput":null,"citations":[],"toolCalls":[],"files":[],"usage":{"inputTokens":5,"outputTokens":3,"tokens":8,"costMicros":0},"finishReason":null,"partial":false})
+        json!({"text":"complete","reasoningContent":null,"structuredOutput":null,"citations":[],"files":[],"usage":{"inputTokens":5,"outputTokens":3,"totalTokens":8,"costMicros":0},"finishReason":null,"partial":false})
     );
 }
 
@@ -206,4 +243,119 @@ fn provider_usage_detail_accepts_raw_and_normalized_token_names() {
         provider_usage_detail(&json!({"usage":{"inputTokens":11,"outputTokens":4,"costMicros":9}})),
         (11, 4, 9)
     );
+}
+
+#[test]
+fn every_registered_manifest_parameter_has_an_explicit_runtime_consumer() {
+    let runtime_consumers: BTreeMap<&str, &[&str]> = BTreeMap::from([
+        ("set", &["values", "keepOnlySet"][..]),
+        ("error_handler", &["mode"]),
+        ("if", &["condition"]),
+        ("switch", &["rules", "sendToAllMatches"]),
+        (
+            "merge",
+            &[
+                "mode",
+                "leftField",
+                "rightField",
+                "joinType",
+                "conflictStrategy",
+            ],
+        ),
+        ("loop_over_items", &[]),
+        (
+            "wait",
+            &[
+                "kind",
+                "durationMs",
+                "resumeAt",
+                "timeoutAt",
+                "payloadSchema",
+                "authenticationMode",
+            ],
+        ),
+        (
+            "approval",
+            &[
+                "title",
+                "description",
+                "candidateUserId",
+                "timeoutMs",
+                "timeoutAt",
+            ],
+        ),
+        ("sub_workflow", &["workflowVersionId"]),
+        ("declarative_http", &["method", "url", "headers", "body"]),
+        ("remote_action", &["endpoint"]),
+        ("model", &["prompt", "userQuestion"]),
+        ("mcp_tool", &["arguments"]),
+        ("skill", &["resourceId"]),
+        ("rag", &["operation", "input"]),
+        ("memory", &["operation", "input"]),
+        (
+            "agent",
+            &[
+                "systemPrompt",
+                "userQuestion",
+                "maxIterations",
+                "maxModelCalls",
+                "maxToolCalls",
+                "maxTotalTokens",
+                "maxOutputTokens",
+                "maxCostMicros",
+                "maxDurationMs",
+                "limitAction",
+            ],
+        ),
+        ("code", &["runner", "source", "arguments", "networkPolicy"]),
+        ("filter", &["condition"]),
+        ("limit", &["maxItems", "keep"]),
+        ("sort", &["fields"]),
+        ("remove_duplicates", &["fields", "keep"]),
+        ("split_out", &["field"]),
+        ("aggregate", &["groupBy", "operations"]),
+        ("rename_fields", &["mappings", "missingField"]),
+        ("json_transform", &["operation", "field", "outputField"]),
+        ("no_op", &[]),
+        ("stop_and_error", &["code", "message"]),
+        (
+            "item_generator",
+            &["items", "start", "end", "step", "field"],
+        ),
+        (
+            "date_time",
+            &[
+                "operation",
+                "field",
+                "outputField",
+                "format",
+                "amount",
+                "unit",
+                "compareTo",
+            ],
+        ),
+        ("base64", &["operation", "field", "outputField"]),
+        ("hash", &["algorithm", "encoding", "field", "outputField"]),
+        ("compare_datasets", &["keyFields"]),
+        ("structured_validator", &["schema", "mode"]),
+    ]);
+    let registry = agentx_runtime::NodeRegistry::m5_defaults();
+    assert_eq!(registry.manifests().count(), runtime_consumers.len());
+    for manifest in registry.manifests() {
+        let declared = manifest.parameter_schema["properties"]
+            .as_object()
+            .map(|properties| properties.keys().map(String::as_str).collect())
+            .unwrap_or_else(BTreeSet::new);
+        let consumed = runtime_consumers
+            .get(manifest.node_type.as_str())
+            .unwrap_or_else(|| panic!("{} has no runtime consumer ownership", manifest.node_type))
+            .iter()
+            .copied()
+            .collect::<BTreeSet<_>>();
+        assert_eq!(
+            declared, consumed,
+            "{} parameter ownership drifted",
+            manifest.node_type
+        );
+    }
 }

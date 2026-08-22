@@ -1,5 +1,6 @@
 use agentx_runtime_contracts::{
-    TraceEventEnvelopeV1, TraceEventKindV1, TraceSpanKindV1, content_hash, deterministic_uuid,
+    TraceContentKindV1, TraceEventEnvelopeV1, TraceEventKindV1, TraceSpanKindV1, content_hash,
+    deterministic_uuid,
 };
 use redis::{AsyncCommands, aio::ConnectionManager};
 use serde_json::{Value, json};
@@ -39,7 +40,7 @@ pub struct TraceDraft {
     pub error_message: Option<String>,
     pub attributes: Value,
     pub content_ref: Option<Uuid>,
-    pub content_role: Option<String>,
+    pub content_kind: Option<TraceContentKindV1>,
     pub content_preview: Option<Value>,
     pub occurred_at: OffsetDateTime,
 }
@@ -91,7 +92,7 @@ impl TraceDraft {
             error_message: None,
             attributes: json!({}),
             content_ref: None,
-            content_role: None,
+            content_kind: None,
             content_preview: None,
             occurred_at: OffsetDateTime::now_utc(),
         }
@@ -122,6 +123,7 @@ impl TraceDraft {
 pub fn trace_span_id(entity_id: Uuid, kind: TraceSpanKindV1) -> Uuid {
     let kind = match kind {
         TraceSpanKindV1::Execution => "execution",
+        TraceSpanKindV1::Boundary => "boundary",
         TraceSpanKindV1::Node => "node",
         TraceSpanKindV1::Attempt => "attempt",
         TraceSpanKindV1::AgentRun => "agent_run",
@@ -131,6 +133,13 @@ pub fn trace_span_id(entity_id: Uuid, kind: TraceSpanKindV1) -> Uuid {
         TraceSpanKindV1::Wait => "wait",
     };
     deterministic_uuid(entity_id, format!("agentx-trace-span-v1:{kind}").as_bytes())
+}
+
+pub fn boundary_entity_id(execution_id: Uuid, boundary: &str) -> Uuid {
+    deterministic_uuid(
+        execution_id,
+        format!("agentx-trace-boundary-v1:{boundary}").as_bytes(),
+    )
 }
 
 pub fn bounded_preview(value: &Value) -> Option<Value> {
@@ -147,12 +156,17 @@ fn redact_preview(value: &mut Value) {
         Value::Object(fields) => {
             for (key, value) in fields {
                 let normalized = key.to_ascii_lowercase().replace(['-', '_'], "");
-                if normalized.contains("password")
-                    || normalized.contains("secret")
-                    || normalized.contains("token")
-                    || normalized.contains("authorization")
-                    || normalized.contains("apikey")
-                    || normalized.contains("credential")
+                let usage_counter = matches!(
+                    normalized.as_str(),
+                    "inputtokens" | "outputtokens" | "totaltokens" | "maxtokens"
+                );
+                if !usage_counter
+                    && (normalized.contains("password")
+                        || normalized.contains("secret")
+                        || normalized.contains("token")
+                        || normalized.contains("authorization")
+                        || normalized.contains("apikey")
+                        || normalized.contains("credential"))
                 {
                     *value = Value::String("[REDACTED]".into());
                 } else {
@@ -245,7 +259,7 @@ pub async fn enqueue(tx: &mut Transaction<'_, MySql>, draft: TraceDraft) -> Runt
         "outputTokens":draft.output_tokens,"costMicros":draft.cost_micros,
         "errorCode":draft.error_code,"errorMessage":draft.error_message,
         "attributes":draft.attributes,
-        "contentRef":draft.content_ref,"contentRole":draft.content_role,
+        "contentRef":draft.content_ref,"contentKind":draft.content_kind,
         "contentPreview":draft.content_preview,"occurredAt":occurred_at
     });
     let hash = content_hash(&unsigned).map_err(|error| RuntimeError::Internal(error.into()))?;
@@ -287,7 +301,7 @@ pub async fn enqueue(tx: &mut Transaction<'_, MySql>, draft: TraceDraft) -> Runt
         error_message: draft.error_message,
         attributes: draft.attributes,
         content_ref: draft.content_ref,
-        content_role: draft.content_role,
+        content_kind: draft.content_kind,
         content_preview: draft.content_preview,
         occurred_at,
         content_hash: hash.clone(),
@@ -450,13 +464,18 @@ mod tests {
         let preview = bounded_preview(&json!({
             "authorization":"Bearer value",
             "nested":{"api_key":"value","safe":"visible"},
-            "items":[{"password":"value"}]
+            "items":[{"password":"value"}],
+            "usage":{"input_tokens":12,"outputTokens":8,"total_tokens":20,"maxTokens":100}
         }))
         .unwrap();
         assert_eq!(preview["authorization"], "[REDACTED]");
         assert_eq!(preview["nested"]["api_key"], "[REDACTED]");
         assert_eq!(preview["nested"]["safe"], "visible");
         assert_eq!(preview["items"][0]["password"], "[REDACTED]");
+        assert_eq!(preview["usage"]["input_tokens"], 12);
+        assert_eq!(preview["usage"]["outputTokens"], 8);
+        assert_eq!(preview["usage"]["total_tokens"], 20);
+        assert_eq!(preview["usage"]["maxTokens"], 100);
         assert!(bounded_preview(&json!({"value":"x".repeat(17 * 1024)})).is_none());
     }
 }

@@ -108,6 +108,7 @@ pub struct UserAccessClaimsV1 {
     pub tenant_id: Uuid,
     pub token_version: u64,
     pub kind: String,
+    pub origin: crate::ExecutionOriginV1,
     pub iat: i64,
     pub exp: i64,
     pub jti: Uuid,

@@ -48,7 +48,7 @@ pub(crate) async fn create_child(
     }
     .ok_or_else(|| invalid("COMPOSITE_SNAPSHOT_MISSING", "Composite Definition and IR were not materialized during Prepare"))?;
     let parent = sqlx::query(
-        "SELECT e.application_id,e.admission_epoch,s.resource_snapshot_json,s.authorization_snapshot_json,s.policy_snapshot_json,s.worker_compatibility_json,s.object_manifest_json,s.runtime_settings_json FROM workflow_executions e JOIN execution_snapshots s ON s.tenant_id=e.tenant_id AND s.execution_id=e.id WHERE e.tenant_id=? AND e.id=?",
+        "SELECT e.application_id,e.admission_epoch,e.initiator_user_id,e.initiator_user_name,e.initiator_department_id,e.initiator_department_name,s.resource_snapshot_json,s.authorization_snapshot_json,s.policy_snapshot_json,s.worker_compatibility_json,s.object_manifest_json,s.runtime_settings_json FROM workflow_executions e JOIN execution_snapshots s ON s.tenant_id=e.tenant_id AND s.execution_id=e.id WHERE e.tenant_id=? AND e.id=?",
     )
     .bind(tenant_id)
     .bind(parent_execution_id)
@@ -93,7 +93,7 @@ pub(crate) async fn create_child(
     }))
     .map_err(|error| RuntimeError::Internal(error.into()))?;
     sqlx::query(
-        "INSERT INTO workflow_executions(id,tenant_id,workflow_id,workflow_version_id,application_id,bundle_id,work_package_id,parent_execution_id,parent_node_execution_id,admission_epoch,state_version,trace_id,trigger_type,status,started_at,input_json) VALUES(?,?,?,?,?,?,?,?,?,?,1,?,'composite','queued',UTC_TIMESTAMP(6),?)",
+        "INSERT INTO workflow_executions(id,tenant_id,workflow_id,workflow_version_id,application_id,bundle_id,work_package_id,parent_execution_id,parent_node_execution_id,admission_epoch,state_version,trace_id,trigger_type,initiator_user_id,initiator_user_name,initiator_department_id,initiator_department_name,trigger_source_id,trigger_name,status,started_at,input_json) VALUES(?,?,?,?,?,?,?,?,?,?,1,?,'composite',?,?,?,?,?,?,'queued',UTC_TIMESTAMP(6),?)",
     )
     .bind(child_execution_id)
     .bind(tenant_id)
@@ -106,6 +106,12 @@ pub(crate) async fn create_child(
     .bind(parent_node_execution_id.as_uuid())
     .bind(parent.try_get::<u64, _>("admission_epoch")?)
     .bind(Uuid::now_v7())
+    .bind(parent.try_get::<Option<Uuid>, _>("initiator_user_id")?)
+    .bind(parent.try_get::<Option<String>, _>("initiator_user_name")?)
+    .bind(parent.try_get::<Option<Uuid>, _>("initiator_department_id")?)
+    .bind(parent.try_get::<Option<String>, _>("initiator_department_name")?)
+    .bind(parent_node_execution_id.as_uuid())
+    .bind(Some(node.name.clone()))
     .bind(&input)
     .execute(&mut **tx)
     .await?;

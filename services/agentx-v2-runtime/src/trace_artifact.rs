@@ -7,7 +7,9 @@ use sha2::{Digest, Sha256};
 use sqlx::{MySqlPool, Row};
 use uuid::Uuid;
 
-use agentx_runtime_contracts::{ContentHash, RuntimeObjectReferenceV1, StorageDomain};
+use agentx_runtime_contracts::{
+    ContentHash, RuntimeObjectReferenceV1, StorageDomain, TraceContentKindV1,
+};
 
 use crate::{engine::ClaimedWorkerAttempt, error::RuntimeResult};
 
@@ -21,7 +23,7 @@ pub(crate) async fn externalize_attempt_input(
     let result = async {
         let value = serde_json::to_value(&claim.inputs)?;
         let encoded = agentx_runtime_contracts::canonical_bytes(&value)?;
-        if encoded.len() <= TRACE_PREVIEW_LIMIT {
+        if !should_externalize(encoded.len()) {
             return Ok::<(), anyhow::Error>(());
         }
         let artifact = persist_content(
@@ -38,7 +40,7 @@ pub(crate) async fn externalize_attempt_input(
             &artifact,
             claim.task.execution_id,
             claim.task.node_execution_id,
-            &format!("trace_input:{}", claim.task.attempt_id),
+            TraceContentKindV1::AttemptInput,
         )
         .await?;
         emit_input_references(pool, claim, &artifact).await?;
@@ -50,31 +52,92 @@ pub(crate) async fn externalize_attempt_input(
     }
 }
 
+fn should_externalize(encoded_len: usize) -> bool {
+    encoded_len > TRACE_PREVIEW_LIMIT
+}
+
+pub(crate) async fn externalize_runtime_call_response(
+    pool: &MySqlPool,
+    objects: &Arc<dyn ObjectStore>,
+    claim: &ClaimedWorkerAttempt,
+    call_id: Uuid,
+    value: &serde_json::Value,
+) -> Option<Uuid> {
+    let result = async {
+        let encoded = agentx_runtime_contracts::canonical_bytes(value)?;
+        if !should_externalize(encoded.len()) {
+            return Ok::<Option<Uuid>, anyhow::Error>(None);
+        }
+        let artifact = persist_content(
+            pool,
+            objects,
+            claim.task.tenant_id,
+            call_id,
+            "provider-response",
+            encoded,
+        )
+        .await?;
+        register_artifact(
+            pool,
+            &artifact,
+            claim.task.execution_id,
+            claim.task.node_execution_id,
+            TraceContentKindV1::RuntimeResponse,
+        )
+        .await?;
+        Ok(Some(artifact.object_id))
+    }
+    .await;
+    match result {
+        Ok(value) => value,
+        Err(error) => {
+            tracing::warn!(%error, %call_id, "Provider response Artifact externalization failed");
+            None
+        }
+    }
+}
+
 pub(crate) async fn register_artifact(
     pool: &MySqlPool,
     artifact: &RuntimeObjectReferenceV1,
     execution_id: Uuid,
     node_execution_id: Uuid,
-    role: &str,
+    content_kind: TraceContentKindV1,
 ) -> anyhow::Result<()> {
     let sha256 = artifact
         .content_hash
         .as_str()
         .strip_prefix("sha256:")
         .ok_or_else(|| anyhow::anyhow!("Runtime Artifact hash is invalid"))?;
+    let role = serde_json::to_value(content_kind)?
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("Trace content kind is invalid"))?
+        .to_owned();
     let mut tx = pool.begin().await?;
     sqlx::query("INSERT INTO artifacts(id,tenant_id,content_type,size_bytes,sha256,storage_key) VALUES(?,?,?,?,?,?) ON DUPLICATE KEY UPDATE id=id")
         .bind(artifact.object_id).bind(artifact.tenant_id).bind(&artifact.media_type)
         .bind(artifact.size_bytes).bind(sha256).bind(&artifact.object_key)
         .execute(&mut *tx).await?;
     sqlx::query("INSERT IGNORE INTO artifact_references(tenant_id,artifact_id,owner_type,owner_id,reference_role) VALUES(?,?,'execution',?,?)")
-        .bind(artifact.tenant_id).bind(artifact.object_id).bind(execution_id.to_string()).bind(role)
+        .bind(artifact.tenant_id).bind(artifact.object_id).bind(execution_id.to_string()).bind(&role)
         .execute(&mut *tx).await?;
     sqlx::query("INSERT IGNORE INTO artifact_references(tenant_id,artifact_id,owner_type,owner_id,reference_role) VALUES(?,?,'node_execution',?,?)")
-        .bind(artifact.tenant_id).bind(artifact.object_id).bind(node_execution_id.to_string()).bind(role)
+        .bind(artifact.tenant_id).bind(artifact.object_id).bind(node_execution_id.to_string()).bind(&role)
         .execute(&mut *tx).await?;
     tx.commit().await?;
     Ok(())
+}
+
+#[cfg(test)]
+#[allow(clippy::items_after_test_module)]
+mod tests {
+    use super::{TRACE_PREVIEW_LIMIT, should_externalize};
+
+    #[test]
+    fn provider_responses_crossing_the_trace_preview_limit_are_externalized() {
+        assert!(!should_externalize(TRACE_PREVIEW_LIMIT));
+        assert!(should_externalize(TRACE_PREVIEW_LIMIT + 1));
+    }
 }
 
 async fn persist_content(
@@ -153,7 +216,7 @@ async fn emit_input_references(
     node.node_execution_id = Some(claim.task.node_execution_id);
     node.attempt_id = Some(claim.task.attempt_id);
     node.content_ref = Some(artifact.object_id);
-    node.content_role = Some("input".into());
+    node.content_kind = Some(agentx_runtime_contracts::TraceContentKindV1::NodeInput);
     node.attributes = json!({"contentExternalized":true});
     crate::trace_delivery::enqueue_best_effort(&mut tx, node).await;
     let mut attempt = crate::trace_delivery::TraceDraft::span(
@@ -173,7 +236,7 @@ async fn emit_input_references(
     attempt.node_execution_id = Some(claim.task.node_execution_id);
     attempt.attempt_id = Some(claim.task.attempt_id);
     attempt.content_ref = Some(artifact.object_id);
-    attempt.content_role = Some("input".into());
+    attempt.content_kind = Some(agentx_runtime_contracts::TraceContentKindV1::AttemptInput);
     attempt.attributes = json!({"contentExternalized":true,"encodedBytes":artifact.size_bytes});
     crate::trace_delivery::enqueue_best_effort(&mut tx, attempt).await;
     if let Some(lease_id) = sqlx::query_scalar::<_, Uuid>("SELECT id FROM sandbox_leases WHERE tenant_id=? AND attempt_id=? ORDER BY created_at DESC LIMIT 1")
@@ -189,7 +252,7 @@ async fn emit_input_references(
         sandbox.attempt_id = Some(claim.task.attempt_id);
         sandbox.sandbox_lease_id = Some(lease_id);
         sandbox.content_ref = Some(artifact.object_id);
-        sandbox.content_role = Some("input".into());
+        sandbox.content_kind = Some(agentx_runtime_contracts::TraceContentKindV1::SandboxRequest);
         sandbox.attributes = json!({"contentExternalized":true});
         crate::trace_delivery::enqueue_best_effort(&mut tx, sandbox).await;
     }

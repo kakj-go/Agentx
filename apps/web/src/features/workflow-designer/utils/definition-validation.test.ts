@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { StudioDocument } from "../model/types";
-import { definitionIssues, isReferenceKey } from "./definition-validation";
+import { definitionIssues, isDynamicValueEmpty, isReferenceKey } from "./definition-validation";
 
 const document = (): StudioDocument => ({
   start: { inputs: { type: "object" }, contexts: {} },
@@ -24,6 +24,14 @@ describe("workflow definition validation", () => {
     expect(isReferenceKey("中文")).toBe(false);
   });
 
+  it("distinguishes missing End output content from valid falsey values and references", () => {
+    expect(isDynamicValueEmpty({ kind: "literal", value: "  " })).toBe(true);
+    expect(isDynamicValueEmpty({ kind: "template", segments: [{ kind: "text", text: "" }] })).toBe(true);
+    expect(isDynamicValueEmpty({ kind: "literal", value: 0 })).toBe(false);
+    expect(isDynamicValueEmpty({ kind: "literal", value: false })).toBe(false);
+    expect(isDynamicValueEmpty({ kind: "reference", selector: { namespace: "inputs", run: { kind: "current" }, item: { kind: "current" }, path: ["question"] }, missingPolicy: { kind: "error" } })).toBe(false);
+  });
+
   it("finds user-editable values rejected by backend definition validation", () => {
     const value = document();
     value.settings.activationBudget = 0;
@@ -36,6 +44,7 @@ describe("workflow definition validation", () => {
       "INVALID_CONTEXT_KEY",
       "INVALID_CONTEXT_MAX_SIZE",
       "INVALID_END_OUTPUT_KEY",
+      "END_OUTPUT_EXPRESSION_REQUIRED",
       "INVALID_ERROR_COLLECT_WINDOW",
     ]));
   });

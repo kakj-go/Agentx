@@ -27,6 +27,7 @@ pub fn routes() -> Router<ControlApiState> {
             "/api/v1/departments",
             get(list_departments).post(create_department),
         )
+        .route("/api/v1/departments/search", get(search_departments))
         .route(
             "/api/v1/departments/{id}",
             patch(update_department).delete(delete_department),
@@ -161,6 +162,30 @@ async fn list_departments(
             .map(department_from_row)
             .collect::<Result<_, _>>()?,
     ))
+}
+
+async fn search_departments(
+    State(state): State<ControlApiState>,
+    actor: Actor,
+    Query(query): Query<ListQuery>,
+) -> ApiResult<Json<PageResponse<DepartmentResponse>>> {
+    actor.require("department:view")?;
+    let search = query.search.unwrap_or_default().trim().to_lowercase();
+    let status = query.status.unwrap_or_default();
+    let rows = sqlx::query("SELECT id,parent_id,name,is_root,status,version FROM departments WHERE tenant_id=? AND (?='' OR status=?) ORDER BY is_root DESC,name")
+        .bind(actor.tenant_id)
+        .bind(&status)
+        .bind(&status)
+        .fetch_all(&state.pool)
+        .await?;
+    let items = rows
+        .into_iter()
+        .map(department_from_row)
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .filter(|item| search.is_empty() || item.name.to_lowercase().contains(&search))
+        .collect();
+    Ok(Json(page(items, query.page, query.page_size)))
 }
 
 async fn create_department(

@@ -29,8 +29,8 @@ export function Select({ value, onValueChange, options, placeholder, className, 
         aria-required={ariaRequired}
         name={name}
         className={cn(
-          'inline-flex h-9 min-w-36 items-center justify-between gap-3 rounded-lg border border-border bg-surface px-3 text-sm text-foreground outline-none transition-colors',
-          'hover:bg-muted/45 focus:border-primary/60 focus:ring-2 focus:ring-primary/15 disabled:cursor-not-allowed disabled:opacity-50',
+          'inline-flex h-9 min-w-36 items-center justify-between gap-3 rounded-lg border border-border bg-surface px-3 text-sm text-foreground outline-none transition-[border-color,box-shadow,background-color]',
+          'hover:bg-muted/45 focus:border-primary focus:ring-2 focus:ring-primary/20 aria-invalid:border-danger aria-invalid:ring-2 aria-invalid:ring-danger/15 aria-invalid:focus:border-danger aria-invalid:focus:ring-danger/20 disabled:cursor-not-allowed disabled:opacity-50',
           'data-[placeholder]:text-muted-foreground',
           className,
         )}
@@ -40,7 +40,7 @@ export function Select({ value, onValueChange, options, placeholder, className, 
       </SelectPrimitive.Trigger>
       <SelectPrimitive.Portal>
         <SelectPrimitive.Content
-          className="z-[230] min-w-[var(--radix-select-trigger-width)] overflow-hidden rounded-xl border border-border bg-surface p-1 text-foreground shadow-xl"
+          className="z-[230] min-w-[var(--radix-select-trigger-width)] overflow-hidden rounded-xl border border-border bg-surface p-1 text-foreground shadow-xl outline-none"
           position="popper"
           sideOffset={6}
         >
@@ -48,6 +48,7 @@ export function Select({ value, onValueChange, options, placeholder, className, 
             {options.map((option) => (
               <SelectPrimitive.Item
                 className="relative flex h-9 cursor-default select-none items-center rounded-lg py-0 pl-3 pr-8 text-xs outline-none data-[disabled]:pointer-events-none data-[disabled]:opacity-40 data-[highlighted]:bg-primary/10 data-[highlighted]:text-primary"
+                data-option-value={option.value}
                 disabled={option.disabled}
                 key={option.value}
                 value={option.value}

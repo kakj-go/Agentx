@@ -10,7 +10,6 @@ const translations = {
   "noHeartbeat": "No heartbeat",
   "activeSandboxes": "Active sandboxes",
   "sandboxCompatibility": "OpenSandbox protocol compatibility",
-  "noMessages": "No messages",
   "runtimeQuotas": "Runtime quotas",
   "workerCapabilities": "Worker capabilities",
   "retention": "Data retention",

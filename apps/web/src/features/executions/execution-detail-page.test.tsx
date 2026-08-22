@@ -15,6 +15,7 @@ const execution = {
   invocationId: null, sessionId: null, traceId: 'trace-1', triggerType: 'manual', executionType: 'whole', parentExecutionId: null,
   callerExecutionId: null, forkCheckpointId: null, status: 'waiting', startedAt: '2026-08-03T10:00:00Z', endedAt: null,
   durationMs: 1200, costMicros: 0, errorCode: null, errorMessage: null,
+  inputTokens: 0, outputTokens: 0, input: { amount: 42 }, output: { result: 'waiting' },
 }
 
 const nodes = { items: [
@@ -45,6 +46,7 @@ function installFetch(options: { execution?: unknown; nodes?: unknown; traceStat
     if (path.includes('/nodes/')) return response(nodes.items.find((node) => path.endsWith(node.id)))
     if (path.endsWith('/checkpoints')) return response({ items: [{ id: 'checkpoint-1', executionId: 'execution-1', nodeExecutionId: 'node-execution-1', sequenceNumber: 2, checkpointType: 'node_completed', stateHash: 'sha256-state', activationCount: 2, deliveryCount: 1, createdAt: '2026-08-03T10:00:01Z' }] })
     if (path.endsWith('/waits')) return response({ items: [{ id: 'wait-1', executionId: 'execution-1', nodeExecutionId: 'node-execution-2', waitKind: 'approval', status: 'waiting', wakeAt: null, timeoutAt: '2026-08-04T10:00:00Z', authenticationMode: 'signed', resumeUrl: '/gateway/v1/waits/wait-1/resume' }] })
+    if (path.endsWith('/events')) return response({ items: [{ sequence: 3, eventType: 'execution.waiting', status: 'waiting', summary: { reason: 'approval' }, occurredAt: '2026-08-03T10:00:01Z' }] })
     if (path.endsWith('/trace')) return response({ executionId: 'execution-1', traceId: 'trace-1', nextCursor: null, complete: options.traceStatus !== 202, degraded: false, warningCode: options.traceStatus === 202 ? 'TRACE_DELAYED' : null, totalSpans: 2, expectedWatermark: 2, ingestedWatermark: options.traceStatus === 202 ? 1 : 2, spans: [
       { spanId: 'span-root', parentSpanId: null, spanKind: 'execution', spanName: 'Order recovery', status: 'running', startedAt: '2026-08-03T10:00:00Z', endedAt: null, durationMs: null, costMicros: 0, hasDetails: false },
       { spanId: 'span-node', parentSpanId: 'span-root', spanKind: 'node', spanName: 'Remote charge', status: 'waiting', startedAt: '2026-08-03T10:00:01Z', endedAt: null, durationMs: null, nodeExecutionId: 'node-execution-2', costMicros: 0, hasDetails: true },
@@ -71,10 +73,10 @@ describe('execution recovery workbench', () => {
     await i18n.changeLanguage('zh-CN')
   })
 
-  it('shows node data, lineage, waits, approvals, checkpoints and fork risk preview', async () => {
+  it('keeps recovery focused on waits, approvals, checkpoints, events and fork risk preview', async () => {
     const requests: string[] = []
     installFetch({ onRequest: (path) => requests.push(path) })
-    renderPage(['execution:fork', 'execution:cancel', 'approval:view'])
+    renderPage(['execution:view', 'execution:fork', 'execution:cancel', 'approval:view'])
 
     const heading = await screen.findByRole('heading', { name: 'Order recovery' })
     expect(heading).toHaveClass('min-w-0', 'flex-1', 'truncate')
@@ -85,9 +87,8 @@ describe('execution recovery workbench', () => {
     expect(screen.getByText('#2 node_completed')).toBeInTheDocument()
     expect(screen.getByText('/gateway/v1/waits/wait-1/resume')).toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: /Source/ }))
-    fireEvent.click(screen.getByRole('tab', { name: '输入' }))
-    expect(screen.getByTestId('execution-json')).toHaveTextContent('"amount": 42')
+    expect(screen.queryByRole('button', { name: /Source/ })).not.toBeInTheDocument()
+    expect(screen.getByText('execution.waiting')).toBeInTheDocument()
 
     const forkButton = screen.getByRole('button', { name: '派生执行' })
     fireEvent.click(forkButton)
@@ -131,7 +132,7 @@ describe('execution recovery workbench', () => {
     renderPage([])
 
     expect(await screen.findByText('Order recovery')).toBeInTheDocument()
-    expect(await screen.findByText('Trace 摄取仍在追赶，当前展示已到达的 Span。')).toBeInTheDocument()
-    expect(screen.getByText('成功')).toBeInTheDocument()
+    expect((await screen.findAllByText('Trace 正在同步…')).length).toBeGreaterThan(0)
+    expect(screen.getAllByText('成功').length).toBeGreaterThan(0)
   })
 })

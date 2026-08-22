@@ -2,9 +2,10 @@ use std::collections::BTreeMap;
 
 use agentx_domain::{
     DynamicValue, ExpressionBinaryOperator, ExpressionFunction, ExpressionNode,
-    ExpressionUnaryOperator, MissingValuePolicy, TemplateSegment, ValueNamespace, ValuePathSegment,
-    ValueSelection, ValueSelector,
+    ExpressionUnaryOperator, MissingValuePolicy, TemplateSegment, ValueCoercion, ValueNamespace,
+    ValuePathSegment, ValueSelection, ValueSelector,
 };
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
 
@@ -35,6 +36,16 @@ pub enum ExpressionError {
     InvalidOperation(String),
 }
 
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StringConversionRecord {
+    pub target_path: String,
+    pub selector: ValueSelector,
+    pub source_type: String,
+    pub mode: String,
+    pub result_bytes: usize,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct ExpressionEngine;
 
@@ -44,26 +55,49 @@ impl ExpressionEngine {
         parameters: &Value,
         context: &ExpressionContext,
     ) -> Result<Value, ExpressionError> {
-        Ok(self
-            .resolve_parameter_value(parameters, context)?
-            .unwrap_or(Value::Null))
+        self.resolve_parameters_with_conversions(parameters, context)
+            .map(|(value, _)| value)
+    }
+
+    pub fn resolve_parameters_with_conversions(
+        &self,
+        parameters: &Value,
+        context: &ExpressionContext,
+    ) -> Result<(Value, Vec<StringConversionRecord>), ExpressionError> {
+        let mut conversions = Vec::new();
+        let value = self
+            .resolve_parameter_value(parameters, context, "parameters", &mut conversions)?
+            .unwrap_or(Value::Null);
+        Ok((value, conversions))
     }
 
     fn resolve_parameter_value(
         &self,
         value: &Value,
         context: &ExpressionContext,
+        target_path: &str,
+        conversions: &mut Vec<StringConversionRecord>,
     ) -> Result<Option<Value>, ExpressionError> {
         if value.is_object()
             && let Ok(dynamic) = serde_json::from_value::<DynamicValue>(value.clone())
         {
-            return self.resolve_dynamic_optional(&dynamic, context);
+            return self.resolve_dynamic_optional_traced(
+                &dynamic,
+                context,
+                target_path,
+                conversions,
+            );
         }
         match value {
             Value::Array(values) => {
                 let mut resolved = Vec::with_capacity(values.len());
-                for value in values {
-                    if let Some(value) = self.resolve_parameter_value(value, context)? {
+                for (index, value) in values.iter().enumerate() {
+                    if let Some(value) = self.resolve_parameter_value(
+                        value,
+                        context,
+                        &format!("{target_path}[{index}]"),
+                        conversions,
+                    )? {
                         resolved.push(value);
                     }
                 }
@@ -72,7 +106,12 @@ impl ExpressionEngine {
             Value::Object(values) => {
                 let mut resolved = serde_json::Map::new();
                 for (key, value) in values {
-                    if let Some(value) = self.resolve_parameter_value(value, context)? {
+                    if let Some(value) = self.resolve_parameter_value(
+                        value,
+                        context,
+                        &format!("{target_path}.{key}"),
+                        conversions,
+                    )? {
                         resolved.insert(key.clone(), value);
                     }
                 }
@@ -99,15 +138,58 @@ impl ExpressionEngine {
         value: &DynamicValue,
         context: &ExpressionContext,
     ) -> Result<Option<Value>, ExpressionError> {
+        self.resolve_dynamic_optional_with_conversions(value, context, "value")
+            .map(|(value, _)| value)
+    }
+
+    pub fn resolve_dynamic_optional_with_conversions(
+        &self,
+        value: &DynamicValue,
+        context: &ExpressionContext,
+        target_path: impl Into<String>,
+    ) -> Result<(Option<Value>, Vec<StringConversionRecord>), ExpressionError> {
+        let mut conversions = Vec::new();
+        let target_path = target_path.into();
+        let value =
+            self.resolve_dynamic_optional_traced(value, context, &target_path, &mut conversions)?;
+        Ok((value, conversions))
+    }
+
+    fn resolve_dynamic_optional_traced(
+        &self,
+        value: &DynamicValue,
+        context: &ExpressionContext,
+        target_path: &str,
+        conversions: &mut Vec<StringConversionRecord>,
+    ) -> Result<Option<Value>, ExpressionError> {
         match value {
             DynamicValue::Literal { value } => Ok(Some(value.clone())),
             DynamicValue::Reference {
                 selector,
                 missing_policy,
-            } => self.resolve_selector_with_policy(selector, missing_policy, context),
+                coerce,
+            } => {
+                let resolved =
+                    self.resolve_selector_with_policy(selector, missing_policy, context)?;
+                if *coerce != Some(ValueCoercion::String) {
+                    return Ok(resolved);
+                }
+                Ok(resolved.map(|value| {
+                    let source_type = json_type(&value).to_owned();
+                    let text = value_to_text(value);
+                    conversions.push(StringConversionRecord {
+                        target_path: target_path.to_owned(),
+                        selector: selector.clone(),
+                        source_type,
+                        mode: "reference".into(),
+                        result_bytes: text.len(),
+                    });
+                    Value::String(text)
+                }))
+            }
             DynamicValue::Template { segments } => {
                 let mut text = String::new();
-                for segment in segments {
+                for (index, segment) in segments.iter().enumerate() {
                     match segment {
                         TemplateSegment::Text { text: value } => text.push_str(value),
                         TemplateSegment::Reference {
@@ -119,7 +201,16 @@ impl ExpressionEngine {
                                 missing_policy,
                                 context,
                             )? {
-                                text.push_str(&value_to_text(value));
+                                let source_type = json_type(&value).to_owned();
+                                let converted = value_to_text(value);
+                                conversions.push(StringConversionRecord {
+                                    target_path: format!("{target_path}.segments[{index}]"),
+                                    selector: selector.clone(),
+                                    source_type,
+                                    mode: "template".into(),
+                                    result_bytes: converted.len(),
+                                });
+                                text.push_str(&converted);
                             }
                         }
                     }
@@ -285,10 +376,24 @@ impl ExpressionEngine {
     }
 }
 
+fn json_type(value: &Value) -> &'static str {
+    match value {
+        Value::Null => "null",
+        Value::Bool(_) => "boolean",
+        Value::Number(_) => "number",
+        Value::String(_) => "string",
+        Value::Array(_) => "array",
+        Value::Object(_) => "object",
+    }
+}
+
 fn value_to_text(value: Value) -> String {
     match value {
         Value::String(value) => value,
-        other => serde_json::to_string(&other).unwrap_or_default(),
+        other => agentx_runtime_contracts::canonical_bytes(&other)
+            .ok()
+            .and_then(|bytes| String::from_utf8(bytes).ok())
+            .unwrap_or_default(),
     }
 }
 
@@ -474,6 +579,31 @@ mod tests {
                 .unwrap(),
             json!({"kept":"yes","template":"prefix"})
         );
+    }
+
+    #[test]
+    fn reference_string_coercion_uses_canonical_json() {
+        let dynamic: DynamicValue = serde_json::from_value(json!({
+            "kind":"reference",
+            "selector":{"namespace":"inputs","run":{"kind":"current"},"item":{"kind":"current"},"path":["payload"]},
+            "missingPolicy":{"kind":"error"},
+            "coerce":"string"
+        })).unwrap();
+        let (value, conversions) = ExpressionEngine
+            .resolve_dynamic_optional_with_conversions(
+                &dynamic,
+                &ExpressionContext {
+                    inputs: json!({"payload":{"z":1,"a":2}}),
+                    ..ExpressionContext::default()
+                },
+                "end.outputs.answer",
+            )
+            .unwrap();
+        assert_eq!(value, Some(json!("{\"a\":2,\"z\":1}")));
+        assert_eq!(conversions.len(), 1);
+        assert_eq!(conversions[0].target_path, "end.outputs.answer");
+        assert_eq!(conversions[0].source_type, "object");
+        assert_eq!(conversions[0].result_bytes, 13);
     }
 
     #[test]

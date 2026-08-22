@@ -24,7 +24,7 @@ Manifest 可声明 `localizations.zh-CN/en-US`，覆盖 `displayName`、`descrip
 
 Workflow 5.0 Manifest 还必须声明 `outputSchema`、`outputCardinality`、`expressionCapabilities`、`contextReadCapability`、`contextWriteCapability`、`outputProjectionSchema` 和 `artifactOutputSchema`。可绑定参数在 Parameter Schema 中使用 `x-agentx-dynamicValue` 声明允许模式、命名空间、基数、缺失策略及是否递归绑定；未声明的代码字段不会自动打开 Reference Picker。
 
-编译器把 Manifest 输出 Schema 与节点实例配置、Projection 合成为按端口冻结的 Effective Output Contract 并写入 IR。Worker 不在提交结果时重新查询 Registry；内置、远程、MCP、Plugin 和 Sub-workflow 均按发布时同一契约验证。Model 标准输出至少包含 `text`、`message`、`reasoningContent`、`structuredOutput`、`citations`、`toolCalls`、`files`、`usage`、`finishReason` 和 `partial`。
+编译器把 Manifest 输出 Schema 与节点实例配置、Projection 合成为按端口冻结的 Effective Output Contract 并写入 IR。Worker 不在提交结果时重新查询 Registry；内置、远程、MCP、Plugin 和 Sub-workflow 均按发布时同一契约验证。Model 与 Agent 标准输出固定为 `text`、`reasoningContent`、`structuredOutput`、`citations`、`files`、`usage`、`finishReason` 和 `partial`；Provider message、工具调用、Agent 迭代与原始响应仅进入受权限控制的 Trace/Artifact。
 
 内置 `error_handler` 使用 Error 类型输入 `error` 和 Main 类型输出 `recovered`；`mode=recover` 保留原错误 Item 并继续，`mode=fail` 使用原错误 code/message 终止。连接任意 Error 输出时 Studio 同一事务把源节点 `onError` 设为 `continue_error_output`。
 
@@ -105,3 +105,31 @@ cargo test -p echo-node
 ```
 
 完整 `scripts/check.ps1` 会重新生成 Node OpenAPI 和四份 JSON Schema，并在任何字节漂移时失败。`services/echo-node/fixtures` 中的请求是语言无关的最小正反样例；接入实现应先对这些 Fixture 做反序列化、认证、Deadline、幂等和结果 Tag 测试，再进入 Kubernetes E2E。
+
+## 8. Manifest 参数与语义输出矩阵
+
+Manifest 是字段名称、动态值能力和输出 Schema 的唯一来源。Adapter 不得读取 Manifest 未声明的别名，也不得把声明参数仅作为透传 metadata。当前内置契约如下：
+
+| 节点类别 | Manifest 参数的执行消费者 | 稳定输出 |
+|---|---|---|
+| Model | Worker 将 `prompt` 组装为 system message、`userQuestion` 组装为 user message | `AiResponse` |
+| Agent | Agent Loop 消费 `systemPrompt/userQuestion` 及全部模型、工具、Token、成本、时长和限额策略 | `AiResponse` |
+| MCP Tool | MCP Adapter 使用解析后的 `arguments` 作为 `tools/call.params.arguments` | `text/structuredOutput/files` |
+| Skill | Runtime Resource Adapter 固定并读取 Skill Object Closure | `text/structuredOutput/files` |
+| RAG / Memory | Resource Adapter 消费 `operation/input` 并映射到固定版本 Endpoint | RAG 为 `text/documents/citations/recordIds`；Memory 为 `text/records/recordIds` |
+| Declarative HTTP | Egress Adapter 使用 `method/url/headers/body` 构建实际请求 | `statusCode/headers/body/files` |
+| Remote Action | Node Protocol Adapter 消费 `endpoint` 和 ResolvedParameters | `text/structuredOutput/files` |
+| Code | Sandbox Manager 消费 `runner/source/arguments/networkPolicy`；当前未实现文件收集和 Credential 文件挂载，因此 Manifest 不声明 `outputPaths/credentialFiles` | `stdout/stderr/exitCode/structuredOutput/files/partial` |
+| Approval | Suspension Adapter 消费 title、description、candidateUserId、timeoutMs、timeoutAt，并把节点输入保存为审批 input | `taskId/decision/reason/decidedBy/input` |
+| Wait | Suspension Adapter 消费 kind、durationMs、resumeAt、timeoutAt、authenticationMode；恢复时验证并返回语义 Payload | `status/payload/resumedAt` |
+| Set / Flow | Builtin Adapter 消费赋值、条件、分支、合并和错误策略 | 直接 Item 字段 |
+| Data Builtins | Builtin Adapter 消费过滤、限制、排序、去重、拆分、聚合、重命名、JSON、生成、日期、Base64、Hash、比较和 Schema 校验参数 | 直接 Item 字段或 Manifest 声明的分支端口 |
+| Sub-workflow | Bundle Builder 用固定 Workflow Version 的 Start/End Contract 生成版本地址 Manifest | 直接继承子 Workflow End Schema |
+
+数据节点产生的动态 Item 字段若要进入非字符串目标，必须先通过 Output Projection 声明具名字段及具体 Schema；字符串目标可由编译器冻结确定性的文本转换。Projection 应使用新字段名，避免覆盖节点已有的 Item 字段。
+
+Runtime Call Trace 保存递归脱敏后的解析参数、请求与 Provider 响应预览；Authorization、Cookie、API Key、Token、Secret 和 Credential 字段不得明文进入预览。原始 Provider 响应超过 16 KiB 时写入 `runtime_calls.response_artifact_id` 指向的执行级 Artifact，Trace span 只保留 Artifact 引用；Artifact 下载继续经过执行查询权限校验。普通输出与 Reference Picker 只读取上述稳定 Schema。
+
+`files` 的数组元素固定为 `ArtifactRef`：`artifactId/fileName/contentType/sizeBytes/sha256` 全部必填，`artifactId` 为 UUID，`sizeBytes` 非负，`sha256` 为 64 位十六进制摘要。`citations` 的数组元素固定为 `Citation`：必填 `sourceId/text/metadata`，可选 `title/uri/recordId`。两种对象都拒绝额外字段，不能再用任意 Object 延迟契约错误。
+
+Studio 对 Model/Agent 的 `text` 标记为推荐引用。开发期已删除的 `message/messages/toolCalls/iterations/artifacts/providerRawResponse` 不提供别名；Compiler 遇到这些字段时明确要求重新选择稳定的 `text` 字段。

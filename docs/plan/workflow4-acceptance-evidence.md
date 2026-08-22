@@ -25,7 +25,7 @@
 | 3 | HTTP JSON 字段提取 | `m4-runtime.spec.ts`、`m7-business-closure.spec.ts` | Remote/HTTP Action 的结构化响应进入后继节点及 End |
 | 4 | Model 文本 JSON Parse | `m5-agent-sandbox.spec.ts`、Runtime Compiler/Expression 单测 | Model 结构化结果遵循 Manifest Schema，解析失败进入明确错误路径 |
 | 5 | Code 多返回值选择 | `m5-agent-sandbox.spec.ts` | Sandbox 结构化输出及 Artifact 可被 End 显式选择 |
-| 6 | 文件输入和文件输出 | `workflow4-closure.spec.ts` | Multipart 文件转换为 Artifact Reference，End 返回受控元数据 |
+| 6 | 文件输入和文件输出 | `workflow4-closure.spec.ts` | 文件先上传到 Artifact API，再以 Artifact Reference 调用，End 返回受控元数据 |
 | 7 | Context 在普通节点之间变化 | `workflow4-closure.spec.ts`、Infrastructure Context 单测 | Node Output、Context Patch、状态与 Checkpoint 同事务提交 |
 | 8 | Context 在 Loop 中按轮次更新 | `m6-local-builtins.spec.ts`、Runtime Compiler/Context 单测 | Loop iteration 语义明确，Patch 幂等且不重复应用 |
 | 9 | 并行 Context 冲突 | `workflow4-closure.spec.ts` | Session CAS 竞争只有一个提交，另一个明确失败 |
@@ -108,6 +108,6 @@
 
 - Run ID：`20260811T172715251Z`。
 - [Start Input JUnit](../../apps/e2e/test-results/kubernetes/20260811T172715251Z/workflow4-start-input/junit.xml) 为 `tests=1, failures=0, skipped=0, errors=0`，HTML 报告与 Trace 位于同目录。
-- 同一用例确认非法长度与空文件数组返回 `INPUT_SCHEMA_VALIDATION_FAILED`，递归默认值生成 `prefix=default-applied`，Multipart 文件转换为 Artifact Reference，并执行 MIME、单文件大小、总大小和数量约束。
+- 同一用例确认非法长度与空文件数组返回 `INPUT_SCHEMA_VALIDATION_FAILED`，递归默认值生成 `prefix=default-applied`；文件先上传到 Artifact API，再以 Artifact Reference 调用，并执行 MIME、单文件大小、总大小和数量约束。
 - Composite Parent 固定调用 Child v1，发布与运行时均不再把 `workflow` 固定版本依赖误判为需要 Resource Grant 的外部资源。
 - `agentx-e2e-start-settings` Namespace 已自动删除；`agentx` 中全部 Deployment/StatefulSet 保持 1 副本且 Ready。

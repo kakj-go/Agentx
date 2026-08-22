@@ -79,8 +79,9 @@ export function ReferencePicker({ catalog, allowedNamespaces = ['inputs', 'outpu
 function markCompatibility(entries: ReferenceEntry[], expectedType: string | undefined, t: TFunction): ReferenceEntry[] {
   return entries.map((entry) => {
     const children = markCompatibility(entry.children, expectedType, t)
-    const incompatible = Boolean(expectedType && entry.selector && entry.type && children.length === 0 && !compatible(entry.type, expectedType))
-    return { ...entry, children, disabledReason: entry.sensitive ? t('studio.references.sensitiveDisabled') : incompatible ? t('studio.references.typeMismatch', { expected: expectedType, actual: entry.type }) : entry.disabledReason }
+    const convertsToString = Boolean(expectedType === 'string' && entry.selector && entry.type !== 'string')
+    const incompatible = Boolean(expectedType && expectedType !== 'string' && entry.selector && (!entry.type || !compatible(entry.type, expectedType)))
+    return { ...entry, children, conversionNote: convertsToString ? t('studio.references.convertToString') : undefined, disabledReason: entry.sensitive ? t('studio.references.sensitiveDisabled') : incompatible ? t('studio.references.typeMismatch', { expected: expectedType, actual: entry.type ?? t('studio.references.unknown') }) : entry.disabledReason }
   })
 }
 

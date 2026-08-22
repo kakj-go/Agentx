@@ -96,7 +96,7 @@ fn parameter_expression_contract(
     let dynamic = schema.and_then(|schema| schema.get("x-agentx-dynamicValue"));
     let templatable = dynamic.is_some() || inherited.templatable;
     let allowed_namespaces = schema
-        .and_then(|_| dynamic)
+        .and(dynamic)
         .and_then(|dynamic| dynamic.get("allowedNamespaces"))
         .and_then(Value::as_array)
         .map(|values| {

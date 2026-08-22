@@ -94,6 +94,10 @@ async fn main() -> Result<()> {
             post(agentx_v2_runtime::publish::apply_admission),
         )
         .route(
+            "/internal/runtime/v1/chat-mappings:apply",
+            post(agentx_v2_runtime::publish::apply_chat_mapping),
+        )
+        .route(
             "/internal/runtime/v1/deployments:activate",
             post(agentx_v2_runtime::publish::activate_deployment),
         )

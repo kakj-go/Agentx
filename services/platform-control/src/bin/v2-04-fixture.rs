@@ -361,6 +361,7 @@ fn build_evaluation_package(
         WorkPackageBuildSource {
             package_id,
             tenant_id: id(TENANT)?,
+            origin: agentx_runtime_contracts::ExecutionOriginV1::system(None),
             purpose: WorkPackagePurpose::Evaluation,
             call_purpose: RuntimeCallPurposeV1::Evaluation,
             spec: RuntimeWorkPackageSpecV1::Evaluation {
@@ -464,8 +465,8 @@ fn reference(
 
 fn full_definition() -> Result<WorkflowDefinition> {
     let nodes = vec![
-        json!({"id":"model","key":"model","type":"model","typeVersion":1,"name":"Model","parameters":{"prompt":"agentx-v2-04"},"outputProjection":{},"contextWrites":[],"resourceReferences":[reference("model-main",None,"model",MODEL,MODEL_VERSION,"use")]}),
-        json!({"id":"mcp","key":"mcp","type":"mcp_tool","typeVersion":1,"name":"MCP","parameters":{"resourceId":MCP,"arguments":{"text":"agentx-v2-04"}},"outputProjection":{},"contextWrites":[],"resourceReferences":[reference("mcp-main",None,"mcp_tool",MCP,MCP_VERSION,"use")]}),
+        json!({"id":"model","key":"model","type":"model","typeVersion":1,"name":"Model","parameters":{"prompt":"你叫 kakj","userQuestion":"你好，你叫什么"},"outputProjection":{},"contextWrites":[],"resourceReferences":[reference("model-main",None,"model",MODEL,MODEL_VERSION,"use")]}),
+        json!({"id":"mcp","key":"mcp","type":"mcp_tool","typeVersion":1,"name":"MCP","parameters":{"arguments":{"text":"agentx-v2-04"}},"outputProjection":{},"contextWrites":[],"resourceReferences":[reference("mcp-main",None,"mcp_tool",MCP,MCP_VERSION,"use")]}),
         json!({"id":"rag","key":"rag","type":"rag","typeVersion":1,"name":"RAG","parameters":{"operation":"query","input":{"query":"agentx-v2-04","mode":"naive"}},"outputProjection":{},"contextWrites":[],"resourceReferences":[reference("rag-main",None,"rag",RAG,RAG_VERSION,"read")]}),
         json!({"id":"memory","key":"memory","type":"memory","typeVersion":1,"name":"Memory","parameters":{"operation":"add","input":{"text":"agentx-v2-04-memory"}},"outputProjection":{},"contextWrites":[],"resourceReferences":[reference("memory-main",None,"memory",MEMORY,MEMORY_VERSION,"write")]}),
         json!({"id":"skill","key":"skill","type":"skill","typeVersion":1,"name":"Skill","parameters":{"resourceId":SKILL},"outputProjection":{},"contextWrites":[],"resourceReferences":[reference("skill-main",None,"skill",SKILL,SKILL_VERSION,"use")]}),
@@ -477,7 +478,7 @@ fn full_definition() -> Result<WorkflowDefinition> {
             reference("agent-skill",Some("ai_skill"),"skill",SKILL,SKILL_VERSION,"use")
         ]}),
         json!({"id":"composite","key":"composite","type":"sub_workflow","typeVersion":1,"name":"Composite","parameters":{"workflowVersionId":CHILD_VERSION},"outputProjection":{},"contextWrites":[],"resourceReferences":[]}),
-        json!({"id":"code","key":"code","type":"code","typeVersion":1,"name":"Sandbox","parameters":{"runner":"python","source":"import json\nimport time\ntime.sleep(5)\nprint(json.dumps({'message':'agentx-v2-04'}))","arguments":[],"networkPolicy":{"defaultAction":"deny"},"outputPaths":[],"credentialFiles":{}},"outputProjection":{},"contextWrites":[],"resourceReferences":[reference("sandbox-main",None,"sandbox_profile",SANDBOX_PROFILE,SANDBOX_VERSION,"use")]}),
+        json!({"id":"code","key":"code","type":"code","typeVersion":1,"name":"Sandbox","parameters":{"runner":"python","source":"import json\nimport time\ntime.sleep(5)\nprint(json.dumps({'message':'agentx-v2-04'}))","arguments":[],"networkPolicy":{"egressMode":"none"}},"outputProjection":{},"contextWrites":[],"resourceReferences":[reference("sandbox-main",None,"sandbox_profile",SANDBOX_PROFILE,SANDBOX_VERSION,"use")]}),
     ];
     let mut connections = Vec::new();
     let sequence = [
@@ -607,7 +608,7 @@ fn resource_fixtures(
             MCP,
             MCP_VERSION,
             "use",
-            json!({"endpoint":format!("{echo}/v2/runtime/mcp"),"toolName":"echo","schemaHash":mcp_schema_hash,"resourceVersion":1,"vaultSecretRef":vault_reference(tenant,"model")}),
+            json!({"endpoint":format!("{echo}/mcp"),"toolName":"echo","schemaHash":mcp_schema_hash,"resourceVersion":1,"vaultSecretRef":vault_reference(tenant,"model")}),
         )?,
         resource(
             "rag",
@@ -655,7 +656,7 @@ fn resource_fixtures(
             MCP,
             MCP_VERSION,
             "use",
-            json!({"endpoint":format!("{echo}/v2/runtime/mcp"),"toolName":"echo","schemaHash":mcp_schema_hash,"resourceVersion":1,"vaultSecretRef":vault_reference(tenant,"model")}),
+            json!({"endpoint":format!("{echo}/mcp"),"toolName":"echo","schemaHash":mcp_schema_hash,"resourceVersion":1,"vaultSecretRef":vault_reference(tenant,"model")}),
         )?,
         resource(
             "agent",

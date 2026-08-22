@@ -1,6 +1,8 @@
 import { expect, type APIResponse, type Page, test } from '@playwright/test'
 import { writeFile } from 'node:fs/promises'
 
+import { publishCompatibleChatMapping } from './playground-helpers'
+
 const password = 'agentx-e2e-admin-password'
 const gatewayBase = process.env.AGENTX_E2E_RUNTIME_URL ?? ''
 
@@ -110,6 +112,7 @@ test('V2-08 API-first empty-domain closure creates product facts without SQL fix
     if (status === 'rejected') throw new Error(`application deployment ${deployment.id} was rejected`)
     return status
   }, { timeout: 180_000, intervals: [500, 1_000, 2_000] }).toBe('active')
+  await publishCompatibleChatMapping(page, token, application.id, deployment.id)
 
   const invoke = async (key: string) => page.request.post(`${gatewayBase}/gateway/v1/applications/${application.slug}/invocations`, {
     data: { input: { message: 'closed' }, responseMode: 'async' },

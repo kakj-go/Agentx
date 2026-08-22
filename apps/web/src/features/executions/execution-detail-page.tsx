@@ -5,20 +5,19 @@ import { useTranslation } from 'react-i18next'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 
 import { useAuth } from '../../app/providers/auth-provider'
-import { apiRequest, apiRequestBlob, jsonBody } from '../../shared/api/client'
-import type { Approval, Checkpoint, Execution, ExecutionWait, ForkExecutionRequest, NodeExecution, PageResponse, SideEffectConfirmationRequest } from '../../shared/api/types'
+import { apiRequest, jsonBody } from '../../shared/api/client'
+import type { Approval, Checkpoint, Execution, ExecutionEvent, ExecutionWait, ForkExecutionRequest, NodeExecution, PageResponse, SideEffectConfirmationRequest } from '../../shared/api/types'
 import { ConfirmDialog } from '../../shared/components/confirm-dialog'
 import { EmptyState } from '../../shared/components/empty-state'
 import { StatusBadge } from '../../shared/components/status-badge'
 import { Button } from '../../shared/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../shared/ui/tabs'
 import { useToast } from '../../shared/ui/toast'
-import { TraceWaterfall } from '../traces/trace-waterfall'
+import { TraceWorkspace } from '../traces/trace-workspace'
+import { useExecutionArtifactDownload } from '../traces/use-execution-artifact-download'
 import { localizedValue } from '../../shared/lib/localized-value'
 import { executionStatus } from './execution-format'
 import { ExecutionForkDialog } from './execution-fork-dialog'
-import { ExecutionNodePanel } from './execution-node-panel'
-import { ExecutionOutline } from './execution-outline'
 import { ExecutionRecoveryRail } from './execution-recovery-rail'
 import { SideEffectDialog } from './side-effect-dialog'
 
@@ -31,9 +30,11 @@ export function ExecutionDetailPage() {
   const { id = '' } = useParams()
   const { t } = useTranslation()
   const auth = useAuth()
+  const canViewExecution = auth.hasPermission('execution:view')
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const { showToast } = useToast()
+  const downloadArtifact = useExecutionArtifactDownload(id)
   const [selectedId, setSelectedId] = useState<string>()
   const [forkOpen, setForkOpen] = useState(false)
   const [cancelOpen, setCancelOpen] = useState(false)
@@ -48,14 +49,9 @@ export function ExecutionDetailPage() {
     refetchInterval: (query) => terminalStatuses.has(query.state.data?.status ?? '') ? false : 2_000,
   })
   const nodes = useQuery({ queryKey: ['execution-nodes', id], queryFn: () => apiRequest<ItemResponse<NodeExecution>>(`/executions/${id}/nodes`), refetchInterval: execution.data && !terminalStatuses.has(execution.data.status) ? 2_000 : false })
-  const nodeDetail = useQuery({
-    enabled: Boolean(selectedId),
-    queryKey: ['execution-node', id, selectedId],
-    queryFn: () => apiRequest<NodeExecution>(`/executions/${id}/nodes/${selectedId}`),
-    refetchInterval: execution.data && !terminalStatuses.has(execution.data.status) ? 2_000 : false,
-  })
-  const checkpoints = useQuery({ queryKey: ['execution-checkpoints', id], queryFn: () => apiRequest<ItemResponse<Checkpoint>>(`/executions/${id}/checkpoints`), refetchInterval: execution.data && !terminalStatuses.has(execution.data.status) ? 2_000 : false })
-  const waits = useQuery({ queryKey: ['execution-waits', id], queryFn: () => apiRequest<ItemResponse<ExecutionWait>>(`/executions/${id}/waits`), refetchInterval: execution.data && !terminalStatuses.has(execution.data.status) ? 2_000 : false })
+  const checkpoints = useQuery({ enabled: canViewExecution, queryKey: ['execution-checkpoints', id], queryFn: () => apiRequest<ItemResponse<Checkpoint>>(`/executions/${id}/checkpoints`), refetchInterval: execution.data && !terminalStatuses.has(execution.data.status) ? 2_000 : false })
+  const waits = useQuery({ enabled: canViewExecution, queryKey: ['execution-waits', id], queryFn: () => apiRequest<ItemResponse<ExecutionWait>>(`/executions/${id}/waits`), refetchInterval: execution.data && !terminalStatuses.has(execution.data.status) ? 2_000 : false })
+  const events = useQuery({ enabled: canViewExecution, queryKey: ['execution-recovery-events', id], queryFn: () => apiRequest<{ items: ExecutionEvent[] }>(`/executions/${id}/events?after=0&limit=200`), refetchInterval: execution.data && !terminalStatuses.has(execution.data.status) ? 2_000 : false })
   const approvals = useQuery({ enabled: auth.hasPermission('approval:view'), queryKey: ['approvals', 'execution', id], queryFn: () => apiRequest<PageResponse<Approval>>('/approvals?pageSize=100'), refetchInterval: execution.data && !terminalStatuses.has(execution.data.status) ? 2_000 : false })
 
   useEffect(() => {
@@ -69,6 +65,7 @@ export function ExecutionDetailPage() {
       queryClient.invalidateQueries({ queryKey: ['execution-node', id] }),
       queryClient.invalidateQueries({ queryKey: ['execution-checkpoints', id] }),
       queryClient.invalidateQueries({ queryKey: ['execution-waits', id] }),
+      queryClient.invalidateQueries({ queryKey: ['execution-recovery-events', id] }),
       queryClient.invalidateQueries({ queryKey: ['execution-trace-spans', id] }),
       queryClient.invalidateQueries({ queryKey: ['approvals', 'execution', id] }),
     ])
@@ -85,6 +82,7 @@ export function ExecutionDetailPage() {
     queryClient.invalidateQueries({ queryKey: ['execution-nodes', id] }),
     queryClient.invalidateQueries({ queryKey: ['execution-checkpoints', id] }),
     queryClient.invalidateQueries({ queryKey: ['execution-waits', id] }),
+    queryClient.invalidateQueries({ queryKey: ['execution-recovery-events', id] }),
     queryClient.invalidateQueries({ queryKey: ['execution-trace-spans', id] }),
     queryClient.invalidateQueries({ queryKey: ['executions'] }),
   ])
@@ -111,24 +109,12 @@ export function ExecutionDetailPage() {
 
   const value = execution.data
   const active = !terminalStatuses.has(value.status)
-  const selectedNode = nodeDetail.data ?? nodeItems.find((node) => node.id === selectedId)
+  const selectedNode = nodeItems.find((node) => node.id === selectedId)
   const executionApprovals = approvals.data?.items.filter((approval) => approval.executionId === id) ?? []
-  const downloadArtifact = async (artifactId: string) => {
-    try {
-      const blob = await apiRequestBlob(`/executions/${id}/artifacts/${artifactId}`)
-      const url = URL.createObjectURL(blob)
-      const anchor = document.createElement('a')
-      anchor.href = url
-      anchor.download = artifactId
-      anchor.click()
-      URL.revokeObjectURL(url)
-    } catch (error) { showToast(error instanceof Error ? error.message : String(error)) }
-  }
-
   return <div className="min-h-full bg-background">
     <header className="border-b border-border bg-surface px-4 py-3 lg:px-6">
       <div className="grid grid-cols-[2.25rem_minmax(0,1fr)] items-center gap-x-3 gap-y-2 md:flex md:flex-wrap md:gap-3">
-        <Button asChild aria-label={t('executions.backToList')} size="icon" variant="ghost"><Link to="/executions"><ArrowLeft className="size-4" /></Link></Button>
+        <Button asChild aria-label={t('executions.backToList')} size="icon" variant="ghost"><Link to={canViewExecution ? '/executions' : '/playground'}><ArrowLeft className="size-4" /></Link></Button>
         <div className="min-w-0 md:flex-1"><div className="flex min-w-0 items-center gap-2"><h1 className="min-w-0 flex-1 truncate text-base font-semibold">{value.workflowName}</h1><StatusBadge label={localizedValue(t, 'common', value.status)} status={executionStatus(value.status)} /></div><p className="mt-1 truncate text-[10px] text-muted-foreground">{t('executions.executionId', { id: value.id })} · {t('executions.workflowVersion', { version: value.workflowVersionNumber ?? '—' })} · {localizedValue(t, 'executions.executionTypes', value.executionType)}</p></div>
         <div className="col-start-2 flex flex-wrap items-center gap-x-5 gap-y-1 text-[10px] text-muted-foreground md:col-auto"><span><strong className="block text-xs text-foreground">{duration(value)}</strong>{t('executions.durationLabel')}</span><span><strong className="block text-xs text-foreground">{localizedValue(t, 'executions.triggerTypes', value.triggerType)}</strong>{t('executions.triggerLabel')}</span><span><strong className="block max-w-36 truncate text-xs text-foreground">{value.traceId}</strong>Trace</span></div>
         <div className="col-start-2 flex items-center justify-self-end gap-2 md:col-auto md:ml-auto">
@@ -142,13 +128,9 @@ export function ExecutionDetailPage() {
     </header>
 
     <Tabs onValueChange={setMainView} value={mainView}>
-      <TabsList className="h-11 border-b border-border bg-surface px-6"><TabsTrigger onClick={() => setMainView('trace')} value="trace">{t('executions.mainViews.trace')}</TabsTrigger><TabsTrigger onClick={() => setMainView('recovery')} value="recovery">{t('executions.mainViews.recovery')}</TabsTrigger></TabsList>
-      <TabsContent value="trace"><TraceWaterfall className="min-h-[620px]" executionId={id} onDownloadArtifact={(artifactId) => void downloadArtifact(artifactId)} onNodeSelect={(nodeExecutionId) => setSelectedId(nodeExecutionId)} /></TabsContent>
-      <TabsContent value="recovery"><div className="grid min-h-[620px] grid-cols-[240px_minmax(420px,1fr)_320px] overflow-hidden max-xl:grid-cols-[230px_minmax(0,1fr)] max-lg:grid-cols-1">
-        <ExecutionOutline nodes={nodeItems} onSelect={setSelectedId} selectedId={selectedId} />
-        <ExecutionNodePanel node={selectedNode} onDownloadArtifact={(artifactId) => void downloadArtifact(artifactId)} />
-        <div className="max-xl:col-span-2 max-lg:col-span-1"><ExecutionRecoveryRail approvals={executionApprovals} canConfirm={auth.hasPermission('execution:fork')} checkpoints={checkpoints.data?.items ?? []} nodes={nodeItems} onConfirm={setConfirmationNode} waits={waits.data?.items ?? []} /></div>
-      </div></TabsContent>
+      <TabsList className="h-11 border-b border-border bg-surface px-6"><TabsTrigger onClick={() => setMainView('trace')} value="trace">{t('executions.mainViews.trace')}</TabsTrigger>{canViewExecution && <TabsTrigger onClick={() => setMainView('recovery')} value="recovery">{t('executions.mainViews.recovery')}</TabsTrigger>}</TabsList>
+      <TabsContent value="trace"><TraceWorkspace active={mainView === 'trace'} className="min-h-[620px]" execution={value} executionId={id} nodes={nodeItems} onDownloadArtifact={downloadArtifact} onNodeSelect={(node) => setSelectedId(node.id)} /></TabsContent>
+      {canViewExecution && <TabsContent value="recovery"><div className="min-h-[620px] overflow-hidden"><ExecutionRecoveryRail approvals={executionApprovals} canConfirm={auth.hasPermission('execution:fork')} checkpoints={checkpoints.data?.items ?? []} events={events.data?.items ?? []} nodes={nodeItems} onConfirm={setConfirmationNode} waits={waits.data?.items ?? []} /></div></TabsContent>}
     </Tabs>
 
     <ExecutionForkDialog checkpoints={checkpoints.data?.items ?? []} initialNodeId={selectedNode?.nodeId} nodes={nodeItems} onClose={closeFork} onSubmit={(request) => fork.mutateAsync(request).then(() => undefined)} open={forkOpen} pending={fork.isPending} />

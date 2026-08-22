@@ -73,8 +73,15 @@ async fn main() -> Result<()> {
         // other capability loops. A cloned ConnectionManager shares the same
         // physical connection and serializes blocking reads, which can starve
         // an otherwise ready capability for longer than an Invocation timeout.
-        let redis =
-            connect_worker_redis(&redis_settings, &format!("capability:{capability}")).await?;
+        let capability_redis_settings = redis_settings.clone();
+        let redis = WorkerRedis {
+            connection: connect_worker_redis(
+                &capability_redis_settings,
+                &format!("capability:{capability}"),
+            )
+            .await?,
+            settings: capability_redis_settings,
+        };
         let worker = worker.clone();
         let worker_lifecycle = lifecycle.clone();
         let progress = agentx_service_kit::RoleProgressWatchdog::start(
@@ -182,7 +189,7 @@ fn worker_capabilities() -> Result<Vec<String>> {
 
 async fn worker_loop(
     pool: sqlx::MySqlPool,
-    mut redis: redis::aio::ConnectionManager,
+    mut redis: WorkerRedis,
     worker: Arc<agentx_v2_runtime::worker_runtime::RuntimeWorker>,
     owner: Uuid,
     capability: String,
@@ -197,7 +204,7 @@ async fn worker_loop(
         let started = std::time::Instant::now();
         match process_worker_batch(
             &pool,
-            &mut redis,
+            &mut redis.connection,
             &worker,
             owner,
             &capability,
@@ -208,7 +215,26 @@ async fn worker_loop(
         {
             Ok(()) => progress.processed_since(started).await,
             Err(error) => {
+                // A dependency failure is not a stalled scheduler: the loop is
+                // still making progress by reclaiming the batch and retrying.
+                // Keep liveness tied to the local role loop so a Redis rebuild
+                // cannot trigger a false Kubernetes restart after the watchdog
+                // timeout.
+                progress.processed_since(started).await;
                 tracing::warn!(%error, %capability, "Worker batch failed and will be reclaimed");
+                match connect_worker_redis(
+                    &redis.settings,
+                    &format!("capability:{capability}:reconnect"),
+                )
+                .await
+                {
+                    Ok(connection) => redis.connection = connection,
+                    Err(reconnect_error) => tracing::warn!(
+                        error = %reconnect_error,
+                        %capability,
+                        "Worker Redis reconnect failed; retrying the capability loop"
+                    ),
+                }
                 tokio::select! {
                     () = lifecycle.cancelled() => return Ok(()),
                     () = tokio::time::sleep(Duration::from_secs(1)) => {}
@@ -216,6 +242,11 @@ async fn worker_loop(
             }
         }
     }
+}
+
+struct WorkerRedis {
+    connection: redis::aio::ConnectionManager,
+    settings: RuntimeRedisSettings,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -228,7 +259,17 @@ async fn process_worker_batch(
     consumer: &str,
     lifecycle: &agentx_service_kit::ServiceLifecycle,
 ) -> Result<()> {
-    for item in runtime_task_queue::read(redis, capability, consumer, 1_000).await? {
+    // XREAD itself blocks for one second. Bound the full queue read so a
+    // multiplexed connection left half-open by a Redis Pod replacement cannot
+    // freeze this capability forever. The outer loop replaces the connection
+    // after either an I/O error or this deadline.
+    let items = tokio::time::timeout(
+        Duration::from_secs(10),
+        runtime_task_queue::read(redis, capability, consumer, 1_000),
+    )
+    .await
+    .context("Runtime Worker queue read timed out")??;
+    for item in items {
         let Some(claim) =
             agentx_v2_runtime::engine::claim_worker_attempt(pool, owner, capability, &item.task)
                 .await?

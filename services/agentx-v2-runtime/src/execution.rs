@@ -47,6 +47,7 @@ pub struct InvocationCaller {
     pub caller_type: &'static str,
     pub caller_id: Uuid,
     pub token_version: Option<u64>,
+    pub origin: agentx_runtime_contracts::ExecutionOriginV1,
 }
 
 pub struct DispatchClaim {
@@ -283,6 +284,15 @@ pub async fn create_invocation(
     caller_id: Uuid,
     request: &InvocationRequestV1,
 ) -> RuntimeResult<InvocationAcceptedV1> {
+    let key_name: String = sqlx::query_scalar(
+        "SELECT key_name FROM api_key_admission WHERE tenant_id=? AND application_id=? AND key_id=?",
+    )
+    .bind(tenant_id)
+    .bind(application_id)
+    .bind(caller_id)
+    .fetch_optional(pool)
+    .await?
+    .ok_or(RuntimeError::Unauthorized)?;
     create_runtime_invocation(
         pool,
         tenant_id,
@@ -291,6 +301,11 @@ pub async fn create_invocation(
             caller_type: "api_key",
             caller_id,
             token_version: None,
+            origin: agentx_runtime_contracts::ExecutionOriginV1 {
+                trigger_source_id: Some(caller_id),
+                trigger_name: Some(key_name),
+                ..agentx_runtime_contracts::ExecutionOriginV1::system(None)
+            },
         },
         None,
         &request.input,
@@ -333,6 +348,53 @@ pub async fn create_runtime_invocation_tx(
     session_id: Option<Uuid>,
     input: &Value,
     idempotency_key: &str,
+) -> RuntimeResult<InvocationAcceptedV1> {
+    create_runtime_invocation_tx_inner(
+        tx,
+        tenant_id,
+        application_id,
+        caller,
+        session_id,
+        input,
+        idempotency_key,
+        false,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn create_chat_runtime_invocation_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::MySql>,
+    tenant_id: Uuid,
+    application_id: Uuid,
+    caller: InvocationCaller,
+    session_id: Uuid,
+    input: &Value,
+    idempotency_key: &str,
+) -> RuntimeResult<InvocationAcceptedV1> {
+    create_runtime_invocation_tx_inner(
+        tx,
+        tenant_id,
+        application_id,
+        caller,
+        Some(session_id),
+        input,
+        idempotency_key,
+        true,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn create_runtime_invocation_tx_inner(
+    tx: &mut sqlx::Transaction<'_, sqlx::MySql>,
+    tenant_id: Uuid,
+    application_id: Uuid,
+    caller: InvocationCaller,
+    session_id: Option<Uuid>,
+    input: &Value,
+    idempotency_key: &str,
+    chat_message: bool,
 ) -> RuntimeResult<InvocationAcceptedV1> {
     let request_hash = format!(
         "{:x}",
@@ -389,10 +451,37 @@ pub async fn create_runtime_invocation_tx(
     };
     let spec: ExecutionSpecPayloadV1 = serde_json::from_value(payload.clone())
         .map_err(|error| RuntimeError::Internal(error.into()))?;
-    let mut input = if session_id.is_some() {
-        project_session_message_input(input, &spec.input_contract)
+    let (mut input, chat_mapping_version, chat_mapping_json) = if chat_message {
+        let row = sqlx::query("SELECT version,mapping_json FROM application_chat_mappings WHERE tenant_id=? AND application_id=? AND bundle_id=? FOR SHARE")
+            .bind(tenant_id)
+            .bind(application_id)
+            .bind(selected_bundle_id)
+            .fetch_optional(&mut **tx)
+            .await?
+            .ok_or_else(|| RuntimeError::InvalidRequest("CHAT_MAPPING_NOT_CONFIGURED", "Conversation testing is not configured for this Deployment".into()))?;
+        let version: u64 = row.try_get("version")?;
+        let mapping_value: Value = row.try_get("mapping_json")?;
+        let mapping = serde_json::from_value::<Option<agentx_runtime_contracts::ChatMappingV1>>(
+            mapping_value.clone(),
+        )
+        .map_err(|error| RuntimeError::Internal(error.into()))?
+        .ok_or_else(|| {
+            RuntimeError::InvalidRequest(
+                "CHAT_MAPPING_NOT_CONFIGURED",
+                "Conversation testing is not configured for this Deployment".into(),
+            )
+        })?;
+        validate_runtime_chat_mapping(&mapping, &spec.input_contract, &spec.output_contract)?;
+        (
+            project_chat_message_input(input, &mapping, &spec.input_contract)?,
+            Some(version),
+            Some(
+                serde_json::to_value(&mapping)
+                    .map_err(|error| RuntimeError::Internal(error.into()))?,
+            ),
+        )
     } else {
-        input.clone()
+        (input.clone(), None, None)
     };
     agentx_runtime::materialize_and_validate_start_input(&mut input, &spec.input_contract)
         .map_err(|error| {
@@ -407,8 +496,8 @@ pub async fn create_runtime_invocation_tx(
     let state_hash =
         agentx_runtime_contracts::content_hash(&json!({"status":"queued","input":input}))
             .map_err(|error| RuntimeError::Internal(error.into()))?;
-    sqlx::query("INSERT INTO application_invocations(id,tenant_id,application_id,session_id,workflow_version_id,bundle_id,admission_epoch,state_version,execution_id,caller_type,caller_id,caller_token_version,request_hash,idempotency_key,status,input_json) VALUES(?,?,?,?,?,?,?,1,?,?,?,?,?,?,'queued',?) ON DUPLICATE KEY UPDATE id=id")
-        .bind(invocation_id).bind(tenant_id).bind(application_id).bind(session_id).bind(spec.workflow_version_id).bind(selected_bundle_id).bind(admission_epoch).bind(execution_id).bind(caller.caller_type).bind(caller.caller_id).bind(caller.token_version).bind(&request_hash).bind(idempotency_key).bind(&input).execute(&mut **tx).await?;
+    sqlx::query("INSERT INTO application_invocations(id,tenant_id,application_id,session_id,workflow_version_id,bundle_id,admission_epoch,state_version,execution_id,caller_type,caller_id,caller_token_version,chat_mapping_version,chat_mapping_json,request_hash,idempotency_key,status,input_json) VALUES(?,?,?,?,?,?,?,1,?,?,?,?,?,?,?,?,'queued',?) ON DUPLICATE KEY UPDATE id=id")
+        .bind(invocation_id).bind(tenant_id).bind(application_id).bind(session_id).bind(spec.workflow_version_id).bind(selected_bundle_id).bind(admission_epoch).bind(execution_id).bind(caller.caller_type).bind(caller.caller_id).bind(caller.token_version).bind(chat_mapping_version).bind(&chat_mapping_json).bind(&request_hash).bind(idempotency_key).bind(&input).execute(&mut **tx).await?;
     let stored = sqlx::query("SELECT id,execution_id,bundle_id,admission_epoch,status,request_hash FROM application_invocations WHERE tenant_id=? AND application_id=? AND caller_type=? AND caller_id=? AND idempotency_key=? FOR UPDATE")
         .bind(tenant_id).bind(application_id).bind(caller.caller_type).bind(caller.caller_id).bind(idempotency_key).fetch_one(&mut **tx).await?;
     let stored_id: Uuid = stored.try_get("id")?;
@@ -427,8 +516,10 @@ pub async fn create_runtime_invocation_tx(
             status: stored.try_get("status")?,
         });
     }
-    sqlx::query("INSERT INTO workflow_executions(id,tenant_id,workflow_id,workflow_version_id,application_id,bundle_id,admission_epoch,state_version,invocation_id,trace_id,trigger_type,status,started_at,input_json) VALUES(?,?,?,?,?,?,?,1,?,?,?,'queued',UTC_TIMESTAMP(6),?)")
-        .bind(execution_id).bind(tenant_id).bind(spec.workflow_id).bind(spec.workflow_version_id).bind(application_id).bind(selected_bundle_id).bind(admission_epoch).bind(invocation_id).bind(trace_id).bind(caller.caller_type).bind(&input).execute(&mut **tx).await?;
+    sqlx::query("INSERT INTO workflow_executions(id,tenant_id,workflow_id,workflow_version_id,application_id,session_id,bundle_id,admission_epoch,state_version,invocation_id,trace_id,trigger_type,initiator_user_id,initiator_user_name,initiator_department_id,initiator_department_name,trigger_source_id,trigger_name,status,started_at,input_json) VALUES(?,?,?,?,?,?,?,?,1,?,?,?,?,?,?,?,?,?,'queued',UTC_TIMESTAMP(6),?)")
+        .bind(execution_id).bind(tenant_id).bind(spec.workflow_id).bind(spec.workflow_version_id).bind(application_id).bind(session_id).bind(selected_bundle_id).bind(admission_epoch).bind(invocation_id).bind(trace_id).bind(caller.caller_type)
+        .bind(caller.origin.initiator_user_id).bind(&caller.origin.initiator_user_name).bind(caller.origin.initiator_department_id).bind(&caller.origin.initiator_department_name).bind(caller.origin.trigger_source_id).bind(&caller.origin.trigger_name)
+        .bind(&input).execute(&mut **tx).await?;
     for artifact_id in input_artifact_ids {
         sqlx::query("INSERT IGNORE INTO artifact_references(tenant_id,artifact_id,owner_type,owner_id,reference_role) VALUES(?,?,'execution',?,'input')")
             .bind(tenant_id)
@@ -483,9 +574,26 @@ pub async fn create_runtime_invocation_tx(
         "execution.accepted",
         "queued",
     );
-    trace.content_role = Some("input".into());
+    trace.content_kind = Some(agentx_runtime_contracts::TraceContentKindV1::WorkflowInput);
     trace.content_preview = crate::trace_delivery::bounded_preview(&input);
     crate::trace_delivery::enqueue_best_effort(tx, trace).await;
+    let mut start = crate::trace_delivery::TraceDraft::span(
+        tenant_id,
+        execution_id,
+        crate::trace_delivery::boundary_entity_id(execution_id, "start"),
+        Some((
+            execution_id,
+            agentx_runtime_contracts::TraceSpanKindV1::Execution,
+        )),
+        agentx_runtime_contracts::TraceSpanKindV1::Boundary,
+        "Start",
+        agentx_runtime_contracts::TraceEventKindV1::Finished,
+        "boundary.start.finished",
+        "succeeded",
+    );
+    start.content_kind = Some(agentx_runtime_contracts::TraceContentKindV1::WorkflowInput);
+    start.content_preview = crate::trace_delivery::bounded_preview(&input);
+    crate::trace_delivery::enqueue_best_effort(tx, start).await;
     sqlx::query("INSERT INTO invocation_events(tenant_id,invocation_id,event_id,sequence_number,event_type,payload_json) VALUES(?,?,?,1,'invocation.accepted',?)")
         .bind(tenant_id).bind(invocation_id).bind(Uuid::now_v7()).bind(json!({"executionId":execution_id,"bundleId":selected_bundle_id,"admissionEpoch":admission_epoch,"status":"queued"})).execute(&mut **tx).await?;
     Ok(InvocationAcceptedV1 {
@@ -497,20 +605,156 @@ pub async fn create_runtime_invocation_tx(
     })
 }
 
-fn project_session_message_input(input: &Value, input_contract: &Value) -> Value {
-    let Some(candidates) = input.as_object() else {
-        return input.clone();
+fn project_chat_message_input(
+    input: &Value,
+    mapping: &agentx_runtime_contracts::ChatMappingV1,
+    input_contract: &Value,
+) -> RuntimeResult<Value> {
+    let question = input
+        .get("question")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let files = input
+        .get("files")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let mut projected = serde_json::Map::from_iter([(
+        mapping.question_input.clone(),
+        Value::String(question.to_owned()),
+    )]);
+    if files.is_empty() {
+        return Ok(Value::Object(projected));
+    }
+    let file_field = mapping.file_input.as_ref().ok_or_else(|| {
+        RuntimeError::InvalidRequest(
+            "CHAT_FILE_MAPPING_NOT_CONFIGURED",
+            "This Chat Mapping does not accept files".into(),
+        )
+    })?;
+    let schema = input_contract
+        .get("properties")
+        .and_then(Value::as_object)
+        .and_then(|properties| properties.get(file_field))
+        .ok_or_else(|| {
+            RuntimeError::InvalidRequest(
+                "CHAT_MAPPING_FIELD_NOT_FOUND",
+                "Mapped file input does not exist".into(),
+            )
+        })?;
+    let value = if schema
+        .get("x-agentx-artifact-array")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        Value::Array(files)
+    } else {
+        if files.len() != 1 {
+            return Err(RuntimeError::InvalidRequest(
+                "CHAT_FILE_CARDINALITY_INVALID",
+                "The mapped input accepts exactly one file".into(),
+            ));
+        }
+        files.into_iter().next().unwrap_or(Value::Null)
     };
-    let Some(properties) = input_contract.get("properties").and_then(Value::as_object) else {
-        return input.clone();
-    };
-    Value::Object(
-        candidates
-            .iter()
-            .filter(|(name, _)| properties.contains_key(*name))
-            .map(|(name, value)| (name.clone(), value.clone()))
-            .collect(),
-    )
+    projected.insert(file_field.clone(), value);
+    Ok(Value::Object(projected))
+}
+
+fn validate_runtime_chat_mapping(
+    mapping: &agentx_runtime_contracts::ChatMappingV1,
+    input_contract: &Value,
+    output_contract: &Value,
+) -> RuntimeResult<()> {
+    let inputs = input_contract
+        .get("properties")
+        .and_then(Value::as_object)
+        .ok_or_else(|| {
+            RuntimeError::InvalidRequest(
+                "CHAT_INPUT_SCHEMA_INCOMPATIBLE",
+                "Input Schema is not an object".into(),
+            )
+        })?;
+    let outputs = output_contract
+        .get("properties")
+        .and_then(Value::as_object)
+        .ok_or_else(|| {
+            RuntimeError::InvalidRequest(
+                "CHAT_OUTPUT_SCHEMA_INCOMPATIBLE",
+                "Output Schema is not an object".into(),
+            )
+        })?;
+    let question = inputs.get(&mapping.question_input).ok_or_else(|| {
+        RuntimeError::InvalidRequest(
+            "CHAT_MAPPING_FIELD_NOT_FOUND",
+            "Mapped question input does not exist".into(),
+        )
+    })?;
+    if question.get("type").and_then(Value::as_str) != Some("string")
+        || question
+            .get("x-agentx-artifact")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+    {
+        return Err(RuntimeError::InvalidRequest(
+            "CHAT_MAPPING_TYPE_MISMATCH",
+            "Mapped question input must be a string".into(),
+        ));
+    }
+    if let Some(name) = &mapping.file_input {
+        let schema = inputs.get(name).ok_or_else(|| {
+            RuntimeError::InvalidRequest(
+                "CHAT_MAPPING_FIELD_NOT_FOUND",
+                "Mapped file input does not exist".into(),
+            )
+        })?;
+        if !schema
+            .get("x-agentx-artifact")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
+            return Err(RuntimeError::InvalidRequest(
+                "CHAT_MAPPING_TYPE_MISMATCH",
+                "Mapped file input must be an Artifact field".into(),
+            ));
+        }
+    }
+    let answer = outputs.get(&mapping.answer_output).ok_or_else(|| {
+        RuntimeError::InvalidRequest(
+            "CHAT_MAPPING_FIELD_NOT_FOUND",
+            "Mapped answer output does not exist".into(),
+        )
+    })?;
+    if answer.get("type").and_then(Value::as_str) != Some("string")
+        || answer
+            .get("x-agentx-sensitive")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+    {
+        return Err(RuntimeError::InvalidRequest(
+            "CHAT_MAPPING_TYPE_MISMATCH",
+            "Mapped answer output must be a non-sensitive string".into(),
+        ));
+    }
+    if let Some(name) = &mapping.answer_files_output {
+        let schema = outputs.get(name).ok_or_else(|| {
+            RuntimeError::InvalidRequest(
+                "CHAT_MAPPING_FIELD_NOT_FOUND",
+                "Mapped answer file output does not exist".into(),
+            )
+        })?;
+        if !schema
+            .get("x-agentx-artifact")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
+            return Err(RuntimeError::InvalidRequest(
+                "CHAT_MAPPING_TYPE_MISMATCH",
+                "Mapped answer file output must be an Artifact field".into(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 #[derive(Debug)]
@@ -994,39 +1238,71 @@ async fn process_cancel_command(
 
 #[cfg(test)]
 mod tests {
-    use super::project_session_message_input;
+    use super::{project_chat_message_input, validate_runtime_chat_mapping};
+    use agentx_runtime_contracts::ChatMappingV1;
     use serde_json::json;
 
     #[test]
-    fn session_message_is_projected_to_the_fixed_bundle_input_contract() {
-        let candidates = json!({
-            "message":"hello",
-            "question":"hello",
-            "attachments":[]
-        });
-        let basic = json!({
-            "type":"object",
-            "properties":{"message":{"type":"string"}},
-            "required":["message"],
-            "additionalProperties":false
-        });
-        let chat = json!({
-            "type":"object",
-            "properties":{
-                "question":{"type":"string"},
-                "attachments":{"type":"array"}
-            },
-            "required":["question","attachments"],
-            "additionalProperties":false
-        });
+    fn chat_message_is_projected_only_to_explicitly_mapped_fields() {
+        let mapping = ChatMappingV1 {
+            question_input: "prompt".into(),
+            file_input: Some("documents".into()),
+            answer_output: "result".into(),
+            answer_files_output: None,
+        };
+        let input = json!({"question":"hello","files":[{"artifactId":"00000000-0000-0000-0000-000000000001"}]});
+        let schema = json!({"type":"object","properties":{
+            "prompt":{"type":"string"},
+            "documents":{"type":"array","x-agentx-artifact":true,"x-agentx-artifact-array":true}
+        }});
+        assert_eq!(
+            project_chat_message_input(&input, &mapping, &schema).unwrap(),
+            json!({"prompt":"hello","documents":[{"artifactId":"00000000-0000-0000-0000-000000000001"}]})
+        );
+    }
 
+    #[test]
+    fn chat_message_projects_one_file_to_a_single_artifact_field() {
+        let mapping = ChatMappingV1 {
+            question_input: "prompt".into(),
+            file_input: Some("document".into()),
+            answer_output: "result".into(),
+            answer_files_output: None,
+        };
+        let reference = json!({"artifactId":"00000000-0000-0000-0000-000000000001"});
+        let schema = json!({"type":"object","properties":{
+            "prompt":{"type":"string"},
+            "document":{"type":"object","x-agentx-artifact":true}
+        }});
         assert_eq!(
-            project_session_message_input(&candidates, &basic),
-            json!({"message":"hello"})
+            project_chat_message_input(
+                &json!({"question":"hello","files":[reference.clone()]}),
+                &mapping,
+                &schema,
+            )
+            .unwrap(),
+            json!({"prompt":"hello","document":reference})
         );
-        assert_eq!(
-            project_session_message_input(&candidates, &chat),
-            json!({"question":"hello","attachments":[]})
+        assert!(
+            project_chat_message_input(
+                &json!({"question":"hello","files":[{}, {}]}),
+                &mapping,
+                &schema,
+            )
+            .is_err()
         );
+    }
+
+    #[test]
+    fn runtime_mapping_validation_rejects_sensitive_answer_output() {
+        let mapping = ChatMappingV1 {
+            question_input: "prompt".into(),
+            file_input: None,
+            answer_output: "result".into(),
+            answer_files_output: None,
+        };
+        let input = json!({"type":"object","properties":{"prompt":{"type":"string"}}});
+        let output = json!({"type":"object","properties":{"result":{"type":"string","x-agentx-sensitive":true}}});
+        assert!(validate_runtime_chat_mapping(&mapping, &input, &output).is_err());
     }
 }

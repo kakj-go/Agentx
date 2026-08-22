@@ -41,3 +41,20 @@ CREATE TABLE application_runtime_trigger_revisions (
     PRIMARY KEY (tenant_id, application_id, revision),
     UNIQUE KEY uq_control_trigger_manifest_hash (tenant_id, application_id, manifest_hash)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+CREATE TABLE application_playground_configs (
+    tenant_id BINARY(16) NOT NULL,
+    application_id BINARY(16) NOT NULL,
+    deployment_id BINARY(16) NOT NULL,
+    version BIGINT UNSIGNED NOT NULL DEFAULT 1,
+    mapping_json JSON NULL,
+    mapping_hash CHAR(71) NOT NULL,
+    published_version BIGINT UNSIGNED NULL,
+    publish_status ENUM('active','publishing','failed') NOT NULL DEFAULT 'publishing',
+    last_error_code VARCHAR(128) NULL,
+    last_error_message VARCHAR(1000) NULL,
+    updated_by BINARY(16) NOT NULL,
+    updated_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+    PRIMARY KEY (tenant_id, deployment_id),
+    KEY idx_playground_config_application (tenant_id, application_id, updated_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;

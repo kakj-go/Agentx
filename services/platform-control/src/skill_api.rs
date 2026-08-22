@@ -1201,14 +1201,22 @@ async fn validate_dependencies(
 }
 
 fn validate_alias(value: &str) -> ApiResult<String> {
-    let value = required_name(value)?.to_ascii_lowercase();
+    let value = required_name(value)?
+        .chars()
+        .flat_map(char::to_lowercase)
+        .collect::<String>();
     if !value
         .chars()
-        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
+        .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
     {
         return Err(ApiError::bad_request(
             "INVALID_SKILL_ALIAS",
-            "Skill alias must contain lowercase letters, digits, dash, or underscore",
+            "Skill alias must contain letters, digits, dash, or underscore",
+        )
+        .with_field_error(
+            "alias",
+            "INVALID_SKILL_ALIAS",
+            "Skill alias must contain letters, digits, dash, or underscore",
         ));
     }
     Ok(value)
@@ -1362,6 +1370,12 @@ mod tests {
         assert!(validate_entry_name("../secret", "file").is_err());
         assert!(join_path(&"a/".repeat(20), "file.md").is_err());
         assert_eq!(validate_alias("My-Skill").unwrap(), "my-skill");
+        assert_eq!(
+            validate_alias("数据分析-Agent_2").unwrap(),
+            "数据分析-agent_2"
+        );
+        assert!(validate_alias("数据 分析").is_err());
+        assert!(validate_alias("数据/分析").is_err());
     }
 
     #[test]

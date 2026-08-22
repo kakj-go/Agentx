@@ -30,6 +30,8 @@ ALTER TABLE application_messages
 ALTER TABLE application_invocations
     MODIFY caller_type ENUM('user','api_key','webhook','schedule','poll','lifecycle') NOT NULL,
     ADD COLUMN caller_token_version BIGINT UNSIGNED NULL AFTER caller_id,
+    ADD COLUMN chat_mapping_version BIGINT UNSIGNED NULL AFTER caller_token_version,
+    ADD COLUMN chat_mapping_json JSON NULL AFTER chat_mapping_version,
     ADD KEY idx_runtime_invocation_query (tenant_id, application_id, created_at, id),
     ADD KEY idx_runtime_invocation_execution (tenant_id, execution_id);
 
@@ -83,6 +85,9 @@ ALTER TABLE execution_resume_tokens
 CREATE TABLE runtime_user_admission (
     tenant_id BINARY(16) NOT NULL,
     user_id BINARY(16) NOT NULL,
+    user_name VARCHAR(255) NOT NULL,
+    department_id BINARY(16) NOT NULL,
+    department_name VARCHAR(255) NOT NULL,
     token_version BIGINT UNSIGNED NOT NULL,
     status ENUM('active','disabled') NOT NULL,
     admission_epoch BIGINT UNSIGNED NOT NULL,
@@ -123,3 +128,16 @@ CREATE TABLE runtime_trigger_operations (
         (tenant_id, idempotency_key)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
+CREATE TABLE application_chat_mappings (
+    tenant_id BINARY(16) NOT NULL,
+    application_id BINARY(16) NOT NULL,
+    deployment_id BINARY(16) NOT NULL,
+    bundle_id BINARY(16) NOT NULL,
+    version BIGINT UNSIGNED NOT NULL,
+    mapping_json JSON NULL,
+    content_hash CHAR(71) NOT NULL,
+    updated_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+    PRIMARY KEY (tenant_id, deployment_id),
+    UNIQUE KEY uq_runtime_chat_mapping_bundle (tenant_id, bundle_id),
+    KEY idx_runtime_chat_mapping_application (tenant_id, application_id, version)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;

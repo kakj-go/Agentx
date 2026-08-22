@@ -377,7 +377,8 @@ async fn api_first_control_closure_uses_empty_schema_and_public_routes() {
             "connectionName":"API Model Connection","providerType":"openai_compatible",
             "endpoint":"http://model.test.svc.cluster.local:8090/v1","credentialId":credential_id,
             "ownerDepartmentId":department_id,"alias":"API Model","modelName":"api-model",
-            "maxInputTokens":4096,"maxOutputTokens":1024,"defaultParameters":{},"price":null
+            "maxInputTokens":4096,"maxOutputTokens":1024,"defaultParameters":{},
+            "price":{"currency":"USD","inputPerMillion":"1","outputPerMillion":"2"}
         })),
     )
     .await;

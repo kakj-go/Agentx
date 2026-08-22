@@ -267,6 +267,9 @@
           "format": "uuid",
           "type": "string"
         },
+        "keyName": {
+          "type": "string"
+        },
         "keyPrefix": {
           "type": "string"
         },
@@ -286,6 +289,7 @@
         "applicationId",
         "keyId",
         "keyPrefix",
+        "keyName",
         "secretHash",
         "status"
       ],
@@ -777,6 +781,13 @@
     "RuntimeUserAdmissionV1": {
       "additionalProperties": false,
       "properties": {
+        "departmentId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "departmentName": {
+          "type": "string"
+        },
         "enabled": {
           "type": "boolean"
         },
@@ -795,11 +806,17 @@
         "userId": {
           "format": "uuid",
           "type": "string"
+        },
+        "userName": {
+          "type": "string"
         }
       },
       "required": [
         "tenantId",
         "userId",
+        "userName",
+        "departmentId",
+        "departmentName",
         "tokenVersion",
         "enabled",
         "tenantQueryEnabled"

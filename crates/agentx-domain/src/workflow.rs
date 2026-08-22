@@ -201,6 +201,8 @@ pub enum DynamicValue {
         selector: ValueSelector,
         #[serde(default, rename = "missingPolicy")]
         missing_policy: MissingValuePolicy,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        coerce: Option<ValueCoercion>,
     },
     Template {
         segments: Vec<TemplateSegment>,
@@ -208,6 +210,12 @@ pub enum DynamicValue {
     Expression {
         root: ExpressionNode,
     },
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ValueCoercion {
+    String,
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Serialize)]

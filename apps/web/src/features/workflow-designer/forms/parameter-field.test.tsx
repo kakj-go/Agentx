@@ -93,6 +93,27 @@ describe('ParameterField', () => {
     expect(onChange).toHaveBeenLastCalledWith([{ nested: 'ok' }])
   })
 
+  it('keeps recursively dynamic JSON literals on their selected scalar type', () => {
+    render(
+      <ParameterField
+        name="items"
+        onChange={vi.fn()}
+        parameters={{}}
+        referenceCatalog={referenceCatalog}
+        schema={{
+          type: 'array',
+          "x-agentx-dynamicValue": { modes: ['literal', 'reference'], allowedNamespaces: ['inputs'], acceptedCardinality: ['single'], missingPolicies: ['error'], recursive: true },
+        }}
+        ui={{ control: 'json' }}
+        value={[{ kind: 'literal', value: 7 }]}
+      />,
+    )
+
+    const field = screen.getByTestId('parameter-items')
+    expect(within(field).getByRole('combobox', { name: 'Value type' })).toHaveTextContent('Number')
+    expect(within(field).getByRole('textbox', { name: 'Value' })).toHaveTextContent('7')
+  })
+
   it('uses manifest localization paths for nested array fields and enum options', () => {
     render(
       <ParameterField
@@ -114,6 +135,37 @@ describe('ParameterField', () => {
     expect(screen.getByText('角色')).toBeInTheDocument()
     expect(screen.getByText('消息发送者')).toBeInTheDocument()
     expect(screen.getByRole('combobox', { name: '角色' })).toHaveTextContent('用户')
+  })
+
+  it('exposes stable manifest paths for fixed object children', () => {
+    const onChange = vi.fn()
+    render(
+      <ParameterField
+        name="operations"
+        onChange={onChange}
+        parameters={{}}
+        schema={{
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              operation: { type: 'string', enum: ['count', 'sum'] },
+              outputField: { type: 'string' },
+            },
+            additionalProperties: false,
+          },
+        }}
+        ui={{ control: 'json' }}
+        value={[{ operation: 'count', outputField: '' }]}
+      />,
+    )
+
+    const operation = document.querySelector<HTMLElement>('[data-field-path="operations[].operation"]')
+    const outputField = document.querySelector<HTMLElement>('[data-field-path="operations[].outputField"]')
+    expect(operation).not.toBeNull()
+    expect(outputField).not.toBeNull()
+    fireEvent.change(within(outputField!).getByRole('textbox'), { target: { value: 'count' } })
+    expect(onChange).toHaveBeenCalledWith([{ operation: 'count', outputField: 'count' }])
   })
 
   it('enables references only when the exact parameter schema declares them', () => {

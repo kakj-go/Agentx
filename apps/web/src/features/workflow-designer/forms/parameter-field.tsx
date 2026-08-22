@@ -197,7 +197,7 @@ export function ParameterField({
       />,
     );
   if (control === "collection")
-    return field(<CollectionControl catalog={referenceCatalog} enabled={textReferenceEnabled} itemSchema={schema.items} onChange={onChange} value={value} />);
+    return field(<CollectionControl catalog={referenceCatalog} enabled={textReferenceEnabled} itemSchema={schema.items} name={name} onChange={onChange} value={value} />);
   if (control === "fixed_collection")
     return field(<FixedCollectionControl catalog={referenceCatalog} enabled={textReferenceEnabled} onChange={onChange} value={value} />);
   if (control === "mapper")
@@ -233,12 +233,13 @@ function NativeReferenceControl({
   const dynamic = asDynamicValue(value);
   const editor = useRef<LexicalEditor | null>(null);
   const changeDynamic = (next: DynamicValue) => {
+    if (next.kind === "reference") return onChange({ ...next, coerce: schema.type === "string" ? "string" : undefined });
     if (next.kind !== "literal") return onChange(next);
     onChange({ kind: "literal", value: coerceLiteral(next.value, schema.type) } satisfies DynamicValue);
   };
   const insert = (selector: ValueSelector) => {
     if (editor.current) insertVariable(editor.current, selector, selectorDisplayLabel(selector, catalog));
-    else onChange({ kind: "reference", selector, missingPolicy: { kind: "error" } } satisfies DynamicValue);
+    else onChange({ kind: "reference", selector, missingPolicy: { kind: "error" }, coerce: schema.type === "string" ? "string" : undefined } satisfies DynamicValue);
   };
   if (!enabled) {
     const literal = dynamic.kind === "literal" ? String(dynamic.value ?? "") : "";
@@ -423,7 +424,7 @@ function ObjectBuilder({ schema, value, onChange, catalog, enabled, path, locali
     const remove = (name: string) => { const next = { ...current }; delete next[name]; onChange(next); };
     const rename = (name: string, nextName: string) => { const clean = nextName.trim(); if (!clean || clean === name || current[clean] !== undefined) return; const next = { ...current, [clean]: current[name] }; delete next[name]; onChange(next); };
     const add = () => { let index = dynamicKeys.length + 1; while (current[`field${index}`] !== undefined) index += 1; set(`field${index}`, defaultForSchema(dynamicSchema)); };
-    return <div className="space-y-2 rounded-md border border-border/70 p-2" data-testid="json-object">{fixedKeys.map((name) => { const childPath = `${path}.${name}`; const childSchema = properties[name]; const label = localization?.label(childPath) ?? childSchema?.title ?? humanize(name); return <div key={name}>{childSchema?.type !== "boolean" && <span className="mb-1 block text-[10px] font-medium text-muted-foreground">{label}</span>}<ObjectBuilder catalog={catalog} enabled={enabled} localization={localization} onChange={(next) => set(name, next)} path={childPath} schema={childSchema} value={current[name]} />{localization?.description(childPath) && <p className="mt-1 text-[10px] text-muted-foreground">{localization.description(childPath)}</p>}</div>; })}{schema.additionalProperties !== false && dynamicKeys.map((name) => <div className="space-y-2 rounded-md border border-border/60 p-2" data-testid="json-object-field" key={name}><div className="flex items-center gap-2"><Input aria-label={t('studio.key')} className="min-w-0 flex-1" defaultValue={name} onBlur={(event) => rename(name, event.target.value)} /><Button aria-label={t('studio.removeField', { key: name })} onClick={() => remove(name)} size="icon" variant="ghost"><Trash2 className="size-3.5" /></Button></div><ObjectBuilder catalog={catalog} enabled={enabled} localization={localization} onChange={(next) => set(name, next)} path={`${path}.${name}`} schema={dynamicSchema} value={current[name]} /></div>)}{schema.additionalProperties !== false && <Button aria-label={t('studio.addField')} onClick={add} size="sm" variant="ghost"><Plus className="size-3.5" />{t('studio.addField')}</Button>}</div>;
+    return <div className="space-y-2 rounded-md border border-border/70 p-2" data-testid="json-object">{fixedKeys.map((name) => { const childPath = `${path}.${name}`; const childSchema = properties[name]; const label = localization?.label(childPath) ?? childSchema?.title ?? humanize(name); return <div data-field-path={childPath} key={name}>{childSchema?.type !== "boolean" && <span className="mb-1 block text-[10px] font-medium text-muted-foreground">{label}</span>}<ObjectBuilder catalog={catalog} enabled={enabled} localization={localization} onChange={(next) => set(name, next)} path={childPath} schema={childSchema} value={current[name]} />{localization?.description(childPath) && <p className="mt-1 text-[10px] text-muted-foreground">{localization.description(childPath)}</p>}</div>; })}{schema.additionalProperties !== false && dynamicKeys.map((name) => <div className="space-y-2 rounded-md border border-border/60 p-2" data-field-path={`${path}.${name}`} data-testid="json-object-field" key={name}><div className="flex items-center gap-2"><Input aria-label={t('studio.key')} className="min-w-0 flex-1" defaultValue={name} onBlur={(event) => rename(name, event.target.value)} /><Button aria-label={t('studio.removeField', { key: name })} onClick={() => remove(name)} size="icon" variant="ghost"><Trash2 className="size-3.5" /></Button></div><ObjectBuilder catalog={catalog} enabled={enabled} localization={localization} onChange={(next) => set(name, next)} path={`${path}.${name}`} schema={dynamicSchema} value={current[name]} /></div>)}{schema.additionalProperties !== false && <Button aria-label={t('studio.addField')} onClick={add} size="sm" variant="ghost"><Plus className="size-3.5" />{t('studio.addField')}</Button>}</div>;
   }
   if (type === 'array') {
     const items = Array.isArray(value) ? value : [];
@@ -445,7 +446,18 @@ function AnyJsonValueBuilder({ schema, value, onChange, catalog, enabled, path =
 }
 
 const JSON_VALUE_TYPES = ['string', 'number', 'boolean', 'object', 'array'] as const;
-function jsonValueType(value: unknown): string { if (Array.isArray(value)) return 'array'; if (value && typeof value === 'object') return 'object'; if (typeof value === 'number') return 'number'; if (typeof value === 'boolean') return 'boolean'; return 'string'; }
+function jsonValueType(value: unknown): string {
+  const unwrapped = isDynamicLiteral(value) ? value.value : value;
+  if (Array.isArray(unwrapped)) return 'array';
+  if (unwrapped && typeof unwrapped === 'object') return 'object';
+  if (typeof unwrapped === 'number') return 'number';
+  if (typeof unwrapped === 'boolean') return 'boolean';
+  return 'string';
+}
+
+function isDynamicLiteral(value: unknown): value is Extract<DynamicValue, { kind: 'literal' }> {
+  return Boolean(value && typeof value === 'object' && (value as { kind?: unknown }).kind === 'literal' && 'value' in value);
+}
 
 function defaultForSchema(schema?: JsonSchemaProperty): unknown { if (schema?.default !== undefined) return schema.default; if (schema?.type === 'object') return {}; if (schema?.type === 'array') return []; if (schema?.type === 'boolean') return false; if (schema?.type === 'number' || schema?.type === 'integer') return 0; return ''; }
 
@@ -454,12 +466,14 @@ function CollectionControl({
   itemSchema,
   catalog,
   enabled,
+  name,
   onChange,
 }: {
   value: unknown;
   itemSchema?: JsonSchemaProperty;
   catalog?: ReferenceCatalog;
   enabled?: boolean;
+  name: string;
   onChange: (value: unknown[]) => void;
 }) {
   const { t } = useTranslation();
@@ -474,7 +488,7 @@ function CollectionControl({
             catalog={catalog}
             enabled={enabled}
             onChange={(next) => update(index, next)}
-            path={`items[]`}
+            path={`${name}[]`}
             schema={itemSchema ?? {}}
             value={item}
           />

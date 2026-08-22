@@ -45,7 +45,7 @@ pub(crate) async fn start_node_attempt_spans(
         status,
     );
     node.node_execution_id = Some(node_execution_id);
-    node.content_role = Some("input".into());
+    node.content_kind = Some(agentx_runtime_contracts::TraceContentKindV1::NodeInput);
     node.content_preview = preview.clone();
     enqueue_best_effort(tx, node).await;
     let mut attempt = TraceDraft::span(
@@ -65,7 +65,7 @@ pub(crate) async fn start_node_attempt_spans(
     attempt.node_execution_id = Some(node_execution_id);
     attempt.attempt_id = Some(attempt_id);
     attempt.attributes = json!({"attemptNumber":attempt_number});
-    attempt.content_role = Some("input".into());
+    attempt.content_kind = Some(agentx_runtime_contracts::TraceContentKindV1::AttemptInput);
     attempt.content_preview = preview;
     enqueue_best_effort(tx, attempt).await;
 }
@@ -111,7 +111,7 @@ pub(crate) async fn finish_resumed_spans(
         trace.node_execution_id = Some(node_execution_id);
         trace.attempt_id = Some(attempt_id);
         trace.error_code = error_code.map(str::to_owned);
-        trace.content_role = Some("output".into());
+        trace.content_kind = Some(agentx_runtime_contracts::TraceContentKindV1::AttemptOutput);
         trace.content_preview = content.clone();
         enqueue_best_effort(tx, trace).await;
     }
@@ -131,7 +131,7 @@ pub(crate) async fn finish_resumed_spans(
     );
     node_trace.node_execution_id = Some(node_execution_id);
     node_trace.error_code = error_code.map(str::to_owned);
-    node_trace.content_role = Some("output".into());
+    node_trace.content_kind = Some(agentx_runtime_contracts::TraceContentKindV1::NodeOutput);
     node_trace.content_preview = content.clone();
     enqueue_best_effort(tx, node_trace).await;
 
@@ -178,7 +178,7 @@ pub(crate) async fn finish_resumed_spans(
         trace.node_execution_id = Some(node_execution_id);
         trace.wait_id = Some(wait_id);
         trace.attributes = json!({"waitKind":wait_kind,"resumeStatus":wait_status});
-        trace.content_role = Some("output".into());
+        trace.content_kind = Some(agentx_runtime_contracts::TraceContentKindV1::WaitResponse);
         trace.content_preview = content;
         enqueue_best_effort(tx, trace).await;
     }
