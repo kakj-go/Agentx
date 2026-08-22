@@ -19,9 +19,10 @@
     "images": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["registry", "tag", "pullPolicy"],
+      "required": ["registry", "repositoryPrefix", "tag", "pullPolicy"],
       "properties": {
         "registry": { "type": "string", "minLength": 1 },
+        "repositoryPrefix": { "type": "string", "pattern": "^[a-z0-9._-]*$" },
         "tag": { "type": "string", "minLength": 1 },
         "pullPolicy": { "enum": ["Always", "IfNotPresent", "Never"] },
         "digests": {

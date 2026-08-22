@@ -8,6 +8,7 @@
   },
   "images": {
     "registry": "registry.example.com/agentx",
+    "repositoryPrefix": "",
     "tag": "v2-07a",
     "pullPolicy": "IfNotPresent",
     "digests": {

@@ -648,10 +648,16 @@ function Get-TargetPlanes {
 
 function Get-ImageReference {
     param($Profile, [string]$Name)
-    if ($Profile.environment -eq "production") {
-        return "$($Profile.images.registry)/$Name@$($Profile.images.digests.PSObject.Properties[$Name].Value)"
+    $repositoryPrefix = [string]$Profile.images.repositoryPrefix
+    $repositoryName = if ($repositoryPrefix -and $Name.StartsWith($repositoryPrefix, [StringComparison]::Ordinal)) {
+        $Name
+    } else {
+        "$repositoryPrefix$Name"
     }
-    return "$($Profile.images.registry)/$Name`:$($Profile.images.tag)"
+    if ($Profile.environment -eq "production") {
+        return "$($Profile.images.registry)/$repositoryName@$($Profile.images.digests.PSObject.Properties[$Name].Value)"
+    }
+    return "$($Profile.images.registry)/$repositoryName`:$($Profile.images.tag)"
 }
 
 function Set-RenderedEnvValue {
@@ -1682,7 +1688,7 @@ if ($Action -eq "Render") {
 try {
     if ($BuildImages) {
         if ($profile.environment -eq "production") { throw "Production images must be supplied by immutable digest; -BuildImages is forbidden." }
-        & (Join-Path $PSScriptRoot "build-images.ps1") -Tag ([string]$profile.images.tag) -Namespace ([string]$namespaces.dependencies) -Services @("agentx-migrate", "agentx-bootstrap", "agentx-doctor", "platform-control", "runtime-gateway", "workflow-runtime", "workflow-worker", "sandbox-manager", "agentx-egress-gateway", "observability", "web-console")
+        & (Join-Path $PSScriptRoot "build-images.ps1") -Registry ([string]$profile.images.registry) -RepositoryPrefix ([string]$profile.images.repositoryPrefix) -Tag ([string]$profile.images.tag) -Namespace ([string]$namespaces.dependencies) -Services @("agentx-migrate", "agentx-bootstrap", "agentx-doctor", "platform-control", "runtime-gateway", "workflow-runtime", "workflow-worker", "sandbox-manager", "agentx-egress-gateway", "observability", "web-console")
     }
 
     $physicalTargets = @(

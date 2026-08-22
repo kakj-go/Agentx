@@ -6,7 +6,7 @@
     "runtime": "agentx-runtime",
     "dependencies": "agentx-deps"
   },
-  "images": { "registry": "agentx", "repositoryPrefix": "", "tag": "dev", "pullPolicy": "IfNotPresent" },
+  "images": { "registry": "kakj", "repositoryPrefix": "agentx-", "tag": "v0.0.1-beta", "pullPolicy": "Always" },
   "ingress": { "className": "agentx-nginx", "controlHost": "agentx.localhost", "runtimeHost": "run.agentx.localhost", "controlTlsSecretName": null, "runtimeTlsSecretName": null },
   "services": {
     "webConsole": { "replicas": 1, "maxReplicas": 4 },

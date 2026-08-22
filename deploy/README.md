@@ -1,6 +1,6 @@
 # Agentx V2 Kubernetes 部署
 
-统一入口是 `scripts/deploy-v2.ps1`，Profile API 固定为破坏性的 `agentx.io/deployment/v2alpha3`。`v2alpha2` 及更早版本不做转换，校验时会明确拒绝。
+用户安装入口是 Windows/PowerShell 的 `scripts/install.ps1` 和 Linux/Bash 的 `scripts/install.sh`；高级部署与运维入口是 `scripts/deploy-v2.ps1`。Profile API 固定为破坏性的 `agentx.io/deployment/v2alpha3`。`v2alpha2` 及更早版本不做转换，校验时会明确拒绝。
 
 ## 1. 物理 Namespace 与逻辑 Plane
 
@@ -23,9 +23,21 @@ Observability 与 Runtime 共用 Namespace，但仍使用独立的 ServiceAccoun
 
 Profile 的 `namespaces` 只能包含不同且非空的 `control`、`runtime`、`dependencies`。本地示例为 `deploy/profiles/v2-full-local.json`，生产示例为 `deploy/profiles/v2-production.example.json`。
 
+公开 Beta 镜像使用 `deploy/profiles/v2-dockerhub-beta.json`。该 Profile 从 Docker Hub 的 `kakj/agentx-*:v0.0.1-beta` 拉取镜像，不需要在部署主机编译 Agentx；仍需按 [OpenSandbox 接入说明](opensandbox/README.md) 独立准备 OpenSandbox Lifecycle 服务。
+
 ```powershell
 .\scripts\deploy-v2.ps1 -Action Validate -Target All -ConfigFile deploy/profiles/v2-full-local.json
 .\scripts\deploy-v2.ps1 -Action Render -Target All -ConfigFile deploy/profiles/v2-full-local.json
+```
+
+快速部署公开 Beta 镜像时只需执行对应平台的一键脚本。脚本内部固定按 `Validate → Install → Doctor` 执行，任一阶段失败都会停止：
+
+```powershell
+.\scripts\install.ps1
+```
+
+```bash
+bash ./scripts/install.sh
 ```
 
 Profile 只保存非敏感配置和 Secret 引用。`agentx-deps/agentx-dependencies-secrets` 是跨组件 Vault、JWT/签名、Egress TLS/KID 和 Observability Redis ACL 凭据的唯一权威源；`generated-local` 自动生成权威值及三个 Namespace 的最小镜像，生产 `existing-kubernetes` 必须预先创建权威 Secret、Profile 引用的工作负载 Secret和外部基础设施凭据。

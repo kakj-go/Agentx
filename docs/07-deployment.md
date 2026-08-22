@@ -16,6 +16,8 @@ Agentx V2 通过 `scripts/deploy-v2.ps1` 和破坏性的 `agentx.io/deployment/v
 
 Profile 只保存非敏感配置和固定 Secret 引用。密码、API Key、Session Token 和加密 Key 只进入 Kubernetes Secret；CA、客户端证书和私钥由部署主机的绝对路径复制到只读 Trust Bundle。
 
+镜像地址由 `images.registry + images.repositoryPrefix + 服务名 + images.tag/digest` 生成。`repositoryPrefix` 只负责同一仓库下的名称前缀；当服务名已经包含该前缀时不会重复添加。例如 Docker Hub Beta Profile 使用 `registry=kakj`、`repositoryPrefix=agentx-`，最终得到 `kakj/agentx-platform-control:v0.0.1-beta` 和 `kakj/agentx-migrate:v0.0.1-beta`。
+
 所有跨组件凭据都以 Dependencies Namespace 的 `agentx-dependencies-secrets` 为唯一权威来源，包括 Vault Token、Control 与 Runtime/Observability 的 JWT/Bundle/Work Package/User 签名材料、Runtime 与 Egress Gateway 的私钥/公钥/KID、Egress TLS/CA，以及 Observability Redis ACL 密码。Kubernetes 不允许 Pod 直接引用其他 Namespace 的 Secret，因此部署器按最小权限把这些值同步到 Control、Runtime、Observability 和 Gateway 的本地镜像 Secret；组件不直接读取跨 Namespace Secret，也不放宽 RBAC。生产 `existing-kubernetes` Profile 同样必须提供 `agentx-dependencies-secrets`，各工作负载 Secret 只保存本地凭据和所需共享值的镜像。
 
 管理员只修改权威 Secret，随后必须执行全量协调同步：
@@ -46,6 +48,10 @@ deploy/
 Control、Runtime、Observability、Dependencies 继续保持四个逻辑 Kustomization；部署器把 Observability 映射到 Runtime Namespace，并负责动态 Namespace、Secret、镜像重写、Pull Policy 和应用顺序。Echo MCP/Node 只用于 local/E2E，不属于基础生产服务。
 
 ## 3. 安装流程
+
+公开 Beta 镜像面向用户提供一键安装入口，Windows/PowerShell 执行 `pwsh ./scripts/install.ps1`，Linux/Bash 执行 `bash ./scripts/install.sh`。两个入口都使用 `deploy/profiles/v2-dockerhub-beta.json`，并按 `Validate → Install → Doctor` 完成配置校验、资源安装和安装后健康检查。
+
+高级部署、独立 Target 操作和自定义 Profile 仍使用底层部署器：
 
 ```powershell
 .\scripts\deploy-v2.ps1 -Action Validate -ConfigFile deploy/profiles/v2-full-local.json

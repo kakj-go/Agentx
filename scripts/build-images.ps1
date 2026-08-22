@@ -1,4 +1,6 @@
 param(
+    [string]$Registry = "agentx",
+    [string]$RepositoryPrefix = "",
     [string]$Tag = "dev",
     [string]$Namespace = "agentx",
     [string[]]$Services = @(
@@ -12,7 +14,9 @@ param(
         "web-console"
     ),
     [switch]$SkipWeb,
-    [switch]$BuildMem0
+    [switch]$BuildMem0,
+    [switch]$SkipKubernetesImport,
+    [switch]$Push
 )
 
 $ErrorActionPreference = "Stop"
@@ -35,6 +39,24 @@ function Invoke-DockerBuild([string[]]$DockerArguments) {
             Write-Warning "Docker build attempt $attempt failed; retrying after a transient backoff."
             Start-Sleep -Seconds (2 * $attempt)
         }
+    }
+}
+
+function Get-ImageName([string]$Service) {
+    $repository = if ($RepositoryPrefix -and $Service.StartsWith($RepositoryPrefix, [StringComparison]::Ordinal)) {
+        $Service
+    } else {
+        "$RepositoryPrefix$Service"
+    }
+    return "$Registry/$repository`:$Tag"
+}
+
+function Complete-Image([string]$Image) {
+    if (-not $SkipKubernetesImport) {
+        Import-LocalKubernetesImage $Image
+    }
+    if ($Push) {
+        & docker push $Image
     }
 }
 
@@ -105,14 +127,14 @@ function Import-LocalKubernetesImage([string]$Image) {
 try {
     foreach ($service in $Services) {
         if ($service -eq "web-console") { continue }
-        $image = "agentx/{0}:{1}" -f $service, $Tag
+        $image = Get-ImageName $service
         if ($service -eq "lightrag") {
             Invoke-DockerBuild -DockerArguments @(
                 "--file", "$root/deploy/docker/lightrag.Dockerfile",
                 "--tag", $image,
                 $root
             )
-            Import-LocalKubernetesImage $image
+            Complete-Image $image
             continue
         }
         $application = if ($service -eq "observability") {
@@ -136,16 +158,16 @@ try {
         }
         $dockerArguments += @("--tag", $image, $root)
         Invoke-DockerBuild -DockerArguments $dockerArguments
-        Import-LocalKubernetesImage $image
+        Complete-Image $image
     }
 
     if (-not $SkipWeb -and $Services -contains "web-console") {
-        $webImage = "agentx/web-console:$Tag"
+        $webImage = Get-ImageName "web-console"
         $webArguments = @("--file", "$root/deploy/docker/web.Dockerfile")
         $webArguments += @("--build-arg", "NGINX_CONFIG=deploy/docker/nginx-v2.conf")
         $webArguments += @("--tag", $webImage, $root)
         Invoke-DockerBuild -DockerArguments $webArguments
-        Import-LocalKubernetesImage $webImage
+        Complete-Image $webImage
     }
 
     if ($BuildMem0) {
