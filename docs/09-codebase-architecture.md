@@ -2,7 +2,7 @@
 
 ## 1. Monorepo
 
-Agentx 使用单仓库管理 Rust 服务、公共 Crate、前端、容器、分域 Migration、Helm Chart、可选 Kustomize Addon 和跨平台 Python 运维工具。
+Agentx 使用单仓库管理 Rust 服务、公共 Crate、Rust `agentxctl`/`xtask`、前端、容器、分域 Migration、Helm Chart、可选 Kustomize Addon 和 Python系统验收工具。
 
 ```text
 Agentx/
@@ -28,11 +28,13 @@ Agentx/
 │   ├── agentx-mysql-lease/
 │   ├── agentx-service-kit/
 │   ├── agentx-boundary-check/
-│   └── agentx-v2-ops/
+│   ├── agentx-v2-ops/
+│   ├── agentx-key-material/
+│   └── agentxctl/
 ├── migrations/{control,runtime,observability}/
-├── deploy/{docker,helm,kustomize,opensandbox,python,values}/
+├── deploy/{docker,helm,kustomize,opensandbox,values}/
 ├── tests/e2e/
-├── tools/python/
+├── xtask/
 └── docs/
 ```
 

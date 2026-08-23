@@ -28,6 +28,16 @@ export type ChatMapping = {
   answerFilesOutput: string | null
 }
 
+export async function useRuntimePortForward(page: Page) {
+  const runtimeBaseUrl = process.env.AGENTX_E2E_RUNTIME_URL
+  if (!runtimeBaseUrl) return
+  await page.route('**/runtime-config.js', (route) => route.fulfill({
+    body: `window.__AGENTX_RUNTIME__={runtimeBaseUrl:${JSON.stringify(runtimeBaseUrl)}};\n`,
+    contentType: 'application/javascript',
+    status: 200,
+  }))
+}
+
 export async function publishCompatibleChatMapping(page: Page, token: string, applicationId: string, deploymentId: string) {
   const headers = { Authorization: `Bearer ${token}` }
   const deploymentsResponse = await page.request.get(`/api/v1/applications/${applicationId}/deployments`, { headers })

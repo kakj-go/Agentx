@@ -1,6 +1,6 @@
 # M5 Agent 运行实施任务清单
 
-> 历史命令说明：本文中的 PowerShell、Shell、deployment Profile 和核心 Kustomize 命令只记录当时验收事实，相关入口已经删除，不得作为当前操作入口；请使用 `agentx-deploy`、`agentx-check` 与 `pytest tests/e2e`。
+> 历史命令说明：本文中的 PowerShell、Shell、deployment Profile 和核心 Kustomize 命令只记录当时验收事实，相关入口已经删除，不得作为当前操作入口；当前部署使用 `agentxctl`，仓库门禁使用 `cargo xtask check`，集群验收使用 `pytest tests/e2e`。
 
 状态：当前 Kubernetes 部署验收 `done`。AGT-001～013、固定协议门禁、资源 Runtime、Agent Ledger/预算/循环、Rust OpenSandbox Adapter、Sandbox Manager、Agent/Code API 与 Workbench、固定版本 LightRAG/Mem0 和临时 Kubernetes Runtime E2E 均已完成。AGT-010 的 Docker+runc 功能基线保持 `done`；gVisor/Kata、CPU/PID/磁盘实际强制、双栈 egress、生产 Vault、镜像签名和生产级跨租户攻击隔离标记为“暂不重试（deferred）”，不在当前环境继续复跑，统一转入 M7 的 INT-006/010/011/014。OpenSandbox 选择及本机实测结论见 [可行性评估](opensandbox-feasibility.md)。
 

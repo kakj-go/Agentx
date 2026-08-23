@@ -1,6 +1,6 @@
 # M2 Workflow 控制面与资源中心验收证据
 
-> 历史命令说明：本文中的 PowerShell、Shell、deployment Profile 和核心 Kustomize 命令只记录当时验收事实，相关入口已经删除，不得作为当前操作入口；请使用 `agentx-deploy`、`agentx-check` 与 `pytest tests/e2e`。
+> 历史命令说明：本文中的 PowerShell、Shell、deployment Profile 和核心 Kustomize 命令只记录当时验收事实，相关入口已经删除，不得作为当前操作入口；当前部署使用 `agentxctl`，仓库门禁使用 `cargo xtask check`，集群验收使用 `pytest tests/e2e`。
 
 > 已被 [M2.1 资源中心重构](m2.1-resource-redesign.md) 取代。本页仅保留旧 M2 历史记录，不再作为当前阶段完成证据；新的验收记录见 [M2.1 验收证据](m2.1-acceptance-evidence.md)。
 

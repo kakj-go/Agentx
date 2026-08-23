@@ -36,9 +36,10 @@
 - name: wait-for-observability-schema
   image: curlimages/curl:8.12.1
   command: [sh, -ec]
-  args: ['until test "$(curl --fail --silent {{ if eq .Values.global.environment "production" }}--cacert /etc/agentx-ca/clickhouse.pem{{ end }} --user "$AGENTX_CLICKHOUSE_USER:$AGENTX_CLICKHOUSE_PASSWORD" --data-binary "SELECT count() FROM observability_schema_migrations WHERE version=2" "${AGENTX_CLICKHOUSE_URL%/}/" 2>/dev/null)" -ge "1"; do sleep 2; done']
+  args: ['until test "$(curl --fail --silent --get {{ if eq .Values.global.environment "production" }}--cacert /etc/agentx-ca/clickhouse.pem{{ end }} --user "$AGENTX_CLICKHOUSE_USER:$AGENTX_CLICKHOUSE_PASSWORD" --data-urlencode "database=$AGENTX_CLICKHOUSE_DATABASE" --data-urlencode "query=SELECT count() FROM observability_schema_migrations WHERE version=2" "${AGENTX_CLICKHOUSE_URL%/}/" 2>/dev/null)" -ge "1"; do sleep 2; done']
   env:
     - { name: AGENTX_CLICKHOUSE_URL, value: {{ .Values.global.components.clickhouse.url | quote }} }
+    - { name: AGENTX_CLICKHOUSE_DATABASE, value: {{ .Values.global.components.clickhouse.database | quote }} }
     - { name: AGENTX_CLICKHOUSE_USER, value: {{ .Values.global.components.clickhouse.queryUser | quote }} }
     - name: AGENTX_CLICKHOUSE_PASSWORD
       valueFrom: { secretKeyRef: { name: {{ include "agentx.secret" (list . "observability" "observability") }}, key: AGENTX_CLICKHOUSE_QUERY_PASSWORD } }

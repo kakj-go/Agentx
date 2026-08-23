@@ -747,6 +747,12 @@ async fn create_retention_run(
     }
     sqlx::query("INSERT INTO retention_runs(id,tenant_id,dry_run,status,requested_by) VALUES(?,?,?,'queued',?)").bind(id).bind(actor.tenant_id).bind(input.dry_run).bind(actor.user_id).execute(&mut *tx).await?;
     tx.commit().await?;
+    tracing::info!(
+        retention_run_id = %id,
+        tenant_id = %actor.tenant_id,
+        dry_run = input.dry_run,
+        "Control Retention Run queued"
+    );
     Ok((
         StatusCode::ACCEPTED,
         Json(

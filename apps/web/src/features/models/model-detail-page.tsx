@@ -70,6 +70,7 @@ export function ModelDetailPage() {
         price,
       }),
     })
+    setHealth(undefined)
     await invalidate()
     showToast(t('models.saved'))
   }

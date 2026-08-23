@@ -71,6 +71,24 @@ describe('model edit form', () => {
     expect(alert).toHaveTextContent('provider returned 401 Unauthorized')
     expect(screen.getByText('42 ms')).toBeInTheDocument()
   })
+
+  it('clears a stale connection result after the deployment configuration changes', async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(<QueryClientProvider client={queryClient}><ToastProvider><MemoryRouter initialEntries={['/models/model-1']}><Routes><Route element={<ModelDetailPage />} path="/models/:id" /></Routes></MemoryRouter></ToastProvider></QueryClientProvider>)
+
+    fireEvent.click(await screen.findByRole('button', { name: '测试连接' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('PROVIDER_HTTP_ERROR')
+
+    const editButton = screen.getByRole('button', { name: '编辑模型' })
+    await waitFor(() => expect(editButton).toBeEnabled())
+    fireEvent.click(editButton)
+    fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: '保存' }))
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(screen.getByText('未测试')).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.queryByText('42 ms')).not.toBeInTheDocument()
+  })
 })
 
 const modelResponse = {

@@ -1,6 +1,6 @@
 # V2 Backup Provider Adapter v1
 
-生产依赖均由外部平台托管。`agentx-deploy backup|restore` 负责安全前置、RPO/RTO 计时、Manifest 校验和证据落盘；实际快照、PITR、Bucket Version 恢复由平台 Adapter 完成。
+生产依赖均由外部平台托管。`agentxctl backup|restore` 负责安全前置、RPO/RTO 计时、Manifest 校验和证据落盘；实际快照、PITR、Bucket Version 恢复由平台 Adapter 完成。
 
 Adapter 必须接受 `--action`、`--target`、`--backup-id`、`--values` 和可选 `--restore-target`，只向标准输出写一个 JSON Receipt：
 

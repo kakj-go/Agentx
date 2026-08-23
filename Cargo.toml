@@ -1,5 +1,7 @@
 [workspace]
 members = [
+  "crates/agentx-key-material",
+  "crates/agentxctl",
   "crates/agentx-api-types",
   "crates/agentx-application",
   "crates/agentx-boundary-check",
@@ -19,6 +21,8 @@ members = [
   "services/observability",
   "services/echo-mcp",
   "services/echo-node",
+  "tests/fixtures/backup-adapter",
+  "xtask",
 ]
 resolver = "3"
 
@@ -26,7 +30,7 @@ resolver = "3"
 edition = "2024"
 license = "Apache-2.0"
 rust-version = "1.85"
-version = "0.1.0"
+version = "0.0.2-beta"
 
 [workspace.dependencies]
 aes-gcm = "0.10"
@@ -37,6 +41,7 @@ async-stream = "0.3"
 axum = { version = "0.8", features = ["multipart"] }
 axum-extra = { version = "0.10", features = ["cookie"] }
 base64 = "0.22"
+clap = { version = "4.5", features = ["derive"] }
 bytes = "1.10"
 clickhouse = { version = "0.13", features = ["time", "uuid", "rustls-tls-native-roots"] }
 csv = "1.3"
@@ -55,6 +60,7 @@ hyper-rustls = { version = "0.27", default-features = false, features = ["aws-lc
 hyper-util = { version = "0.1", features = ["client-legacy", "http1", "server", "tokio"] }
 jsonwebtoken = "9.3"
 jsonschema = { version = "0.33", default-features = false }
+include_dir = "0.7"
 ipnet = "2.11"
 object_store = { version = "0.11", features = ["aws"] }
 rand = "0.8"
@@ -78,13 +84,14 @@ sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-r
 thiserror = "2.0"
 time = { version = "0.3", features = ["serde", "formatting", "parsing", "macros"] }
 tokio = { version = "1.0", features = ["macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+tempfile = "3.20"
 tokio-rustls = "0.26"
 tokio-util = "0.7"
 tokio-stream = "0.1"
 tonic = { version = "0.13", features = ["transport"] }
 prost = "0.13"
 tower = "0.5"
-tower-http = { version = "0.6", features = ["catch-panic", "request-id", "trace"] }
+tower-http = { version = "0.6", features = ["catch-panic", "cors", "request-id", "trace"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 utoipa = { version = "5", features = ["uuid", "time"] }
@@ -95,6 +102,7 @@ zeroize = "1.8"
 zip = { version = "2.4", default-features = false, features = ["deflate"] }
 
 agentx-api-types = { path = "crates/agentx-api-types" }
+agentx-key-material = { path = "crates/agentx-key-material" }
 agentx-bundle-builder = { path = "crates/agentx-bundle-builder" }
 agentx-application = { path = "crates/agentx-application" }
 agentx-control-infrastructure = { path = "crates/agentx-control-infrastructure" }

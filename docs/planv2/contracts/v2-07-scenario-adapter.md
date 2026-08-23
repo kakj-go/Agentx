@@ -1,8 +1,8 @@
 # V2-07A Scenario Adapter v1（历史）
 
-> 历史命令说明：本文中的 PowerShell、Shell、deployment Profile 和核心 Kustomize 命令只记录当时验收事实，相关入口已经删除，不得作为当前操作入口；请使用 `agentx-deploy`、`agentx-check` 与 `pytest tests/e2e`。
+> 历史命令说明：本文中的 PowerShell、Shell、deployment Profile 和核心 Kustomize 命令只记录当时验收事实，相关入口已经删除，不得作为当前操作入口；当前部署使用 `agentxctl`，仓库门禁使用 `cargo xtask check`，集群验收使用 `pytest tests/e2e`。
 
-> 本契约只记录 V2-07A 当时的验收方式，旧阶段脚本已经删除，不再是可执行接口。当前环境编排、故障注入和证据采集由 `tests/e2e` 的领域 Fixture 与 `agentx-deploy` 完成。
+> 本契约只记录 V2-07A 当时的验收方式，旧阶段脚本已经删除，不再是可执行接口。当前环境编排、故障注入和证据采集由 `tests/e2e` 的领域 Fixture 与 `agentxctl` 完成。
 
 `scripts/v2-07-e2e.ps1` 只负责部署、升级、Migration、恢复顺序和清理；需要业务身份、外部托管服务管理 API 或平台专用网络探针的断言由真实 Scenario Adapter 执行。Adapter 必须接受：
 

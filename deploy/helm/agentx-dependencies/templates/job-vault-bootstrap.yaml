@@ -29,8 +29,8 @@ spec:
               printf 'path "secret/data/tenants/+/runtime-credentials/+" { capabilities = ["create", "update"] }\n' | vault policy write agentx-control-runtime-credential-writer -
               printf 'path "secret/data/tenants/+/credentials/+" { capabilities = ["create", "update", "read"] }\npath "secret/destroy/tenants/+/credentials/+" { capabilities = ["update"] }\n' | vault policy write agentx-control-credential-manager -
               printf 'path "secret/data/tenants/+/webhooks/+" { capabilities = ["read"] }\npath "secret/data/tenants/+/runtime-credentials/+" { capabilities = ["read"] }\npath "secret/data/tenants/+/credentials/+" { capabilities = ["read"] }\n' | vault policy write agentx-runtime-secret-reader -
-              vault token lookup "$CONTROL_VAULT_TOKEN" >/dev/null 2>&1 || vault token create -policy=agentx-control-webhook-writer -policy=agentx-control-runtime-credential-writer -policy=agentx-control-credential-manager -id="$CONTROL_VAULT_TOKEN" -orphan >/dev/null
-              vault token lookup "$RUNTIME_VAULT_TOKEN" >/dev/null 2>&1 || vault token create -policy=agentx-runtime-secret-reader -id="$RUNTIME_VAULT_TOKEN" -orphan >/dev/null
-              vault token lookup "$CONTROL_VAULT_TOKEN" >/dev/null
-              vault token lookup "$RUNTIME_VAULT_TOKEN" >/dev/null
+              vault token lookup -- "$CONTROL_VAULT_TOKEN" >/dev/null 2>&1 || vault token create -policy=agentx-control-webhook-writer -policy=agentx-control-runtime-credential-writer -policy=agentx-control-credential-manager -id="$CONTROL_VAULT_TOKEN" -orphan >/dev/null
+              vault token lookup -- "$RUNTIME_VAULT_TOKEN" >/dev/null 2>&1 || vault token create -policy=agentx-runtime-secret-reader -id="$RUNTIME_VAULT_TOKEN" -orphan >/dev/null
+              vault token lookup -- "$CONTROL_VAULT_TOKEN" >/dev/null
+              vault token lookup -- "$RUNTIME_VAULT_TOKEN" >/dev/null
 {{- end }}

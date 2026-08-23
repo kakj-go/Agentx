@@ -37,6 +37,7 @@ export function serializeStudio(document: StudioDocument): { definition: Workflo
   const actionNodes = document.nodes.filter((node): node is StudioNode & { data: ActionNodeData } => node.data.editorKind === 'action')
   const bindingNodes = new Map(document.nodes.filter((node): node is StudioNode & { data: BindingNodeData } => node.data.editorKind === 'binding').map((node) => [node.id, node]))
   const bindingByTarget = new Map<string, Array<ActionNodeData['resourceReferences'][number]>>()
+  const persistedBindingIds = new Set<string>()
   for (const edge of document.edges.filter((item) => item.data?.edgeKind === 'binding')) {
     const binding = bindingNodes.get(edge.source)
     const role = edge.data?.targetSlot ?? edge.targetHandle?.replace(/^binding:/, '')
@@ -44,6 +45,7 @@ export function serializeStudio(document: StudioDocument): { definition: Workflo
     const references = bindingByTarget.get(edge.target) ?? []
     references.push({ bindingId: binding.data.bindingId, bindingRole: role, resourceType: binding.data.resourceType, resourceId: binding.data.resourceId, resourceVersionId: binding.data.resourceVersionId, operation: binding.data.operation })
     bindingByTarget.set(edge.target, references)
+    persistedBindingIds.add(binding.data.bindingId)
   }
   const connections = document.edges.filter((edge) => edge.data?.edgeKind !== 'binding').map((edge) => ({ id: edge.id, sourceNodeId: edge.source, sourceHandle: edge.sourceHandle ?? 'main', targetNodeId: edge.target, targetHandle: edge.targetHandle ?? 'main', order: edge.data?.order ?? 0 }))
   const grouped = new Map<string, typeof connections>()
@@ -61,9 +63,9 @@ export function serializeStudio(document: StudioDocument): { definition: Workflo
     editorDocument: {
       nodeLayouts: actionNodes.map((node) => ({ nodeId: node.id, x: node.position.x, y: node.position.y, width: node.measured?.width, height: node.measured?.height })),
       boundaryLayouts: document.boundaryLayouts,
-      bindingLayouts: [...bindingNodes.values()].map((node) => ({ bindingId: node.data.bindingId, x: node.position.x, y: node.position.y })),
+      bindingLayouts: [...bindingNodes.values()].filter((node) => persistedBindingIds.has(node.data.bindingId)).map((node) => ({ bindingId: node.data.bindingId, x: node.position.x, y: node.position.y })),
       edges: connections.map((edge) => ({ edgeId: edge.id })),
-      bindingEdges: document.edges.filter((edge) => edge.data?.edgeKind === 'binding').map((edge) => ({ edgeId: edge.id, sourceBindingId: bindingNodes.get(edge.source)?.data.bindingId ?? '', targetNodeId: edge.target, targetSlot: edge.data?.targetSlot ?? edge.targetHandle?.replace(/^binding:/, '') ?? '' })).filter((edge) => edge.sourceBindingId && edge.targetSlot),
+      bindingEdges: document.edges.filter((edge) => edge.data?.edgeKind === 'binding').map((edge) => ({ edgeId: edge.id, sourceBindingId: bindingNodes.get(edge.source)?.data.bindingId ?? '', targetNodeId: edge.target, targetSlot: edge.data?.targetSlot ?? edge.targetHandle?.replace(/^binding:/, '') ?? '' })).filter((edge) => persistedBindingIds.has(edge.sourceBindingId) && edge.targetSlot),
       annotations: document.annotations,
       groups: document.groups,
       viewport: document.viewport,

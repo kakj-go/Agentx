@@ -8,6 +8,7 @@ global:
     registry: registry.example.com/agentx
     repositoryPrefix: ''
     tag: v2-07a
+    sourceCommit: 0000000000000000000000000000000000000000
     pullPolicy: IfNotPresent
     pullSecretName: agentx-registry-credentials
     digests:

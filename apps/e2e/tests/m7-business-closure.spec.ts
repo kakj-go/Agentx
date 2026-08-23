@@ -2,7 +2,7 @@ import { createHmac } from 'node:crypto'
 
 import { expect, type APIResponse, type Page, test } from '@playwright/test'
 
-import { publishChatMapping } from './playground-helpers'
+import { publishChatMapping, useRuntimePortForward } from './playground-helpers'
 
 const password = 'agentx-e2e-admin-password'
 const gatewayBase = process.env.AGENTX_E2E_RUNTIME_URL ?? ''
@@ -290,12 +290,15 @@ async function verifyFileEchoPlayground(page: Page, token: string, application: 
   expect(invocationHttp.status()).toBe(202)
   const completed = await waitInvocation(page, token, (await invocationHttp.json() as Invocation).id, true)
   expect(completed.status).toBe('completed')
-  await expect(page.getByText('M7 file echo', { exact: true })).toHaveCount(2, { timeout: 30_000 })
+  const echoMessages = page.getByRole('article').filter({ hasText: 'M7 file echo' })
+  await expect(echoMessages).toHaveCount(2, { timeout: 30_000 })
+  await expect(echoMessages.getByText('M7 file echo', { exact: true })).toHaveCount(2)
   await expect(page.getByRole('link', { name: '执行详情 / Trace' })).toHaveAttribute('href', `/executions/${completed.executionId}`)
   await expect(page.getByRole('button', { name: /m7-echo-image\.png/ })).toHaveCount(2)
 }
 
 test('M7 closes Application, Trigger, Evaluation, Approval and governance paths on the shared Runtime', async ({ context, page }, testInfo) => {
+  await useRuntimePortForward(page)
   const token = await login(page)
   const suffix = Date.now()
   const remoteNodeEndpoint = process.env.AGENTX_E2E_REMOTE_NODE_ENDPOINT ?? 'http://echo-node:8080'

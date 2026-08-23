@@ -10,8 +10,8 @@ from pathlib import Path
 
 import httpx
 import pytest
-from agentx_deploy.config import load_values
-from agentx_deploy.process import ManagedProcess, redact, run, start_process
+
+from tests.e2e.support import ManagedProcess, agentxctl, deployment_config, redact, run, start_process
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -37,16 +37,26 @@ def _timeline(timeline: list[str], message: str) -> None:
     timeline.append(f"{datetime.now(UTC).isoformat()} {message}")
 
 
+def _must_remain_available_during_scale_down(deployment: dict[str, object]) -> bool:
+    labels = deployment.get("metadata", {}).get("labels", {})
+    return (
+        labels.get("app.kubernetes.io/name") == "ingress-nginx"
+        and labels.get("app.kubernetes.io/component") == "controller"
+    )
+
+
 def _scale_development(values: Path, enabled: bool) -> dict[tuple[str, str], int]:
     if not enabled:
         return {}
-    config = load_values(values)
+    config = deployment_config(values)
     replicas: dict[tuple[str, str], int] = {}
-    for namespace in dict.fromkeys(config.namespaces.values()):
+    for namespace in dict.fromkeys(config["namespaces"].values()):
         result = run(("kubectl", "-n", namespace, "get", "deployment", "-o", "json"), check=False, timeout=60)
         if result.returncode != 0:
             continue
         for deployment in result.json().get("items", []):
+            if _must_remain_available_during_scale_down(deployment):
+                continue
             name = deployment["metadata"]["name"]
             replicas[(namespace, name)] = int(deployment.get("spec", {}).get("replicas", 1))
             run(("kubectl", "-n", namespace, "scale", f"deployment/{name}", "--replicas=0"), timeout=60)
@@ -97,12 +107,12 @@ def installed_agentx(
     timeline: list[str] = []
     failures_before = request.session.testsfailed
     development = _scale_development(deployment_values, pytestconfig.getoption("--scale-down-development"))
-    config = load_values(deployment_values, run_id=run_id)
-    artifact_dir = config.root / "artifacts" / "e2e" / run_id
+    config = deployment_config(deployment_values, run_id=run_id)
+    artifact_dir = Path(__file__).resolve().parents[2] / "artifacts" / "e2e" / run_id
     artifact_dir.mkdir(parents=True, exist_ok=True)
     _timeline(timeline, "install started")
     install_command = (
-        "agentx-deploy",
+        agentxctl(),
         "install",
         "--values",
         deployment_values,
@@ -116,7 +126,7 @@ def installed_agentx(
     except Exception:
         run(
             (
-                "agentx-deploy",
+                agentxctl(),
                 "uninstall",
                 "--values",
                 deployment_values,
@@ -135,11 +145,11 @@ def installed_agentx(
     context = {
         "values": str(deployment_values),
         "run_id": run_id,
-        "control_namespace": config.namespaces["control"],
-        "runtime_namespace": config.namespaces["runtime"],
-        "dependencies_namespace": config.namespaces["dependencies"],
+        "control_namespace": config["namespaces"]["control"],
+        "runtime_namespace": config["namespaces"]["runtime"],
+        "dependencies_namespace": config["namespaces"]["dependencies"],
         "artifact_dir": str(artifact_dir),
-        "root": str(config.root),
+        "root": str(Path(__file__).resolve().parents[2]),
     }
     try:
         yield context
@@ -152,7 +162,7 @@ def installed_agentx(
             _timeline(timeline, "purge started")
             result = run(
                 (
-                    "agentx-deploy",
+                    agentxctl(),
                     "uninstall",
                     "--values",
                     deployment_values,
@@ -176,13 +186,34 @@ def e2e_providers(installed_agentx: dict[str, str]) -> dict[str, str]:
     namespace = installed_agentx["dependencies_namespace"]
     fixture = Path(installed_agentx["root"]) / "deploy" / "kustomize" / "e2e-fixtures" / "runtime-providers"
     run(("kubectl", "-n", namespace, "apply", "-k", fixture), timeout=300)
+    run(
+        (
+            "kubectl",
+            "-n",
+            namespace,
+            "wait",
+            "--for=condition=complete",
+            "job/lightrag-tokenizer-cache",
+            "--timeout=300s",
+        ),
+        timeout=330,
+    )
     for deployment in ("echo-mcp", "echo-node", "lightrag", "mem0", "mem0-postgres"):
+        rollout_timeout = 600 if deployment == "lightrag" else 300
         result = run(
-            ("kubectl", "-n", namespace, "rollout", "status", f"deployment/{deployment}", "--timeout=300s"),
+            (
+                "kubectl",
+                "-n",
+                namespace,
+                "rollout",
+                "status",
+                f"deployment/{deployment}",
+                f"--timeout={rollout_timeout}s",
+            ),
             check=False,
-            timeout=330,
+            timeout=rollout_timeout + 30,
         )
-        if result.returncode != 0 and deployment in {"echo-mcp", "echo-node"}:
+        if result.returncode != 0:
             raise RuntimeError(f"required E2E provider did not become ready: {namespace}/{deployment}")
     return {
         "echo_mcp": f"http://echo-mcp.{namespace}.svc:8090",

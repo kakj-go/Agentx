@@ -1,6 +1,6 @@
 # V1 删除与替代台账
 
-> 历史命令说明：本文中的 PowerShell、Shell、deployment Profile 和核心 Kustomize 命令只记录当时验收事实，相关入口已经删除，不得作为当前操作入口；请使用 `agentx-deploy`、`agentx-check` 与 `pytest tests/e2e`。
+> 历史命令说明：本文中的 PowerShell、Shell、deployment Profile 和核心 Kustomize 命令只记录当时验收事实，相关入口已经删除，不得作为当前操作入口；当前部署使用 `agentxctl`，仓库门禁使用 `cargo xtask check`，集群验收使用 `pytest tests/e2e`。
 
 V2-08A 已完成 V1 物理删除。当前工作树不保留冻结 Profile、双路由、兼容 Feature 或 Legacy Cargo 例外；历史 V1 名称只允许出现在本删除记录、历史证据和“禁止重新引入”的边界 Fixture 中。
 

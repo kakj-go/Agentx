@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 import yaml
-from agentx_deploy.config import load_values
-from agentx_deploy.helm import template
+
+from tests.e2e.support import render
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -91,9 +91,8 @@ def test_claim_lease_catalog_and_source_invariants() -> None:
 
 @pytest.mark.skipif(shutil.which("helm") is None, reason="Helm is not installed")
 def test_backend_deployments_use_pod_uid_as_instance_id() -> None:
-    config = load_values("deploy/values/local.yaml")
     for target in ("control", "runtime", "observability"):
-        for document in yaml.safe_load_all(template(config, target).stdout):
+        for document in yaml.safe_load_all(render("deploy/values/local.yaml", target)):
             if not isinstance(document, dict) or document.get("kind") != "Deployment":
                 continue
             if document["metadata"]["name"] == "web-console":

@@ -44,7 +44,7 @@
 - name: wait-for-control-schema
   image: mysql:8.4
   command: [sh, -ec]
-  args: ['until test "$(MYSQL_PWD="$AGENTX_CONTROL_MYSQL_PASSWORD" mysql {{ if eq $root.Values.global.environment "production" }}--ssl-mode=VERIFY_IDENTITY --ssl-ca=/etc/agentx-ca/mysql.pem{{ else }}--ssl-mode=DISABLED{{ end }} -N -B -h "$AGENTX_CONTROL_MYSQL_HOST" -u "$AGENTX_CONTROL_MYSQL_USER" "$AGENTX_CONTROL_MYSQL_DATABASE" -e "SELECT COUNT(*) FROM _sqlx_migrations WHERE version=6 AND success=1" 2>/dev/null)" = "1"; do sleep 2; done']
+  args: ['until test "$(MYSQL_PWD="$AGENTX_CONTROL_MYSQL_PASSWORD" mysql {{ if eq $root.Values.global.environment "production" }}--ssl-mode=VERIFY_IDENTITY --ssl-ca=/etc/agentx-ca/mysql.pem{{ else }}--ssl-mode=DISABLED --get-server-public-key{{ end }} -N -B -h "$AGENTX_CONTROL_MYSQL_HOST" -u "$AGENTX_CONTROL_MYSQL_USER" "$AGENTX_CONTROL_MYSQL_DATABASE" -e "SELECT COUNT(*) FROM _sqlx_migrations WHERE version=6 AND success=1" 2>/dev/null)" = "1"; do sleep 2; done']
   env:
     - { name: AGENTX_CONTROL_MYSQL_HOST, value: {{ $root.Values.global.components.controlMysql.host | quote }} }
     - { name: AGENTX_CONTROL_MYSQL_DATABASE, value: {{ $root.Values.global.components.controlMysql.database | quote }} }

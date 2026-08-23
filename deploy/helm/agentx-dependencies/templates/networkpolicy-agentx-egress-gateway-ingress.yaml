@@ -5,6 +5,8 @@ spec:
   podSelector: { matchLabels: { app.kubernetes.io/name: agentx-egress-gateway } }
   policyTypes: [Ingress]
   ingress:
+    - from: [{ podSelector: { matchLabels: { app.kubernetes.io/name: dependencies-doctor } } }]
+      ports: [{ protocol: TCP, port: 8080 }]
     - from:
         - namespaceSelector: { matchLabels: { agentx.io/plane: runtime } }
           podSelector: { matchLabels: { agentx.io/egress-client: managed } }

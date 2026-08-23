@@ -1,0 +1,73 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: lightrag-tokenizer-cache
+spec:
+  activeDeadlineSeconds: 300
+  backoffLimit: 5
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: lightrag-tokenizer-cache
+    spec:
+      restartPolicy: OnFailure
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: download
+          image: curlimages/curl:8.12.1
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              set -eu
+              mkdir -p /app/data/tiktoken-cache
+              target=/app/data/tiktoken-cache/fb374d419588a4632f3f557e76b4b70aebbca790
+              curl --fail --silent --show-error --location --connect-timeout 10 --max-time 60 \
+                --retry 5 --retry-delay 2 --retry-all-errors \
+                --output "${target}.tmp" \
+                https://openaipublic.blob.core.windows.net/encodings/o200k_base.tiktoken
+              echo "446a9538cb6c348e3516120d7c08b09f57c36495e2acfffe59a5bf8b0cfb1a2d  ${target}.tmp" | sha256sum -c -
+              mv "${target}.tmp" "${target}"
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits: { cpu: 100m, memory: 64Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 101
+            runAsGroup: 102
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - { name: data, mountPath: /app/data }
+      volumes:
+        - name: data
+          persistentVolumeClaim: { claimName: lightrag-data }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: lightrag-tokenizer-cache-egress
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: lightrag-tokenizer-cache
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector: {}
+          podSelector: { matchLabels: { k8s-app: kube-dns } }
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            # Docker Desktop DNS uses 198.18.0.0/15 synthetic addresses for
+            # public destinations. This E2E-only Job still has a fixed HTTPS
+            # URL, a read-only image, and a five-minute active deadline.
+            except: [0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12, 192.0.0.0/24, 192.168.0.0/16, 224.0.0.0/4, 240.0.0.0/4]
+      ports:
+        - { protocol: TCP, port: 443 }

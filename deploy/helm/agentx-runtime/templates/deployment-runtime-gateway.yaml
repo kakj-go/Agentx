@@ -29,6 +29,8 @@ spec:
             - { name: AGENTX_RUNTIME_MYSQL_MAX_CONNECTIONS, value: {{ .Values.runtime.services.runtimeGateway.mysqlPool | quote }} }
             - { name: AGENTX_RUNTIME_MYSQL_TLS_MODE, value: {{ .Values.global.components.runtimeMysql.tlsMode | quote }} }
             - { name: AGENTX_RUNTIME_REDIS_URL, value: {{ .Values.global.components.runtimeRedis.url | quote }} }
+            - { name: AGENTX_RUNTIME_CORS_ALLOWED_ORIGIN, value: {{ printf "%s://%s" (ternary "https" "http" (ne .Values.global.ingress.controlTlsSecretName nil)) .Values.global.ingress.controlHost | quote }} }
+            - { name: AGENTX_RUNTIME_CORS_ALLOW_DYNAMIC_ORIGIN, value: {{ ne .Values.global.environment "production" | quote }} }
             - { name: AGENTX_RUNTIME_GATEWAY_RATE_LIMIT_RPS, value: "50" }
             - { name: AGENTX_RUNTIME_GATEWAY_RATE_LIMIT_BURST, value: "100" }
             - { name: AGENTX_RUNTIME_USER_JWT_ISSUER, value: agentx-platform }

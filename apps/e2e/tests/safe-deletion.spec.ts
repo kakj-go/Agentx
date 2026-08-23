@@ -44,6 +44,9 @@ async function select(container: Locator, label: string, option: string) {
 
 async function openDelete(page: Page, path: string, entityName: string) {
   await page.goto(path)
+  const search = page.getByRole('searchbox')
+  await expect(search).toBeVisible()
+  await search.fill(entityName)
   const row = page.getByRole('row').filter({ hasText: entityName }).first()
   await expect(row).toBeVisible()
   const deleteButton = row.getByRole('button', { name: '删除', exact: true })

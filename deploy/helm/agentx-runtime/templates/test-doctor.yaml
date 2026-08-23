@@ -3,7 +3,7 @@ kind: Job
 metadata:
   name: runtime-doctor
   namespace: {{ .Values.global.namespaces.runtime }}
-  annotations: { "helm.sh/hook": test, "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded }
+  annotations: { "helm.sh/hook": test, "helm.sh/hook-delete-policy": before-hook-creation }
   labels: { agentx.io/plane: runtime, app.kubernetes.io/name: runtime-doctor }
 spec:
   backoffLimit: 0
@@ -50,18 +50,22 @@ spec:
           args:
             - --fail
             - --silent
+            - --connect-timeout
+            - "10"
+            - --max-time
+            - "30"
 {{- if .Values.global.components.sandbox.secureAccess }}
             - --cacert
             - /etc/agentx-opensandbox-ca/ca.crt
 {{- end }}
             - --header
-            - Open-Sandbox-Api-Key: $(AGENTX_OPENSANDBOX_API_KEY)
+            - "Open-Sandbox-Api-Key: $(AGENTX_OPENSANDBOX_API_KEY)"
             - {{ printf "%s/health" (trimSuffix "/" .Values.global.components.sandbox.endpoint) | quote }}
           env:
             - name: AGENTX_OPENSANDBOX_API_KEY
               valueFrom: { secretKeyRef: { name: {{ include "agentx.secret" (list . "sandboxManager" "runtime") }}, key: AGENTX_OPENSANDBOX_API_KEY } }
           resources: { requests: { cpu: 10m, memory: 16Mi }, limits: { cpu: 100m, memory: 64Mi } }
-          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, runAsNonRoot: true, capabilities: { drop: [ALL] } }
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, runAsNonRoot: true, runAsUser: 101, runAsGroup: 102, capabilities: { drop: [ALL] } }
 {{- if .Values.global.components.sandbox.secureAccess }}
           volumeMounts:
             - { name: opensandbox-ca, mountPath: /etc/agentx-opensandbox-ca, readOnly: true }

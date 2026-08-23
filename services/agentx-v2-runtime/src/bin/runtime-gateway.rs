@@ -2,10 +2,12 @@ use agentx_v2_runtime::RuntimeState;
 use anyhow::Result;
 use axum::{
     Router,
+    http::{HeaderName, HeaderValue, Method, header},
     routing::{get, post},
 };
 use futures::StreamExt;
 use std::time::Duration;
+use tower_http::cors::{AllowOrigin, CorsLayer};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -72,6 +74,7 @@ async fn main() -> Result<()> {
             }
         }
     });
+    let public_gateway = agentx_v2_runtime::gateway::router().layer(runtime_cors()?);
     let router = Router::new()
         .route(
             "/internal/runtime/v1/events:export",
@@ -193,8 +196,111 @@ async fn main() -> Result<()> {
             "/internal/runtime/v1/resource-operations:execute",
             post(agentx_v2_runtime::resource_check::execute_resource_operation),
         )
-        .nest("/gateway/v1", agentx_v2_runtime::gateway::router())
+        .nest("/gateway/v1", public_gateway)
         .with_state(state);
     agentx_service_kit::serve_with_lifecycle("runtime-gateway", router, health, lifecycle, metrics)
         .await
+}
+
+fn runtime_cors() -> Result<CorsLayer> {
+    let dynamic = std::env::var("AGENTX_RUNTIME_CORS_ALLOW_DYNAMIC_ORIGIN")
+        .is_ok_and(|value| value.eq_ignore_ascii_case("true"));
+    let origin = std::env::var("AGENTX_RUNTIME_CORS_ALLOWED_ORIGIN").ok();
+    runtime_cors_layer(dynamic, origin.as_deref())
+}
+
+fn runtime_cors_layer(dynamic: bool, origin: Option<&str>) -> Result<CorsLayer> {
+    let allow_origin = if dynamic {
+        AllowOrigin::mirror_request()
+    } else {
+        AllowOrigin::exact(
+            origin
+                .ok_or_else(|| anyhow::anyhow!("AGENTX_RUNTIME_CORS_ALLOWED_ORIGIN is required"))?
+                .parse::<HeaderValue>()?,
+        )
+    };
+    Ok(CorsLayer::new()
+        .allow_origin(allow_origin)
+        .allow_credentials(true)
+        .allow_methods([
+            Method::GET,
+            Method::POST,
+            Method::PUT,
+            Method::PATCH,
+            Method::DELETE,
+            Method::OPTIONS,
+        ])
+        .allow_headers([
+            header::AUTHORIZATION,
+            header::CONTENT_TYPE,
+            HeaderName::from_static("idempotency-key"),
+            HeaderName::from_static("last-event-id"),
+            HeaderName::from_static("x-agentx-signature"),
+            HeaderName::from_static("x-agentx-timestamp"),
+        ])
+        .max_age(Duration::from_secs(600)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{
+        body::Body,
+        http::{Request, StatusCode},
+    };
+    use tower::ServiceExt;
+
+    async fn preflight(cors: CorsLayer, origin: &'static str) -> axum::response::Response {
+        Router::new()
+            .route(
+                "/gateway/v1/sessions",
+                post(|| async { StatusCode::CREATED }),
+            )
+            .layer(cors)
+            .oneshot(
+                Request::builder()
+                    .method(Method::OPTIONS)
+                    .uri("/gateway/v1/sessions")
+                    .header(header::ORIGIN, origin)
+                    .header(header::ACCESS_CONTROL_REQUEST_METHOD, "POST")
+                    .header(
+                        header::ACCESS_CONTROL_REQUEST_HEADERS,
+                        "authorization,idempotency-key",
+                    )
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn local_cors_reflects_port_forward_origin_with_credentials() {
+        let response = preflight(
+            runtime_cors_layer(true, None).unwrap(),
+            "http://127.0.0.1:54321",
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get(header::ACCESS_CONTROL_ALLOW_ORIGIN),
+            Some(&HeaderValue::from_static("http://127.0.0.1:54321"))
+        );
+        assert_eq!(
+            response
+                .headers()
+                .get(header::ACCESS_CONTROL_ALLOW_CREDENTIALS),
+            Some(&HeaderValue::from_static("true"))
+        );
+    }
+
+    #[tokio::test]
+    async fn production_cors_rejects_unconfigured_origin() {
+        let cors = runtime_cors_layer(false, Some("https://control.agentx.example")).unwrap();
+        let response = preflight(cors, "https://other.example").await;
+        assert_eq!(
+            response.headers().get(header::ACCESS_CONTROL_ALLOW_ORIGIN),
+            Some(&HeaderValue::from_static("https://control.agentx.example"))
+        );
+    }
 }

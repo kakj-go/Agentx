@@ -34,7 +34,7 @@
 3. `secrets.mode=existing` 的 Secret 不由脚本轮换或删除；managed Secret 的 Credential Keyring 在轮换时保持不变。
 4. bundled 持久化服务的数据库、存储和内部认证密码在通用轮换中保持不变，避免只改 Kubernetes Secret 却未改存量数据；外部凭据轮换必须先在 Provider 完成，再通过部署环境变量更新。
 5. 普通 Upgrade 不改变四项状态型依赖的模式。模式迁移必须停写、备份、恢复并重新 Install。
-6. Uninstall 的选择器必须同时匹配 `agentx.io/component` 与 `app.kubernetes.io/managed-by=agentx-deploy`；PVC 和 Namespace 还需要显式删除参数和所有权证据。
+6. Uninstall 的选择器必须同时匹配 `agentx.io/component` 与 `app.kubernetes.io/managed-by=agentxctl`；PVC 和 Namespace 还需要显式删除参数和所有权证据。
 7. Sandbox disabled 时不部署 Manager、不注入 Manager URL/Token；Worker 继续领取 Sandbox capability 并返回 `RUNTIME_UNAVAILABLE`。
 
 ## 4. 验收矩阵

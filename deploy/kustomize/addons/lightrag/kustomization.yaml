@@ -5,5 +5,5 @@ resources:
 labels:
   - pairs:
       app.kubernetes.io/part-of: agentx
-      app.kubernetes.io/managed-by: agentx-deploy
+      app.kubernetes.io/managed-by: agentxctl
       agentx.io/component: lightrag

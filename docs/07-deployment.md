@@ -2,7 +2,7 @@
 
 ## 1. 部署事实来源
 
-Agentx 核心 Kubernetes 资源以 Helm 为唯一事实来源。部署主机通过 Python 3.12 + uv运行 `agentx-deploy`，Windows 与 Linux 使用相同参数和行为。CLI 调用 Helm/kubectl并解析 JSON输出，不实现第二套 Kubernetes Client，也不下载前置工具。
+Agentx 核心 Kubernetes 资源以 Helm 为唯一事实来源。部署主机通过 Rust原生 `agentxctl`运行，Windows 与 Linux 使用相同参数和行为。CLI嵌入固定版本Chart/Schema，调用 Helm/kubectl并解析 JSON输出，不实现第二套 Kubernetes Client，也不下载前置工具。
 
 四个逻辑域对应四个独立 Release：
 
@@ -60,7 +60,7 @@ Expand Migration可手工创建一次性 Revision外 Job。Contract门禁检查�
 
 Dependencies Namespace中的 `agentx-dependencies-secrets` 是共享 JWT、Bundle、Work Package、User签名、Egress Key/KID、Egress TLS和 Observability Redis材料的权威源。Pod不能跨 Namespace引用 Secret，因此每个工作负载使用本 Namespace的最小镜像 Secret。
 
-- local/test：Python `cryptography` 生成材料；先查权威 Secret，重复 Install/Upgrade保持原值。
+- local/test：Rust共享密钥材料库生成RSA、Ed25519和TLS材料；先查权威 Secret，重复 Install/Upgrade保持原值。
 - production：只接受预先创建的权威、工作负载和外部依赖 Secret。
 - Helm：只渲染 Secret名称和 Key，不生成或承载明文。
 - 普通 Install/Upgrade：不隐式轮换持久密钥。
@@ -84,6 +84,7 @@ Control、Runtime和 Observability Chart通过投影 Secret把私有 CA只读挂
 - Runtime业务 Pod不能直连公网，Model/MCP/Memory/RAG/HTTP等动态流量经 Gateway `3128`。
 - Sandbox默认断网；显式允许时只访问 Gateway `3129` TLS入口。
 - Gateway应用层和 NetworkPolicy共同拒绝私网、回环、Metadata、保留网段和未批准端口。
+- Runtime Gateway在服务层执行浏览器CORS：production只接受配置中的Control Origin，local/test允许临时port-forward Origin；Ingress继续保留同源白名单作为外层防护。
 - Observability无 Runtime MySQL凭据，只使用受限 Redis ACL、ClickHouse和独立对象存储身份。
 - 核心部署不引入 Prometheus、指标 Adapter、HPA、KEDA、Operator或 GitOps控制器。
 

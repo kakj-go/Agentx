@@ -104,7 +104,7 @@ cargo run -p echo-node -- schemas schemas
 cargo test -p echo-node
 ```
 
-完整 `uv run --frozen agentx-check` 会校验 Node OpenAPI、JSON Schema、Rust、Web、Python、Helm/Kustomize 渲染和契约漂移，并在不一致时失败。`services/echo-node/fixtures` 中的请求是语言无关的最小正反样例；接入实现应先对这些 Fixture 做反序列化、认证、Deadline、幂等和结果 Tag 测试，再进入 Kubernetes E2E。
+完整 `cargo xtask check` 会校验 Node OpenAPI、JSON Schema、Rust、Web、Python验收、Helm/Kustomize 渲染和契约漂移，并在不一致时失败。`services/echo-node/fixtures` 中的请求是语言无关的最小正反样例；接入实现应先对这些 Fixture 做反序列化、认证、Deadline、幂等和结果 Tag 测试，再进入 Kubernetes E2E。
 
 ## 8. Manifest 参数与语义输出矩阵
 

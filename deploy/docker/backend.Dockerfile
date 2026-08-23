@@ -9,6 +9,8 @@ WORKDIR /workspace
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 COPY services ./services
+COPY tests/fixtures ./tests/fixtures
+COPY xtask ./xtask
 COPY migrations ./migrations
 COPY openapi ./openapi
 

@@ -1,6 +1,6 @@
 # 用户输入唯一性校验验收证据
 
-> 历史命令说明：本文中的 PowerShell、Shell、deployment Profile 和核心 Kustomize 命令只记录当时验收事实，相关入口已经删除，不得作为当前操作入口；请使用 `agentx-deploy`、`agentx-check` 与 `pytest tests/e2e`。
+> 历史命令说明：本文中的 PowerShell、Shell、deployment Profile 和核心 Kustomize 命令只记录当时验收事实，相关入口已经删除，不得作为当前操作入口；当前部署使用 `agentxctl`，仓库门禁使用 `cargo xtask check`，集群验收使用 `pytest tests/e2e`。
 
 > 状态：实现完成（2026-08-12）。现有自动化门禁与 Kubernetes UI E2E 已通过；补充的真实业务 API 并发矩阵、逐路径 Artifact 故障注入，以及 MCP/Skill/Sandbox 唯一性专项 UI 场景由项目负责人后续人工验收，不作为本轮实现完成的阻塞项。
 

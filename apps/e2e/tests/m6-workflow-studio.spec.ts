@@ -1,7 +1,7 @@
 import { expect, type Locator, type Page, test } from '@playwright/test'
 import { readFile } from 'node:fs/promises'
 
-import { publishCompatibleChatMapping } from './playground-helpers'
+import { publishCompatibleChatMapping, useRuntimePortForward } from './playground-helpers'
 
 const password = 'agentx-e2e-admin-password'
 const gatewayBase = process.env.AGENTX_E2E_RUNTIME_URL ?? ''
@@ -1128,7 +1128,11 @@ test('M6 standalone MCP consumes configured arguments and returns semantic field
   await page.getByRole('button', { name: /^(适应画布|Fit View)$/ }).click({ force: true })
   const mcp = page.locator('.react-flow__node-manifest').filter({ hasText: /工具|Tool/ }).first()
   const details = await openNodeDetails(page, mcp)
-  await choose(page, details.getByTestId('resource-selector-mcp_tool'), /echo/i)
+  await choose(
+    page,
+    details.getByTestId('resource-selector-mcp_tool'),
+    new RegExp(`echo.*${studioMcpName}`, 'i'),
+  )
   const argumentsField = details.getByTestId('parameter-arguments')
   await argumentsField.getByRole('button', { name: /添加字段|Add field/ }).click()
   const key = argumentsField.getByRole('textbox', { name: /键|Key/ }).last()
@@ -1187,6 +1191,7 @@ test('M6 standalone Wait resumes a duration suspension with the stable output co
 })
 
 test('M6 Studio makes dual-Agent output selection explicit across serial, parallel and Merge topologies', async ({ page }, testInfo) => {
+  await useRuntimePortForward(page)
   const { token } = await login(page)
   await ensureStudioResources(page, token)
   const workflowName = `M6 Multi Agent ${Date.now()}`

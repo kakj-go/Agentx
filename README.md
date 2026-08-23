@@ -1,16 +1,15 @@
 # Agentx
 
-![版本](https://img.shields.io/badge/版本-v0.0.1--beta-6d5dfc)
+![版本](https://img.shields.io/badge/版本-v0.0.2--beta-6d5dfc)
 ![许可证](https://img.shields.io/badge/许可证-Apache--2.0-blue)
 ![Rust](https://img.shields.io/badge/Rust-1.85%2B-orange)
-![Python](https://img.shields.io/badge/Python-3.12-3776ab)
-![uv](https://img.shields.io/badge/环境-uv-de5fe9)
+![agentxctl](https://img.shields.io/badge/CLI-agentxctl-orange)
 ![Helm](https://img.shields.io/badge/部署-Helm-0f1689)
 ![Kubernetes](https://img.shields.io/badge/运行-Kubernetes-326ce5)
 
 Agentx 是一个面向企业场景的开源 Agent 工作流平台，提供可视化 Workflow 编排、模型与 MCP 资源管理、在线调试、应用发布、执行追踪、审批恢复和运行治理。
 
-> 当前版本为 `v0.0.1-beta`，仍处于快速开发阶段，不保证历史数据和旧协议兼容。未经容量、安全、备份恢复和隔离评审，不建议直接用于生产环境。
+> 当前版本为 `v0.0.2-beta`，仍处于快速开发阶段，不保证历史数据和旧协议兼容。未经容量、安全、备份恢复和隔离评审，不建议直接用于生产环境。
 
 ## 核心能力
 
@@ -39,18 +38,41 @@ Agentx 是一个面向企业场景的开源 Agent 工作流平台，提供可视
 
 前置条件：
 
-- Python `3.12.x` 和 [uv](https://docs.astral.sh/uv/)；
+- 对应平台的 `agentxctl` 发布包；
 - Helm 3、kubectl 和一个可访问且具有默认 StorageClass 的 Kubernetes 集群；
 - 集群可以拉取 Docker Hub、ingress-nginx 和基础依赖镜像；
 - OpenSandbox 已独立安装，并可从 Agentx Runtime Namespace 访问。
 
-Python 和 uv 只运行在部署主机与开发环境中，不会被加入 Agentx 业务容器。
+Linux x64 下载、校验并安装：
 
 ```bash
-git clone https://github.com/kakj-go/Agentx.git
-cd Agentx
-uv sync --frozen
-uv run --frozen agentx-deploy install --values deploy/values/dockerhub-beta.yaml
+VERSION=0.0.2-beta
+ARCHIVE="agentxctl-${VERSION}-x86_64-unknown-linux-musl.tar.gz"
+curl -fLO "https://github.com/kakj-go/Agentx/releases/download/agentxctl-v${VERSION}/${ARCHIVE}"
+curl -fLO "https://github.com/kakj-go/Agentx/releases/download/agentxctl-v${VERSION}/${ARCHIVE}.sha256"
+sha256sum -c "${ARCHIVE}.sha256"
+tar -xzf "${ARCHIVE}"
+cd "agentxctl-${VERSION}-x86_64-unknown-linux-musl"
+./agentxctl validate --values values/dockerhub-beta.yaml
+./agentxctl install --values values/dockerhub-beta.yaml
+```
+
+Windows x64 PowerShell 下载、校验并安装：
+
+```powershell
+$Version = "0.0.2-beta"
+$Name = "agentxctl-$Version-x86_64-pc-windows-msvc"
+$Archive = "$Name.zip"
+$BaseUrl = "https://github.com/kakj-go/Agentx/releases/download/agentxctl-v$Version"
+Invoke-WebRequest "$BaseUrl/$Archive" -OutFile $Archive
+Invoke-WebRequest "$BaseUrl/$Archive.sha256" -OutFile "$Archive.sha256"
+$Expected = ((Get-Content "$Archive.sha256").Trim() -split '\s+')[0].ToLower()
+$Actual = (Get-FileHash $Archive -Algorithm SHA256).Hash.ToLower()
+if ($Actual -ne $Expected) { throw "agentxctl SHA-256 mismatch" }
+Expand-Archive $Archive -DestinationPath . -Force
+Set-Location $Name
+.\agentxctl.exe validate --values .\values\dockerhub-beta.yaml
+.\agentxctl.exe install --values .\values\dockerhub-beta.yaml
 ```
 
 安装命令会完成 Values/工具/集群检查、三个 Namespace、Secret、ingress-nginx、四个 Helm Release、Migration、Bootstrap、Rollout 和 Helm Doctor。任一步失败都会返回非零退出码，Helm 使用 `--atomic --wait --wait-for-jobs` 回滚本次失败发布。
@@ -58,8 +80,8 @@ uv run --frozen agentx-deploy install --values deploy/values/dockerhub-beta.yaml
 查看状态和运行 Doctor：
 
 ```bash
-uv run --frozen agentx-deploy status --values deploy/values/dockerhub-beta.yaml --output json
-uv run --frozen agentx-deploy doctor --values deploy/values/dockerhub-beta.yaml
+./agentxctl status --values values/dockerhub-beta.yaml --output json
+./agentxctl doctor --values values/dockerhub-beta.yaml
 ```
 
 本地访问 Web Console：
@@ -73,28 +95,34 @@ kubectl -n agentx-control port-forward service/web-console 18080:8080
 普通卸载保留 Namespace、PVC 和外部资源：
 
 ```bash
-uv run --frozen agentx-deploy uninstall --values deploy/values/dockerhub-beta.yaml
+./agentxctl uninstall --values values/dockerhub-beta.yaml --target all
 ```
 
-local/test 的临时环境只有在同时提供 `--target all --purge-data --yes` 时才删除数据；production Values 会直接拒绝清理数据。
+如需同时删除 local/test 的三个 Namespace 和持久化数据，必须显式确认：
+
+```bash
+./agentxctl uninstall --values values/dockerhub-beta.yaml --target all --purge-data --yes
+```
+
+production Values 会直接拒绝 `--purge-data`。执行清理前请确认不再需要 PVC 中的数据；普通卸载不会删除 Namespace、PVC 或外部依赖。
 
 ## 已发布镜像
 
-当前 Beta 镜像均为 Linux AMD64，标签为 `v0.0.1-beta`。
+当前 Beta 镜像均为 Linux AMD64，标签为 `v0.0.2-beta`。
 
 | 镜像 | 用途 |
 |---|---|
-| `kakj/agentx-web-console:v0.0.1-beta` | Web 管理控制台 |
-| `kakj/agentx-platform-control:v0.0.1-beta` | Control API、发布和投影 |
-| `kakj/agentx-runtime-gateway:v0.0.1-beta` | 应用调用和 Runtime 查询入口 |
-| `kakj/agentx-workflow-runtime:v0.0.1-beta` | 调度、恢复和后台角色 |
-| `kakj/agentx-workflow-worker:v0.0.1-beta` | 节点与 Agent 执行 |
-| `kakj/agentx-sandbox-manager:v0.0.1-beta` | OpenSandbox 生命周期适配 |
-| `kakj/agentx-egress-gateway:v0.0.1-beta` | 受控公网出口 |
-| `kakj/agentx-observability:v0.0.1-beta` | Trace 摄取和查询 |
-| `kakj/agentx-migrate:v0.0.1-beta` | MySQL/ClickHouse Migration |
-| `kakj/agentx-bootstrap:v0.0.1-beta` | 幂等初始化检查 |
-| `kakj/agentx-doctor:v0.0.1-beta` | 部署后依赖与权限检查 |
+| `kakj/agentx-web-console:v0.0.2-beta` | Web 管理控制台 |
+| `kakj/agentx-platform-control:v0.0.2-beta` | Control API、发布和投影 |
+| `kakj/agentx-runtime-gateway:v0.0.2-beta` | 应用调用和 Runtime 查询入口 |
+| `kakj/agentx-workflow-runtime:v0.0.2-beta` | 调度、恢复和后台角色 |
+| `kakj/agentx-workflow-worker:v0.0.2-beta` | 节点与 Agent 执行 |
+| `kakj/agentx-sandbox-manager:v0.0.2-beta` | OpenSandbox 生命周期适配 |
+| `kakj/agentx-egress-gateway:v0.0.2-beta` | 受控公网出口 |
+| `kakj/agentx-observability:v0.0.2-beta` | Trace 摄取和查询 |
+| `kakj/agentx-migrate:v0.0.2-beta` | MySQL/ClickHouse Migration |
+| `kakj/agentx-bootstrap:v0.0.2-beta` | 幂等初始化检查 |
+| `kakj/agentx-doctor:v0.0.2-beta` | 部署后依赖与权限检查 |
 
 ## 本地开发与测试
 
@@ -103,9 +131,9 @@ local/test 的临时环境只有在同时提供 `--target all --purge-data --yes
 ```bash
 corepack enable
 pnpm install --frozen-lockfile
-uv sync --frozen --extra test
-uv run --frozen ruff check .
-uv run --frozen pytest deploy/tests
+uv sync --frozen --group test
+uv run --frozen --group test ruff check .
+uv run --frozen --group test pytest tests/acceptance
 cargo test --workspace
 pnpm --filter @agentx/web test
 pnpm build:web
@@ -114,20 +142,20 @@ pnpm build:web
 统一门禁：
 
 ```bash
-uv run --frozen agentx-check
+cargo xtask check
 ```
 
 本地构建并导入 Kubernetes 镜像：
 
 ```bash
-uv run --frozen agentx-deploy build-images --values deploy/values/local.yaml
+cargo xtask images --values deploy/values/local.yaml
 ```
 
 领域 E2E 使用临时 Namespace；浏览器场景仍由 TypeScript Playwright 执行：
 
 ```bash
-uv run --frozen pytest tests/e2e --values deploy/values/local.yaml -m infrastructure
-uv run --frozen pytest tests/e2e --values deploy/values/local.yaml -m product
+uv run --frozen --group test pytest tests/e2e --values deploy/values/local.yaml -m infrastructure
+uv run --frozen --group test pytest tests/e2e --values deploy/values/local.yaml -m product
 ```
 
 ## 文档

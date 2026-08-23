@@ -1,0 +1,117 @@
+name: agentxctl-release
+
+on:
+  push:
+    tags: ["agentxctl-v*"]
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            archive: tar.gz
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive: zip
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.18.4
+      - uses: azure/setup-kubectl@v4
+        with:
+          version: v1.33.4
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - run: cargo build --release -p agentxctl --target ${{ matrix.target }}
+      - shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}" -replace '^agentxctl-v',''
+          $suffix = if ($IsWindows) { '.exe' } else { '' }
+          $binary = (Resolve-Path "target/${{ matrix.target }}/release/agentxctl$suffix").Path
+          $actualVersion = (& $binary --version).Trim()
+          if ($actualVersion -ne "agentxctl $version") {
+            throw "release tag version $version does not match binary version: $actualVersion"
+          }
+          $values = (Resolve-Path deploy/values/local.yaml).Path
+          Push-Location $env:RUNNER_TEMP
+          & $binary validate --values $values --output json
+          & $binary render --values $values --target runtime | Out-Null
+          Pop-Location
+      - shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}" -replace '^agentxctl-v',''
+          $name = "agentxctl-$version-${{ matrix.target }}"
+          New-Item -ItemType Directory -Path "dist/$name/values" -Force | Out-Null
+          $suffix = if ($IsWindows) { '.exe' } else { '' }
+          Copy-Item "target/${{ matrix.target }}/release/agentxctl$suffix" "dist/$name/agentxctl$suffix"
+          Copy-Item deploy/values/local.yaml,deploy/values/dockerhub-beta.yaml,deploy/values/production.example.yaml "dist/$name/values/"
+          Copy-Item LICENSE "dist/$name/"
+          $actualFiles = Get-ChildItem "dist/$name" -File -Recurse | ForEach-Object {
+            $_.FullName.Substring((Resolve-Path "dist/$name").Path.Length + 1).Replace('\', '/')
+          } | Sort-Object
+          $expectedFiles = @(
+            "LICENSE",
+            "agentxctl$suffix",
+            "values/dockerhub-beta.yaml",
+            "values/local.yaml",
+            "values/production.example.yaml"
+          ) | Sort-Object
+          if (Compare-Object $expectedFiles $actualFiles) {
+            throw "release package contents differ from the five-file contract"
+          }
+          if ('${{ matrix.archive }}' -eq 'zip') {
+            Compress-Archive -Path "dist/$name" -DestinationPath "dist/$name.zip"
+          } else {
+            tar -czf "dist/$name.tar.gz" -C dist $name
+          }
+          $archive = Get-ChildItem "dist/$name.*" | Select-Object -First 1
+          (Get-FileHash $archive.FullName -Algorithm SHA256).Hash.ToLower() + "  " + $archive.Name | Set-Content "$($archive.FullName).sha256"
+          $smokeRoot = Join-Path $env:RUNNER_TEMP "agentxctl-package-smoke-${{ matrix.target }}"
+          New-Item -ItemType Directory -Path $smokeRoot -Force | Out-Null
+          if ('${{ matrix.archive }}' -eq 'zip') {
+            Expand-Archive -Path $archive.FullName -DestinationPath $smokeRoot
+          } else {
+            tar -xzf $archive.FullName -C $smokeRoot
+          }
+          $packagedBinary = (Resolve-Path "$smokeRoot/$name/agentxctl$suffix").Path
+          $packagedValues = (Resolve-Path "$smokeRoot/$name/values/local.yaml").Path
+          Push-Location $smokeRoot
+          & $packagedBinary validate --values $packagedValues --output json
+          & $packagedBinary render --values $packagedValues --target runtime | Out-Null
+          Pop-Location
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/agentxctl-*.*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agentxctl-${{ matrix.target }}
+          path: |
+            dist/agentxctl-*.zip
+            dist/agentxctl-*.tar.gz
+            dist/agentxctl-*.sha256
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: agentxctl-*
+          merge-multiple: true
+          path: dist
+      - uses: softprops/action-gh-release@v2
+        with:
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          files: dist/*

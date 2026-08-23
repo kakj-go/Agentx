@@ -1,0 +1,9 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: dependencies-doctor-egress, namespace: {{ .Values.global.namespaces.dependencies }} }
+spec:
+  podSelector: { matchLabels: { app.kubernetes.io/name: dependencies-doctor } }
+  policyTypes: [Egress]
+  egress:
+    - to: [{ podSelector: { matchLabels: { app.kubernetes.io/name: agentx-egress-gateway } } }]
+      ports: [{ protocol: TCP, port: 8080 }]

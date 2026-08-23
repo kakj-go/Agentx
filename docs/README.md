@@ -75,7 +75,7 @@ Agentx 是一个采用 n8n 式画布交互、但使用 Agentx 原生 Workflow/No
 10. 控制面可以模块化单体起步，但 Workflow Worker、Sandbox Manager 和 Trace Writer 必须能够独立扩容。
 11. 前端使用 Tailwind CSS 设计令牌和统一组件层，复杂无障碍交互基于 Radix UI。
 12. Workflow 画布使用 React Flow；Workflow Definition、Editor Document 和 Debug Overlay 分离，运行编译只消费 Definition。
-13. Kubernetes 核心资源由 Control、Runtime、Observability、Dependencies 四个 Helm Release管理；Python 3.12 + uv提供 Windows/Linux统一命令，Kustomize只管理可选 Addon和 E2E Fixture，并通过专用 ingress-nginx暴露 Web。
+13. Kubernetes 核心资源由 Control、Runtime、Observability、Dependencies 四个 Helm Release管理；Rust `agentxctl`提供 Windows/Linux统一命令并嵌入固定 Chart/Schema，Kustomize只管理可选 Addon和 E2E Fixture，并通过专用 ingress-nginx暴露 Web。
 14. Sandbox 采用独立安装的 OpenSandbox；本地 Docker+runc 与当前 Kubernetes 用于功能验收，gVisor/Kata 和生产强隔离作为后续强化。
 
 ## 分阶段详细设计

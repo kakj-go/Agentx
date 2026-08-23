@@ -40,6 +40,8 @@ async function loginIfNeeded(page: Page) {
 }
 
 async function connectHandles(page: Page, source: Locator, target: Locator) {
+  await expect(source).toBeInViewport()
+  await expect(target).toBeInViewport()
   const sourceBox = await source.boundingBox()
   const targetBox = await target.boundingBox()
   if (!sourceBox || !targetBox) throw new Error('Workflow node handles are not visible')
@@ -57,9 +59,9 @@ async function selectedNode(page: Page) {
   return page.locator(`.react-flow__node[data-id="${nodeId}"]`)
 }
 
-async function grantResource(page: Page, name: string, resourceType: string, subject: 'workflow' | 'department', operation = '使用') {
+async function grantResource(page: Page, name: string, resourceType: string, subject: 'workflow' | 'department', operation = '使用', detail?: string) {
   await page.getByRole('tab', { name: resourceType, exact: true }).click()
-  const row = page.getByRole('row').filter({ hasText: name }).filter({ hasText: resourceType }).first()
+  const row = page.getByRole('row').filter({ hasText: detail ?? name }).filter({ hasText: resourceType }).first()
   await expect(row).toBeVisible()
   await row.getByRole('button', { name: '管理授权' }).click()
   const grant = page.getByRole('dialog', { name: new RegExp(`管理.*${name}.*授权`) })
@@ -168,6 +170,8 @@ async function createAndReviseModel(page: Page) {
   await select(duplicate, '凭证', 'Echo Credential Renamed')
   await (await field(duplicate, '模型名称')).fill('echo-chat')
   await (await field(duplicate, '上游模型 ID')).fill('echo-model-v1')
+  await (await field(duplicate, '输入单价/百万 Token')).fill('0.50')
+  await (await field(duplicate, '输出单价/百万 Token')).fill('0.80')
   await select(duplicate, '所属部门', company)
   await duplicate.getByRole('button', { name: '保存', exact: true }).click()
   await expect(duplicate.getByText('该模型名称已存在。')).toBeVisible()
@@ -276,7 +280,7 @@ async function createSkillWorkspace(page: Page) {
   await expect(skillDescription).toHaveValue('Managed entirely in the browser')
   await skillDescription.fill('Build browser-managed reusable instructions')
   await page.getByRole('button', { name: '保存', exact: true }).last().click()
-  await expect(page.getByText('Build browser-managed reusable instructions', { exact: true })).toBeVisible()
+  await expect(page.getByRole('main').locator('header').getByText('Build browser-managed reusable instructions', { exact: true })).toBeVisible()
 
   await page.getByRole('button', { name: '编辑' }).click()
   const edit = await dialog(page, '编辑技能')
@@ -352,7 +356,7 @@ async function configureCentralResourceGrants(page: Page) {
   await grantResource(page, 'Echo Credential Renamed', '凭证', 'workflow')
   await grantResource(page, 'echo-chat', '模型', 'workflow')
   await grantResource(page, 'Echo MCP', 'MCP 服务', 'workflow')
-  await grantResource(page, 'echo', 'MCP 工具', 'workflow')
+  await grantResource(page, 'echo', 'MCP 工具', 'workflow', '使用', 'Echo MCP / echo')
   await grantResource(page, 'Workspace Skill', '技能', 'workflow')
   await grantResource(page, 'echo-chat', '模型', 'department', '查看')
 
@@ -398,7 +402,7 @@ async function configureAndPublishWorkflow(page: Page) {
   await page.getByTestId('palette-binding-mcp_tool').click()
   const toolNode = await selectedNode(page)
   await page.getByTestId('attachment-resource').getByRole('combobox').click()
-  await page.getByRole('option', { name: /echo/ }).click()
+  await page.getByRole('option', { name: /^echo Echo MCP \/ echo$/ }).click()
   await page.getByTestId('node-details-view').getByRole('button', { name: /关闭|Close/ }).click()
 
   await page.getByRole('button', { name: /^(适应画布|Fit View)$/ }).click()
@@ -450,7 +454,14 @@ async function configureAndPublishWorkflow(page: Page) {
   await outputDialog.getByRole('textbox', { name: 'Value' }).click()
   picker = page.getByTestId('reference-picker')
   await picker.getByRole('button', { name: /输出|Outputs/ }).click()
-  for (const label of ['agent', 'main', 'current', 'text']) await picker.getByRole('button', { name: new RegExp(label, 'i') }).first().click()
+  const outputPath = ['agent', 'main', 'current', 'text']
+  for (const [index, label] of outputPath.entries()) {
+    const row = picker.getByRole('button', { name: new RegExp(label, 'i') }).first()
+    const toggle = row.locator('[data-tree-toggle]')
+    if (index < outputPath.length - 1 && await toggle.count()) await toggle.click()
+    else await row.click()
+  }
+  await expect(picker).toBeHidden()
   await expect(outputDialog.locator('[data-agentx-variable]')).toBeVisible()
   await outputDialog.getByLabel(/必填|Required/).check()
   await outputDialog.getByRole('button', { name: /保存|Save/ }).click()

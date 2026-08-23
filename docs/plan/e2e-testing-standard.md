@@ -2,7 +2,7 @@
 
 ## 1. 分工
 
-pytest 是 Kubernetes环境和系统级 E2E的唯一编排入口；TypeScript Playwright继续验证真实浏览器和 UI业务操作。Python只负责安装环境、port-forward、环境变量、调用 pnpm Playwright和收集报告，不复制浏览器场景。
+pytest 是 Kubernetes环境和系统级 E2E的唯一编排入口；TypeScript Playwright继续验证真实浏览器和 UI业务操作。Python只负责调用Rust `agentxctl`、port-forward、环境变量、调用pnpm Playwright和收集报告，不复制部署或浏览器逻辑。
 
 ## 2. 领域 Marker
 
@@ -28,7 +28,7 @@ pytest 是 Kubernetes环境和系统级 E2E的唯一编排入口；TypeScript Pl
 - 独立 `artifacts/e2e/<run-id>/` 证据目录；
 - 两个有界生命周期的 Web/Runtime port-forward。
 
-Fixture通过 `agentx-deploy install/upgrade/doctor/uninstall`管理四个 Helm Release。Addon/Echo Provider仅在请求对应 Fixture时通过 `deploy/kustomize/e2e-fixtures`安装，不进入核心 Release。
+Fixture通过 `agentxctl install/upgrade/doctor/uninstall`管理四个 Helm Release。Addon/Echo Provider仅在请求对应 Fixture时通过 `deploy/kustomize/e2e-fixtures`安装，不进入核心 Release。
 
 `--scale-down-development` 可在测试前记录常驻开发 Deployment副本并缩容为 0，结束时在 `finally`恢复。默认成功或失败都清理临时 Namespace；只有失败且显式使用 `--keep-on-failure` 才保留现场。
 
@@ -40,6 +40,7 @@ Fixture通过 `agentx-deploy install/upgrade/doctor/uninstall`管理四个 Helm 
 - 文件场景使用浏览器文件选择或拖拽，不直接写对象存储。
 - 升级场景必须证明副本、PVC、权威 Secret和业务数据保持；Rollback必须使用明确 Helm Revision。
 - Migration并发、Bootstrap幂等、Secret轮换回滚、Dependencies卸载保护和 production Purge拒绝是系统级不变量。
+- Backup/Restore使用workspace中的Rust可执行Fixture `agentx-backup-test-adapter`验证五字段Receipt、Evidence Schema和RPO/RTO；E2E不得依赖Python Adapter或Python部署模块。
 
 ## 5. Playwright 门禁
 
@@ -74,16 +75,16 @@ pnpm --filter @agentx/e2e test
 
 ```bash
 # 单域
-uv run --frozen pytest tests/e2e --values deploy/values/local.yaml -m infrastructure
+uv run --frozen --group test pytest tests/e2e --values deploy/values/local.yaml -m infrastructure
 
 # 多域
-uv run --frozen pytest tests/e2e --values deploy/values/local.yaml -m "security or upgrade"
+uv run --frozen --group test pytest tests/e2e --values deploy/values/local.yaml -m "security or upgrade"
 
 # 产品闭环
-uv run --frozen pytest tests/e2e --values deploy/values/local.yaml -m product
+uv run --frozen --group test pytest tests/e2e --values deploy/values/local.yaml -m product
 
 # 失败时保留现场
-uv run --frozen pytest tests/e2e --values deploy/values/local.yaml -m product --keep-on-failure
+uv run --frozen --group test pytest tests/e2e --values deploy/values/local.yaml -m product --keep-on-failure
 ```
 
 ## 8. 平台门禁

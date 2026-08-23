@@ -388,11 +388,15 @@
               "type": "string",
               "pattern": "^[a-z0-9._-]*$"
             },
-            "tag": {
-              "type": "string",
-              "minLength": 1
-            },
-            "pullPolicy": {
+              "tag": {
+                "type": "string",
+                "minLength": 1
+              },
+              "sourceCommit": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{40}$"
+              },
+              "pullPolicy": {
               "enum": [
                 "Always",
                 "IfNotPresent",

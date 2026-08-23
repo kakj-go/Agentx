@@ -5,9 +5,8 @@ import subprocess
 
 import pytest
 import yaml
-from agentx_deploy.config import load_values
-from agentx_deploy.helm import template
-from agentx_deploy.process import run
+
+from tests.e2e.support import agentxctl, render, run
 
 
 @pytest.mark.cluster
@@ -15,7 +14,7 @@ from agentx_deploy.process import run
 def test_all_planes_are_ready(installed_agentx: dict[str, str]) -> None:
     result = subprocess.run(
         [
-            "agentx-deploy",
+            agentxctl(),
             "status",
             "--values",
             installed_agentx["values"],
@@ -41,10 +40,11 @@ def test_all_planes_are_ready(installed_agentx: dict[str, str]) -> None:
 @pytest.mark.cluster
 @pytest.mark.infrastructure
 def test_bootstrap_is_idempotent(installed_agentx: dict[str, str]) -> None:
-    config = load_values(installed_agentx["values"], run_id=installed_agentx["run_id"])
     for target in ("control", "runtime", "observability"):
         documents = [
-            document for document in yaml.safe_load_all(template(config, target).stdout) if isinstance(document, dict)
+            document
+            for document in yaml.safe_load_all(render(installed_agentx["values"], target, installed_agentx["run_id"]))
+            if isinstance(document, dict)
         ]
         bootstrap = next(
             document

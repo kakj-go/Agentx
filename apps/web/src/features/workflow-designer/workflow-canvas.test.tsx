@@ -143,6 +143,22 @@ describe('workflow studio serializer', () => {
     expect(serialized.editorDocument.bindingEdges[0]).toMatchObject({ targetSlot: 'ai_model' })
   })
 
+  it('omits incomplete attachment nodes from autosave until they form a resource binding', () => {
+    const document = deserializeDraft(draft)
+    document.nodes.push({
+      id: 'binding:pending-model',
+      type: 'attachment',
+      position: { x: 390, y: 410 },
+      data: { editorKind: 'binding', bindingId: 'pending-model', bindingRole: 'ai_model', resourceType: 'model', operation: 'use', label: 'model' },
+    })
+
+    const serialized = serializeStudio(document)
+
+    expect(serialized.definition.nodes[0].resourceReferences).toEqual([])
+    expect(serialized.editorDocument.bindingLayouts).toEqual([])
+    expect(serialized.editorDocument.bindingEdges).toEqual([])
+  })
+
   it('normalizes connection order independently for every source port', () => {
     const document = deserializeDraft({
       ...draft,

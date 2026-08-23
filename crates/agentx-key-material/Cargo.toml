@@ -1,0 +1,15 @@
+[package]
+name = "agentx-key-material"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+base64.workspace = true
+ed25519-dalek.workspace = true
+rand.workspace = true
+rcgen.workspace = true
+rsa.workspace = true
+serde.workspace = true

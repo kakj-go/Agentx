@@ -12,7 +12,7 @@ spec:
       labels:
         app.kubernetes.io/name: echo-mcp
         app.kubernetes.io/part-of: agentx
-        app.kubernetes.io/managed-by: agentx-deploy
+        app.kubernetes.io/managed-by: agentxctl
         agentx.io/component: runtime-provider-fixture
     spec:
       automountServiceAccountToken: false
@@ -72,7 +72,7 @@ spec:
       labels:
         app.kubernetes.io/name: echo-node
         app.kubernetes.io/part-of: agentx
-        app.kubernetes.io/managed-by: agentx-deploy
+        app.kubernetes.io/managed-by: agentxctl
         agentx.io/component: runtime-provider-fixture
     spec:
       automountServiceAccountToken: false

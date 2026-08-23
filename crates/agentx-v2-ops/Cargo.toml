@@ -6,19 +6,15 @@ rust-version.workspace = true
 version.workspace = true
 
 [dependencies]
+agentx-key-material.workspace = true
 agentx-control-infrastructure.workspace = true
 agentx-runtime-infrastructure.workspace = true
 anyhow.workspace = true
 argon2.workspace = true
 bytes.workspace = true
-base64.workspace = true
 clickhouse.workspace = true
-ed25519-dalek.workspace = true
 object_store.workspace = true
-rand.workspace = true
-rcgen.workspace = true
 redis.workspace = true
-rsa.workspace = true
 secrecy.workspace = true
 serde.workspace = true
 serde_json.workspace = true

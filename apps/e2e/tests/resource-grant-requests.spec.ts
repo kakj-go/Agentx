@@ -107,6 +107,8 @@ async function createCrossDepartmentModel(page: Page) {
   await select(model, '凭证', 'Cross Department Credential')
   await (await field(model, '模型名称')).fill(modelName)
   await (await field(model, '上游模型 ID')).fill('cross-department-echo')
+  await (await field(model, '输入单价/百万 Token')).fill('0.50')
+  await (await field(model, '输出单价/百万 Token')).fill('0.80')
   await select(model, '所属部门', modelDepartment)
   await submit(model)
   await expect(page.getByRole('row').filter({ hasText: modelName })).toBeVisible()

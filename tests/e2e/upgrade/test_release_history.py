@@ -4,7 +4,8 @@ import json
 import subprocess
 
 import pytest
-from agentx_deploy.process import run
+
+from tests.e2e.support import agentxctl, run
 
 
 @pytest.mark.cluster
@@ -36,7 +37,7 @@ def test_runtime_upgrade_preserves_replicas_and_can_rollback(installed_agentx: d
     run(("kubectl", "-n", namespace, "scale", "deployment/workflow-runtime", "--replicas=2"), timeout=60)
     run(
         (
-            "agentx-deploy",
+            agentxctl(),
             "upgrade",
             "--values",
             installed_agentx["values"],
@@ -68,7 +69,7 @@ def test_runtime_upgrade_preserves_replicas_and_can_rollback(installed_agentx: d
     ).json()["data"]
     run(
         (
-            "agentx-deploy",
+            agentxctl(),
             "rollback",
             "--values",
             installed_agentx["values"],
@@ -104,7 +105,7 @@ def test_runtime_upgrade_preserves_replicas_and_can_rollback(installed_agentx: d
 def test_dependencies_uninstall_is_refused_while_runtime_exists(installed_agentx: dict[str, str]) -> None:
     result = run(
         (
-            "agentx-deploy",
+            agentxctl(),
             "uninstall",
             "--values",
             installed_agentx["values"],

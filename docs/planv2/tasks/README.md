@@ -54,7 +54,7 @@ V2-03 和 V2-04 可在 V2P-008 通过后按产品能力垂直并行，但 V2-05 
 - 数据库变化有独立空库 Migration 测试；跨面变化有 Schema/OpenAPI 漂移检查。
 - 多副本后台任务使用公共 Claim/Lease/Fencing 或 Consumer Group，没有私有无锁扫描。
 - UI 变更使用统一组件和错误契约，具备 loading、empty、error、permission 状态测试。
-- `uv run --frozen agentx-check` 及阶段清单指定的验证通过；全局门禁以 [E2E 标准](../04-e2e-acceptance.md)为准。
+- `cargo xtask check` 及阶段清单指定的验证通过；全局门禁以 [E2E 标准](../04-e2e-acceptance.md)为准。
 - 证据包含命令、提交/镜像版本、环境规格、结果和敏感信息清理说明。
 - 同步更新本任务状态、[阶段状态](../README.md#6-阶段状态)和[追踪矩阵](../99-traceability.md)；三处状态不得矛盾。
 

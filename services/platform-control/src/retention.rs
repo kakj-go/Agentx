@@ -31,10 +31,16 @@ pub(super) async fn run_loop(
             return Ok(());
         }
         let started = std::time::Instant::now();
-        if let Some(claim) = claim(&publisher).await? {
+        if let Some(claim) = claim(&publisher.pool, publisher.owner).await? {
             if let Err(error) =
                 with_heartbeat(&publisher, &claim, publish(&publisher, &claim)).await
             {
+                tracing::warn!(
+                    retention_run_id = %claim.id,
+                    runtime_command_id = %claim.runtime_command_id,
+                    %error,
+                    "Control Retention Run publish failed"
+                );
                 let message = error.to_string().chars().take(1000).collect::<String>();
                 let changed = sqlx::query(
                     "UPDATE retention_runs SET status='queued',available_at=DATE_ADD(UTC_TIMESTAMP(6),INTERVAL 2 SECOND),error_message=?,locked_by=NULL,locked_until=NULL WHERE id=? AND locked_by=? AND fencing_token=? AND locked_until>UTC_TIMESTAMP(6)",
@@ -78,10 +84,13 @@ where
     }
 }
 
-async fn claim(publisher: &Publisher) -> Result<Option<RetentionClaim>> {
-    let mut tx = publisher.pool.begin().await?;
+async fn claim(
+    pool: &sqlx::MySqlPool,
+    owner: agentx_mysql_lease::LeaseOwner,
+) -> Result<Option<RetentionClaim>> {
+    let mut tx = pool.begin().await?;
     let row = sqlx::query(
-        "SELECT id FROM retention_runs WHERE status='queued' AND available_at<=UTC_TIMESTAMP(6) AND (locked_until IS NULL OR locked_until<=UTC_TIMESTAMP(6)) ORDER BY created_at,id LIMIT 1 FOR UPDATE SKIP LOCKED",
+        "SELECT id FROM retention_runs WHERE status='queued' AND runtime_receipt_json IS NULL AND available_at<=UTC_TIMESTAMP(6) AND (locked_until IS NULL OR locked_until<=UTC_TIMESTAMP(6)) ORDER BY created_at,id LIMIT 1 FOR UPDATE SKIP LOCKED",
     )
     .fetch_optional(&mut *tx)
     .await?;
@@ -96,7 +105,7 @@ async fn claim(publisher: &Publisher) -> Result<Option<RetentionClaim>> {
     )
     .bind(runtime_command_id)
     .bind(format!("retention:{id}"))
-    .bind(publisher.owner.0)
+    .bind(owner.0)
     .bind(id)
     .execute(&mut *tx)
     .await?;
@@ -115,6 +124,14 @@ async fn claim(publisher: &Publisher) -> Result<Option<RetentionClaim>> {
         fencing_token: row.try_get("fencing_token")?,
     };
     tx.commit().await?;
+    tracing::info!(
+        retention_run_id = %claim.id,
+        runtime_command_id = %claim.runtime_command_id,
+        tenant_id = %claim.tenant_id,
+        policy_version = claim.policy_version,
+        dry_run = claim.dry_run,
+        "Control Retention Run claimed"
+    );
     Ok(Some(claim))
 }
 
@@ -212,4 +229,80 @@ fn derived_id(source: Uuid, discriminator: u8) -> Uuid {
     let mut bytes = *source.as_bytes();
     bytes[15] ^= discriminator;
     Uuid::from_bytes(bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use agentx_mysql_lease::LeaseOwner;
+    use sqlx::{MySqlPool, mysql::MySqlPoolOptions};
+    use testcontainers::{
+        GenericImage, ImageExt,
+        core::{IntoContainerPort, WaitFor},
+        runners::AsyncRunner,
+    };
+    use uuid::Uuid;
+
+    use super::claim;
+
+    #[tokio::test]
+    async fn projected_queued_run_with_runtime_receipt_is_not_dispatched_again() {
+        let container = GenericImage::new("mysql", "8.4")
+            .with_exposed_port(3306.tcp())
+            .with_wait_for(WaitFor::message_on_stderr("ready for connections"))
+            .with_env_var("MYSQL_DATABASE", "agentx_control")
+            .with_env_var("MYSQL_USER", "agentx")
+            .with_env_var("MYSQL_PASSWORD", "agentx-test-password")
+            .with_env_var("MYSQL_ROOT_PASSWORD", "agentx-root-password")
+            .start()
+            .await
+            .unwrap();
+        let port = container.get_host_port_ipv4(3306.tcp()).await.unwrap();
+        let pool = connect(port).await;
+        sqlx::raw_sql(
+            "CREATE TABLE retention_policies(tenant_id BINARY(16) NOT NULL,data_type VARCHAR(64) NOT NULL,version BIGINT UNSIGNED NOT NULL DEFAULT 1,PRIMARY KEY(tenant_id,data_type));\
+             CREATE TABLE retention_runs(id BINARY(16) NOT NULL PRIMARY KEY,tenant_id BINARY(16) NOT NULL,runtime_command_id BINARY(16) NULL,policy_version BIGINT UNSIGNED NOT NULL DEFAULT 1,dry_run BOOLEAN NOT NULL,status VARCHAR(16) NOT NULL,runtime_receipt_json JSON NULL,idempotency_key VARCHAR(192) NULL,available_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),locked_by BINARY(16) NULL,locked_until TIMESTAMP(6) NULL,fencing_token BIGINT UNSIGNED NOT NULL DEFAULT 0,attempt_count INT UNSIGNED NOT NULL DEFAULT 0,started_at TIMESTAMP(6) NULL,created_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6));",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let tenant_id = Uuid::now_v7();
+        let dispatched_id = Uuid::now_v7();
+        let pending_id = Uuid::now_v7();
+        sqlx::query("INSERT INTO retention_policies(tenant_id,data_type) VALUES(?,'artifact')")
+            .bind(tenant_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO retention_runs(id,tenant_id,dry_run,status,runtime_receipt_json) VALUES(?,?,TRUE,'queued',JSON_OBJECT('applied',TRUE)),(?,?,TRUE,'queued',NULL)")
+            .bind(dispatched_id)
+            .bind(tenant_id)
+            .bind(pending_id)
+            .bind(tenant_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let owner = LeaseOwner::new();
+        let claimed = claim(&pool, owner).await.unwrap().unwrap();
+        assert_eq!(claimed.id, pending_id);
+        assert!(claim(&pool, owner).await.unwrap().is_none());
+        let dispatched_status: String =
+            sqlx::query_scalar("SELECT status FROM retention_runs WHERE id=?")
+                .bind(dispatched_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(dispatched_status, "queued");
+    }
+
+    async fn connect(port: u16) -> MySqlPool {
+        let url = format!("mysql://agentx:agentx-test-password@127.0.0.1:{port}/agentx_control");
+        for _ in 0..40 {
+            if let Ok(pool) = MySqlPoolOptions::new().connect(&url).await {
+                return pool;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
+        panic!("MySQL test container did not become ready")
+    }
 }
