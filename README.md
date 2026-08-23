@@ -38,51 +38,44 @@ Agentx 是一个面向企业场景的开源 Agent 工作流平台，提供可视
 
 前置条件：
 
-- 对应平台的 `agentxctl` 发布包；
+- 对应平台的 `agentxctl` 单文件二进制；
 - Helm 3、kubectl 和一个可访问且具有默认 StorageClass 的 Kubernetes 集群；
 - 集群可以拉取 Docker Hub、ingress-nginx 和基础依赖镜像；
 - OpenSandbox 已独立安装，并可从 Agentx Runtime Namespace 访问。
 
-Linux x64 下载、校验并安装：
+### Windows x64
 
-```bash
-VERSION=0.0.2-beta
-ARCHIVE="agentxctl-${VERSION}-x86_64-unknown-linux-musl.tar.gz"
-curl -fLO "https://github.com/kakj-go/Agentx/releases/download/agentxctl-v${VERSION}/${ARCHIVE}"
-curl -fLO "https://github.com/kakj-go/Agentx/releases/download/agentxctl-v${VERSION}/${ARCHIVE}.sha256"
-sha256sum -c "${ARCHIVE}.sha256"
-tar -xzf "${ARCHIVE}"
-cd "agentxctl-${VERSION}-x86_64-unknown-linux-musl"
-./agentxctl validate --values values/dockerhub-beta.yaml
-./agentxctl install --values values/dockerhub-beta.yaml
-```
+[直接下载 `agentxctl-windows-x86_64.exe`](https://github.com/kakj-go/Agentx/releases/download/agentxctl-v0.0.2-beta/agentxctl-windows-x86_64.exe)（[SHA-256](https://github.com/kakj-go/Agentx/releases/download/agentxctl-v0.0.2-beta/agentxctl-windows-x86_64.exe.sha256)）
 
-Windows x64 PowerShell 下载、校验并安装：
+下载完成后，在 PowerShell 进入下载目录并直接安装：
 
 ```powershell
-$Version = "0.0.2-beta"
-$Name = "agentxctl-$Version-x86_64-pc-windows-msvc"
-$Archive = "$Name.zip"
-$BaseUrl = "https://github.com/kakj-go/Agentx/releases/download/agentxctl-v$Version"
-Invoke-WebRequest "$BaseUrl/$Archive" -OutFile $Archive
-Invoke-WebRequest "$BaseUrl/$Archive.sha256" -OutFile "$Archive.sha256"
-$Expected = ((Get-Content "$Archive.sha256").Trim() -split '\s+')[0].ToLower()
-$Actual = (Get-FileHash $Archive -Algorithm SHA256).Hash.ToLower()
-if ($Actual -ne $Expected) { throw "agentxctl SHA-256 mismatch" }
-Expand-Archive $Archive -DestinationPath . -Force
-Set-Location $Name
-.\agentxctl.exe validate --values .\values\dockerhub-beta.yaml
-.\agentxctl.exe install --values .\values\dockerhub-beta.yaml
+Set-Location $HOME\Downloads
+.\agentxctl-windows-x86_64.exe install
 ```
 
-安装命令会完成 Values/工具/集群检查、三个 Namespace、Secret、ingress-nginx、四个 Helm Release、Migration、Bootstrap、Rollout 和 Helm Doctor。任一步失败都会返回非零退出码，Helm 使用 `--atomic --wait --wait-for-jobs` 回滚本次失败发布。
+### Linux x64
+
+[直接下载 `agentxctl-linux-x86_64`](https://github.com/kakj-go/Agentx/releases/download/agentxctl-v0.0.2-beta/agentxctl-linux-x86_64)（[SHA-256](https://github.com/kakj-go/Agentx/releases/download/agentxctl-v0.0.2-beta/agentxctl-linux-x86_64.sha256)）
+
+浏览器下载不会保留 Linux 可执行权限，因此首次运行前需要执行一次 `chmod`：
+
+```bash
+cd ~/Downloads
+chmod +x agentxctl-linux-x86_64
+./agentxctl-linux-x86_64 install
+```
+
+不传 `--values` 时，单文件二进制使用与当前 CLI 版本绑定的内嵌 Docker Hub Beta 配置。安装命令会完成 Values、工具、集群、三个 Namespace、Secret、ingress-nginx、四个 Helm Release、Migration、Bootstrap、Rollout 和 Helm Doctor。任一步失败都会返回非零退出码，Helm 使用 `--atomic --wait --wait-for-jobs` 回滚本次失败发布。
 
 查看状态和运行 Doctor：
 
 ```bash
-./agentxctl status --values values/dockerhub-beta.yaml --output json
-./agentxctl doctor --values values/dockerhub-beta.yaml
+./agentxctl-linux-x86_64 status --output json
+./agentxctl-linux-x86_64 doctor
 ```
+
+Windows 使用相同子命令，将二进制名称替换为 `.\agentxctl-windows-x86_64.exe` 即可。自定义或 production 部署必须显式提供 `--values <文件>`。
 
 本地访问 Web Console：
 
@@ -95,13 +88,13 @@ kubectl -n agentx-control port-forward service/web-console 18080:8080
 普通卸载保留 Namespace、PVC 和外部资源：
 
 ```bash
-./agentxctl uninstall --values values/dockerhub-beta.yaml --target all
+./agentxctl-linux-x86_64 uninstall --target all
 ```
 
 如需同时删除 local/test 的三个 Namespace 和持久化数据，必须显式确认：
 
 ```bash
-./agentxctl uninstall --values values/dockerhub-beta.yaml --target all --purge-data --yes
+./agentxctl-linux-x86_64 uninstall --target all --purge-data --yes
 ```
 
 production Values 会直接拒绝 `--purge-data`。执行清理前请确认不再需要 PVC 中的数据；普通卸载不会删除 Namespace、PVC 或外部依赖。

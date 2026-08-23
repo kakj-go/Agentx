@@ -1,4 +1,4 @@
-use crate::assets::VALUES_SCHEMA;
+use crate::assets::{DOCKERHUB_BETA_VALUES, VALUES_SCHEMA};
 use anyhow::{Context, Result, anyhow, bail};
 use ipnet::IpNet;
 use regex::Regex;
@@ -25,8 +25,20 @@ impl DeploymentConfig {
             .canonicalize()
             .with_context(|| format!("values file does not exist: {}", path.display()))?;
         let yaml = std::fs::read_to_string(&path)?;
+        Self::from_yaml(path, &yaml, run_id)
+    }
+
+    pub fn load_embedded_beta(run_id: Option<&str>) -> Result<Self> {
+        Self::from_yaml(
+            PathBuf::from("embedded:dockerhub-beta.yaml"),
+            DOCKERHUB_BETA_VALUES,
+            run_id,
+        )
+    }
+
+    fn from_yaml(path: PathBuf, yaml: &str, run_id: Option<&str>) -> Result<Self> {
         let values: Value =
-            serde_yaml::from_str(&yaml).context("deployment values must be valid YAML")?;
+            serde_yaml::from_str(yaml).context("deployment values must be valid YAML")?;
         if !values.is_object() {
             bail!("deployment values must be a YAML object");
         }
@@ -407,6 +419,14 @@ mod tests {
         ] {
             DeploymentConfig::load(root.join("deploy/values").join(name), None).unwrap();
         }
+    }
+
+    #[test]
+    fn embedded_beta_is_the_default_standalone_configuration() {
+        let config = DeploymentConfig::load_embedded_beta(None).unwrap();
+        assert_eq!(config.path, PathBuf::from("embedded:dockerhub-beta.yaml"));
+        assert_eq!(config.environment(), "local");
+        assert_eq!(config.string("/global/images/tag"), Some("v0.0.2-beta"));
     }
 
     #[test]

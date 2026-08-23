@@ -19,7 +19,7 @@ Kustomize 只管理 LightRAG/Mem0 Addon与临时 E2E Fixture。核心 Helm与 Ku
 
 ## 2. Values 契约
 
-环境配置是 YAML，顶层固定为 `global`、`control`、`runtime`、`observability`、`dependencies`。四个 Chart携带相同 `values.schema.json`，测试保证公共定义无漂移。
+环境配置是 YAML，顶层固定为 `global`、`control`、`runtime`、`observability`、`dependencies`。CLI 内嵌与版本绑定的 Docker Hub Beta Values，常规命令省略 `--values` 时使用该配置完成单文件快速部署；自定义和 production 配置必须显式提供。四个 Chart携带相同 `values.schema.json`，测试保证公共定义无漂移。
 
 `global` 组合：
 

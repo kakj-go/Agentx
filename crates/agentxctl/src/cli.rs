@@ -23,8 +23,11 @@ struct Cli {
 
 #[derive(Args, Clone)]
 struct Common {
-    #[arg(long)]
-    values: PathBuf,
+    #[arg(
+        long,
+        help = "Values YAML; defaults to the embedded Docker Hub Beta configuration"
+    )]
+    values: Option<PathBuf>,
     #[arg(long, value_enum, default_value_t = Target::All)]
     target: Target,
     #[arg(long, help = "E2E-only namespace suffix")]
@@ -305,7 +308,7 @@ async fn execute(command: Command) -> Result<Value> {
             if !matches!(common.target, Target::All) {
                 return Err(anyhow!("sync-secrets requires --target all"));
             }
-            let config = DeploymentConfig::load(common.values, common.run_id.as_deref())?;
+            let config = load_config(common.values.as_ref(), common.run_id.as_deref())?;
             operations::sync_secrets(&config, &assets).await
         }
         Command::RotateEgressKeys {
@@ -369,9 +372,16 @@ async fn execute(command: Command) -> Result<Value> {
 
 fn load_common(common: &Common) -> Result<(DeploymentConfig, Vec<&'static str>)> {
     Ok((
-        DeploymentConfig::load(&common.values, common.run_id.as_deref())?,
+        load_config(common.values.as_ref(), common.run_id.as_deref())?,
         selected_targets(common.target.name())?,
     ))
+}
+
+fn load_config(values: Option<&PathBuf>, run_id: Option<&str>) -> Result<DeploymentConfig> {
+    match values {
+        Some(path) => DeploymentConfig::load(path, run_id),
+        None => DeploymentConfig::load_embedded_beta(run_id),
+    }
 }
 
 #[cfg(test)]
@@ -381,6 +391,12 @@ mod tests {
     #[test]
     fn every_public_subcommand_has_a_parseable_contract() {
         let cases = [
+            vec!["validate"],
+            vec!["render", "--target", "runtime"],
+            vec!["install"],
+            vec!["status", "--output", "json"],
+            vec!["doctor"],
+            vec!["uninstall", "--purge-data", "--yes"],
             vec!["validate", "--values", "values.yaml"],
             vec!["render", "--values", "values.yaml", "--target", "runtime"],
             vec!["install", "--values", "values.yaml", "--skip-doctor"],

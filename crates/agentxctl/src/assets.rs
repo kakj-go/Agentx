@@ -5,6 +5,7 @@ use tempfile::TempDir;
 
 static CHARTS: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/../../deploy/helm");
 pub const VALUES_SCHEMA: &str = include_str!("../../../deploy/values/values.schema.json");
+pub const DOCKERHUB_BETA_VALUES: &str = include_str!("../../../deploy/values/dockerhub-beta.yaml");
 pub const RELEASE_SCHEMA: &str =
     include_str!("../../../deploy/release/v2-release-manifest.schema.json");
 pub const BACKUP_SCHEMA: &str = include_str!("../../../deploy/release/backup-manifest.schema.json");
@@ -92,6 +93,10 @@ mod tests {
         let ingress = std::fs::read(assets.ingress_chart()).unwrap();
         assert!(ingress.len() > 1024);
         assert_eq!(&ingress[..2], &[0x1f, 0x8b]);
+        assert_eq!(
+            std::fs::read_to_string(root.join("deploy/values/dockerhub-beta.yaml")).unwrap(),
+            DOCKERHUB_BETA_VALUES
+        );
     }
 
     #[test]

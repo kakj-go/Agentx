@@ -43,3 +43,14 @@ fn json_failure_is_machine_readable_and_uses_new_name() {
             .contains("values file does not exist")
     );
 }
+
+#[test]
+fn standalone_install_uses_embedded_beta_values() {
+    let output = Command::new(env!("CARGO_BIN_EXE_agentxctl"))
+        .args(["install", "--help"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("defaults to the embedded Docker Hub Beta configuration"));
+}

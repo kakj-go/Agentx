@@ -17,9 +17,11 @@ jobs:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-musl
             archive: tar.gz
+            standalone: agentxctl-linux-x86_64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             archive: zip
+            standalone: agentxctl-windows-x86_64.exe
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -45,10 +47,9 @@ jobs:
           if ($actualVersion -ne "agentxctl $version") {
             throw "release tag version $version does not match binary version: $actualVersion"
           }
-          $values = (Resolve-Path deploy/values/local.yaml).Path
           Push-Location $env:RUNNER_TEMP
-          & $binary validate --values $values --output json
-          & $binary render --values $values --target runtime | Out-Null
+          & $binary validate --output json
+          & $binary render --target runtime | Out-Null
           Pop-Location
       - shell: pwsh
         run: |
@@ -57,6 +58,7 @@ jobs:
           New-Item -ItemType Directory -Path "dist/$name/values" -Force | Out-Null
           $suffix = if ($IsWindows) { '.exe' } else { '' }
           Copy-Item "target/${{ matrix.target }}/release/agentxctl$suffix" "dist/$name/agentxctl$suffix"
+          Copy-Item "target/${{ matrix.target }}/release/agentxctl$suffix" "dist/${{ matrix.standalone }}"
           Copy-Item deploy/values/local.yaml,deploy/values/dockerhub-beta.yaml,deploy/values/production.example.yaml "dist/$name/values/"
           Copy-Item LICENSE "dist/$name/"
           $actualFiles = Get-ChildItem "dist/$name" -File -Recurse | ForEach-Object {
@@ -79,6 +81,8 @@ jobs:
           }
           $archive = Get-ChildItem "dist/$name.*" | Select-Object -First 1
           (Get-FileHash $archive.FullName -Algorithm SHA256).Hash.ToLower() + "  " + $archive.Name | Set-Content "$($archive.FullName).sha256"
+          $standalone = (Resolve-Path "dist/${{ matrix.standalone }}").Path
+          (Get-FileHash $standalone -Algorithm SHA256).Hash.ToLower() + "  " + (Split-Path $standalone -Leaf) | Set-Content "$standalone.sha256"
           $smokeRoot = Join-Path $env:RUNNER_TEMP "agentxctl-package-smoke-${{ matrix.target }}"
           New-Item -ItemType Directory -Path $smokeRoot -Force | Out-Null
           if ('${{ matrix.archive }}' -eq 'zip') {
@@ -92,9 +96,16 @@ jobs:
           & $packagedBinary validate --values $packagedValues --output json
           & $packagedBinary render --values $packagedValues --target runtime | Out-Null
           Pop-Location
+          Push-Location $env:RUNNER_TEMP
+          & $standalone validate --output json
+          & $standalone render --target runtime | Out-Null
+          Pop-Location
       - uses: actions/attest-build-provenance@v2
         with:
-          subject-path: dist/agentxctl-*.*
+          subject-path: dist/agentxctl-*-${{ matrix.target }}.${{ matrix.archive }}
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/${{ matrix.standalone }}
       - uses: actions/upload-artifact@v4
         with:
           name: agentxctl-${{ matrix.target }}
@@ -102,6 +113,7 @@ jobs:
             dist/agentxctl-*.zip
             dist/agentxctl-*.tar.gz
             dist/agentxctl-*.sha256
+            dist/${{ matrix.standalone }}
 
   publish:
     needs: build

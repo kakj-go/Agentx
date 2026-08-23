@@ -13,6 +13,16 @@ from tests.e2e.support import render, run
 TARGETS = ("dependencies", "control", "runtime", "observability")
 
 
+def test_release_exposes_standalone_binaries_and_direct_download_links() -> None:
+    workflow = Path(".github/workflows/agentxctl-release.yml").read_text(encoding="utf-8")
+    readme = Path("README.md").read_text(encoding="utf-8")
+    for asset in ("agentxctl-linux-x86_64", "agentxctl-windows-x86_64.exe"):
+        assert f"standalone: {asset}" in workflow
+        assert f"/agentxctl-v0.0.2-beta/{asset}" in readme
+    assert "& $standalone validate --output json" in workflow
+    assert "& $standalone render --target runtime" in workflow
+
+
 def test_backend_builder_copies_every_workspace_member_root() -> None:
     workspace = tomllib.loads(Path("Cargo.toml").read_text(encoding="utf-8"))["workspace"]["members"]
     dockerfile = Path("deploy/docker/backend.Dockerfile").read_text(encoding="utf-8")

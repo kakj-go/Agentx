@@ -4,17 +4,17 @@ Agentx 使用四个独立 Helm Release 管理核心资源，使用 Rust 原生 `
 
 ## 前置条件
 
-- 对应平台的 `agentxctl` 发布包；
+- 对应平台的 `agentxctl` 单文件二进制或完整发布包；
 - Helm 3；
 - kubectl；
 - 可访问的 Kubernetes 集群；
 - Docker 仅用于开发期 `cargo xtask images`。
 
-发布包包含 `agentxctl`、三个 Values 示例和许可证；四个 Agentx Chart、JSON Schema、ingress-nginx Chart 与 Values 已嵌入二进制，安装时不会下载部署资源。
+Release 同时提供可直接下载的 Windows/Linux 单文件二进制和完整归档包。归档包含 `agentxctl`、三个 Values 示例和许可证；四个 Agentx Chart、JSON Schema、Docker Hub Beta Values、ingress-nginx Chart 与 Values 已嵌入二进制，安装时不会下载部署资源。
 
 ```bash
-agentxctl validate --values values/dockerhub-beta.yaml
-agentxctl install --values values/dockerhub-beta.yaml
+agentxctl validate
+agentxctl install
 ```
 
 ## Release 与 Namespace
@@ -31,7 +31,7 @@ Kustomize只管理可选Addon与E2E Fixture，不拥有核心资源。OpenSandbo
 
 ## Values
 
-所有命令必须显式提供 `--values`。顶层固定为 `global`、`control`、`runtime`、`observability`、`dependencies`。
+常规集群命令未提供 `--values` 时使用与 CLI 版本严格绑定的内嵌 `dockerhub-beta.yaml`，用于单文件快速部署。自定义和 production 部署必须显式提供 `--values`。顶层固定为 `global`、`control`、`runtime`、`observability`、`dependencies`。
 
 - `local.yaml`：本地镜像、bundled状态依赖、自动生成Secret。
 - `dockerhub-beta.yaml`：公开Beta镜像和本地依赖。
@@ -42,12 +42,13 @@ production另外强制要求 `global.images.sourceCommit` 为镜像对应的40�
 ## 安装与状态
 
 ```bash
+agentxctl validate
+agentxctl install
+agentxctl status --output json
+agentxctl doctor
 agentxctl validate --values values/local.yaml
 agentxctl validate --values values/production.yaml --cluster --output json
 agentxctl render --values values/production.yaml > artifacts/production-render.yaml
-agentxctl install --values values/local.yaml
-agentxctl status --values values/local.yaml --output json
-agentxctl doctor --values values/local.yaml
 ```
 
 安装顺序固定为Values/工具/集群/Secret校验、Namespace、local Secret、ingress-nginx、Dependencies、Control、Runtime、Observability和Helm Doctor。Helm发布使用`--atomic --wait --wait-for-jobs`。
@@ -95,8 +96,8 @@ agentxctl restore --values values/production.yaml \
 ## 卸载
 
 ```bash
-agentxctl uninstall --values values/local.yaml --target observability
-agentxctl uninstall --values values/local.yaml --target all --purge-data --yes
+agentxctl uninstall --target observability
+agentxctl uninstall --target all --purge-data --yes
 ```
 
 普通卸载保留Namespace、PVC和外部资源。数据清理只允许local/test、`--target all`并要求`--yes`；production永远拒绝。Runtime仍存在时拒绝单独卸载Dependencies。
