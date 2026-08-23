@@ -72,6 +72,9 @@ async fn ensure_namespaces(config: &DeploymentConfig, targets: &[&str]) -> Resul
                 Value::String("agentxctl".into()),
             ),
         ]);
+        if plane == "dependencies" {
+            labels.insert("agentx.io/ingress".into(), "allowed".into());
+        }
         if plane != "dependencies" {
             for key in ["enforce", "audit", "warn"] {
                 labels.insert(
@@ -847,6 +850,39 @@ mod tests {
                 "agentx-runtime",
                 "agentx-observability",
             ]
+        );
+    }
+
+    #[tokio::test]
+    async fn install_labels_the_dependencies_namespace_for_ingress_access() {
+        let executor = Arc::new(test_support::RecordingExecutor::new(standard_response));
+        let assets = EmbeddedAssets::extract().unwrap();
+        let config = local_config(true);
+        process::with_command_executor(
+            executor.clone(),
+            install(&config, &assets, &TARGETS, false, false),
+        )
+        .await
+        .unwrap();
+
+        let dependencies_namespace = executor
+            .requests()
+            .into_iter()
+            .filter(|request| request.command == ["kubectl", "apply", "-f", "-"])
+            .filter_map(|request| request.input)
+            .filter_map(|input| serde_json::from_str::<Value>(&input).ok())
+            .find(|manifest| {
+                manifest.pointer("/kind").and_then(Value::as_str) == Some("Namespace")
+                    && manifest.pointer("/metadata/name").and_then(Value::as_str)
+                        == Some("agentx-deps")
+            })
+            .unwrap();
+
+        assert_eq!(
+            dependencies_namespace
+                .pointer("/metadata/labels/agentx.io~1ingress")
+                .and_then(Value::as_str),
+            Some("allowed")
         );
     }
 

@@ -45,7 +45,7 @@ Agentx 是一个面向企业场景的开源 Agent 工作流平台，提供可视
 
 ### Windows x64
 
-[直接下载 `agentxctl-windows-x86_64.exe`](https://github.com/kakj-go/Agentx/releases/download/agentxctl-v0.0.2-beta/agentxctl-windows-x86_64.exe)（[SHA-256](https://github.com/kakj-go/Agentx/releases/download/agentxctl-v0.0.2-beta/agentxctl-windows-x86_64.exe.sha256)）
+[直接下载 `agentxctl-windows-x86_64.exe`](https://github.com/kakj-go/Agentx/releases/download/agentxctl-v0.0.3-beta/agentxctl-windows-x86_64.exe)（[SHA-256](https://github.com/kakj-go/Agentx/releases/download/agentxctl-v0.0.3-beta/agentxctl-windows-x86_64.exe.sha256)）
 
 下载完成后，在 PowerShell 进入下载目录并直接安装：
 
@@ -56,7 +56,7 @@ Set-Location $HOME\Downloads
 
 ### Linux x64
 
-[直接下载 `agentxctl-linux-x86_64`](https://github.com/kakj-go/Agentx/releases/download/agentxctl-v0.0.2-beta/agentxctl-linux-x86_64)（[SHA-256](https://github.com/kakj-go/Agentx/releases/download/agentxctl-v0.0.2-beta/agentxctl-linux-x86_64.sha256)）
+[直接下载 `agentxctl-linux-x86_64`](https://github.com/kakj-go/Agentx/releases/download/agentxctl-v0.0.3-beta/agentxctl-linux-x86_64)（[SHA-256](https://github.com/kakj-go/Agentx/releases/download/agentxctl-v0.0.3-beta/agentxctl-linux-x86_64.sha256)）
 
 浏览器下载不会保留 Linux 可执行权限，因此首次运行前需要执行一次 `chmod`：
 
