@@ -92,7 +92,8 @@ CREATE TABLE runtime_user_workflow_grants (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 ALTER TABLE runtime_user_admission
-    ADD COLUMN tenant_query_enabled BOOLEAN NOT NULL DEFAULT FALSE AFTER status;
+    ADD COLUMN tenant_query_enabled BOOLEAN NOT NULL DEFAULT FALSE AFTER status,
+    ADD COLUMN role_assignments_json JSON NOT NULL AFTER tenant_query_enabled;
 
 ALTER TABLE runtime_user_application_grants
     ADD COLUMN can_invoke BOOLEAN NOT NULL DEFAULT FALSE AFTER status,
@@ -113,6 +114,9 @@ ALTER TABLE workflow_executions
     ADD KEY idx_runtime_execution_user_snapshot (tenant_id,initiator_user_id,created_at,id),
     ADD KEY idx_runtime_execution_department_snapshot (tenant_id,initiator_department_id,created_at,id),
     ADD KEY idx_runtime_execution_trigger_snapshot (tenant_id,trigger_type,trigger_source_id,created_at,id);
+
+ALTER TABLE execution_snapshots
+    ADD COLUMN execution_context_json JSON NOT NULL AFTER policy_snapshot_json;
 
 ALTER TABLE application_invocations
     ADD KEY idx_runtime_invocation_snapshot (tenant_id,created_at,id),

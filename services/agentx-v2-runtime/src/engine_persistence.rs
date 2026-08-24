@@ -512,7 +512,7 @@ async fn materialize_result(
             .unwrap_or(Value::Null),
         outputs,
         contexts: context.clone(),
-        execution: json!({"id":execution_id}),
+        execution: crate::execution_context::load(tx, tenant_id, execution_id).await?,
         output_node_keys: machine
             .workflow()
             .nodes

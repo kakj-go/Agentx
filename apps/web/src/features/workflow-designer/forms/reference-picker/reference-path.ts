@@ -13,10 +13,13 @@ const EMPTY_CATALOG: ReferenceCatalog = {
   contexts: [],
 };
 
+type Localize = (key: string, fallback: string) => string;
+
 export function buildReferenceCatalog(
   document: Pick<StudioDocument, "start" | "nodes" | "edges">,
   manifests: Map<string, NodeManifest>,
   targetNodeId?: string,
+  localize: Localize = (_key, fallback) => fallback,
 ): ReferenceCatalog {
   const catalog = structuredClone(EMPTY_CATALOG);
   const inputSchema = asSchema(document.start.inputs);
@@ -179,7 +182,85 @@ export function buildReferenceCatalog(
       },
     ];
   });
+  catalog.execution = executionEntries(localize);
   return catalog;
+}
+
+function executionEntries(localize: Localize): ReferenceEntry[] {
+  const label = (name: string, fallback: string) =>
+    localize(`studio.executionReferences.${name}`, fallback);
+  const partial = label("partial", "Empty for some trigger types");
+  const leaf = (
+    name: string,
+    fallback: string,
+    path: Array<string | number>,
+    type: string,
+    nullable = false,
+  ): ReferenceEntry => ({
+    id: `execution.${path.join(".")}`,
+    label: label(name, fallback),
+    path: `execution.${path.join(".")}`,
+    selector: baseSelector("execution", path),
+    type,
+    nullable,
+    description: nullable ? partial : undefined,
+    children: [],
+  });
+  const group = (name: string, fallback: string, children: ReferenceEntry[]): ReferenceEntry => ({
+    id: `execution.group.${name}`,
+    label: label(name, fallback),
+    path: `execution.${name}`,
+    children,
+  });
+  return [{
+    id: "execution.root",
+    label: label("root", "Execution information"),
+    path: "execution",
+    children: [
+      group("execution", "Execution", [
+        leaf("executionId", "Execution ID", ["id"], "string"),
+        leaf("startedAt", "Started at", ["startedAt"], "string"),
+        leaf("parentExecutionId", "Parent execution ID", ["parentExecutionId"], "string", true),
+      ]),
+      group("node", "Current node", [
+        leaf("nodeId", "Node ID", ["node", "id"], "string"),
+        leaf("nodeExecutionId", "Node execution ID", ["node", "executionId"], "string"),
+        leaf("runIndex", "Run index", ["node", "runIndex"], "integer"),
+        leaf("itemIndex", "Item index", ["node", "itemIndex"], "integer", true),
+        leaf("loopIterationIndex", "Loop iteration index", ["node", "loopIterationIndex"], "integer", true),
+      ]),
+      group("workflow", "Workflow", [
+        leaf("workflowId", "Workflow ID", ["workflow", "id"], "string"),
+        leaf("workflowName", "Workflow name", ["workflow", "name"], "string"),
+        leaf("workflowVersionId", "Version ID", ["workflow", "versionId"], "string"),
+        leaf("workflowVersionNumber", "Version number", ["workflow", "versionNumber"], "integer"),
+        leaf("ownerDepartmentId", "Owner department ID", ["workflow", "ownerDepartment", "id"], "string", true),
+        leaf("ownerDepartmentName", "Owner department name", ["workflow", "ownerDepartment", "name"], "string", true),
+      ]),
+      group("trigger", "Trigger", [
+        leaf("triggerType", "Trigger type", ["trigger", "type"], "string"),
+        leaf("triggerSourceId", "Trigger source ID", ["trigger", "sourceId"], "string", true),
+        leaf("triggerName", "Trigger name", ["trigger", "name"], "string", true),
+      ]),
+      group("initiator", "Initiator", [
+        leaf("initiatorType", "Initiator type", ["initiator", "type"], "string"),
+        leaf("userId", "User ID", ["initiator", "user", "id"], "string", true),
+        leaf("userName", "User name", ["initiator", "user", "name"], "string", true),
+        leaf("departmentId", "Department ID", ["initiator", "department", "id"], "string", true),
+        leaf("departmentName", "Department name", ["initiator", "department", "name"], "string", true),
+        leaf("roleIds", "Role IDs", ["initiator", "roles", "ids"], "array", true),
+        leaf("roleCodes", "Role codes", ["initiator", "roles", "codes"], "array", true),
+        leaf("roleNames", "Role names", ["initiator", "roles", "names"], "array", true),
+        leaf("roleAssignments", "Role assignments", ["initiator", "roles", "assignments"], "array", true),
+      ]),
+      group("applicationSession", "Application and session", [
+        leaf("applicationId", "Application ID", ["application", "id"], "string", true),
+        leaf("invocationId", "Invocation ID", ["invocation", "id"], "string", true),
+        leaf("sessionId", "Session ID", ["session", "id"], "string", true),
+        leaf("externalUserId", "External user ID", ["session", "externalUserId"], "string", true),
+      ]),
+    ],
+  }];
 }
 
 function recommendAiText(entries: ReferenceEntry[], nodeType: string): ReferenceEntry[] {

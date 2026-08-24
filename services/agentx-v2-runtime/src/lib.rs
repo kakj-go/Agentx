@@ -12,6 +12,7 @@ mod engine_trace;
 pub mod error;
 pub mod event_export;
 pub mod execution;
+mod execution_context;
 mod fork_runtime;
 pub mod gateway;
 pub mod gc;

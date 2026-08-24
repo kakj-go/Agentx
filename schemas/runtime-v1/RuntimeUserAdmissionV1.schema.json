@@ -1,4 +1,58 @@
 {
+  "$defs": {
+    "ExecutionDepartmentSnapshotV1": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name"
+      ],
+      "type": "object"
+    },
+    "ExecutionRoleAssignmentV1": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "dataScope": {
+          "type": "string"
+        },
+        "id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "scopeDepartment": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ExecutionDepartmentSnapshotV1"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "code",
+        "name",
+        "dataScope"
+      ],
+      "type": "object"
+    }
+  },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "properties": {
@@ -11,6 +65,12 @@
     },
     "enabled": {
       "type": "boolean"
+    },
+    "roleAssignments": {
+      "items": {
+        "$ref": "#/$defs/ExecutionRoleAssignmentV1"
+      },
+      "type": "array"
     },
     "tenantId": {
       "format": "uuid",
@@ -40,7 +100,8 @@
     "departmentName",
     "tokenVersion",
     "enabled",
-    "tenantQueryEnabled"
+    "tenantQueryEnabled",
+    "roleAssignments"
   ],
   "title": "RuntimeUserAdmissionV1",
   "type": "object"

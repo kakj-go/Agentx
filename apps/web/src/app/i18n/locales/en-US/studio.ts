@@ -352,7 +352,7 @@ const translations = {
     "outputs": "Outputs",
     "contexts": "Global variables",
     "item": "Current data",
-    "execution": "Execution",
+    "execution": "Execution information",
     "loop": "Loop",
     "currentError": "Current error",
     "currentInput": "Current node input",
@@ -377,6 +377,21 @@ const translations = {
     "example": "Example",
     "unknown": "unknown",
     "single": "single"
+  },
+  "executionReferences": {
+    "root": "Execution information", "execution": "Execution", "node": "Current node", "workflow": "Workflow",
+    "trigger": "Trigger", "initiator": "Initiator", "applicationSession": "Application and session",
+    "executionId": "Execution ID", "startedAt": "Started at", "parentExecutionId": "Parent execution ID",
+    "nodeId": "Node ID", "nodeExecutionId": "Node execution ID", "runIndex": "Run index",
+    "itemIndex": "Item index", "loopIterationIndex": "Loop iteration index",
+    "workflowId": "Workflow ID", "workflowName": "Workflow name", "workflowVersionId": "Version ID",
+    "workflowVersionNumber": "Version number", "ownerDepartmentId": "Owner department ID", "ownerDepartmentName": "Owner department name",
+    "triggerType": "Trigger type", "triggerSourceId": "Trigger source ID", "triggerName": "Trigger name",
+    "initiatorType": "Initiator type", "userId": "User ID", "userName": "User name",
+    "departmentId": "Department ID", "departmentName": "Department name", "roleIds": "Role IDs",
+    "roleCodes": "Role codes", "roleNames": "Role names", "roleAssignments": "Role assignments",
+    "applicationId": "Application ID", "invocationId": "Invocation ID", "sessionId": "Session ID",
+    "externalUserId": "External user ID", "partial": "Empty for some trigger types"
   },
   "interface": {
     "start": "Start",

@@ -12,6 +12,19 @@ const catalog: ReferenceCatalog = {
 }
 
 describe('ReferencePicker', () => {
+  it('shows execution information only when the field contract allows it', () => {
+    const executionLabel = ['Execution', 'information'].join(' ')
+    const executionCatalog: ReferenceCatalog = {
+      ...catalog,
+      execution: [{ id: 'execution.root', label: executionLabel, path: 'execution', children: [] }],
+    }
+    const rendered = render(<ReferencePicker catalog={executionCatalog} onInsert={vi.fn()} onOpenChange={vi.fn()} open />)
+    expect(screen.queryByText(executionLabel)).not.toBeInTheDocument()
+
+    rendered.rerender(<ReferencePicker allowedNamespaces={['execution']} catalog={executionCatalog} onInsert={vi.fn()} onOpenChange={vi.fn()} open />)
+    expect(screen.getByText(executionLabel)).toBeInTheDocument()
+  })
+
   it('inserts a selected reference and closes', () => {
     const insert = vi.fn()
     const open = vi.fn()

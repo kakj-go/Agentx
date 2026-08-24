@@ -712,6 +712,62 @@ pub async fn fork_execution(pool: &MySqlPool, claim: &RuntimeCommandClaim) -> Ru
     .await?
     .ok_or(RuntimeError::NotFound)?;
     let bundle_id: Uuid = source.try_get("bundle_id")?;
+    let started_at = time::OffsetDateTime::now_utc();
+    let mut execution_context: Value = sqlx::query_scalar(
+        "SELECT execution_context_json FROM execution_snapshots WHERE tenant_id=? AND execution_id=?",
+    )
+    .bind(claim.tenant_id)
+    .bind(source_execution_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    if let Some(root) = execution_context.as_object_mut() {
+        root.insert("id".into(), json!(fork_execution_id));
+        root.insert(
+            "startedAt".into(),
+            json!(
+                started_at
+                    .format(&time::format_description::well_known::Rfc3339)
+                    .map_err(|error| RuntimeError::Internal(error.into()))?
+            ),
+        );
+        root.insert("parentExecutionId".into(), json!(source_execution_id));
+        root.insert(
+            "trigger".into(),
+            json!({
+                "type": "fork",
+                "sourceId": source_execution_id,
+                "name": origin.trigger_name,
+            }),
+        );
+        root.insert(
+            "initiator".into(),
+            serde_json::to_value(agentx_runtime_contracts::ExecutionInitiatorSnapshotV1 {
+                kind: "user".into(),
+                user: origin
+                    .initiator_user_id
+                    .zip(origin.initiator_user_name.clone())
+                    .map(
+                        |(id, name)| agentx_runtime_contracts::ExecutionUserSnapshotV1 { id, name },
+                    ),
+                department: origin
+                    .initiator_department_id
+                    .zip(origin.initiator_department_name.clone())
+                    .map(
+                        |(id, name)| agentx_runtime_contracts::ExecutionDepartmentSnapshotV1 {
+                            id,
+                            name,
+                        },
+                    ),
+                roles: Some(
+                    agentx_runtime_contracts::ExecutionRolesSnapshotV1::from_assignments(
+                        origin.role_assignments.clone(),
+                    ),
+                ),
+            })
+            .map_err(|error| RuntimeError::Internal(error.into()))?,
+        );
+        root.remove("node");
+    }
     let checkpoint_exists: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM checkpoints WHERE tenant_id=? AND id=? AND execution_id=? AND bundle_id=?)",
     )
@@ -728,7 +784,7 @@ pub async fn fork_execution(pool: &MySqlPool, claim: &RuntimeCommandClaim) -> Ru
         ));
     }
     sqlx::query(
-        "INSERT INTO workflow_executions(id,tenant_id,workflow_id,workflow_version_id,application_id,bundle_id,work_package_id,parent_execution_id,admission_epoch,state_version,trace_id,trigger_type,initiator_user_id,initiator_user_name,initiator_department_id,initiator_department_name,trigger_source_id,trigger_name,status,started_at,input_json) SELECT ?,tenant_id,workflow_id,workflow_version_id,application_id,bundle_id,work_package_id,id,admission_epoch,1,?,'fork',?,?,?,?,?,?,'queued',UTC_TIMESTAMP(6),input_json FROM workflow_executions WHERE tenant_id=? AND id=?",
+        "INSERT INTO workflow_executions(id,tenant_id,workflow_id,workflow_version_id,application_id,bundle_id,work_package_id,parent_execution_id,admission_epoch,state_version,trace_id,trigger_type,initiator_user_id,initiator_user_name,initiator_department_id,initiator_department_name,trigger_source_id,trigger_name,status,started_at,input_json) SELECT ?,tenant_id,workflow_id,workflow_version_id,application_id,bundle_id,work_package_id,id,admission_epoch,1,?,'fork',?,?,?,?,?,?,'queued',?,input_json FROM workflow_executions WHERE tenant_id=? AND id=?",
     )
     .bind(fork_execution_id)
     .bind(Uuid::now_v7())
@@ -738,14 +794,16 @@ pub async fn fork_execution(pool: &MySqlPool, claim: &RuntimeCommandClaim) -> Ru
     .bind(&origin.initiator_department_name)
     .bind(source_execution_id)
     .bind(&origin.trigger_name)
+    .bind(started_at)
     .bind(claim.tenant_id)
     .bind(source_execution_id)
     .execute(&mut *tx)
     .await?;
     sqlx::query(
-        "INSERT INTO execution_snapshots(execution_id,tenant_id,workflow_version_id,bundle_id,work_package_id,admission_epoch,state_version,definition_json,compiled_ir_json,compiled_ir_hash,compiler_version,resource_snapshot_json,authorization_snapshot_json,policy_snapshot_json,worker_compatibility_json,object_manifest_json,runtime_settings_json,state_hash) SELECT ?,tenant_id,workflow_version_id,bundle_id,work_package_id,admission_epoch,1,definition_json,compiled_ir_json,compiled_ir_hash,compiler_version,resource_snapshot_json,authorization_snapshot_json,policy_snapshot_json,worker_compatibility_json,object_manifest_json,runtime_settings_json,state_hash FROM execution_snapshots WHERE tenant_id=? AND execution_id=?",
+        "INSERT INTO execution_snapshots(execution_id,tenant_id,workflow_version_id,bundle_id,work_package_id,admission_epoch,state_version,definition_json,compiled_ir_json,compiled_ir_hash,compiler_version,resource_snapshot_json,authorization_snapshot_json,policy_snapshot_json,execution_context_json,worker_compatibility_json,object_manifest_json,runtime_settings_json,state_hash) SELECT ?,tenant_id,workflow_version_id,bundle_id,work_package_id,admission_epoch,1,definition_json,compiled_ir_json,compiled_ir_hash,compiler_version,resource_snapshot_json,authorization_snapshot_json,policy_snapshot_json,?,worker_compatibility_json,object_manifest_json,runtime_settings_json,state_hash FROM execution_snapshots WHERE tenant_id=? AND execution_id=?",
     )
     .bind(fork_execution_id)
+    .bind(execution_context)
     .bind(claim.tenant_id)
     .bind(source_execution_id)
     .execute(&mut *tx)
@@ -818,7 +876,7 @@ pub async fn claim_worker_attempt(
         ));
     }
     let row = sqlx::query(
-        "SELECT a.id,a.tenant_id,a.execution_id,a.node_execution_id,a.capability,a.worker_protocol_version,a.input_json,a.fencing_token,a.deadline_at,n.node_id,n.node_type,n.node_version,n.run_index,n.iteration_index,e.input_json execution_input_json,s.compiled_ir_json,s.resource_snapshot_json,r.context_json FROM node_attempts a JOIN node_executions n ON n.id=a.node_execution_id JOIN workflow_executions e ON e.id=a.execution_id JOIN execution_snapshots s ON s.execution_id=a.execution_id JOIN execution_runtime_state r ON r.execution_id=a.execution_id WHERE a.id=? AND a.status='queued' AND (a.locked_until IS NULL OR a.locked_until<=UTC_TIMESTAMP(6)) AND (a.deadline_at IS NULL OR a.deadline_at>UTC_TIMESTAMP(6)) FOR UPDATE",
+        "SELECT a.id,a.tenant_id,a.execution_id,a.node_execution_id,a.capability,a.worker_protocol_version,a.input_json,a.fencing_token,a.deadline_at,n.node_id,n.node_type,n.node_version,n.run_index,n.iteration_index,e.input_json execution_input_json,s.compiled_ir_json,s.resource_snapshot_json,s.execution_context_json,r.context_json FROM node_attempts a JOIN node_executions n ON n.id=a.node_execution_id JOIN workflow_executions e ON e.id=a.execution_id JOIN execution_snapshots s ON s.execution_id=a.execution_id JOIN execution_runtime_state r ON r.execution_id=a.execution_id WHERE a.id=? AND a.status='queued' AND (a.locked_until IS NULL OR a.locked_until<=UTC_TIMESTAMP(6)) AND (a.deadline_at IS NULL OR a.deadline_at>UTC_TIMESTAMP(6)) FOR UPDATE",
     )
     .bind(task.attempt_id)
     .fetch_optional(&mut *tx)
@@ -890,7 +948,14 @@ pub async fn claim_worker_attempt(
             .unwrap_or(Value::Null),
         load_output_namespace(&mut tx, task.tenant_id, task.execution_id).await?,
         context.clone(),
-        json!({"id":task.execution_id}),
+        crate::execution_context::with_node(
+            row.try_get("execution_context_json")?,
+            &node_id,
+            task.node_execution_id,
+            row.try_get("run_index")?,
+            None,
+            row.try_get("iteration_index")?,
+        ),
         compiled
             .nodes
             .iter()
@@ -1009,7 +1074,7 @@ async fn submit_worker_result_resolved(
         return Ok(true);
     }
     let attempt = sqlx::query(
-        "SELECT a.tenant_id,a.execution_id,a.node_execution_id,a.attempt_number,a.status,a.lease_token,a.fencing_token,COALESCE(a.locked_until>UTC_TIMESTAMP(6),FALSE) lease_active,n.node_key,COALESCE(NULLIF(n.node_name,''),n.node_key) node_name,n.run_index,e.bundle_id,e.work_package_id,e.state_version,e.invocation_id,e.input_json,s.policy_snapshot_json,s.worker_compatibility_json,s.resource_snapshot_json FROM node_attempts a JOIN node_executions n ON n.id=a.node_execution_id JOIN workflow_executions e ON e.id=a.execution_id JOIN execution_snapshots s ON s.execution_id=a.execution_id WHERE a.id=? FOR UPDATE",
+        "SELECT a.tenant_id,a.execution_id,a.node_execution_id,a.attempt_number,a.status,a.lease_token,a.fencing_token,COALESCE(a.locked_until>UTC_TIMESTAMP(6),FALSE) lease_active,n.node_key,COALESCE(NULLIF(n.node_name,''),n.node_key) node_name,n.run_index,n.iteration_index,e.bundle_id,e.work_package_id,e.state_version,e.invocation_id,e.input_json,s.policy_snapshot_json,s.worker_compatibility_json,s.resource_snapshot_json FROM node_attempts a JOIN node_executions n ON n.id=a.node_execution_id JOIN workflow_executions e ON e.id=a.execution_id JOIN execution_snapshots s ON s.execution_id=a.execution_id WHERE a.id=? FOR UPDATE",
     )
     .bind(result.attempt_id)
     .fetch_one(&mut *tx)
@@ -1069,10 +1134,14 @@ async fn submit_worker_result_resolved(
                         .unwrap_or(Value::Null),
                     outputs: upstream,
                     contexts: context.clone(),
-                    execution: json!({
-                        "executionId":execution_id,
-                        "nodeExecutionId":node_execution_id.as_uuid(),
-                    }),
+                    execution: crate::execution_context::with_node(
+                        crate::execution_context::load(&mut tx, tenant_id, execution_id).await?,
+                        &node.id,
+                        node_execution_id.as_uuid(),
+                        activation.run_index,
+                        None,
+                        attempt.try_get("iteration_index")?,
+                    ),
                     output_node_keys: machine
                         .workflow()
                         .nodes
@@ -1470,7 +1539,14 @@ async fn apply_context_writes(
         inputs: input,
         outputs,
         contexts: current_context.clone(),
-        execution: json!({"id":execution_id}),
+        execution: crate::execution_context::with_node(
+            crate::execution_context::load(tx, tenant_id, execution_id).await?,
+            &node.id,
+            node_execution_id.as_uuid(),
+            activation.run_index,
+            None,
+            None,
+        ),
         output_node_keys: machine
             .workflow()
             .nodes

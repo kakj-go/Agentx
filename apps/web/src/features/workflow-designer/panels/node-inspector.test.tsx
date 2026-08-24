@@ -1,9 +1,9 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 
 import { ToastProvider } from '../../../shared/ui/toast'
-import type { NodeManifest } from '../model/types'
+import type { NodeManifest, ReferenceCatalog } from '../model/types'
 import { NodeInspector } from './node-inspector'
 
 const manifest: NodeManifest = {
@@ -33,6 +33,13 @@ const filterManifest: NodeManifest = {
   nodeType: 'filter',
   parameterSchema: { type: 'object', properties: { condition: { "x-agentx-dynamicValue": { modes: ['literal', 'reference', 'expression'], allowedNamespaces: ['inputs', 'outputs', 'contexts', 'item'], acceptedCardinality: ['single'], missingPolicies: ['error'], recursive: false } } } },
   uiSchema: { canvas: { role: 'default' }, fields: { condition: { control: 'expression' } } },
+}
+
+const executionCatalog: ReferenceCatalog = {
+  inputs: [],
+  outputs: [],
+  contexts: [{ id: 'contexts.session', label: 'session', path: 'contexts.session', type: 'object', children: [] }],
+  execution: [{ id: 'execution.root', label: 'Execution information', path: 'execution', children: [] }],
 }
 
 describe('NodeInspector details view', () => {
@@ -110,6 +117,22 @@ describe('NodeInspector details view', () => {
     fireEvent.click(screen.getByRole('option', { name: 'session.answer' }))
     fireEvent.click(screen.getByRole('button', { name: /Save|保存/ }))
     expect(onChange).toHaveBeenCalledWith({ contextWrites: [{ operation: 'set', path: 'session.answer', value: { kind: 'literal', value: '' } }] })
+  })
+
+  it('offers execution information in output projection and context write dialogs', () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(<QueryClientProvider client={client}><ToastProvider><NodeInspector data={{ editorKind: 'action', nodeType: 'model', typeVersion: 1, label: 'Model', key: 'model', parameters: {}, outputProjection: {}, contextWrites: [], resourceReferences: [], settings: {}, disabled: false }} manifest={modelManifest} nodeId="model-1" onChange={vi.fn()} onDelete={vi.fn()} referenceCatalog={executionCatalog} resources={{}} /></ToastProvider></QueryClientProvider>)
+
+    fireEvent.click(screen.getByRole('button', { name: /Add custom output|添加自定义输出/ }))
+    let dialog = screen.getByRole('dialog', { name: /Add custom output|添加自定义输出/ })
+    fireEvent.focus(within(dialog).getByLabelText('Value'))
+    expect(screen.getByRole('button', { name: /Execution information|运行信息/ })).toBeInTheDocument()
+    fireEvent.click(within(dialog).getByRole('button', { name: /Cancel|取消/ }))
+
+    fireEvent.click(screen.getByRole('button', { name: /Add global variable write|添加全局变量写入/ }))
+    dialog = screen.getByRole('dialog', { name: /Add global variable write|添加全局变量写入/ })
+    fireEvent.focus(within(dialog).getByLabelText('Value'))
+    expect(screen.getByRole('button', { name: /Execution information|运行信息/ })).toBeInTheDocument()
   })
 
   it('rejects duplicate projection field names before overwriting an existing field', () => {

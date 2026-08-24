@@ -3,8 +3,9 @@ use std::collections::BTreeSet;
 use agentx_bundle_builder::composite_ir_object_id;
 use agentx_domain::ResourceVersionSnapshot;
 use agentx_runtime_contracts::{
-    ContentHash, RuntimeModelPriceV1, RuntimeResourceBindingV1, RuntimeResourceConfigurationV1,
-    RuntimeResourceKindV1, SandboxEgressModeV1, VaultSecretReferenceV1,
+    ContentHash, ExecutionDepartmentSnapshotV1, ExecutionWorkflowSnapshotV1, RuntimeModelPriceV1,
+    RuntimeResourceBindingV1, RuntimeResourceConfigurationV1, RuntimeResourceKindV1,
+    SandboxEgressModeV1, VaultSecretReferenceV1,
 };
 use anyhow::{Context, Result};
 use serde_json::Value;
@@ -175,10 +176,20 @@ fn from_parts(
             let workflow_version_id = version_id
                 .or_else(|| json_uuid(&snapshot, "workflowVersionId"))
                 .context("Composite Runtime binding requires a fixed Workflow Version")?;
+            let workflow = serde_json::from_value::<ExecutionWorkflowSnapshotV1>(
+                snapshot
+                    .get("workflow")
+                    .cloned()
+                    .context("Composite Runtime binding requires workflow snapshot metadata")?,
+            )?;
+            anyhow::ensure!(
+                workflow.version_id == workflow_version_id,
+                "Composite Runtime binding Workflow snapshot has a mismatched version"
+            );
             (
                 RuntimeResourceKindV1::Composite,
                 RuntimeResourceConfigurationV1::Composite {
-                    workflow_version_id,
+                    workflow,
                     definition_object_id: workflow_version_id,
                     ir_object_id: composite_ir_object_id(workflow_version_id),
                 },
@@ -198,6 +209,30 @@ fn from_parts(
         content_hash,
         configuration,
         object_ids,
+    })
+}
+
+pub(crate) async fn workflow_snapshot(
+    pool: &sqlx::MySqlPool,
+    tenant_id: Uuid,
+    version_id: Uuid,
+) -> Result<ExecutionWorkflowSnapshotV1> {
+    let row = sqlx::query("SELECT w.id workflow_id,w.name,v.version_number,w.owner_department_id,d.name owner_department_name FROM workflow_versions v JOIN workflows w ON w.tenant_id=v.tenant_id AND w.id=v.workflow_id LEFT JOIN departments d ON d.tenant_id=w.tenant_id AND d.id=w.owner_department_id WHERE v.tenant_id=? AND v.id=?")
+        .bind(tenant_id)
+        .bind(version_id)
+        .fetch_optional(pool)
+        .await?
+        .with_context(|| format!("fixed Workflow Version {version_id} is missing"))?;
+    let owner_department_id: Option<Uuid> = row.try_get("owner_department_id")?;
+    Ok(ExecutionWorkflowSnapshotV1 {
+        id: row.try_get("workflow_id")?,
+        name: row.try_get("name")?,
+        version_id,
+        version_number: row.try_get("version_number")?,
+        owner_department: owner_department_id.map(|id| ExecutionDepartmentSnapshotV1 {
+            id,
+            name: row.try_get("owner_department_name").unwrap_or_default(),
+        }),
     })
 }
 

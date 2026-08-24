@@ -457,6 +457,7 @@ export type ReferenceEntry = {
   disabledReason?: string;
   conversionNote?: string;
   recommended?: boolean;
+  description?: string;
   children: ReferenceEntry[];
 };
 export type ReferenceCatalog = Record<

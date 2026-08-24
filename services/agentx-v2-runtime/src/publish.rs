@@ -293,10 +293,9 @@ async fn prepare_bundle_inner(
         .execute(&mut *tx)
         .await?;
         if let agentx_runtime_contracts::RuntimeResourceConfigurationV1::Composite {
-            workflow_version_id,
-            ..
+            workflow, ..
         } = &resource.configuration
-            && let Some(snapshot) = composites.get(workflow_version_id)
+            && let Some(snapshot) = composites.get(&workflow.version_id)
         {
             crate::composite::persist(
                 &mut tx,
@@ -454,8 +453,10 @@ async fn apply_admission_inner(
         }
         AdmissionTargetV1::RuntimeUser { state: user } => {
             ensure_tenant(tenant_id, user.tenant_id)?;
-            sqlx::query("INSERT INTO runtime_user_admission(tenant_id,user_id,user_name,department_id,department_name,token_version,status,tenant_query_enabled,admission_epoch) VALUES(?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE user_name=IF(admission_epoch<=VALUES(admission_epoch),VALUES(user_name),user_name),department_id=IF(admission_epoch<=VALUES(admission_epoch),VALUES(department_id),department_id),department_name=IF(admission_epoch<=VALUES(admission_epoch),VALUES(department_name),department_name),token_version=IF(admission_epoch<=VALUES(admission_epoch),VALUES(token_version),token_version),status=IF(admission_epoch<=VALUES(admission_epoch),VALUES(status),status),tenant_query_enabled=IF(admission_epoch<=VALUES(admission_epoch),VALUES(tenant_query_enabled),tenant_query_enabled),admission_epoch=GREATEST(admission_epoch,VALUES(admission_epoch))")
-                .bind(user.tenant_id).bind(user.user_id).bind(&user.user_name).bind(user.department_id).bind(&user.department_name).bind(user.token_version).bind(if user.enabled{"active"}else{"disabled"}).bind(user.tenant_query_enabled).bind(request.admission_epoch).execute(&mut *tx).await?;
+            let role_assignments = serde_json::to_value(&user.role_assignments)
+                .map_err(|error| RuntimeError::Internal(error.into()))?;
+            sqlx::query("INSERT INTO runtime_user_admission(tenant_id,user_id,user_name,department_id,department_name,token_version,status,tenant_query_enabled,role_assignments_json,admission_epoch) VALUES(?,?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE user_name=IF(admission_epoch<=VALUES(admission_epoch),VALUES(user_name),user_name),department_id=IF(admission_epoch<=VALUES(admission_epoch),VALUES(department_id),department_id),department_name=IF(admission_epoch<=VALUES(admission_epoch),VALUES(department_name),department_name),token_version=IF(admission_epoch<=VALUES(admission_epoch),VALUES(token_version),token_version),status=IF(admission_epoch<=VALUES(admission_epoch),VALUES(status),status),tenant_query_enabled=IF(admission_epoch<=VALUES(admission_epoch),VALUES(tenant_query_enabled),tenant_query_enabled),role_assignments_json=IF(admission_epoch<=VALUES(admission_epoch),VALUES(role_assignments_json),role_assignments_json),admission_epoch=GREATEST(admission_epoch,VALUES(admission_epoch))")
+                .bind(user.tenant_id).bind(user.user_id).bind(&user.user_name).bind(user.department_id).bind(&user.department_name).bind(user.token_version).bind(if user.enabled{"active"}else{"disabled"}).bind(user.tenant_query_enabled).bind(role_assignments).bind(request.admission_epoch).execute(&mut *tx).await?;
         }
         AdmissionTargetV1::RuntimeUserApplicationGrant { state: grant } => {
             ensure_tenant(tenant_id, grant.tenant_id)?;

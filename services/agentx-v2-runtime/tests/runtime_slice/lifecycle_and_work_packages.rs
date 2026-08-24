@@ -218,6 +218,9 @@ impl Fixture {
                 deployment_id: Uuid::now_v7(),
                 workflow_id: self.workflow_id,
                 workflow_version_id,
+                workflow_name: "Runtime slice Workflow".into(),
+                workflow_version_number: sequence,
+                workflow_owner_department: None,
                 sequence,
                 definition,
                 dependency_versions: BTreeMap::new(),
@@ -263,6 +266,13 @@ impl Fixture {
         WorkPackageBuildSource {
             package_id,
             tenant_id: self.tenant_id,
+            workflow: agentx_runtime_contracts::ExecutionWorkflowSnapshotV1 {
+                id: self.workflow_id,
+                name: "Runtime slice Workflow".into(),
+                version_id: package_id,
+                version_number: 1,
+                owner_department: None,
+            },
             origin: agentx_runtime_contracts::ExecutionOriginV1::system(None),
             purpose: WorkPackagePurpose::Debug,
             call_purpose: RuntimeCallPurposeV1::Debug,
@@ -456,6 +466,18 @@ async fn work_package_prepare_execute_cancel_are_independently_signed_and_idempo
     .unwrap()
     .0;
     assert!(!executed.replayed);
+    let debug_execution_id = serde_json::from_value::<Uuid>(executed.result["executionId"].clone())
+        .expect("debug Work Package returns one Execution ID");
+    let debug_context: Value = sqlx::query_scalar(
+        "SELECT execution_context_json FROM execution_snapshots WHERE execution_id=?",
+    )
+    .bind(debug_execution_id)
+    .fetch_one(&fixture.state.pool)
+    .await
+    .unwrap();
+    assert_eq!(debug_context["trigger"]["type"], "debug");
+    assert_eq!(debug_context["workflow"]["name"], "Runtime slice Workflow");
+    assert!(debug_context["initiator"].get("user").is_none());
     let execute_replay = execute_work_package(
         State(fixture.state.clone()),
         Path(package_id),
@@ -587,6 +609,18 @@ async fn evaluation_work_package_creates_cases_converges_and_cancels_atomically(
         .map(|id| serde_json::from_value::<Uuid>(id.clone()).unwrap())
         .collect::<Vec<_>>();
     assert_eq!(execution_ids.len(), 2);
+    for execution_id in &execution_ids {
+        let evaluation_context: Value = sqlx::query_scalar(
+            "SELECT execution_context_json FROM execution_snapshots WHERE execution_id=?",
+        )
+        .bind(execution_id)
+        .fetch_one(&fixture.state.pool)
+        .await
+        .unwrap();
+        assert_eq!(evaluation_context["trigger"]["type"], "evaluation");
+        assert_eq!(evaluation_context["workflow"]["name"], "Runtime slice Workflow");
+        assert!(evaluation_context["initiator"].get("user").is_none());
+    }
     let case_count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM evaluation_run_cases c JOIN evaluation_runs r ON r.id=c.evaluation_run_id AND r.tenant_id=c.tenant_id WHERE r.tenant_id=? AND r.work_package_id=?",
     )

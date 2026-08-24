@@ -95,6 +95,9 @@ pub struct ExecutionSpecPayloadV1 {
     pub deployment_id: Uuid,
     pub workflow_id: Uuid,
     pub workflow_version_id: Uuid,
+    pub workflow_name: String,
+    pub workflow_version_number: u64,
+    pub workflow_owner_department: Option<crate::ExecutionDepartmentSnapshotV1>,
     pub bundle_sequence: u64,
     pub definition: Value,
     pub compiled_ir: CompiledWorkflowV1,
@@ -143,6 +146,7 @@ pub struct RuntimeWorkPackagePayloadV1 {
     pub schema_version: u32,
     pub package_id: Uuid,
     pub tenant_id: Uuid,
+    pub workflow: crate::ExecutionWorkflowSnapshotV1,
     pub origin: crate::ExecutionOriginV1,
     pub purpose: WorkPackagePurpose,
     pub call_purpose: RuntimeCallPurposeV1,
@@ -232,6 +236,8 @@ fn validate_bundle_payload(payload: &ExecutionSpecPayloadV1) -> Result<(), crate
         .map_err(crate::ContractError::InvalidRuntimePolicy)?;
     if payload.authorization.tenant_id != payload.tenant_id
         || payload.authorization.workflow_id != payload.workflow_id
+        || payload.workflow_name.trim().is_empty()
+        || payload.workflow_version_number == 0
         || payload
             .objects
             .iter()
@@ -352,6 +358,9 @@ fn validate_work_package_payload(
         .validate()
         .map_err(crate::ContractError::InvalidRuntimePolicy)?;
     if payload.authorization.tenant_id != payload.tenant_id
+        || payload.authorization.workflow_id != payload.workflow.id
+        || payload.workflow.name.trim().is_empty()
+        || payload.workflow.version_number == 0
         || payload
             .objects
             .iter()
@@ -488,7 +497,26 @@ fn valid_resource_bindings(
             .iter()
             .all(|object_id| available_objects.contains(object_id))
             && configuration_kind(&resource.configuration) == resource.resource_kind
+            && valid_configuration(resource)
     })
+}
+
+fn valid_configuration(resource: &RuntimeResourceBindingV1) -> bool {
+    match &resource.configuration {
+        RuntimeResourceConfigurationV1::Composite {
+            workflow,
+            definition_object_id,
+            ir_object_id,
+        } => {
+            resource.resource_id == workflow.version_id
+                && resource.resource_version == workflow.version_id.to_string()
+                && workflow.version_number > 0
+                && !workflow.name.trim().is_empty()
+                && definition_object_id == &workflow.version_id
+                && definition_object_id != ir_object_id
+        }
+        _ => true,
+    }
 }
 
 const fn configuration_kind(

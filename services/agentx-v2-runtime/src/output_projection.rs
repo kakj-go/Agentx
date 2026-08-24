@@ -28,9 +28,17 @@ pub(crate) fn apply(
             continue;
         };
         for (index, item) in items.iter_mut().enumerate() {
+            let mut execution = base.execution.clone();
+            if let Some(node) = execution
+                .get_mut("node")
+                .and_then(serde_json::Value::as_object_mut)
+            {
+                node.insert("itemIndex".into(), serde_json::json!(index));
+            }
             let context = ExpressionContext {
                 json: item.json.clone(),
                 item_index: index,
+                execution,
                 ..base.clone()
             };
             let target = item

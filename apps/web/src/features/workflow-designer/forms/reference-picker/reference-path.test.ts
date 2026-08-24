@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import type { NodeManifest, StudioDocument, StudioNode } from '../../model/types'
 import { buildReferenceCatalog } from './reference-path'
+import { selectorDisplayLabel } from '../variable-token-editor'
 
 const action = (id: string, key: string): StudioNode => ({
   id,
@@ -33,6 +34,35 @@ const document = {
 } as Pick<StudioDocument, 'start' | 'nodes' | 'edges'>
 
 describe('Workflow 5.0 reference selectors', () => {
+  it('builds the shared execution catalog with typed role and nullable initiator selectors', () => {
+    const catalog = buildReferenceCatalog(document, new Map())
+    const root = catalog.execution?.[0]
+    const initiator = root?.children.find((entry) => entry.id === 'execution.group.initiator')
+    const roleCodes = initiator?.children.find((entry) => entry.path === 'execution.initiator.roles.codes')
+    const departmentName = initiator?.children.find((entry) => entry.path === 'execution.initiator.department.name')
+
+    expect(root?.label).toBe('Execution information')
+    expect(roleCodes?.type).toBe('array')
+    expect(roleCodes?.selector?.path).toEqual(['initiator', 'roles', 'codes'])
+    expect(departmentName?.nullable).toBe(true)
+    expect(departmentName?.description).toBe('Empty for some trigger types')
+  })
+
+  it('uses localized execution paths for chips without persisting display metadata', () => {
+    const labels: Record<string, string> = {
+      'studio.executionReferences.root': '运行信息',
+      'studio.executionReferences.initiator': '发起人',
+      'studio.executionReferences.departmentName': '部门名称',
+    }
+    const catalog = buildReferenceCatalog(document, new Map(), undefined, (key, fallback) => labels[key] ?? fallback)
+    const selector = catalog.execution![0].children
+      .find((entry) => entry.id === 'execution.group.initiator')!.children
+      .find((entry) => entry.path === 'execution.initiator.department.name')!.selector!
+
+    expect(selectorDisplayLabel(selector, catalog)).toBe('运行信息 / 发起人 / 部门名称')
+    expect(selector).toEqual({ namespace: 'execution', run: { kind: 'current' }, item: { kind: 'current' }, path: ['initiator', 'department', 'name'] })
+  })
+
   it('builds the three namespaces and filters outputs to reachable predecessors', () => {
     const catalog = buildReferenceCatalog(document, new Map([['if@1', manifest]]), 'target')
 

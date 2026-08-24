@@ -408,6 +408,58 @@
       ],
       "type": "object"
     },
+    "ExecutionDepartmentSnapshotV1": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name"
+      ],
+      "type": "object"
+    },
+    "ExecutionRoleAssignmentV1": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "dataScope": {
+          "type": "string"
+        },
+        "id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "scopeDepartment": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ExecutionDepartmentSnapshotV1"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "code",
+        "name",
+        "dataScope"
+      ],
+      "type": "object"
+    },
     "Plane": {
       "enum": [
         "control",
@@ -791,6 +843,12 @@
         "enabled": {
           "type": "boolean"
         },
+        "roleAssignments": {
+          "items": {
+            "$ref": "#/$defs/ExecutionRoleAssignmentV1"
+          },
+          "type": "array"
+        },
         "tenantId": {
           "format": "uuid",
           "type": "string"
@@ -819,7 +877,8 @@
         "departmentName",
         "tokenVersion",
         "enabled",
-        "tenantQueryEnabled"
+        "tenantQueryEnabled",
+        "roleAssignments"
       ],
       "type": "object"
     },

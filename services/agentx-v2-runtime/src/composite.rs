@@ -2,8 +2,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use agentx_runtime::{CompileContext, NodeRegistry, WorkflowCompiler};
 use agentx_runtime_contracts::{
-    CompiledWorkflowV1, RuntimeObjectReferenceV1, RuntimePublishErrorCodeV1,
-    RuntimeResourceBindingV1, RuntimeResourceConfigurationV1,
+    CompiledWorkflowV1, ExecutionWorkflowSnapshotV1, RuntimeObjectReferenceV1,
+    RuntimePublishErrorCodeV1, RuntimeResourceBindingV1, RuntimeResourceConfigurationV1,
 };
 use object_store::path::Path as ObjectPath;
 use serde_json::Value;
@@ -18,7 +18,7 @@ use crate::{
 
 #[derive(Clone)]
 pub(crate) struct MaterializedComposite {
-    pub workflow_version_id: Uuid,
+    pub workflow: ExecutionWorkflowSnapshotV1,
     pub definition_object_id: Uuid,
     pub ir_object_id: Uuid,
     pub definition: Value,
@@ -40,25 +40,26 @@ pub(crate) async fn materialize(
     let mut result = BTreeMap::new();
     for resource in resources {
         let RuntimeResourceConfigurationV1::Composite {
-            workflow_version_id,
+            workflow,
             definition_object_id,
             ir_object_id,
-        } = resource.configuration
+        } = &resource.configuration
         else {
             continue;
         };
-        if !resource.object_ids.contains(&definition_object_id)
-            || !resource.object_ids.contains(&ir_object_id)
+        let workflow_version_id = workflow.version_id;
+        if !resource.object_ids.contains(definition_object_id)
+            || !resource.object_ids.contains(ir_object_id)
         {
             return Err(invalid_object(
                 "Composite Binding does not contain its Definition and IR objects",
             ));
         }
         let definition_object = object_map
-            .get(&definition_object_id)
+            .get(definition_object_id)
             .ok_or_else(|| invalid_object("Composite Definition object is absent from closure"))?;
         let ir_object = object_map
-            .get(&ir_object_id)
+            .get(ir_object_id)
             .ok_or_else(|| invalid_object("Composite IR object is absent from closure"))?;
         if definition_object.tenant_id != tenant_id || ir_object.tenant_id != tenant_id {
             return Err(invalid_object("Composite object belongs to another Tenant"));
@@ -115,9 +116,9 @@ pub(crate) async fn materialize(
             .insert(
                 workflow_version_id,
                 MaterializedComposite {
-                    workflow_version_id,
-                    definition_object_id,
-                    ir_object_id,
+                    workflow: workflow.clone(),
+                    definition_object_id: *definition_object_id,
+                    ir_object_id: *ir_object_id,
                     definition: serde_json::to_value(definition)
                         .map_err(|error| RuntimeError::Internal(error.into()))?,
                     compiled_ir,
@@ -166,13 +167,14 @@ pub(crate) async fn persist(
     snapshot: &MaterializedComposite,
 ) -> RuntimeResult<()> {
     sqlx::query(
-        "INSERT INTO runtime_composite_snapshots(tenant_id,bundle_id,work_package_id,binding_id,workflow_version_id,definition_object_id,ir_object_id,definition_hash,ir_hash,definition_json,compiled_ir_json) VALUES(?,?,?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE binding_id=binding_id",
+        "INSERT INTO runtime_composite_snapshots(tenant_id,bundle_id,work_package_id,binding_id,workflow_version_id,workflow_json,definition_object_id,ir_object_id,definition_hash,ir_hash,definition_json,compiled_ir_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE binding_id=binding_id",
     )
     .bind(tenant_id)
     .bind(bundle_id)
     .bind(work_package_id)
     .bind(binding_id)
-    .bind(snapshot.workflow_version_id)
+    .bind(snapshot.workflow.version_id)
+    .bind(serde_json::to_value(&snapshot.workflow).map_err(|error| RuntimeError::Internal(error.into()))?)
     .bind(snapshot.definition_object_id)
     .bind(snapshot.ir_object_id)
     .bind(&snapshot.definition_hash)

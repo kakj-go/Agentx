@@ -201,7 +201,7 @@ pub enum RuntimeResourceConfigurationV1 {
         maximum_ttl_seconds: u32,
     },
     Composite {
-        workflow_version_id: Uuid,
+        workflow: crate::ExecutionWorkflowSnapshotV1,
         definition_object_id: Uuid,
         ir_object_id: Uuid,
     },

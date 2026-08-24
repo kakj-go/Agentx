@@ -33,9 +33,9 @@ use agentx_v2_runtime::{
     auth::RuntimeTrust,
     error::RuntimeError,
     execution::{
-        InvocationRequestV1, authenticate_api_key, claim_commands, claim_dispatch,
-        complete_dispatch, create_invocation, process_command, process_command_with_state,
-        recover_dispatches, release_dispatch,
+        InvocationCaller, InvocationRequestV1, authenticate_api_key, claim_commands,
+        claim_dispatch, complete_dispatch, create_invocation, create_runtime_invocation_tx,
+        process_command, process_command_with_state, recover_dispatches, release_dispatch,
     },
     gc::{cleanup_expired_temporary_objects, mark_collectable, sweep_one},
     internal_engine::{

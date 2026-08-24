@@ -98,6 +98,7 @@ fn execution_origin_and_search_filters_round_trip_without_compatibility_fields()
         initiator_department_name: Some("Historical department".into()),
         trigger_source_id: Some(trigger_source_id),
         trigger_name: Some("Historical trigger".into()),
+        role_assignments: vec![],
     };
     let encoded = serde_json::to_value(&origin).unwrap();
     assert_eq!(encoded["initiatorUserId"], user_id.to_string());
@@ -417,12 +418,20 @@ fn work_package_uses_an_independent_key_and_rejects_payload_tampering() {
     let bundle_key = SigningKey::generate(&mut OsRng);
     let package_key = SigningKey::generate(&mut OsRng);
     let tenant_id = Uuid::now_v7();
+    let workflow_id = Uuid::now_v7();
     let compiled = compiled_workflow();
     let mut package = RuntimeWorkPackageV1::signed(
         RuntimeWorkPackagePayloadV1 {
             schema_version: BUNDLE_SCHEMA_VERSION,
             package_id: Uuid::now_v7(),
             tenant_id,
+            workflow: agentx_runtime_contracts::ExecutionWorkflowSnapshotV1 {
+                id: workflow_id,
+                name: "Workflow".into(),
+                version_id: Uuid::now_v7(),
+                version_number: 7,
+                owner_department: None,
+            },
             origin: agentx_runtime_contracts::ExecutionOriginV1::system(None),
             purpose: WorkPackagePurpose::Debug,
             call_purpose: RuntimeCallPurposeV1::Debug,
@@ -441,7 +450,7 @@ fn work_package_uses_an_independent_key_and_rejects_payload_tampering() {
             },
             resource_closure: DependencyClosureV1 { entries: vec![] },
             resources: vec![],
-            authorization: authorization(tenant_id, Uuid::now_v7()),
+            authorization: authorization(tenant_id, workflow_id),
             objects: vec![RuntimeObjectReferenceV1 {
                 tenant_id,
                 storage_domain: StorageDomain::Runtime,
@@ -631,6 +640,13 @@ fn evaluation_work_package_payload() -> RuntimeWorkPackagePayloadV1 {
         schema_version: 1,
         package_id: Uuid::now_v7(),
         tenant_id,
+        workflow: agentx_runtime_contracts::ExecutionWorkflowSnapshotV1 {
+            id: workflow_id,
+            name: "Workflow".into(),
+            version_id: Uuid::now_v7(),
+            version_number: 1,
+            owner_department: None,
+        },
         origin: agentx_runtime_contracts::ExecutionOriginV1::system(None),
         purpose: WorkPackagePurpose::Evaluation,
         call_purpose: RuntimeCallPurposeV1::Evaluation,
@@ -711,6 +727,9 @@ fn bundle_payload() -> ExecutionSpecPayloadV1 {
         deployment_id: Uuid::now_v7(),
         workflow_id,
         workflow_version_id: Uuid::now_v7(),
+        workflow_name: "Workflow".into(),
+        workflow_version_number: 7,
+        workflow_owner_department: None,
         bundle_sequence: 7,
         definition: json!({"schemaVersion": "5.0"}),
         compiled_ir: compiled_workflow(),

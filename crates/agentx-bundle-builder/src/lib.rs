@@ -26,6 +26,9 @@ pub struct BundleBuildSource {
     pub deployment_id: Uuid,
     pub workflow_id: Uuid,
     pub workflow_version_id: Uuid,
+    pub workflow_name: String,
+    pub workflow_version_number: u64,
+    pub workflow_owner_department: Option<agentx_runtime_contracts::ExecutionDepartmentSnapshotV1>,
     pub sequence: u64,
     pub definition: WorkflowDefinition,
     pub dependency_versions: BTreeMap<Uuid, WorkflowDefinition>,
@@ -44,6 +47,7 @@ pub struct BundleBuildSource {
 pub struct WorkPackageBuildSource {
     pub package_id: Uuid,
     pub tenant_id: Uuid,
+    pub workflow: agentx_runtime_contracts::ExecutionWorkflowSnapshotV1,
     pub origin: ExecutionOriginV1,
     pub purpose: WorkPackagePurpose,
     pub call_purpose: RuntimeCallPurposeV1,
@@ -156,7 +160,7 @@ pub fn node_registry_with_composites(
                     "allOf": [definition.start.inputs],
                     "x-agentx-dynamicValue": {
                         "modes": ["literal", "reference"],
-                        "allowedNamespaces": ["inputs", "outputs", "contexts"],
+                        "allowedNamespaces": ["inputs", "outputs", "contexts", "execution"],
                         "acceptedCardinality": ["single"],
                         "missingPolicies": ["error", "null", "default", "omit"],
                         "recursive": true
@@ -294,6 +298,9 @@ pub fn build_bundle(
             deployment_id: source.deployment_id,
             workflow_id: source.workflow_id,
             workflow_version_id: source.workflow_version_id,
+            workflow_name: source.workflow_name,
+            workflow_version_number: source.workflow_version_number,
+            workflow_owner_department: source.workflow_owner_department,
             bundle_sequence: source.sequence,
             definition: serde_json::to_value(source.definition)
                 .expect("Workflow Definition serializes"),
@@ -407,6 +414,7 @@ pub fn build_work_package(
             schema_version: BUNDLE_SCHEMA_VERSION,
             package_id: source.package_id,
             tenant_id: source.tenant_id,
+            workflow: source.workflow,
             origin: source.origin,
             purpose: source.purpose,
             call_purpose: source.call_purpose,
@@ -813,6 +821,9 @@ mod tests {
             deployment_id: Uuid::from_u128(4),
             workflow_id: Uuid::from_u128(5),
             workflow_version_id: Uuid::from_u128(6),
+            workflow_name: "Workflow".into(),
+            workflow_version_number: 1,
+            workflow_owner_department: None,
             sequence: 1,
             definition: definition(),
             dependency_versions: BTreeMap::new(),
@@ -858,6 +869,13 @@ mod tests {
         WorkPackageBuildSource {
             package_id,
             tenant_id,
+            workflow: agentx_runtime_contracts::ExecutionWorkflowSnapshotV1 {
+                id: Uuid::from_u128(5),
+                name: "Workflow".into(),
+                version_id: package_id,
+                version_number: 7,
+                owner_department: None,
+            },
             origin: agentx_runtime_contracts::ExecutionOriginV1::system(None),
             purpose: WorkPackagePurpose::Debug,
             call_purpose: RuntimeCallPurposeV1::Debug,
@@ -1152,7 +1170,7 @@ mod tests {
         );
         assert_eq!(
             manifest.parameter_schema["properties"]["inputs"]["x-agentx-dynamicValue"]["allowedNamespaces"],
-            json!(["inputs", "outputs", "contexts"])
+            json!(["inputs", "outputs", "contexts", "execution"])
         );
         assert_eq!(manifest.output_schema["required"], json!(["answer"]));
         assert_eq!(

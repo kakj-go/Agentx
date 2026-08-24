@@ -352,7 +352,7 @@ const translations = {
     "outputs": "输出",
     "contexts": "全局变量",
     "item": "当前数据",
-    "execution": "执行信息",
+    "execution": "运行信息",
     "loop": "循环信息",
     "currentError": "当前错误",
     "currentInput": "当前节点输入",
@@ -377,6 +377,21 @@ const translations = {
     "example": "示例",
     "unknown": "未知",
     "single": "单值"
+  },
+  "executionReferences": {
+    "root": "运行信息", "execution": "执行信息", "node": "当前节点", "workflow": "工作流",
+    "trigger": "触发信息", "initiator": "发起人", "applicationSession": "应用与会话",
+    "executionId": "执行 ID", "startedAt": "开始时间", "parentExecutionId": "父执行 ID",
+    "nodeId": "节点 ID", "nodeExecutionId": "节点执行 ID", "runIndex": "运行序号",
+    "itemIndex": "数据项序号", "loopIterationIndex": "循环迭代序号",
+    "workflowId": "工作流 ID", "workflowName": "工作流名称", "workflowVersionId": "版本 ID",
+    "workflowVersionNumber": "版本号", "ownerDepartmentId": "所属部门 ID", "ownerDepartmentName": "所属部门名称",
+    "triggerType": "触发类型", "triggerSourceId": "触发来源 ID", "triggerName": "触发来源名称",
+    "initiatorType": "发起人类型", "userId": "用户 ID", "userName": "用户名称",
+    "departmentId": "部门 ID", "departmentName": "部门名称", "roleIds": "角色 ID 列表",
+    "roleCodes": "角色编码列表", "roleNames": "角色名称列表", "roleAssignments": "完整角色分配",
+    "applicationId": "应用 ID", "invocationId": "调用 ID", "sessionId": "会话 ID",
+    "externalUserId": "外部用户 ID", "partial": "部分触发方式下为空"
   },
   "interface": {
     "start": "开始",

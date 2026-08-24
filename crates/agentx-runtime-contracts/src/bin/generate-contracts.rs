@@ -7,23 +7,23 @@ use agentx_runtime_contracts::{
     ApplyReceiptV1, CancelWorkPackageRequestV1, ChatMappingV1, CommandEnvelopeV1,
     DelegationScopeV1, DisableDeploymentRequestV1, EgressConnectClaimsV1, EventEnvelopeV1,
     EventExportPageV1, EventExportRequestV1, ExecuteWorkPackageRequestV1, ExecutionArtifactV1,
-    ExecutionCheckpointV1, ExecutionCollectionPageV1, ExecutionDetailV1, ExecutionEventPageV1,
-    ExecutionNodeV1, ExecutionRuntimeDetailsV1, ExecutionSearchPageV1, ExecutionSearchRequestV1,
-    ExecutionSpecBundleV1, ExecutionTraceV1, ExecutionWaitV1, GovernanceSnapshotPageV1,
-    GovernanceSnapshotRequestV1, InvocationDetailV1, InvocationSearchPageV1,
-    InvocationSearchRequestV1, ObservabilityAggregatePageV1, ObservabilityAggregateRequestV1,
-    PrepareBundleRequestV1, PrepareWorkPackageRequestV1, ProjectionStatusV1, PublishReceiptV1,
-    ReferenceCheckReceiptV1, ReferenceCheckRequestV1, RetentionCommandRequestV1,
-    RollbackDeploymentRequestV1, RuntimeAdmissionCommandV1, RuntimeAuthorizationSnapshotV1,
-    RuntimeCommandApplyRequestV1, RuntimeDebugPlanV1, RuntimeIntegrationEventEnvelopeV1,
-    RuntimeObjectUploadMetadataV1, RuntimeObjectUploadReceiptV1, RuntimePolicyV1,
-    RuntimeResourceBindingV1, RuntimeResourceCheckRequestV1, RuntimeResourceCheckResponseV1,
-    RuntimeResourceOperationRequestV1, RuntimeResourceOperationResponseV1, RuntimeSkillProgramV1,
-    RuntimeTriggerSpecV1, RuntimeUserAdmissionV1, RuntimeUserApplicationGrantV1,
-    RuntimeUserWorkflowGrantV1, RuntimeWorkPackageV1, SessionDetailV1, SessionSearchPageV1,
-    SessionSearchRequestV1, SessionUpgradeCommandV1, SessionUpgradeReceiptV1, TraceEventEnvelopeV1,
-    TraceSearchPageV1, TraceSearchRequestV1, TraceSpanDetailV1, WorkerAttemptLeaseV1,
-    WorkerResultV1, WorkerTaskV1,
+    ExecutionCheckpointV1, ExecutionCollectionPageV1, ExecutionContextSnapshotV1,
+    ExecutionDetailV1, ExecutionEventPageV1, ExecutionNodeV1, ExecutionRuntimeDetailsV1,
+    ExecutionSearchPageV1, ExecutionSearchRequestV1, ExecutionSpecBundleV1, ExecutionTraceV1,
+    ExecutionWaitV1, GovernanceSnapshotPageV1, GovernanceSnapshotRequestV1, InvocationDetailV1,
+    InvocationSearchPageV1, InvocationSearchRequestV1, ObservabilityAggregatePageV1,
+    ObservabilityAggregateRequestV1, PrepareBundleRequestV1, PrepareWorkPackageRequestV1,
+    ProjectionStatusV1, PublishReceiptV1, ReferenceCheckReceiptV1, ReferenceCheckRequestV1,
+    RetentionCommandRequestV1, RollbackDeploymentRequestV1, RuntimeAdmissionCommandV1,
+    RuntimeAuthorizationSnapshotV1, RuntimeCommandApplyRequestV1, RuntimeDebugPlanV1,
+    RuntimeIntegrationEventEnvelopeV1, RuntimeObjectUploadMetadataV1, RuntimeObjectUploadReceiptV1,
+    RuntimePolicyV1, RuntimeResourceBindingV1, RuntimeResourceCheckRequestV1,
+    RuntimeResourceCheckResponseV1, RuntimeResourceOperationRequestV1,
+    RuntimeResourceOperationResponseV1, RuntimeSkillProgramV1, RuntimeTriggerSpecV1,
+    RuntimeUserAdmissionV1, RuntimeUserApplicationGrantV1, RuntimeUserWorkflowGrantV1,
+    RuntimeWorkPackageV1, SessionDetailV1, SessionSearchPageV1, SessionSearchRequestV1,
+    SessionUpgradeCommandV1, SessionUpgradeReceiptV1, TraceEventEnvelopeV1, TraceSearchPageV1,
+    TraceSearchRequestV1, TraceSpanDetailV1, WorkerAttemptLeaseV1, WorkerResultV1, WorkerTaskV1,
 };
 use anyhow::{Context, Result};
 use schemars::{JsonSchema, schema_for};
@@ -69,6 +69,7 @@ fn contract_schemas() -> Result<Map<String, Value>> {
     let mut schemas = Map::new();
     insert::<ExecutionSpecBundleV1>(&mut schemas, "ExecutionSpecBundleV1")?;
     insert::<RuntimeWorkPackageV1>(&mut schemas, "RuntimeWorkPackageV1")?;
+    insert::<ExecutionContextSnapshotV1>(&mut schemas, "ExecutionContextSnapshotV1")?;
     insert::<RuntimeDebugPlanV1>(&mut schemas, "RuntimeDebugPlanV1")?;
     insert::<RuntimePolicyV1>(&mut schemas, "RuntimePolicyV1")?;
     insert::<RuntimeAuthorizationSnapshotV1>(&mut schemas, "RuntimeAuthorizationSnapshotV1")?;

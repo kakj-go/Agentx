@@ -1,5 +1,5 @@
 import { expect, type Locator, type Page, test } from '@playwright/test'
-import { readFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 
 import { publishCompatibleChatMapping, useRuntimePortForward } from './playground-helpers'
 
@@ -19,7 +19,7 @@ const resourceNames = [
 ] as const
 const resourceTabs = { credential: '凭证', model: '模型', mcp_server: 'MCP 服务', mcp_tool: 'MCP 工具', sandbox_profile: '沙箱配置' } as const
 
-type Execution = { id: string; status: string; errorCode?: string | null }
+type Execution = { id: string; status: string; errorCode?: string | null; output?: Record<string, unknown> | null }
 type Approval = { id: string; executionId: string; status: string }
 type Application = { id: string; name: string; slug: string }
 type ApplicationDeployment = { id: string; status: string; publishErrorCode?: string | null; publishErrorMessage?: string | null }
@@ -337,8 +337,9 @@ async function chooseReference(page: Page, scope: Locator, namespace: RegExp, la
   const picker = page.getByTestId('reference-picker')
   await expect(picker).toBeVisible()
   await picker.getByRole('button', { name: namespace }).click()
+  const referenceTree = picker.locator(':scope > div').nth(1)
   for (const [index, label] of labels.entries()) {
-    const row = picker.getByRole('button', { name: new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i') }).first()
+    const row = referenceTree.getByRole('button', { name: new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i') }).first()
     const toggle = row.locator('[data-tree-toggle]')
     if (index < labels.length - 1 && await toggle.count()) await toggle.click()
     else await row.click()
@@ -382,6 +383,20 @@ async function setEndOutput(page: Page, nodeKey: string, fieldPath = 'json', por
   await panel.getByRole('button', { name: /^(关闭|Close)$/ }).click()
 }
 
+async function setEndContextOutput(page: Page) {
+  await page.getByTestId('workflow-end').click()
+  const panel = page.getByTestId('workflow-interface-panel')
+  await expect(panel).toBeVisible()
+  await panel.getByRole('button', { name: /添加字段|Add field/ }).first().click()
+  const dialog = page.getByRole('dialog', { name: /输出字段|Output field/ })
+  const outputName = dialog.getByLabel(/输出名称|Output name/)
+  await outputName.fill('context_workflow_name')
+  await outputName.blur()
+  await chooseReference(page, dialog, /全局变量|Global variables|Contexts/, ['session_note'])
+  await dialog.getByRole('button', { name: /保存|Save/ }).click()
+  await panel.getByRole('button', { name: /^(关闭|Close)$/ }).click()
+}
+
 async function setStartInputs(page: Page) {
   await page.getByTestId('workflow-start').click()
   const panel = page.getByTestId('workflow-interface-panel')
@@ -420,7 +435,6 @@ async function setStartInputs(page: Page) {
 }
 
 async function configureProjectionAndContextWrite(page: Page, details: Locator) {
-  const key = await details.getByLabel(/引用键|Reference key/).inputValue()
   await details.locator('button').filter({ hasText: /自定义输出|custom output/i }).click()
   const outputDialog = page.getByRole('dialog', { name: /添加自定义输出|Add custom output/ })
   const outputName = outputDialog.getByLabel(/输出名称|Output name/)
@@ -428,11 +442,24 @@ async function configureProjectionAndContextWrite(page: Page, details: Locator) 
   await outputName.blur()
   await chooseReference(page, outputDialog, /当前数据|Current data/, ['当前节点原始输出', 'stdout'])
   await outputDialog.getByRole('button', { name: /保存|Save/ }).click()
+  for (const [name, labels] of [
+    ['workflow_name', ['运行信息', '工作流', '工作流名称']],
+    ['initiator_department_name', ['运行信息', '发起人', '部门名称']],
+    ['initiator_role_codes', ['运行信息', '发起人', '角色编码列表']],
+  ] as const) {
+    await details.locator('button').filter({ hasText: /自定义输出|custom output/i }).click()
+    const runtimeOutput = page.getByRole('dialog', { name: /添加自定义输出|Add custom output/ })
+    const runtimeOutputName = runtimeOutput.getByLabel(/输出名称|Output name/)
+    await runtimeOutputName.fill(name)
+    await runtimeOutputName.blur()
+    await chooseReference(page, runtimeOutput, /运行信息|Execution information/, [...labels])
+    await runtimeOutput.getByRole('button', { name: /保存|Save/ }).click()
+  }
   await details.getByRole('button', { name: /添加全局变量写入|Add global variable write/ }).click()
   const writeDialog = page.getByRole('dialog', { name: /添加全局变量写入|Add global variable write/ })
   await writeDialog.getByLabel(/全局变量|Global variable/).click()
   await page.getByRole('option', { name: 'session_note' }).click()
-  await chooseReference(page, writeDialog, /输出|Outputs/, [key, 'main', 'current', 'summary'])
+  await chooseReference(page, writeDialog, /运行信息|Execution information/, ['运行信息', '工作流', '工作流名称'])
   await writeDialog.getByRole('button', { name: /保存|Save/ }).click()
 }
 
@@ -631,6 +658,7 @@ test('M6 Studio creates, debugs, versions and publishes a manifest-driven Workfl
 
   const approvalKey = (await saveAndReadDraft(page, token, workflowId)).definition.nodes.find((node) => node.type === 'approval')!.key
   await setEndOutput(page, approvalKey, 'json.decision', 'approved', false, 'string', true)
+  await setEndContextOutput(page)
   await setEndErrorOutput(page)
 
   await openNodeDetails(page, code)
@@ -666,7 +694,10 @@ test('M6 Studio creates, debugs, versions and publishes a manifest-driven Workfl
   expect(draft.definition.nodes.find((node) => node.type === 'agent')?.resourceReferences.map((item) => item.bindingRole)).toEqual(expect.arrayContaining(['ai_model', 'ai_tool']))
   expect(draft.definition.nodes.find((node) => node.type === 'code')?.settings.onError).toBe('continue_error_output')
   expect(draft.definition.nodes.find((node) => node.type === 'code')?.outputProjection.main.summary.value).toMatchObject({ kind: 'reference', selector: { namespace: 'item', path: ['stdout'] } })
-  expect(draft.definition.nodes.find((node) => node.type === 'code')?.contextWrites).toContainEqual({ operation: 'set', path: 'session_note', value: expect.objectContaining({ kind: 'reference', selector: expect.objectContaining({ namespace: 'outputs', port: 'main', path: ['summary'] }) }) })
+  expect(draft.definition.nodes.find((node) => node.type === 'code')?.outputProjection.main.workflow_name.value).toMatchObject({ kind: 'reference', selector: { namespace: 'execution', path: ['workflow', 'name'] } })
+  expect(draft.definition.nodes.find((node) => node.type === 'code')?.outputProjection.main.initiator_department_name.value).toMatchObject({ kind: 'reference', selector: { namespace: 'execution', path: ['initiator', 'department', 'name'] } })
+  expect(draft.definition.nodes.find((node) => node.type === 'code')?.outputProjection.main.initiator_role_codes.value).toMatchObject({ kind: 'reference', selector: { namespace: 'execution', path: ['initiator', 'roles', 'codes'] } })
+  expect(draft.definition.nodes.find((node) => node.type === 'code')?.contextWrites).toContainEqual({ operation: 'set', path: 'session_note', value: expect.objectContaining({ kind: 'reference', selector: expect.objectContaining({ namespace: 'execution', path: ['workflow', 'name'] }) }) })
   expect(draft.definition.start.contexts).toMatchObject({ session_note: { default: 'initial', mutable: true } })
   const startInputs = draft.definition.start.inputs as { properties: Record<string, Record<string, unknown>> }
   expect(startInputs.properties.attachments).toMatchObject({
@@ -687,6 +718,7 @@ test('M6 Studio creates, debugs, versions and publishes a manifest-driven Workfl
       { kind: 'text', text: ' after' },
     ],
   })
+  expect(draft.definition.end.outputs.context_workflow_name.value).toMatchObject({ kind: 'reference', selector: { namespace: 'contexts', path: ['session_note'] } })
   expect(draft.definition.end.error).toMatchObject({ strategy: 'collect', collectWindowMs: 1200, outputs: { failure_message: { value: { kind: 'reference', selector: { namespace: 'item', path: ['message'] } } } } })
   expect(draft.definition.connections).toContainEqual(expect.objectContaining({ sourceNodeId: draft.definition.nodes.find((node) => node.type === 'code')!.id, sourceHandle: 'error', targetNodeId: '__end__', targetHandle: 'error' }))
   expect(draft.editorDocument.bindingEdges).toHaveLength(2)
@@ -694,7 +726,27 @@ test('M6 Studio creates, debugs, versions and publishes a manifest-driven Workfl
   const firstExecution = await startDebug(page, () => studioRun(page).click())
   const approvalPage = await context.newPage()
   await approveExecution(approvalPage, token, firstExecution)
-  await waitExecution(page, token, firstExecution, ['succeeded'])
+  const completedExecution = await waitExecution(page, token, firstExecution, ['succeeded'])
+  expect(completedExecution.output).toMatchObject({ context_workflow_name: workflowName })
+
+  const me = await api<{ departmentName: string; roles: string[] }>(page, token, '/auth/me')
+  const codeNodeId = draft.definition.nodes.find((node) => node.type === 'code')!.id
+  const runtimeNodes = await api<{ items: Array<{ nodeId: string; output?: { main?: Array<{ json?: Record<string, unknown> }> } }> }>(page, token, `/executions/${firstExecution}/nodes`)
+  const runtimeInformation = runtimeNodes.items.find((node) => node.nodeId === codeNodeId)?.output?.main?.[0].json
+  expect(runtimeInformation).toMatchObject({
+    workflow_name: workflowName,
+    initiator_department_name: me.departmentName,
+  })
+  expect(runtimeInformation?.initiator_role_codes).toEqual(expect.arrayContaining(me.roles))
+  const executionContextEvidencePath = process.env.AGENTX_EXECUTION_CONTEXT_EVIDENCE_OUTPUT
+  if (!executionContextEvidencePath) throw new Error('AGENTX_EXECUTION_CONTEXT_EVIDENCE_OUTPUT is required')
+  await writeFile(executionContextEvidencePath, JSON.stringify({
+    executionId: firstExecution,
+    workflowName,
+    departmentName: me.departmentName,
+    roleCodes: me.roles,
+    contextWorkflowName: completedExecution.output?.context_workflow_name,
+  }))
 
   const details = await openNodeDetails(page, code)
   await details.getByRole('tab', { name: '输出' }).click()
@@ -790,6 +842,7 @@ test('M6 Studio creates, debugs, versions and publishes a manifest-driven Workfl
   await waterfall.getByRole('tab', { name: '原始数据' }).click()
   const rawTracePanel = waterfall.getByRole('tabpanel')
   await expect(rawTracePanel).toBeVisible()
+  await expect(rawTracePanel).toContainText(workflowName)
   const rawTraceBox = await rawTracePanel.boundingBox()
   const runtimeRailBox = await runtimeRail.boundingBox()
   expect(rawTraceBox!.y + rawTraceBox!.height).toBeLessThanOrEqual(runtimeRailBox!.y + runtimeRailBox!.height + 1)

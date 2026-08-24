@@ -65,6 +65,7 @@ CREATE TABLE runtime_composite_snapshots (
     work_package_id BINARY(16) NULL,
     binding_id BINARY(16) NOT NULL,
     workflow_version_id BINARY(16) NOT NULL,
+    workflow_json JSON NOT NULL,
     definition_object_id BINARY(16) NOT NULL,
     ir_object_id BINARY(16) NOT NULL,
     definition_hash CHAR(71) NOT NULL,

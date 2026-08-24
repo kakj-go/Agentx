@@ -611,6 +611,23 @@
       ],
       "type": "string"
     },
+    "ExecutionDepartmentSnapshotV1": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name"
+      ],
+      "type": "object"
+    },
     "ExecutionOrder": {
       "enum": [
         "deterministic",
@@ -648,6 +665,12 @@
             "null"
           ]
         },
+        "roleAssignments": {
+          "items": {
+            "$ref": "#/$defs/ExecutionRoleAssignmentV1"
+          },
+          "type": "array"
+        },
         "triggerName": {
           "type": [
             "string",
@@ -662,6 +685,44 @@
           ]
         }
       },
+      "required": [
+        "roleAssignments"
+      ],
+      "type": "object"
+    },
+    "ExecutionRoleAssignmentV1": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "dataScope": {
+          "type": "string"
+        },
+        "id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "scopeDepartment": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ExecutionDepartmentSnapshotV1"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "code",
+        "name",
+        "dataScope"
+      ],
       "type": "object"
     },
     "ExecutionStyle": {
@@ -672,6 +733,44 @@
         "sub_workflow"
       ],
       "type": "string"
+    },
+    "ExecutionWorkflowSnapshotV1": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "ownerDepartment": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ExecutionDepartmentSnapshotV1"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "versionId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "versionNumber": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "versionId",
+        "versionNumber"
+      ],
+      "type": "object"
     },
     "ExpressionBinaryOperator": {
       "enum": [
@@ -1855,14 +1954,13 @@
               "const": "composite",
               "type": "string"
             },
-            "workflowVersionId": {
-              "format": "uuid",
-              "type": "string"
+            "workflow": {
+              "$ref": "#/$defs/ExecutionWorkflowSnapshotV1"
             }
           },
           "required": [
             "kind",
-            "workflowVersionId",
+            "workflow",
             "definitionObjectId",
             "irObjectId"
           ],
@@ -2013,12 +2111,16 @@
         },
         "workerCompatibility": {
           "$ref": "#/$defs/WorkerCompatibilityV1"
+        },
+        "workflow": {
+          "$ref": "#/$defs/ExecutionWorkflowSnapshotV1"
         }
       },
       "required": [
         "schemaVersion",
         "packageId",
         "tenantId",
+        "workflow",
         "origin",
         "purpose",
         "callPurpose",

@@ -361,6 +361,13 @@ fn build_evaluation_package(
         WorkPackageBuildSource {
             package_id,
             tenant_id: id(TENANT)?,
+            workflow: agentx_runtime_contracts::ExecutionWorkflowSnapshotV1 {
+                id: id(WORKFLOW)?,
+                name: "V2-04 Evaluation Workflow".into(),
+                version_id: package_id,
+                version_number: 1,
+                owner_department: None,
+            },
             origin: agentx_runtime_contracts::ExecutionOriginV1::system(None),
             purpose: WorkPackagePurpose::Evaluation,
             call_purpose: RuntimeCallPurposeV1::Evaluation,

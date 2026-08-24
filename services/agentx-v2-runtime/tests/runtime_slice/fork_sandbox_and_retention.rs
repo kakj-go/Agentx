@@ -40,6 +40,7 @@ async fn fork_uses_checkpoint_machine_and_preserves_source(
                     initiator_department_name: Some("Fork Department".into()),
                     trigger_source_id: Some(source_execution_id),
                     trigger_name: Some("Fork from checkpoint".into()),
+                    role_assignments: vec![],
                 },
                 mode: agentx_runtime_contracts::PartialExecutionModeV1::Node,
                 node_id: Some("pass".into()),
@@ -307,7 +308,13 @@ async fn composite_child_uses_immutable_runtime_snapshot_and_merges_on_success(f
         .unwrap();
     }
     let configuration = agentx_runtime_contracts::RuntimeResourceConfigurationV1::Composite {
-        workflow_version_id: child_version_id,
+        workflow: agentx_runtime_contracts::ExecutionWorkflowSnapshotV1 {
+            id: Uuid::now_v7(),
+            name: "Composite Child".into(),
+            version_id: child_version_id,
+            version_number: 3,
+            owner_department: None,
+        },
         definition_object_id: child_version_id,
         ir_object_id,
     };
@@ -321,6 +328,7 @@ async fn composite_child_uses_immutable_runtime_snapshot_and_merges_on_success(f
         initiator_department_name: Some("Composite Root Department".into()),
         trigger_source_id: None,
         trigger_name: None,
+        role_assignments: vec![],
     };
     source.definition = composite_definition(child_version_id);
     source
@@ -397,7 +405,7 @@ async fn composite_child_uses_immutable_runtime_snapshot_and_merges_on_success(f
     .fetch_one(&fixture.state.pool)
     .await
     .unwrap();
-    let child_origin = sqlx::query("SELECT e.trigger_type,e.initiator_user_id,e.initiator_user_name,e.initiator_department_id,e.initiator_department_name,e.trigger_source_id,e.trigger_name,c.parent_node_execution_id FROM workflow_executions e JOIN execution_children c ON c.tenant_id=e.tenant_id AND c.child_execution_id=e.id WHERE e.tenant_id=? AND e.id=?")
+    let child_origin = sqlx::query("SELECT e.trigger_type,e.initiator_user_id,e.initiator_user_name,e.initiator_department_id,e.initiator_department_name,e.trigger_source_id,e.trigger_name,c.parent_node_execution_id,s.execution_context_json FROM workflow_executions e JOIN execution_children c ON c.tenant_id=e.tenant_id AND c.child_execution_id=e.id JOIN execution_snapshots s ON s.tenant_id=e.tenant_id AND s.execution_id=e.id WHERE e.tenant_id=? AND e.id=?")
         .bind(fixture.tenant_id)
         .bind(child_execution_id)
         .fetch_one(&fixture.state.pool)
@@ -425,6 +433,19 @@ async fn composite_child_uses_immutable_runtime_snapshot_and_merges_on_success(f
         child_origin.get::<Uuid, _>("parent_node_execution_id")
     );
     assert!(!child_origin.get::<String, _>("trigger_name").is_empty());
+    let child_context: Value = child_origin.get("execution_context_json");
+    assert_eq!(
+        child_context.pointer("/workflow/name"),
+        Some(&json!("Composite Child"))
+    );
+    assert_eq!(
+        child_context.pointer("/workflow/versionNumber"),
+        Some(&json!(3))
+    );
+    assert_eq!(
+        child_context.pointer("/workflow/versionId"),
+        Some(&json!(child_version_id))
+    );
     let child_start = claim_commands(&fixture.state.pool, owner, 100)
         .await
         .unwrap()

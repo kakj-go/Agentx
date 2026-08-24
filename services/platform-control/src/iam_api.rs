@@ -283,6 +283,23 @@ async fn update_department(
         ));
     }
     rebuild_closure(&mut tx, actor.tenant_id).await?;
+    let affected_users = sqlx::query_scalar::<_, Uuid>(
+        "SELECT user_id FROM user_departments WHERE tenant_id=? AND department_id=? UNION SELECT user_id FROM user_roles WHERE tenant_id=? AND scope_department_id=?",
+    )
+    .bind(actor.tenant_id)
+    .bind(id)
+    .bind(actor.tenant_id)
+    .bind(id)
+    .fetch_all(&mut *tx)
+    .await?;
+    for user_id in affected_users {
+        sqlx::query("UPDATE users SET token_version=token_version+1 WHERE tenant_id=? AND id=?")
+            .bind(actor.tenant_id)
+            .bind(user_id)
+            .execute(&mut *tx)
+            .await?;
+        emit_user_admission(&mut tx, actor.tenant_id, user_id, true).await?;
+    }
     audit(
         &mut tx,
         &actor,
@@ -591,6 +608,21 @@ async fn update_role(
         ));
     }
     replace_permissions(&mut tx, actor.tenant_id, id, &input.permissions).await?;
+    let member_ids = sqlx::query_scalar::<_, Uuid>(
+        "SELECT user_id FROM user_roles WHERE tenant_id=? AND role_id=? ORDER BY user_id FOR UPDATE",
+    )
+    .bind(actor.tenant_id)
+    .bind(id)
+    .fetch_all(&mut *tx)
+    .await?;
+    for user_id in member_ids {
+        sqlx::query("UPDATE users SET token_version=token_version+1 WHERE tenant_id=? AND id=?")
+            .bind(actor.tenant_id)
+            .bind(user_id)
+            .execute(&mut *tx)
+            .await?;
+        emit_user_admission(&mut tx, actor.tenant_id, user_id, true).await?;
+    }
     tx.commit().await?;
     let row = sqlx::query("SELECT code,status FROM roles WHERE id=?")
         .bind(id)
@@ -605,10 +637,12 @@ async fn update_role(
         is_builtin: false,
         status: row.try_get("status")?,
         permissions: input.permissions,
-        member_count: sqlx::query_scalar("SELECT COUNT(*) FROM user_roles WHERE role_id=?")
-            .bind(id)
-            .fetch_one(&state.pool)
-            .await?,
+        member_count: sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM user_roles WHERE role_id=?",
+        )
+        .bind(id)
+        .fetch_one(&state.pool)
+        .await? as u64,
         version: input.version + 1,
     }))
 }

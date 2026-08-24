@@ -380,6 +380,7 @@ async fn insert_evaluator_execution(
     rule_id: Uuid,
     input: &Value,
 ) -> RuntimeResult<()> {
+    let started_at = time::OffsetDateTime::now_utc();
     let state_hash = agentx_runtime_contracts::content_hash(&json!({
         "status":"queued",
         "input":input,
@@ -387,7 +388,7 @@ async fn insert_evaluator_execution(
     }))
     .map_err(|error| RuntimeError::Internal(error.into()))?;
     sqlx::query(
-        "INSERT INTO workflow_executions(id,tenant_id,workflow_id,workflow_version_id,bundle_id,work_package_id,parent_execution_id,parent_node_execution_id,admission_epoch,state_version,trace_id,trigger_type,initiator_user_id,initiator_user_name,initiator_department_id,initiator_department_name,trigger_source_id,trigger_name,status,started_at,input_json) VALUES(?,?,?,?,?,?,?,?,1,1,?,'evaluation',?,?,?,?,?,?,'queued',UTC_TIMESTAMP(6),?)",
+        "INSERT INTO workflow_executions(id,tenant_id,workflow_id,workflow_version_id,bundle_id,work_package_id,parent_execution_id,parent_node_execution_id,admission_epoch,state_version,trace_id,trigger_type,initiator_user_id,initiator_user_name,initiator_department_id,initiator_department_name,trigger_source_id,trigger_name,status,started_at,input_json) VALUES(?,?,?,?,?,?,?,?,1,1,?,'evaluation',?,?,?,?,?,?,'queued',?,?)",
     )
     .bind(execution_id)
     .bind(package.tenant_id)
@@ -404,11 +405,12 @@ async fn insert_evaluator_execution(
     .bind(&package.origin.initiator_department_name)
     .bind(target_execution_id)
     .bind(&package.origin.trigger_name)
+    .bind(started_at)
     .bind(input)
     .execute(&mut **tx)
     .await?;
     sqlx::query(
-        "INSERT INTO execution_snapshots(execution_id,tenant_id,workflow_version_id,bundle_id,work_package_id,admission_epoch,state_version,definition_json,compiled_ir_json,compiled_ir_hash,compiler_version,resource_snapshot_json,authorization_snapshot_json,policy_snapshot_json,worker_compatibility_json,object_manifest_json,runtime_settings_json,state_hash) VALUES(?,?,?,?,?,1,1,?,?,?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO execution_snapshots(execution_id,tenant_id,workflow_version_id,bundle_id,work_package_id,admission_epoch,state_version,definition_json,compiled_ir_json,compiled_ir_hash,compiler_version,resource_snapshot_json,authorization_snapshot_json,policy_snapshot_json,execution_context_json,worker_compatibility_json,object_manifest_json,runtime_settings_json,state_hash) VALUES(?,?,?,?,?,1,1,?,?,?,?,?,?,?,?,?,?,?,?)",
     )
     .bind(execution_id)
     .bind(package.tenant_id)
@@ -431,6 +433,25 @@ async fn insert_evaluator_execution(
     ).map_err(|error| RuntimeError::Internal(error.into()))?)
     .bind(serde_json::to_value(&package.authorization).map_err(|error| RuntimeError::Internal(error.into()))?)
     .bind(serde_json::to_value(&package.runtime_policy).map_err(|error| RuntimeError::Internal(error.into()))?)
+    .bind(serde_json::to_value(crate::execution_context::create_snapshot(
+        crate::execution_context::NewExecutionContext {
+            execution_id,
+            started_at,
+            parent_execution_id: Some(target_execution_id),
+            workflow: agentx_runtime_contracts::ExecutionWorkflowSnapshotV1 {
+                id: package.workflow.id,
+                name: format!("{} / Model evaluator", package.workflow.name),
+                version_id: evaluator.evaluator_id,
+                version_number: package.workflow.version_number,
+                owner_department: package.workflow.owner_department.clone(),
+            },
+            trigger_type: "evaluation",
+            origin: &package.origin,
+            application_id: None,
+            invocation_id: None,
+            session: None,
+        },
+    )).map_err(|error| RuntimeError::Internal(error.into()))?)
     .bind(serde_json::to_value(&package.worker_compatibility).map_err(|error| RuntimeError::Internal(error.into()))?)
     .bind(serde_json::to_value(&package.objects).map_err(|error| RuntimeError::Internal(error.into()))?)
     .bind(json!({
@@ -871,11 +892,12 @@ async fn insert_execution(
     input: &Value,
     trigger_type: &str,
 ) -> RuntimeResult<()> {
+    let started_at = time::OffsetDateTime::now_utc();
     let state_hash =
         agentx_runtime_contracts::content_hash(&json!({"status":"queued","input":input}))
             .map_err(|error| RuntimeError::Internal(error.into()))?;
     sqlx::query(
-        "INSERT INTO workflow_executions(id,tenant_id,workflow_id,workflow_version_id,bundle_id,work_package_id,admission_epoch,state_version,trace_id,trigger_type,initiator_user_id,initiator_user_name,initiator_department_id,initiator_department_name,trigger_source_id,trigger_name,status,started_at,input_json) VALUES(?,?,?,?,?,?,1,1,?,?,?,?,?,?,?,?,'queued',UTC_TIMESTAMP(6),?)",
+        "INSERT INTO workflow_executions(id,tenant_id,workflow_id,workflow_version_id,bundle_id,work_package_id,admission_epoch,state_version,trace_id,trigger_type,initiator_user_id,initiator_user_name,initiator_department_id,initiator_department_name,trigger_source_id,trigger_name,status,started_at,input_json) VALUES(?,?,?,?,?,?,1,1,?,?,?,?,?,?,?,?,'queued',?,?)",
     )
     .bind(execution_id)
     .bind(package.tenant_id)
@@ -891,11 +913,12 @@ async fn insert_execution(
     .bind(&package.origin.initiator_department_name)
     .bind(package.origin.trigger_source_id)
     .bind(&package.origin.trigger_name)
+    .bind(started_at)
     .bind(input)
     .execute(&mut **tx)
     .await?;
     sqlx::query(
-        "INSERT INTO execution_snapshots(execution_id,tenant_id,workflow_version_id,bundle_id,work_package_id,admission_epoch,state_version,definition_json,compiled_ir_json,compiled_ir_hash,compiler_version,resource_snapshot_json,authorization_snapshot_json,policy_snapshot_json,worker_compatibility_json,object_manifest_json,runtime_settings_json,state_hash) VALUES(?,?,?,?,?,1,1,?,?,?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO execution_snapshots(execution_id,tenant_id,workflow_version_id,bundle_id,work_package_id,admission_epoch,state_version,definition_json,compiled_ir_json,compiled_ir_hash,compiler_version,resource_snapshot_json,authorization_snapshot_json,policy_snapshot_json,execution_context_json,worker_compatibility_json,object_manifest_json,runtime_settings_json,state_hash) VALUES(?,?,?,?,?,1,1,?,?,?,?,?,?,?,?,?,?,?,?)",
     )
     .bind(execution_id)
     .bind(package.tenant_id)
@@ -909,6 +932,19 @@ async fn insert_execution(
     .bind(serde_json::to_value(&package.resources).map_err(|error| RuntimeError::Internal(error.into()))?)
     .bind(serde_json::to_value(&package.authorization).map_err(|error| RuntimeError::Internal(error.into()))?)
     .bind(serde_json::to_value(&package.runtime_policy).map_err(|error| RuntimeError::Internal(error.into()))?)
+    .bind(serde_json::to_value(crate::execution_context::create_snapshot(
+        crate::execution_context::NewExecutionContext {
+            execution_id,
+            started_at,
+            parent_execution_id: None,
+            workflow: package.workflow.clone(),
+            trigger_type,
+            origin: &package.origin,
+            application_id: None,
+            invocation_id: None,
+            session: None,
+        },
+    )).map_err(|error| RuntimeError::Internal(error.into()))?)
     .bind(serde_json::to_value(&package.worker_compatibility).map_err(|error| RuntimeError::Internal(error.into()))?)
     .bind(serde_json::to_value(&package.objects).map_err(|error| RuntimeError::Internal(error.into()))?)
     .bind(json!({

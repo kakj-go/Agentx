@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use sqlx::Row;
+use time::OffsetDateTime;
 use uuid::Uuid;
 
 use crate::error::{RuntimeError, RuntimeResult};
@@ -427,15 +428,22 @@ async fn create_runtime_invocation_tx_inner(
             .bind(tenant_id).bind(caller.caller_id).bind(caller.token_version.ok_or(RuntimeError::Unauthorized)?).bind(application_id).fetch_optional(&mut **tx).await?.ok_or(RuntimeError::Unauthorized)?,
         _ => head_epoch,
     };
+    let origin = if caller.caller_type == "user" {
+        crate::execution_context::runtime_user_origin(tx, tenant_id, caller.caller_id).await?
+    } else {
+        caller.origin.clone()
+    };
     let mut selected_bundle_id = bundle_id;
+    let mut session_external_user_id = None;
     if let Some(session_id) = session_id {
-        let session = sqlx::query("SELECT application_id,bundle_id,version_policy,status FROM application_sessions WHERE tenant_id=? AND id=? FOR UPDATE")
+        let session = sqlx::query("SELECT application_id,bundle_id,version_policy,status,external_user_id FROM application_sessions WHERE tenant_id=? AND id=? FOR UPDATE")
             .bind(tenant_id).bind(session_id).fetch_optional(&mut **tx).await?.ok_or(RuntimeError::NotFound)?;
         if session.try_get::<Uuid, _>("application_id")? != application_id
             || session.try_get::<String, _>("status")? != "active"
         {
             return Err(RuntimeError::Unauthorized);
         }
+        session_external_user_id = session.try_get("external_user_id")?;
         if session.try_get::<String, _>("version_policy")? != "follow_deployment" {
             selected_bundle_id = session
                 .try_get::<Option<Uuid>, _>("bundle_id")?
@@ -491,6 +499,7 @@ async fn create_runtime_invocation_tx_inner(
         validate_invocation_artifacts(tx, tenant_id, &input, &spec.input_contract).await?;
     let invocation_id = Uuid::now_v7();
     let execution_id = Uuid::now_v7();
+    let started_at = OffsetDateTime::now_utc();
     let command_id = Uuid::now_v7();
     let trace_id = Uuid::now_v7();
     let state_hash =
@@ -516,9 +525,10 @@ async fn create_runtime_invocation_tx_inner(
             status: stored.try_get("status")?,
         });
     }
-    sqlx::query("INSERT INTO workflow_executions(id,tenant_id,workflow_id,workflow_version_id,application_id,session_id,bundle_id,admission_epoch,state_version,invocation_id,trace_id,trigger_type,initiator_user_id,initiator_user_name,initiator_department_id,initiator_department_name,trigger_source_id,trigger_name,status,started_at,input_json) VALUES(?,?,?,?,?,?,?,?,1,?,?,?,?,?,?,?,?,?,'queued',UTC_TIMESTAMP(6),?)")
+    sqlx::query("INSERT INTO workflow_executions(id,tenant_id,workflow_id,workflow_version_id,application_id,session_id,bundle_id,admission_epoch,state_version,invocation_id,trace_id,trigger_type,initiator_user_id,initiator_user_name,initiator_department_id,initiator_department_name,trigger_source_id,trigger_name,status,started_at,input_json) VALUES(?,?,?,?,?,?,?,?,1,?,?,?,?,?,?,?,?,?,'queued',?,?)")
         .bind(execution_id).bind(tenant_id).bind(spec.workflow_id).bind(spec.workflow_version_id).bind(application_id).bind(session_id).bind(selected_bundle_id).bind(admission_epoch).bind(invocation_id).bind(trace_id).bind(caller.caller_type)
-        .bind(caller.origin.initiator_user_id).bind(&caller.origin.initiator_user_name).bind(caller.origin.initiator_department_id).bind(&caller.origin.initiator_department_name).bind(caller.origin.trigger_source_id).bind(&caller.origin.trigger_name)
+        .bind(origin.initiator_user_id).bind(&origin.initiator_user_name).bind(origin.initiator_department_id).bind(&origin.initiator_department_name).bind(origin.trigger_source_id).bind(&origin.trigger_name)
+        .bind(started_at)
         .bind(&input).execute(&mut **tx).await?;
     for artifact_id in input_artifact_ids {
         sqlx::query("INSERT IGNORE INTO artifact_references(tenant_id,artifact_id,owner_type,owner_id,reference_role) VALUES(?,?,'execution',?,'input')")
@@ -540,8 +550,28 @@ async fn create_runtime_invocation_tx_inner(
         .map_err(|error| RuntimeError::Internal(error.into()))?;
     let object_manifest = serde_json::to_value(&spec.objects)
         .map_err(|error| RuntimeError::Internal(error.into()))?;
+    let execution_context = serde_json::to_value(crate::execution_context::create_snapshot(
+        crate::execution_context::NewExecutionContext {
+            execution_id,
+            started_at,
+            parent_execution_id: None,
+            workflow: agentx_runtime_contracts::ExecutionWorkflowSnapshotV1 {
+                id: spec.workflow_id,
+                name: spec.workflow_name.clone(),
+                version_id: spec.workflow_version_id,
+                version_number: spec.workflow_version_number,
+                owner_department: spec.workflow_owner_department.clone(),
+            },
+            trigger_type: caller.caller_type,
+            origin: &origin,
+            application_id: Some(application_id),
+            invocation_id: Some(invocation_id),
+            session: session_id.map(|id| (id, session_external_user_id)),
+        },
+    ))
+    .map_err(|error| RuntimeError::Internal(error.into()))?;
     sqlx::query(
-        "INSERT INTO execution_snapshots(execution_id,tenant_id,workflow_version_id,bundle_id,admission_epoch,state_version,definition_json,compiled_ir_json,compiled_ir_hash,compiler_version,resource_snapshot_json,authorization_snapshot_json,policy_snapshot_json,worker_compatibility_json,object_manifest_json,runtime_settings_json,state_hash) VALUES(?,?,?,?,?,1,?,?,?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO execution_snapshots(execution_id,tenant_id,workflow_version_id,bundle_id,admission_epoch,state_version,definition_json,compiled_ir_json,compiled_ir_hash,compiler_version,resource_snapshot_json,authorization_snapshot_json,policy_snapshot_json,execution_context_json,worker_compatibility_json,object_manifest_json,runtime_settings_json,state_hash) VALUES(?,?,?,?,?,1,?,?,?,?,?,?,?,?,?,?,?,?)",
     )
     .bind(execution_id)
     .bind(tenant_id)
@@ -555,6 +585,7 @@ async fn create_runtime_invocation_tx_inner(
     .bind(resource_snapshot)
     .bind(authorization_snapshot)
     .bind(&policy_snapshot)
+    .bind(execution_context)
     .bind(worker_compatibility)
     .bind(object_manifest)
     .bind(&policy_snapshot)

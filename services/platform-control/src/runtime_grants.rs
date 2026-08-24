@@ -1,15 +1,17 @@
 use agentx_runtime_contracts::{
-    AdmissionTargetV1, RuntimeUserAdmissionV1, RuntimeUserApplicationGrantV1,
+    AdmissionTargetV1, ExecutionDepartmentSnapshotV1, ExecutionRoleAssignmentV1,
+    RuntimeUserAdmissionV1, RuntimeUserApplicationGrantV1,
 };
 use anyhow::Result;
 use sqlx::Row;
+use std::collections::BTreeMap;
 use uuid::Uuid;
 
 /// Materializes the smallest user admission projection needed by Runtime.
 ///
-/// Roles, departments and visibility remain Control facts. Runtime receives
-/// only one user state and one exact Application grant per Control user, so a
-/// later deployment can revoke grants that were present in an older revision.
+/// Roles, departments and visibility remain Control facts. Runtime receives an
+/// immutable-ready display projection plus one exact Application grant per
+/// Control user; resource authorization still uses Service Identity grants.
 pub async fn application_user_targets(
     pool: &sqlx::MySqlPool,
     tenant_id: Uuid,
@@ -23,6 +25,7 @@ pub async fn application_user_targets(
     .bind(tenant_id)
     .fetch_all(pool)
     .await?;
+    let mut roles_by_user = role_assignments_by_user(pool, tenant_id, None).await?;
     let mut targets = Vec::with_capacity(rows.len() * 2);
     for row in rows {
         let user_id: Uuid = row.try_get("id")?;
@@ -37,6 +40,7 @@ pub async fn application_user_targets(
                 token_version: row.try_get("token_version")?,
                 enabled,
                 tenant_query_enabled: enabled && row.try_get::<bool, _>("tenant_query_enabled")?,
+                role_assignments: roles_by_user.remove(&user_id).unwrap_or_default(),
             },
         });
         targets.push(AdmissionTargetV1::RuntimeUserApplicationGrant {
@@ -53,6 +57,49 @@ pub async fn application_user_targets(
         });
     }
     Ok(targets)
+}
+
+pub async fn user_role_assignments(
+    pool: &sqlx::MySqlPool,
+    tenant_id: Uuid,
+    user_id: Uuid,
+) -> Result<Vec<ExecutionRoleAssignmentV1>, sqlx::Error> {
+    Ok(role_assignments_by_user(pool, tenant_id, Some(user_id))
+        .await?
+        .remove(&user_id)
+        .unwrap_or_default())
+}
+
+async fn role_assignments_by_user(
+    pool: &sqlx::MySqlPool,
+    tenant_id: Uuid,
+    user_id: Option<Uuid>,
+) -> Result<BTreeMap<Uuid, Vec<ExecutionRoleAssignmentV1>>, sqlx::Error> {
+    let query = "SELECT ur.user_id,r.id,r.code,r.name,r.data_scope,sd.id scope_department_id,sd.name scope_department_name FROM user_roles ur JOIN roles r ON r.tenant_id=ur.tenant_id AND r.id=ur.role_id AND r.status='active' LEFT JOIN departments sd ON sd.tenant_id=ur.tenant_id AND sd.id=ur.scope_department_id WHERE ur.tenant_id=? AND (? IS NULL OR ur.user_id=?) ORDER BY ur.user_id,r.code,r.id";
+    let rows = sqlx::query(query)
+        .bind(tenant_id)
+        .bind(user_id)
+        .bind(user_id)
+        .fetch_all(pool)
+        .await?;
+    let mut roles_by_user = BTreeMap::<Uuid, Vec<ExecutionRoleAssignmentV1>>::new();
+    for row in rows {
+        let scope_department_id: Option<Uuid> = row.try_get("scope_department_id")?;
+        roles_by_user
+            .entry(row.try_get("user_id")?)
+            .or_default()
+            .push(ExecutionRoleAssignmentV1 {
+                id: row.try_get("id")?,
+                code: row.try_get("code")?,
+                name: row.try_get("name")?,
+                data_scope: row.try_get("data_scope")?,
+                scope_department: scope_department_id.map(|id| ExecutionDepartmentSnapshotV1 {
+                    id,
+                    name: row.try_get("scope_department_name").unwrap_or_default(),
+                }),
+            });
+    }
+    Ok(roles_by_user)
 }
 
 #[cfg(test)]
@@ -166,6 +213,29 @@ mod tests {
         let targets = application_user_targets(&pool, tenant, application, 7)
             .await
             .unwrap();
+        let department_projection = targets
+            .iter()
+            .find_map(|target| match target {
+                agentx_runtime_contracts::AdmissionTargetV1::RuntimeUser { state }
+                    if state.user_id == department =>
+                {
+                    Some(state)
+                }
+                _ => None,
+            })
+            .expect("department user projection exists");
+        assert_eq!(department_projection.role_assignments.len(), 1);
+        assert_eq!(
+            department_projection.role_assignments[0].data_scope,
+            "department_tree"
+        );
+        assert_eq!(
+            department_projection.role_assignments[0]
+                .scope_department
+                .as_ref()
+                .map(|department| (department.id, department.name.as_str())),
+            Some((root, "Root"))
+        );
         let grants = targets
             .into_iter()
             .filter_map(|target| match target {

@@ -10,13 +10,14 @@ use agentx_bundle_builder::{
 use agentx_domain::WorkflowDefinition;
 use agentx_runtime_contracts::{
     CancelWorkPackageRequestV1, ContentHash, ControlRole, ExecuteWorkPackageRequestV1,
-    PartialExecutionModeV1, PrepareWorkPackageRequestV1, PublishReceiptStatusV1,
-    RuntimeAuthorizationSnapshotV1, RuntimeCallPurposeV1, RuntimeDebugInputSourceV1,
-    RuntimeDebugPlanV1, RuntimeEvaluationCaseV1, RuntimeEvaluatorV1, RuntimeObjectReferenceV1,
-    RuntimeObjectUploadMetadataV1, RuntimeObjectUploadReceiptV1, RuntimePolicyV1,
-    RuntimeResourceBindingV1, RuntimeResourceConfigurationV1, RuntimeResourceKindV1,
-    RuntimeWorkPackageOverlayV1, RuntimeWorkPackageSpecV1, ServiceClaimsV1, SideEffectResolutionV1,
-    StorageDomain, VaultSecretReferenceV1, WorkPackagePurpose, issue_service_token, now_unix,
+    ExecutionDepartmentSnapshotV1, ExecutionWorkflowSnapshotV1, PartialExecutionModeV1,
+    PrepareWorkPackageRequestV1, PublishReceiptStatusV1, RuntimeAuthorizationSnapshotV1,
+    RuntimeCallPurposeV1, RuntimeDebugInputSourceV1, RuntimeDebugPlanV1, RuntimeEvaluationCaseV1,
+    RuntimeEvaluatorV1, RuntimeObjectReferenceV1, RuntimeObjectUploadMetadataV1,
+    RuntimeObjectUploadReceiptV1, RuntimePolicyV1, RuntimeResourceBindingV1,
+    RuntimeResourceConfigurationV1, RuntimeResourceKindV1, RuntimeWorkPackageOverlayV1,
+    RuntimeWorkPackageSpecV1, ServiceClaimsV1, SideEffectResolutionV1, StorageDomain,
+    VaultSecretReferenceV1, WorkPackagePurpose, issue_service_token, now_unix,
 };
 use axum::{
     Json,
@@ -37,6 +38,32 @@ use crate::{
     api_error::{ApiError, ApiResult},
     control_api::{Actor, ControlApiState, execution_origin},
 };
+
+async fn workflow_snapshot(
+    pool: &MySqlPool,
+    tenant_id: Uuid,
+    workflow_id: Uuid,
+    version_id: Uuid,
+    version_number: u64,
+) -> ApiResult<ExecutionWorkflowSnapshotV1> {
+    let row = sqlx::query("SELECT w.name,w.owner_department_id,d.name owner_department_name FROM workflows w LEFT JOIN departments d ON d.tenant_id=w.tenant_id AND d.id=w.owner_department_id WHERE w.tenant_id=? AND w.id=?")
+        .bind(tenant_id)
+        .bind(workflow_id)
+        .fetch_one(pool)
+        .await?;
+    Ok(ExecutionWorkflowSnapshotV1 {
+        id: workflow_id,
+        name: row.try_get("name")?,
+        version_id,
+        version_number,
+        owner_department: row
+            .try_get::<Option<Uuid>, _>("owner_department_id")?
+            .map(|id| ExecutionDepartmentSnapshotV1 {
+                id,
+                name: row.try_get("owner_department_name").unwrap_or_default(),
+            }),
+    })
+}
 
 #[derive(Clone)]
 pub(crate) struct WorkPackageClient {
@@ -308,6 +335,14 @@ pub(crate) async fn start_version_execution(
         WorkPackageBuildSource {
             package_id,
             tenant_id: actor.tenant_id,
+            workflow: workflow_snapshot(
+                &state.pool,
+                actor.tenant_id,
+                workflow_id,
+                version_id,
+                version_number,
+            )
+            .await?,
             origin: execution_origin(state, actor).await?,
             purpose: WorkPackagePurpose::Debug,
             call_purpose: RuntimeCallPurposeV1::Debug,
@@ -474,11 +509,13 @@ pub(crate) async fn start_debug_run(
     let mut pending_objects =
         load_snapshot_values(&state, actor.tenant_id, &snapshot_values).await?;
     add_composite_closure(
+        &state.pool,
         actor.tenant_id,
         &dependencies,
         &mut resources,
         &mut pending_objects,
-    )?;
+    )
+    .await?;
     let service_identity_id: Uuid = draft.try_get("service_identity_id")?;
     let grant_ids = sqlx::query_scalar::<_, Uuid>("SELECT id FROM resource_grants WHERE tenant_id=? AND subject_type='workflow_service_identity' AND subject_id=? ORDER BY id")
         .bind(actor.tenant_id)
@@ -509,6 +546,14 @@ pub(crate) async fn start_debug_run(
         WorkPackageBuildSource {
             package_id,
             tenant_id: actor.tenant_id,
+            workflow: workflow_snapshot(
+                &state.pool,
+                actor.tenant_id,
+                workflow_id,
+                package_id,
+                revision,
+            )
+            .await?,
             origin: execution_origin(&state, &actor).await?,
             purpose: WorkPackagePurpose::Debug,
             call_purpose: RuntimeCallPurposeV1::Debug,
@@ -786,11 +831,13 @@ async fn load_published_version_closure(
     }
     let mut pending_objects = load_snapshot_objects(state, tenant_id, &resource_rows).await?;
     add_composite_closure(
+        &state.pool,
         tenant_id,
         &dependencies,
         &mut resources,
         &mut pending_objects,
-    )?;
+    )
+    .await?;
     Ok((dependencies, resources, pending_objects))
 }
 
@@ -920,7 +967,8 @@ async fn load_snapshot_values(
     Ok(objects)
 }
 
-fn add_composite_closure(
+async fn add_composite_closure(
+    pool: &sqlx::MySqlPool,
     tenant_id: Uuid,
     dependencies: &BTreeMap<Uuid, WorkflowDefinition>,
     resources: &mut Vec<RuntimeResourceBindingV1>,
@@ -953,17 +1001,23 @@ fn add_composite_closure(
         )?;
         if resources.iter().any(|resource| {
             matches!(
-                resource.configuration,
+                &resource.configuration,
                 RuntimeResourceConfigurationV1::Composite {
-                    workflow_version_id,
+                    workflow,
                     ..
-                } if workflow_version_id == *version_id
+                } if workflow.version_id == *version_id
             )
         }) {
             continue;
         }
         let configuration = RuntimeResourceConfigurationV1::Composite {
-            workflow_version_id: *version_id,
+            workflow: crate::runtime_resource_binding::workflow_snapshot(
+                pool,
+                tenant_id,
+                *version_id,
+            )
+            .await
+            .map_err(ApiError::internal)?,
             definition_object_id: *version_id,
             ir_object_id,
         };
@@ -1280,7 +1334,7 @@ pub(crate) async fn start_evaluation(
     actor: &Actor,
     run_id: Uuid,
 ) -> ApiResult<()> {
-    let row = sqlx::query("SELECT r.workflow_version_id,r.dataset_version_id,r.evaluation_profile_version_id,r.parameters_json,r.status,v.workflow_id,v.definition_json,i.id service_identity_id,i.version identity_version FROM evaluation_runs r JOIN workflow_versions v ON v.tenant_id=r.tenant_id AND v.id=r.workflow_version_id JOIN workflow_service_identities i ON i.tenant_id=v.tenant_id AND i.workflow_id=v.workflow_id WHERE r.tenant_id=? AND r.id=?")
+    let row = sqlx::query("SELECT r.workflow_version_id,r.dataset_version_id,r.evaluation_profile_version_id,r.parameters_json,r.status,v.workflow_id,v.version_number workflow_version_number,v.definition_json,i.id service_identity_id,i.version identity_version FROM evaluation_runs r JOIN workflow_versions v ON v.tenant_id=r.tenant_id AND v.id=r.workflow_version_id JOIN workflow_service_identities i ON i.tenant_id=v.tenant_id AND i.workflow_id=v.workflow_id WHERE r.tenant_id=? AND r.id=?")
         .bind(actor.tenant_id).bind(run_id).fetch_optional(&state.pool).await?.ok_or_else(||ApiError::not_found("Evaluation Run"))?;
     if row.try_get::<String, _>("status")? != "created" {
         return Err(ApiError::conflict(
@@ -1420,6 +1474,14 @@ pub(crate) async fn start_evaluation(
         WorkPackageBuildSource {
             package_id,
             tenant_id: actor.tenant_id,
+            workflow: workflow_snapshot(
+                &state.pool,
+                actor.tenant_id,
+                workflow_id,
+                row.try_get("workflow_version_id")?,
+                row.try_get("workflow_version_number")?,
+            )
+            .await?,
             origin: execution_origin(state, actor).await?,
             purpose: WorkPackagePurpose::Evaluation,
             call_purpose: RuntimeCallPurposeV1::Evaluation,

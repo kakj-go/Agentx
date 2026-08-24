@@ -312,6 +312,9 @@ pub(crate) async fn execution_origin(
             .bind(actor.department_id)
             .fetch_one(&state.pool)
             .await?;
+    let role_assignments =
+        crate::runtime_grants::user_role_assignments(&state.pool, actor.tenant_id, actor.user_id)
+            .await?;
     Ok(ExecutionOriginV1 {
         initiator_user_id: Some(actor.user_id),
         initiator_user_name: Some(actor.display_name.clone()),
@@ -319,6 +322,7 @@ pub(crate) async fn execution_origin(
         initiator_department_name: Some(department_name),
         trigger_source_id: None,
         trigger_name: None,
+        role_assignments,
     })
 }
 

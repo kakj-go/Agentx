@@ -672,7 +672,7 @@ async fn query_is_tenant_application_and_execution_scoped(fixture: &Fixture, exe
     let subject_id = Uuid::now_v7();
     let initiator_department_id = Uuid::now_v7();
     sqlx::query(
-        "INSERT INTO runtime_user_admission(tenant_id,user_id,user_name,department_id,department_name,token_version,status,tenant_query_enabled,admission_epoch) VALUES(?,?,'Historical User',?,'Historical Department',1,'active',FALSE,1)",
+        "INSERT INTO runtime_user_admission(tenant_id,user_id,user_name,department_id,department_name,token_version,status,tenant_query_enabled,role_assignments_json,admission_epoch) VALUES(?,?,'Historical User',?,'Historical Department',1,'active',FALSE,JSON_ARRAY(),1)",
     )
     .bind(fixture.tenant_id)
     .bind(subject_id)

@@ -101,6 +101,7 @@ pub struct RuntimeUserAdmissionV1 {
     pub token_version: u64,
     pub enabled: bool,
     pub tenant_query_enabled: bool,
+    pub role_assignments: Vec<crate::ExecutionRoleAssignmentV1>,
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]

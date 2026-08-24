@@ -122,6 +122,108 @@ async fn api_first_control_closure_uses_empty_schema_and_public_routes() {
     )
     .await;
     assert_eq!(status, 201, "user response: {user}");
+    let (status, projection_department) = request(
+        &app,
+        "POST",
+        "/api/v1/departments",
+        Some(&token),
+        Some(json!({"parentId":department_id,"name":"Projection Department"})),
+    )
+    .await;
+    assert_eq!(
+        status, 201,
+        "projection department: {projection_department}"
+    );
+    let (status, projection_role) = request(
+        &app,
+        "POST",
+        "/api/v1/roles",
+        Some(&token),
+        Some(json!({
+            "code":"workflow_operator_fixture",
+            "name":"Workflow Operator Fixture",
+            "description":"Execution context projection fixture",
+            "dataScope":"company",
+            "permissions":["application:invoke","execution:view"]
+        })),
+    )
+    .await;
+    assert_eq!(status, 201, "projection role: {projection_role}");
+    let (status, projection_user) = request(
+        &app,
+        "POST",
+        "/api/v1/users",
+        Some(&token),
+        Some(json!({
+            "username":"projection-user",
+            "displayName":"Projection User",
+            "departmentId":projection_department["id"],
+            "roleId":projection_role["id"]
+        })),
+    )
+    .await;
+    assert_eq!(status, 201, "projection user: {projection_user}");
+    let (status, renamed_role) = request(
+        &app,
+        "PATCH",
+        &format!("/api/v1/roles/{}", projection_role["id"].as_str().unwrap()),
+        Some(&token),
+        Some(json!({
+            "name":"Renamed Workflow Operator",
+            "description":"Renamed execution context projection fixture",
+            "dataScope":"company",
+            "permissions":["application:invoke","execution:view"],
+            "version":1
+        })),
+    )
+    .await;
+    assert_eq!(status, 200, "renamed role: {renamed_role}");
+    let (status, renamed_department) = request(
+        &app,
+        "PATCH",
+        &format!(
+            "/api/v1/departments/{}",
+            projection_department["id"].as_str().unwrap()
+        ),
+        Some(&token),
+        Some(json!({
+            "name":"Renamed Projection Department",
+            "parentId":department_id,
+            "version":1
+        })),
+    )
+    .await;
+    assert_eq!(status, 200, "renamed department: {renamed_department}");
+    let projection_user_id = Uuid::parse_str(projection_user["id"].as_str().unwrap()).unwrap();
+    let projection_tenant_id =
+        Uuid::parse_str(bootstrap["user"]["companyId"].as_str().unwrap()).unwrap();
+    let projected_roles = crate::runtime_grants::user_role_assignments(
+        &pool,
+        projection_tenant_id,
+        projection_user_id,
+    )
+    .await
+    .unwrap();
+    assert_eq!(projected_roles.len(), 1);
+    assert_eq!(projected_roles[0].code, "workflow_operator_fixture");
+    assert_eq!(projected_roles[0].name, "Renamed Workflow Operator");
+    let latest_projection_admission: Value = sqlx::query_scalar(
+        "SELECT payload_json FROM outbox WHERE event_type='RuntimeUserAdmissionChanged' AND aggregate_id=? ORDER BY occurred_at DESC,id DESC LIMIT 1",
+    )
+    .bind(projection_user["id"].as_str().unwrap())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(latest_projection_admission["tokenVersion"], 3);
+    let projected_department_name: String = sqlx::query_scalar(
+        "SELECT d.name FROM user_departments ud JOIN departments d ON d.tenant_id=ud.tenant_id AND d.id=ud.department_id WHERE ud.tenant_id=? AND ud.user_id=?",
+    )
+    .bind(projection_tenant_id)
+    .bind(projection_user_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(projected_department_name, "Renamed Projection Department");
     let (status, password_login) = request(
         &app,
         "POST",

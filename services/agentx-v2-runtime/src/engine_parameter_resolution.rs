@@ -38,12 +38,20 @@ pub(super) fn resolve(
         .into_iter()
         .enumerate()
         .map(|(item_index, item)| {
+            let mut item_execution = base.execution.clone();
+            if let Some(node) = item_execution
+                .get_mut("node")
+                .and_then(serde_json::Value::as_object_mut)
+            {
+                node.insert("itemIndex".into(), serde_json::json!(item_index));
+            }
             ExpressionEngine.resolve_parameters_with_conversions(
                 raw_parameters,
                 &ExpressionContext {
                     json: item.json.clone(),
                     input: item.json.clone(),
                     item_index,
+                    execution: item_execution,
                     ..base.clone()
                 },
             )

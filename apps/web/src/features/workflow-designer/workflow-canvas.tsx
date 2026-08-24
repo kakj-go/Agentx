@@ -217,9 +217,10 @@ export function WorkflowCanvas() {
           `${selected.data.nodeType}@${selected.data.typeVersion}`,
         )
       : undefined;
+  const executionReferenceRoot = t("studio.executionReferences.root");
   const referenceCatalog = useMemo(
-    () => buildReferenceCatalog(referenceSource, manifestMap, selected?.id),
-    [manifestMap, referenceSource, selected?.id],
+    () => buildReferenceCatalog(referenceSource, manifestMap, selected?.id, (key, fallback) => key === "studio.executionReferences.root" ? executionReferenceRoot : t(key, fallback)),
+    [executionReferenceRoot, manifestMap, referenceSource, selected?.id, t],
   );
   const creatorSourceManifest = creatorSource
     ? (() => {

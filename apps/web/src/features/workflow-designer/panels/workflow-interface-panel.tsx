@@ -264,7 +264,7 @@ function OutputFieldDialog({ open, onOpenChange, editing, existing, referenceCat
   const update = (patch: Partial<WorkflowOutput>) => setOutput((current) => ({ ...current, ...patch }));
   const updateType = (type: string) => update({ schema: schemaForInputKind(type, asObject(output.schema) as InputProperty) });
   const schema = asObject(output.schema);
-  const allowed = currentError ? ["inputs", "outputs", "contexts", "item"] as const : ["inputs", "outputs", "contexts"] as const;
+  const allowed = currentError ? ["inputs", "outputs", "contexts", "execution", "item"] as const : ["inputs", "outputs", "contexts", "execution"] as const;
   const nameError = internalNameError(name, existing, editing?.originalName, t);
   const contentError = saveAttempted && isDynamicValueEmpty(output.value) ? t("studio.validation.issues.END_OUTPUT_EXPRESSION_REQUIRED") : undefined;
   const save = () => { setSaveAttempted(true); if (!nameError && !isDynamicValueEmpty(output.value)) onSave(name.trim(), output); };

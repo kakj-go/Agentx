@@ -611,6 +611,23 @@
       ],
       "type": "string"
     },
+    "ExecutionDepartmentSnapshotV1": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name"
+      ],
+      "type": "object"
+    },
     "ExecutionOrder": {
       "enum": [
         "deterministic",
@@ -695,9 +712,27 @@
           "format": "uuid",
           "type": "string"
         },
+        "workflowName": {
+          "type": "string"
+        },
+        "workflowOwnerDepartment": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ExecutionDepartmentSnapshotV1"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "workflowVersionId": {
           "format": "uuid",
           "type": "string"
+        },
+        "workflowVersionNumber": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
         }
       },
       "required": [
@@ -708,6 +743,8 @@
         "deploymentId",
         "workflowId",
         "workflowVersionId",
+        "workflowName",
+        "workflowVersionNumber",
         "bundleSequence",
         "definition",
         "compiledIr",
@@ -734,6 +771,44 @@
         "sub_workflow"
       ],
       "type": "string"
+    },
+    "ExecutionWorkflowSnapshotV1": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "ownerDepartment": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ExecutionDepartmentSnapshotV1"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "versionId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "versionNumber": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "versionId",
+        "versionNumber"
+      ],
+      "type": "object"
     },
     "ExpressionBinaryOperator": {
       "enum": [
@@ -1683,14 +1758,13 @@
               "const": "composite",
               "type": "string"
             },
-            "workflowVersionId": {
-              "format": "uuid",
-              "type": "string"
+            "workflow": {
+              "$ref": "#/$defs/ExecutionWorkflowSnapshotV1"
             }
           },
           "required": [
             "kind",
-            "workflowVersionId",
+            "workflow",
             "definitionObjectId",
             "irObjectId"
           ],

@@ -83,6 +83,21 @@ async fn v2_publish_execution_query_recovery_and_gc_are_fenced_and_idempotent() 
     .unwrap();
     assert_eq!(accepted.bundle_id, first.payload.bundle_id);
     assert_eq!(accepted.admission_epoch, 1);
+    let execution_context: Value = sqlx::query_scalar(
+        "SELECT execution_context_json FROM execution_snapshots WHERE tenant_id=? AND execution_id=?",
+    )
+    .bind(fixture.tenant_id)
+    .bind(accepted.execution_id)
+    .fetch_one(&fixture.state.pool)
+    .await
+    .unwrap();
+    assert_eq!(execution_context["id"], json!(accepted.execution_id));
+    assert_eq!(execution_context["workflow"]["name"], "Runtime slice Workflow");
+    assert_eq!(execution_context["trigger"]["type"], "api_key");
+    assert_eq!(execution_context["application"]["id"], json!(fixture.application_id));
+    assert!(execution_context["initiator"].get("user").is_none());
+    assert!(execution_context.get("node").is_none());
+    execution_context_projection_changes_only_affect_future_executions(&fixture).await;
 
     invocation_and_dispatch_recovery_are_fenced(&fixture, accepted.execution_id).await;
     retry_policy_creates_a_second_attempt_and_trace(&fixture).await;
@@ -152,6 +167,158 @@ async fn v2_publish_execution_query_recovery_and_gc_are_fenced_and_idempotent() 
     quota_projection_covers_all_dimensions_and_has_no_terminal_residue(&fixture).await;
     retention_dry_run_reference_block_and_object_sweep_are_fenced(&fixture).await;
     event_sequencer_quarantines_invalid_payload_without_blocking_valid_events(&fixture).await;
+}
+
+async fn execution_context_projection_changes_only_affect_future_executions(fixture: &Fixture) {
+    let user_id = Uuid::now_v7();
+    let first_department_id = Uuid::now_v7();
+    let second_department_id = Uuid::now_v7();
+    let role_id = Uuid::now_v7();
+    let mut tx = fixture.state.pool.begin().await.unwrap();
+    let first_roles = json!([{
+        "id": role_id,
+        "code": "workflow_operator",
+        "name": "Workflow Operator",
+        "dataScope": "department_tree",
+        "scopeDepartment": { "id": first_department_id, "name": "Platform" }
+    }]);
+    sqlx::query("INSERT INTO runtime_user_admission(tenant_id,user_id,user_name,department_id,department_name,token_version,status,tenant_query_enabled,role_assignments_json,admission_epoch) VALUES(?,?,'Historical Operator',?,'Platform',1,'active',FALSE,?,1)")
+        .bind(fixture.tenant_id)
+        .bind(user_id)
+        .bind(first_department_id)
+        .bind(first_roles)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO runtime_user_application_grants(tenant_id,user_id,application_id,grant_version,status,can_invoke,can_query,admission_epoch) VALUES(?,?,?,1,'active',TRUE,FALSE,1)")
+        .bind(fixture.tenant_id)
+        .bind(user_id)
+        .bind(fixture.application_id)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    let first = create_runtime_invocation_tx(
+        &mut tx,
+        fixture.tenant_id,
+        fixture.application_id,
+        InvocationCaller {
+            caller_type: "user",
+            caller_id: user_id,
+            token_version: Some(1),
+            origin: agentx_runtime_contracts::ExecutionOriginV1::system(None),
+        },
+        None,
+        &json!({"message":"first-user-snapshot"}),
+        "execution-context:user:first",
+    )
+    .await
+    .unwrap();
+    let first_context: Value = sqlx::query_scalar(
+        "SELECT execution_context_json FROM execution_snapshots WHERE execution_id=?",
+    )
+    .bind(first.execution_id)
+    .fetch_one(&mut *tx)
+    .await
+    .unwrap();
+    let first_authorization: Value = sqlx::query_scalar(
+        "SELECT authorization_snapshot_json FROM execution_snapshots WHERE execution_id=?",
+    )
+    .bind(first.execution_id)
+    .fetch_one(&mut *tx)
+    .await
+    .unwrap();
+
+    let second_roles = json!([{
+        "id": role_id,
+        "code": "workflow_operator",
+        "name": "Renamed Workflow Operator",
+        "dataScope": "department_tree",
+        "scopeDepartment": { "id": second_department_id, "name": "Engineering" }
+    }]);
+    sqlx::query("UPDATE runtime_user_admission SET user_name='Current Operator',department_id=?,department_name='Engineering',token_version=2,role_assignments_json=?,admission_epoch=2 WHERE tenant_id=? AND user_id=?")
+        .bind(second_department_id)
+        .bind(second_roles)
+        .bind(fixture.tenant_id)
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    let second = create_runtime_invocation_tx(
+        &mut tx,
+        fixture.tenant_id,
+        fixture.application_id,
+        InvocationCaller {
+            caller_type: "user",
+            caller_id: user_id,
+            token_version: Some(2),
+            origin: agentx_runtime_contracts::ExecutionOriginV1::system(None),
+        },
+        None,
+        &json!({"message":"second-user-snapshot"}),
+        "execution-context:user:second",
+    )
+    .await
+    .unwrap();
+    let second_context: Value = sqlx::query_scalar(
+        "SELECT execution_context_json FROM execution_snapshots WHERE execution_id=?",
+    )
+    .bind(second.execution_id)
+    .fetch_one(&mut *tx)
+    .await
+    .unwrap();
+    let second_authorization: Value = sqlx::query_scalar(
+        "SELECT authorization_snapshot_json FROM execution_snapshots WHERE execution_id=?",
+    )
+    .bind(second.execution_id)
+    .fetch_one(&mut *tx)
+    .await
+    .unwrap();
+    assert_eq!(first_context.pointer("/initiator/user/name"), Some(&json!("Historical Operator")));
+    assert_eq!(first_context.pointer("/initiator/department/name"), Some(&json!("Platform")));
+    assert_eq!(first_context.pointer("/initiator/roles/names/0"), Some(&json!("Workflow Operator")));
+    assert_eq!(second_context.pointer("/initiator/user/name"), Some(&json!("Current Operator")));
+    assert_eq!(second_context.pointer("/initiator/department/name"), Some(&json!("Engineering")));
+    assert_eq!(second_context.pointer("/initiator/roles/names/0"), Some(&json!("Renamed Workflow Operator")));
+    assert_eq!(first_context.pointer("/initiator/department/name"), Some(&json!("Platform")), "historical snapshots must remain immutable");
+    assert_eq!(first_authorization, second_authorization, "role variables must not alter Workflow Service Identity authorization");
+    assert_eq!(second_authorization["serviceIdentityId"], json!(fixture.identity_id));
+
+    for trigger_type in ["webhook", "schedule"] {
+        let source_id = Uuid::now_v7();
+        let accepted = create_runtime_invocation_tx(
+            &mut tx,
+            fixture.tenant_id,
+            fixture.application_id,
+            InvocationCaller {
+                caller_type: trigger_type,
+                caller_id: source_id,
+                token_version: None,
+                origin: agentx_runtime_contracts::ExecutionOriginV1 {
+                    trigger_source_id: Some(source_id),
+                    trigger_name: Some(format!("{trigger_type} fixture")),
+                    ..agentx_runtime_contracts::ExecutionOriginV1::system(None)
+                },
+            },
+            None,
+            &json!({"message":format!("{trigger_type}-snapshot")}),
+            &format!("execution-context:{trigger_type}"),
+        )
+        .await
+        .unwrap();
+        let context: Value = sqlx::query_scalar(
+            "SELECT execution_context_json FROM execution_snapshots WHERE execution_id=?",
+        )
+        .bind(accepted.execution_id)
+        .fetch_one(&mut *tx)
+        .await
+        .unwrap();
+        assert_eq!(context["trigger"]["type"], trigger_type);
+        assert_eq!(context["trigger"]["sourceId"], json!(source_id));
+        assert!(context["initiator"].get("user").is_none());
+        assert!(context["initiator"].get("department").is_none());
+        assert!(context["initiator"].get("roles").is_none());
+    }
+    tx.rollback().await.unwrap();
 }
 
 async fn trace_watermarks_are_atomic_under_concurrency(pool: &MySqlPool) {
@@ -831,14 +998,15 @@ async fn wait_and_approval_resume_exactly_once(fixture: &Fixture) {
     );
 
     let approval_execution = start_suspending_work_package(fixture, "approval").await;
-    let task: (Uuid, u64) = sqlx::query_as(
-        "SELECT id,version FROM approval_tasks WHERE tenant_id=? AND execution_id=?",
+    let task: (Uuid, u64, String) = sqlx::query_as(
+        "SELECT id,version,title FROM approval_tasks WHERE tenant_id=? AND execution_id=?",
     )
     .bind(fixture.tenant_id)
     .bind(approval_execution)
     .fetch_one(&fixture.state.pool)
     .await
     .unwrap();
+    assert_eq!(task.2, "Runtime slice Workflow");
     let notification_count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM notifications WHERE tenant_id=? AND notification_type='approval_reassigned' AND target_type='user' AND target_id=?",
     )
@@ -999,7 +1167,16 @@ async fn wait_and_approval_resume_exactly_once(fixture: &Fixture) {
 async fn start_suspending_work_package(fixture: &Fixture, node_type: &str) -> Uuid {
     let parameters = if node_type == "approval" {
         json!({
-            "title":"Runtime approval",
+            "title":{
+                "kind":"reference",
+                "selector":{
+                    "namespace":"execution",
+                    "run":{"kind":"current"},
+                    "item":{"kind":"current"},
+                    "path":["workflow","name"]
+                },
+                "missingPolicy":{"kind":"error"}
+            },
             "timeoutMs":300000,
             "candidateUserId":{"kind":"literal","value":fixture.identity_id}
         })
@@ -1248,7 +1425,7 @@ async fn large_worker_results_are_externalized_and_verified(fixture: &Fixture) {
     assert!(trace_refs.contains(&object.object_id.to_string()));
     let artifact_subject = Uuid::now_v7();
     let artifact_department = Uuid::now_v7();
-    sqlx::query("INSERT INTO runtime_user_admission(tenant_id,user_id,user_name,department_id,department_name,token_version,status,tenant_query_enabled,admission_epoch) VALUES(?,?,'Artifact Reader',?,'Artifact Department',1,'active',FALSE,1)")
+    sqlx::query("INSERT INTO runtime_user_admission(tenant_id,user_id,user_name,department_id,department_name,token_version,status,tenant_query_enabled,role_assignments_json,admission_epoch) VALUES(?,?,'Artifact Reader',?,'Artifact Department',1,'active',FALSE,JSON_ARRAY(),1)")
         .bind(fixture.tenant_id)
         .bind(artifact_subject)
         .bind(artifact_department)

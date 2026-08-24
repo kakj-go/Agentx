@@ -54,7 +54,14 @@ pub(crate) async fn resolve_and_create(
             inputs: execution_input,
             outputs: load_output_namespace(tx, request.tenant_id, request.execution_id).await?,
             contexts: request.context.clone(),
-            execution: json!({"id":request.execution_id}),
+            execution: crate::execution_context::with_node(
+                crate::execution_context::load(tx, request.tenant_id, request.execution_id).await?,
+                &request.node.id,
+                request.node_execution_id.as_uuid(),
+                request.activation.run_index,
+                None,
+                None,
+            ),
             run_index: request.activation.run_index,
             output_node_keys: request
                 .machine

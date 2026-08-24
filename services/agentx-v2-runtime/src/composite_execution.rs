@@ -1,6 +1,7 @@
 use agentx_domain::NodeExecutionId;
 use serde_json::{Value, json};
 use sqlx::{MySql, Row, Transaction};
+use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use uuid::Uuid;
 
 use crate::error::{RuntimeError, RuntimeResult};
@@ -29,7 +30,7 @@ pub(crate) async fn create_child(
         })?;
     let composite = if let Some(work_package_id) = work_package_id {
         sqlx::query(
-            "SELECT definition_json,compiled_ir_json,definition_hash,ir_hash FROM runtime_composite_snapshots WHERE tenant_id=? AND work_package_id=? AND bundle_id IS NULL AND workflow_version_id=?",
+            "SELECT workflow_json,definition_json,compiled_ir_json,definition_hash,ir_hash FROM runtime_composite_snapshots WHERE tenant_id=? AND work_package_id=? AND bundle_id IS NULL AND workflow_version_id=?",
         )
         .bind(tenant_id)
         .bind(work_package_id)
@@ -38,7 +39,7 @@ pub(crate) async fn create_child(
         .await?
     } else {
         sqlx::query(
-            "SELECT definition_json,compiled_ir_json,definition_hash,ir_hash FROM runtime_composite_snapshots WHERE tenant_id=? AND bundle_id=? AND work_package_id IS NULL AND workflow_version_id=?",
+            "SELECT workflow_json,definition_json,compiled_ir_json,definition_hash,ir_hash FROM runtime_composite_snapshots WHERE tenant_id=? AND bundle_id=? AND work_package_id IS NULL AND workflow_version_id=?",
         )
         .bind(tenant_id)
         .bind(bundle_id)
@@ -48,7 +49,7 @@ pub(crate) async fn create_child(
     }
     .ok_or_else(|| invalid("COMPOSITE_SNAPSHOT_MISSING", "Composite Definition and IR were not materialized during Prepare"))?;
     let parent = sqlx::query(
-        "SELECT e.application_id,e.admission_epoch,e.initiator_user_id,e.initiator_user_name,e.initiator_department_id,e.initiator_department_name,s.resource_snapshot_json,s.authorization_snapshot_json,s.policy_snapshot_json,s.worker_compatibility_json,s.object_manifest_json,s.runtime_settings_json FROM workflow_executions e JOIN execution_snapshots s ON s.tenant_id=e.tenant_id AND s.execution_id=e.id WHERE e.tenant_id=? AND e.id=?",
+        "SELECT e.application_id,e.admission_epoch,e.initiator_user_id,e.initiator_user_name,e.initiator_department_id,e.initiator_department_name,s.resource_snapshot_json,s.authorization_snapshot_json,s.policy_snapshot_json,s.execution_context_json,s.worker_compatibility_json,s.object_manifest_json,s.runtime_settings_json FROM workflow_executions e JOIN execution_snapshots s ON s.tenant_id=e.tenant_id AND s.execution_id=e.id WHERE e.tenant_id=? AND e.id=?",
     )
     .bind(tenant_id)
     .bind(parent_execution_id)
@@ -56,6 +57,9 @@ pub(crate) async fn create_child(
     .await?;
     let compiled_ir: agentx_runtime_contracts::CompiledWorkflowV1 =
         serde_json::from_value(composite.try_get("compiled_ir_json")?)
+            .map_err(|error| RuntimeError::Internal(error.into()))?;
+    let workflow: agentx_runtime_contracts::ExecutionWorkflowSnapshotV1 =
+        serde_json::from_value(composite.try_get("workflow_json")?)
             .map_err(|error| RuntimeError::Internal(error.into()))?;
     let input_items = activation
         .inputs
@@ -92,8 +96,35 @@ pub(crate) async fn create_child(
         "parentNodeExecutionId":parent_node_execution_id.as_uuid(),
     }))
     .map_err(|error| RuntimeError::Internal(error.into()))?;
+    let started_at = OffsetDateTime::now_utc();
+    let mut execution_context: Value = parent.try_get("execution_context_json")?;
+    if let Some(root) = execution_context.as_object_mut() {
+        root.insert("id".into(), json!(child_execution_id));
+        root.insert(
+            "startedAt".into(),
+            json!(
+                started_at
+                    .format(&Rfc3339)
+                    .map_err(|error| RuntimeError::Internal(error.into()))?
+            ),
+        );
+        root.insert("parentExecutionId".into(), json!(parent_execution_id));
+        root.insert(
+            "trigger".into(),
+            json!({
+                "type": "composite",
+                "sourceId": parent_node_execution_id.as_uuid(),
+                "name": node.name,
+            }),
+        );
+        root.insert(
+            "workflow".into(),
+            serde_json::to_value(workflow).map_err(|error| RuntimeError::Internal(error.into()))?,
+        );
+        root.remove("node");
+    }
     sqlx::query(
-        "INSERT INTO workflow_executions(id,tenant_id,workflow_id,workflow_version_id,application_id,bundle_id,work_package_id,parent_execution_id,parent_node_execution_id,admission_epoch,state_version,trace_id,trigger_type,initiator_user_id,initiator_user_name,initiator_department_id,initiator_department_name,trigger_source_id,trigger_name,status,started_at,input_json) VALUES(?,?,?,?,?,?,?,?,?,?,1,?,'composite',?,?,?,?,?,?,'queued',UTC_TIMESTAMP(6),?)",
+        "INSERT INTO workflow_executions(id,tenant_id,workflow_id,workflow_version_id,application_id,bundle_id,work_package_id,parent_execution_id,parent_node_execution_id,admission_epoch,state_version,trace_id,trigger_type,initiator_user_id,initiator_user_name,initiator_department_id,initiator_department_name,trigger_source_id,trigger_name,status,started_at,input_json) VALUES(?,?,?,?,?,?,?,?,?,?,1,?,'composite',?,?,?,?,?,?,'queued',?,?)",
     )
     .bind(child_execution_id)
     .bind(tenant_id)
@@ -112,11 +143,12 @@ pub(crate) async fn create_child(
     .bind(parent.try_get::<Option<String>, _>("initiator_department_name")?)
     .bind(parent_node_execution_id.as_uuid())
     .bind(Some(node.name.clone()))
+    .bind(started_at)
     .bind(&input)
     .execute(&mut **tx)
     .await?;
     sqlx::query(
-        "INSERT INTO execution_snapshots(execution_id,tenant_id,workflow_version_id,bundle_id,work_package_id,admission_epoch,state_version,definition_json,compiled_ir_json,compiled_ir_hash,compiler_version,resource_snapshot_json,authorization_snapshot_json,policy_snapshot_json,worker_compatibility_json,object_manifest_json,runtime_settings_json,state_hash) VALUES(?,?,?,?,?,?,1,?,?,?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO execution_snapshots(execution_id,tenant_id,workflow_version_id,bundle_id,work_package_id,admission_epoch,state_version,definition_json,compiled_ir_json,compiled_ir_hash,compiler_version,resource_snapshot_json,authorization_snapshot_json,policy_snapshot_json,execution_context_json,worker_compatibility_json,object_manifest_json,runtime_settings_json,state_hash) VALUES(?,?,?,?,?,?,1,?,?,?,?,?,?,?,?,?,?,?,?)",
     )
     .bind(child_execution_id)
     .bind(tenant_id)
@@ -131,6 +163,7 @@ pub(crate) async fn create_child(
     .bind(parent.try_get::<Value, _>("resource_snapshot_json")?)
     .bind(parent.try_get::<Value, _>("authorization_snapshot_json")?)
     .bind(parent.try_get::<Value, _>("policy_snapshot_json")?)
+    .bind(execution_context)
     .bind(parent.try_get::<Value, _>("worker_compatibility_json")?)
     .bind(parent.try_get::<Value, _>("object_manifest_json")?)
     .bind(parent.try_get::<Value, _>("runtime_settings_json")?)

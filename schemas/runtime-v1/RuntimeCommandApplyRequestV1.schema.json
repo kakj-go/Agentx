@@ -154,6 +154,23 @@
         }
       ]
     },
+    "ExecutionDepartmentSnapshotV1": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name"
+      ],
+      "type": "object"
+    },
     "ExecutionOriginV1": {
       "additionalProperties": false,
       "description": "Immutable audit context captured when an Execution is created.\n\nControl remains authoritative for current IAM and resource names. Runtime\nstores this snapshot so later renames do not rewrite execution history.",
@@ -184,6 +201,12 @@
             "null"
           ]
         },
+        "roleAssignments": {
+          "items": {
+            "$ref": "#/$defs/ExecutionRoleAssignmentV1"
+          },
+          "type": "array"
+        },
         "triggerName": {
           "type": [
             "string",
@@ -198,6 +221,44 @@
           ]
         }
       },
+      "required": [
+        "roleAssignments"
+      ],
+      "type": "object"
+    },
+    "ExecutionRoleAssignmentV1": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "dataScope": {
+          "type": "string"
+        },
+        "id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "scopeDepartment": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ExecutionDepartmentSnapshotV1"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "code",
+        "name",
+        "dataScope"
+      ],
       "type": "object"
     },
     "PartialExecutionModeV1": {

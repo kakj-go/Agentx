@@ -471,6 +471,12 @@ impl Publisher {
                                     .get("tenantQueryEnabled")
                                     .and_then(Value::as_bool)
                                     .unwrap_or(false),
+                                role_assignments: runtime_grants::user_role_assignments(
+                                    &self.pool,
+                                    event.tenant_id,
+                                    user_id,
+                                )
+                                .await?,
                             },
                         }
                     } else if event.event_type == "RuntimeUserApplicationGrantChanged" {
@@ -763,7 +769,7 @@ impl Publisher {
     }
 
     async fn build(&self, a: &Attempt) -> Result<()> {
-        let row=sqlx::query("SELECT d.workflow_version_id,d.sequence_number,d.input_schema_json,d.output_schema_json,d.session_version_policy,d.trigger_revision,a.workflow_id,a.slug,wv.definition_json,wsi.id identity_id,wsi.version identity_version FROM application_deployments d JOIN applications a ON a.id=d.application_id AND a.tenant_id=d.tenant_id JOIN workflow_versions wv ON wv.id=d.workflow_version_id AND wv.tenant_id=d.tenant_id JOIN workflow_service_identities wsi ON wsi.workflow_id=a.workflow_id AND wsi.tenant_id=a.tenant_id WHERE d.id=? AND d.tenant_id=?").bind(a.deployment_id).bind(a.tenant_id).fetch_one(&self.pool).await?;
+        let row=sqlx::query("SELECT d.workflow_version_id,d.sequence_number,d.input_schema_json,d.output_schema_json,d.session_version_policy,d.trigger_revision,a.workflow_id,a.slug,w.name workflow_name,w.owner_department_id,od.name owner_department_name,wv.version_number,wv.definition_json,wsi.id identity_id,wsi.version identity_version FROM application_deployments d JOIN applications a ON a.id=d.application_id AND a.tenant_id=d.tenant_id JOIN workflows w ON w.id=a.workflow_id AND w.tenant_id=a.tenant_id LEFT JOIN departments od ON od.id=w.owner_department_id AND od.tenant_id=w.tenant_id JOIN workflow_versions wv ON wv.id=d.workflow_version_id AND wv.tenant_id=d.tenant_id JOIN workflow_service_identities wsi ON wsi.workflow_id=a.workflow_id AND wsi.tenant_id=a.tenant_id WHERE d.id=? AND d.tenant_id=?").bind(a.deployment_id).bind(a.tenant_id).fetch_one(&self.pool).await?;
         let definition: WorkflowDefinition =
             serde_json::from_value(row.try_get("definition_json")?)?;
         let workflow_version_id: Uuid = row.try_get("workflow_version_id")?;
@@ -941,17 +947,22 @@ impl Publisher {
         for dependency_id in dependencies.keys().copied() {
             if resources.iter().any(|binding| {
                 matches!(
-                    binding.configuration,
+                    &binding.configuration,
                     RuntimeResourceConfigurationV1::Composite {
-                        workflow_version_id,
+                        workflow,
                         ..
-                    } if workflow_version_id == dependency_id
+                    } if workflow.version_id == dependency_id
                 )
             }) {
                 continue;
             }
             let configuration = RuntimeResourceConfigurationV1::Composite {
-                workflow_version_id: dependency_id,
+                workflow: runtime_resource_binding::workflow_snapshot(
+                    &self.pool,
+                    a.tenant_id,
+                    dependency_id,
+                )
+                .await?,
                 definition_object_id: dependency_id,
                 ir_object_id: composite_ir_object_id(dependency_id),
             };
@@ -993,6 +1004,16 @@ impl Publisher {
                 deployment_id: a.deployment_id,
                 workflow_id,
                 workflow_version_id,
+                workflow_name: row.try_get("workflow_name")?,
+                workflow_version_number: row.try_get("version_number")?,
+                workflow_owner_department: row
+                    .try_get::<Option<Uuid>, _>("owner_department_id")?
+                    .map(
+                        |id| agentx_runtime_contracts::ExecutionDepartmentSnapshotV1 {
+                            id,
+                            name: row.try_get("owner_department_name").unwrap_or_default(),
+                        },
+                    ),
                 sequence: row.try_get("sequence_number")?,
                 definition,
                 dependency_versions: dependencies,

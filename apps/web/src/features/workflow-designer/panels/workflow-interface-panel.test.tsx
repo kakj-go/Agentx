@@ -27,7 +27,12 @@ const end: WorkflowEnd = {
   },
 }
 
-const catalog: ReferenceCatalog = { inputs: [], outputs: [], contexts: [] }
+const catalog: ReferenceCatalog = {
+  inputs: [],
+  outputs: [],
+  contexts: [],
+  execution: [{ id: 'execution.root', label: '运行信息', path: 'execution', children: [] }],
+}
 const dynamicValueMime = 'application/x-agentx-dynamic-value+json'
 
 afterEach(async () => { await i18n.changeLanguage('zh-CN') })
@@ -202,6 +207,21 @@ describe('Workflow boundary forms', () => {
       const state = JSON.parse(screen.getByTestId('definition-state').textContent ?? '{}')
       expect(state.end.error.outputs.failure_message.value).toMatchObject({ kind: 'reference', selector: { namespace: 'item', path: ['message'] } })
     })
+  })
+
+  it('offers execution information in success and error End output dialogs', () => {
+    render(<Harness boundary="end" />)
+
+    fireEvent.click(screen.getAllByRole('button', { name: /Add field|添加字段/ })[0])
+    let dialog = screen.getByRole('dialog', { name: /Output field|输出字段/ })
+    fireEvent.focus(within(dialog).getByLabelText('Value'))
+    expect(screen.getByRole('button', { name: /Execution information|运行信息/ })).toBeInTheDocument()
+    fireEvent.click(within(dialog).getByRole('button', { name: /Cancel|取消/ }))
+
+    fireEvent.click(screen.getByRole('button', { name: /Edit field|编辑字段/ }))
+    dialog = screen.getByRole('dialog', { name: /Output field|输出字段/ })
+    fireEvent.focus(within(dialog).getByLabelText('Value'))
+    expect(screen.getByRole('button', { name: /Execution information|运行信息/ })).toBeInTheDocument()
   })
 
   it('preserves a success expression when a field rename blurs immediately before content editing', async () => {
