@@ -1,0 +1,351 @@
+{
+  "$defs": {
+    "AgentSessionEntryV1": {
+      "additionalProperties": false,
+      "oneOf": [
+        {
+          "not": {
+            "required": [
+              "payloadArtifactId"
+            ]
+          },
+          "required": [
+            "payloadJson"
+          ]
+        },
+        {
+          "not": {
+            "required": [
+              "payloadJson"
+            ]
+          },
+          "required": [
+            "payloadArtifactId"
+          ]
+        }
+      ],
+      "properties": {
+        "createdAtMillis": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "entryId": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "entryKind": {
+          "enum": [
+            "message_user",
+            "message_assistant",
+            "message_tool_call",
+            "message_tool_result",
+            "custom_external_context",
+            "compaction",
+            "pending_steering",
+            "pending_follow_up"
+          ]
+        },
+        "lane": {
+          "const": "main"
+        },
+        "operationId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "parentEntryId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "payloadArtifactId": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "payloadJson": {},
+        "sessionId": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "entryId",
+        "sessionId",
+        "lane",
+        "entryKind",
+        "createdAtMillis"
+      ],
+      "type": "object"
+    },
+    "AgentSessionLaneV1": {
+      "description": "The only lane implemented by P3-05.  Keeping this as a closed enum avoids\nsilently mixing a future branch/tree implementation with the main lane.",
+      "enum": [
+        "main"
+      ],
+      "type": "string"
+    },
+    "CompactionKindV1": {
+      "enum": [
+        "threshold",
+        "overflow"
+      ],
+      "type": "string"
+    },
+    "CompactionRegisterV1": {
+      "additionalProperties": false,
+      "properties": {
+        "cutEntryId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kind": {
+          "$ref": "#/$defs/CompactionKindV1"
+        },
+        "retainedEntryIds": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "snapshotId": {
+          "type": "string"
+        },
+        "summaryHash": {
+          "type": "string"
+        },
+        "tokensAfter": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "tokensBefore": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "snapshotId",
+        "kind",
+        "summaryHash",
+        "retainedEntryIds",
+        "tokensBefore",
+        "tokensAfter"
+      ],
+      "type": "object"
+    },
+    "DurableOperationPhaseV1": {
+      "enum": [
+        "accepted",
+        "checkpoint",
+        "model_ready",
+        "model_effect_pending",
+        "model_settled",
+        "tool_batch_planned",
+        "tool_effect_pending",
+        "tool_settled",
+        "compaction_planned",
+        "compaction_effect_pending",
+        "compaction_settled",
+        "terminal",
+        "pending",
+        "cancelled",
+        "unknown_outcome"
+      ],
+      "type": "string"
+    },
+    "DurableOperationStateV1": {
+      "additionalProperties": false,
+      "properties": {
+        "attemptId": {
+          "type": "string"
+        },
+        "bundleHash": {
+          "type": "string"
+        },
+        "continuation": true,
+        "deadlineAtMillis": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "effectIdentity": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "expectedStateVersion": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "fencingToken": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "inputHash": {
+          "type": "string"
+        },
+        "modelVersion": {
+          "type": "string"
+        },
+        "operationId": {
+          "type": "string"
+        },
+        "phase": {
+          "$ref": "#/$defs/DurableOperationPhaseV1"
+        },
+        "recoveryAction": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "registryHash": {
+          "type": "string"
+        },
+        "replayPolicy": {
+          "$ref": "#/$defs/ReplayPolicyV1"
+        },
+        "updatedAtMillis": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "operationId",
+        "attemptId",
+        "fencingToken",
+        "expectedStateVersion",
+        "phase",
+        "inputHash",
+        "bundleHash",
+        "modelVersion",
+        "registryHash",
+        "replayPolicy",
+        "deadlineAtMillis",
+        "updatedAtMillis"
+      ],
+      "type": "object"
+    },
+    "ReplayPolicyV1": {
+      "enum": [
+        "safe",
+        "never",
+        "idempotency_required",
+        "ledger_dependent"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "bundleHash": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "compaction": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CompactionRegisterV1"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "coreContractVersion": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "definitionHash": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "fencingToken": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "lane": {
+      "$ref": "#/$defs/AgentSessionLaneV1"
+    },
+    "leafEntryId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "modelVersion": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "openOperationId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "operationState": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/DurableOperationStateV1"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "pendingEntries": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/AgentSessionEntryV1"
+      },
+      "type": "array"
+    },
+    "sessionId": {
+      "type": "string"
+    },
+    "stateVersion": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "terminalState": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "updatedAtMillis": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "sessionId",
+    "lane",
+    "stateVersion",
+    "fencingToken",
+    "updatedAtMillis"
+  ],
+  "title": "AgentSessionRegisterV1",
+  "type": "object"
+}

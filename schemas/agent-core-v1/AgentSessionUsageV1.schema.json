@@ -1,0 +1,89 @@
+{
+  "$defs": {
+    "UsageKindV1": {
+      "enum": [
+        "model",
+        "compaction",
+        "tool",
+        "memory"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "cacheReadTokens": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "cacheWriteTokens": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "costCurrency": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "costMicros": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "createdAtMillis": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "effectId": {
+      "type": "string"
+    },
+    "inputTokens": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "operationId": {
+      "type": "string"
+    },
+    "outputTokens": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "resourceReference": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "sessionId": {
+      "type": "string"
+    },
+    "usageId": {
+      "type": "string"
+    },
+    "usageKind": {
+      "$ref": "#/$defs/UsageKindV1"
+    }
+  },
+  "required": [
+    "usageId",
+    "sessionId",
+    "operationId",
+    "effectId",
+    "usageKind",
+    "inputTokens",
+    "outputTokens",
+    "cacheReadTokens",
+    "cacheWriteTokens",
+    "costMicros",
+    "createdAtMillis"
+  ],
+  "title": "AgentSessionUsageV1",
+  "type": "object"
+}

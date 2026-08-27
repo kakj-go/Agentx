@@ -1,4 +1,39 @@
 {
+  "$defs": {
+    "RuntimeGrantBindingV1": {
+      "additionalProperties": false,
+      "properties": {
+        "grantId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "operation": {
+          "type": "string"
+        },
+        "resourceId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "resourceType": {
+          "type": "string"
+        },
+        "resourceVersionId": {
+          "format": "uuid",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "grantId",
+        "resourceType",
+        "resourceId",
+        "operation"
+      ],
+      "type": "object"
+    }
+  },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "properties": {
@@ -11,6 +46,12 @@
     },
     "capturedAt": {
       "type": "string"
+    },
+    "grantBindings": {
+      "items": {
+        "$ref": "#/$defs/RuntimeGrantBindingV1"
+      },
+      "type": "array"
     },
     "grantIds": {
       "items": {
@@ -54,6 +95,7 @@
     "workflowId",
     "policyEpoch",
     "grantIds",
+    "grantBindings",
     "capabilities",
     "maximumPolicyStalenessSeconds",
     "capturedAt"

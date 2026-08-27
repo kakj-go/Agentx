@@ -1,7 +1,4 @@
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    sync::Arc,
-};
+use std::{collections::BTreeMap, sync::Arc};
 
 use agentx_domain::{ExecutionId, NodeExecutionId, TenantId};
 use agentx_node_protocol::{
@@ -10,7 +7,7 @@ use agentx_node_protocol::{
 };
 use agentx_runtime_contracts::{
     ContentHash, RuntimeObjectReferenceV1, RuntimeResourceBindingV1,
-    RuntimeResourceConfigurationV1, RuntimeResourceKindV1, RuntimeSkillProgramV1, StorageDomain,
+    RuntimeResourceConfigurationV1, RuntimeResourceKindV1, RuntimeSkillProgramV2, StorageDomain,
     WorkerResultStatusV1, WorkerResultV1,
 };
 use bytes::Bytes;
@@ -26,11 +23,19 @@ use crate::{
     engine::ClaimedWorkerAttempt,
     vault::RuntimeVault,
     worker_support::{
-        openai_chat_completions_endpoint, provider_secret_header, raw_hash,
-        runtime_call_fingerprint, runtime_call_span_name, stable_id,
+        openai_chat_completions_endpoint, provider_secret_header, runtime_call_fingerprint,
+        runtime_call_span_name, stable_id,
     },
 };
 
+#[path = "worker_runtime_agent_attachments.rs"]
+mod agent_attachments;
+#[path = "worker_runtime_agent_core.rs"]
+mod agent_core;
+#[path = "worker_runtime_agent_model.rs"]
+mod agent_model;
+#[path = "worker_runtime_agent_state.rs"]
+mod agent_state;
 #[path = "worker_runtime_agent_trace.rs"]
 mod agent_trace;
 #[path = "worker_runtime_builtin.rs"]
@@ -44,9 +49,9 @@ mod provider;
 #[cfg(test)]
 use output::system_prompt;
 use output::{
-    apply_model_price, effective_agent_budget, memory_execution_output, openai_chat_request,
-    openai_execution_output, provider_usage, provider_usage_detail, rag_execution_output,
-    runtime_call_is_replayable, sandbox_execution_output, tool_execution_output,
+    apply_model_price, memory_execution_output, openai_chat_request, openai_execution_output,
+    provider_usage_detail, rag_execution_output, runtime_call_is_replayable,
+    runtime_call_side_effect, sandbox_execution_output, tool_execution_output,
 };
 
 pub struct WorkerExecution {
@@ -116,6 +121,22 @@ pub trait WorkerProvider: Send + Sync {
             )))
         }
     }
+
+    async fn legacy_sse_rpc(
+        &self,
+        _session_key: &str,
+        _endpoint: &str,
+        _context: EgressRequestContext,
+        _timeout: std::time::Duration,
+        _headers: HeaderMap,
+        _body: &Value,
+    ) -> Result<WorkerProviderResponse, WorkerProviderError> {
+        Err(WorkerProviderError::Denied(
+            "Legacy SSE is not supported by this provider".into(),
+        ))
+    }
+
+    async fn close_legacy_sse_session(&self, _session_key: &str) {}
 }
 
 #[derive(Clone, Copy)]
@@ -153,6 +174,15 @@ impl WorkerExecution {
         }
     }
 
+    fn cancelled(code: &str, message: impl Into<String>) -> Self {
+        Self {
+            status: WorkerResultStatusV1::Cancelled,
+            outputs: BTreeMap::new(),
+            error_code: Some(code.into()),
+            error_message: Some(message.into()),
+        }
+    }
+
     fn suspended(resume: Value) -> Self {
         Self {
             status: WorkerResultStatusV1::Suspended,
@@ -170,10 +200,10 @@ impl WorkerExecution {
 }
 
 pub struct RuntimeWorker {
-    pool: MySqlPool,
-    provider: Arc<dyn WorkerProvider>,
-    vault: Option<RuntimeVault>,
-    objects: Arc<dyn ObjectStore>,
+    pub(crate) pool: MySqlPool,
+    pub(crate) provider: Arc<dyn WorkerProvider>,
+    pub(crate) vault: Option<RuntimeVault>,
+    pub(crate) objects: Arc<dyn ObjectStore>,
 }
 
 impl RuntimeWorker {
@@ -209,7 +239,7 @@ impl RuntimeWorker {
             NodeCapability::Builtin => self.execute_builtin(claim),
             NodeCapability::DeclarativeHttp => self.execute_declarative_http(claim).await,
             NodeCapability::RemoteAction => self.execute_remote_action(claim).await,
-            NodeCapability::Agent => self.execute_agent(claim).await,
+            NodeCapability::Agent => self.execute_agent_core(claim).await,
             NodeCapability::Model
             | NodeCapability::McpTool
             | NodeCapability::Rag
@@ -356,426 +386,8 @@ impl RuntimeWorker {
         builtin::execute(claim)
     }
 
-    async fn execute_agent(&self, claim: &ClaimedWorkerAttempt) -> WorkerExecution {
-        let run_id = stable_id(claim.task.attempt_id, b"agent-run");
-        let mut state = first_input(claim).unwrap_or(Value::Null);
-        let before_hash = raw_hash(&state);
-        let budget = effective_agent_budget(&claim.node_parameters);
-        let started = std::time::Instant::now();
-        if let Err(error) = sqlx::query(
-            "INSERT INTO agent_runs(id,tenant_id,execution_id,node_execution_id,attempt_id,status,budget_json,state_hash) VALUES(?,?,?,?,?,'running',?,?) ON DUPLICATE KEY UPDATE id=id",
-        )
-        .bind(run_id)
-        .bind(claim.task.tenant_id)
-        .bind(claim.task.execution_id)
-        .bind(claim.task.node_execution_id)
-        .bind(claim.task.attempt_id)
-        .bind(&budget)
-        .bind(&before_hash)
-        .execute(&self.pool)
-        .await
-        {
-            return WorkerExecution::failed("AGENT_STATE_UNAVAILABLE", error.to_string(), false);
-        }
-        self.emit_agent_span(
-            run_id,
-            None,
-            agentx_runtime_contracts::TraceEventKindV1::Started,
-            "running",
-            None,
-            Some(&state),
-        )
-        .await;
-        let maximum_iterations = budget["maxIterations"]
-            .as_u64()
-            .unwrap_or(12)
-            .min(budget["maxModelCalls"].as_u64().unwrap_or(12))
-            as u32;
-        let maximum_tokens = budget["maxTokens"].as_u64().unwrap_or(4096);
-        let maximum_output_tokens = budget["maxOutputTokens"].as_u64().unwrap_or(4096);
-        let maximum_tool_calls = budget["maxToolCalls"].as_u64().unwrap_or(32) as u32;
-        let maximum_duration =
-            std::time::Duration::from_millis(budget["maxDurationMs"].as_u64().unwrap_or(300_000));
-        let maximum_cost = budget["maxCostMicros"].as_u64().unwrap_or(1_000_000);
-        let Some(model) = claim
-            .resources
-            .iter()
-            .find(|binding| binding.resource_kind == RuntimeResourceKindV1::Model)
-        else {
-            return self
-                .finish_agent_failure(
-                    run_id,
-                    0,
-                    0,
-                    0,
-                    &before_hash,
-                    "model_binding_missing",
-                    "AGENT_MODEL_BINDING_MISSING",
-                )
-                .await;
-        };
-        let tool = mcp_tool_binding(&claim.resources);
-        let mut seen = BTreeSet::from([before_hash]);
-        let mut tokens = 0_u64;
-        let mut input_tokens = 0_u64;
-        let mut output_tokens = 0_u64;
-        let mut cost_micros = 0_u64;
-        let mut tool_calls = 0_u32;
-        for iteration in 0..maximum_iterations {
-            if started.elapsed() > maximum_duration {
-                return self
-                    .finish_agent_limit(
-                        run_id,
-                        iteration,
-                        input_tokens,
-                        output_tokens,
-                        cost_micros,
-                        &state,
-                        &budget,
-                        "duration_budget_exceeded",
-                        "AGENT_DURATION_BUDGET_EXCEEDED",
-                    )
-                    .await;
-            }
-            let state_before_hash = raw_hash(&state);
-            let iteration_id = stable_id(run_id, format!("iteration-{iteration}").as_bytes());
-            if let Err(error) = sqlx::query(
-                "INSERT INTO agent_iterations(id,tenant_id,agent_run_id,iteration_index,status,state_before_hash) VALUES(?,?,?,?,'running',?) ON DUPLICATE KEY UPDATE id=id",
-            )
-            .bind(iteration_id)
-            .bind(claim.task.tenant_id)
-            .bind(run_id)
-            .bind(iteration)
-            .bind(&state_before_hash)
-            .execute(&self.pool)
-            .await
-            {
-                return WorkerExecution::failed("AGENT_STATE_UNAVAILABLE", error.to_string(), false);
-            }
-            self.emit_agent_span(
-                run_id,
-                Some(iteration_id),
-                agentx_runtime_contracts::TraceEventKindV1::Started,
-                "running",
-                None,
-                Some(&state),
-            )
-            .await;
-            let model_result = self
-                .execute_provider_call(claim, model, state.clone(), iteration * 2)
-                .await;
-            let Some(model_output) = successful_value(&model_result) else {
-                self.finish_iteration(
-                    iteration_id,
-                    "failed",
-                    &state_before_hash,
-                    "provider_failed",
-                )
-                .await;
-                self.finish_agent(
-                    run_id,
-                    "failed",
-                    iteration + 1,
-                    tokens,
-                    cost_micros,
-                    tool_calls,
-                    &state_before_hash,
-                    "provider_failed",
-                )
-                .await;
-                return model_result;
-            };
-            let usage = provider_usage(&model_output);
-            let usage_detail = provider_usage_detail(&model_output);
-            tokens = tokens.saturating_add(usage.0);
-            input_tokens = input_tokens.saturating_add(usage_detail.0);
-            output_tokens = output_tokens.saturating_add(usage_detail.1);
-            cost_micros = cost_micros.saturating_add(usage.1);
-            if tokens > maximum_tokens
-                || output_tokens > maximum_output_tokens
-                || cost_micros > maximum_cost
-            {
-                self.finish_iteration(
-                    iteration_id,
-                    "failed",
-                    &state_before_hash,
-                    "budget_exceeded",
-                )
-                .await;
-                return self
-                    .finish_agent_limit(
-                        run_id,
-                        iteration + 1,
-                        input_tokens,
-                        output_tokens,
-                        cost_micros,
-                        &state,
-                        &budget,
-                        "budget_exceeded",
-                        "AGENT_BUDGET_EXCEEDED",
-                    )
-                    .await;
-            }
-            let tool_call = model_output.get("toolCall").cloned();
-            state = if let Some(tool_input) = tool_call.clone() {
-                if tool_calls >= maximum_tool_calls {
-                    self.finish_iteration(
-                        iteration_id,
-                        "failed",
-                        &state_before_hash,
-                        "tool_budget_exceeded",
-                    )
-                    .await;
-                    return self
-                        .finish_agent_limit(
-                            run_id,
-                            iteration + 1,
-                            input_tokens,
-                            output_tokens,
-                            cost_micros,
-                            &state,
-                            &budget,
-                            "tool_budget_exceeded",
-                            "AGENT_TOOL_BUDGET_EXCEEDED",
-                        )
-                        .await;
-                }
-                let Some(tool) = tool else {
-                    self.finish_iteration(
-                        iteration_id,
-                        "failed",
-                        &state_before_hash,
-                        "tool_binding_missing",
-                    )
-                    .await;
-                    return self
-                        .finish_agent_failure(
-                            run_id,
-                            iteration + 1,
-                            tokens,
-                            cost_micros,
-                            &state_before_hash,
-                            "tool_binding_missing",
-                            "AGENT_TOOL_BINDING_MISSING",
-                        )
-                        .await;
-                };
-                let tool_result = self
-                    .execute_provider_call(claim, tool, tool_input, iteration * 2 + 1)
-                    .await;
-                let Some(tool_output) = successful_value(&tool_result) else {
-                    self.finish_iteration(
-                        iteration_id,
-                        "failed",
-                        &state_before_hash,
-                        "tool_failed",
-                    )
-                    .await;
-                    self.finish_agent(
-                        run_id,
-                        "failed",
-                        iteration + 1,
-                        tokens,
-                        cost_micros,
-                        tool_calls,
-                        &state_before_hash,
-                        "tool_failed",
-                    )
-                    .await;
-                    return tool_result;
-                };
-                tool_calls += 1;
-                json!({"model":model_output,"tool":tool_output})
-            } else {
-                model_output.clone()
-            };
-            let state_after_hash = raw_hash(&state);
-            let terminal = tool_call.is_none()
-                || model_output.get("done").and_then(Value::as_bool) == Some(true);
-            if terminal {
-                self.finish_iteration(iteration_id, "completed", &state_after_hash, "completed")
-                    .await;
-                self.finish_agent(
-                    run_id,
-                    "succeeded",
-                    iteration + 1,
-                    tokens,
-                    cost_micros,
-                    tool_calls,
-                    &state_after_hash,
-                    "completed",
-                )
-                .await;
-                let text = model_output.get("text").cloned().unwrap_or(Value::Null);
-                return WorkerExecution::succeeded(json!({
-                    "text":text.as_str().unwrap_or_default(),
-                    "reasoningContent":model_output.get("reasoningContent").cloned().unwrap_or(Value::Null),
-                    "structuredOutput":model_output.get("structuredOutput").cloned().unwrap_or(Value::Null),
-                    "files":model_output.get("files").cloned().unwrap_or_else(|| json!([])),
-                    "citations":model_output.get("citations").cloned().unwrap_or_else(|| json!([])),
-                    "usage":{"inputTokens":input_tokens,"outputTokens":output_tokens,"totalTokens":tokens,"costMicros":cost_micros},
-                    "finishReason":model_output.get("finishReason").cloned().unwrap_or(Value::Null),
-                    "partial":false
-                }));
-            }
-            if !seen.insert(state_after_hash.clone()) {
-                self.finish_iteration(iteration_id, "failed", &state_after_hash, "loop_detected")
-                    .await;
-                return self
-                    .finish_agent_failure(
-                        run_id,
-                        iteration + 1,
-                        tokens,
-                        cost_micros,
-                        &state_after_hash,
-                        "loop_detected",
-                        "AGENT_LOOP_DETECTED",
-                    )
-                    .await;
-            }
-            self.finish_iteration(iteration_id, "completed", &state_after_hash, "continued")
-                .await;
-        }
-        self.finish_agent_limit(
-            run_id,
-            maximum_iterations,
-            input_tokens,
-            output_tokens,
-            cost_micros,
-            &state,
-            &budget,
-            "iteration_budget_exhausted",
-            "AGENT_ITERATION_BUDGET_EXCEEDED",
-        )
-        .await
-    }
-
-    async fn finish_iteration(
-        &self,
-        iteration_id: Uuid,
-        status: &str,
-        state_hash: &str,
-        stop_reason: &str,
-    ) {
-        let _ = sqlx::query(
-            "UPDATE agent_iterations SET status=?,state_after_hash=?,stop_reason=?,ended_at=UTC_TIMESTAMP(6) WHERE id=?",
-        )
-        .bind(status)
-        .bind(state_hash)
-        .bind(stop_reason)
-        .bind(iteration_id)
-        .execute(&self.pool)
-        .await;
-        self.emit_agent_iteration_finish(iteration_id, status, stop_reason)
-            .await;
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    async fn finish_agent(
-        &self,
-        run_id: Uuid,
-        status: &str,
-        iterations: u32,
-        tokens: u64,
-        cost_micros: u64,
-        tool_calls: u32,
-        state_hash: &str,
-        stop_reason: &str,
-    ) {
-        let _ = sqlx::query(
-            "UPDATE agent_runs SET status=?,iteration_count=?,model_call_count=?,tool_call_count=?,input_tokens=?,cost_micros=?,state_hash=?,stop_reason=?,ended_at=UTC_TIMESTAMP(6) WHERE id=?",
-        )
-        .bind(status)
-        .bind(iterations)
-        .bind(iterations)
-        .bind(tool_calls)
-        .bind(tokens)
-        .bind(cost_micros)
-        .bind(state_hash)
-        .bind(stop_reason)
-        .bind(run_id)
-        .execute(&self.pool)
-        .await;
-        self.emit_agent_span(
-            run_id,
-            None,
-            agentx_runtime_contracts::TraceEventKindV1::Finished,
-            status,
-            (status == "failed").then_some(stop_reason),
-            None,
-        )
-        .await;
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    async fn finish_agent_failure(
-        &self,
-        run_id: Uuid,
-        iterations: u32,
-        tokens: u64,
-        cost_micros: u64,
-        state_hash: &str,
-        stop_reason: &str,
-        error_code: &str,
-    ) -> WorkerExecution {
-        self.finish_agent(
-            run_id,
-            "failed",
-            iterations,
-            tokens,
-            cost_micros,
-            0,
-            state_hash,
-            stop_reason,
-        )
-        .await;
-        WorkerExecution::failed(error_code, stop_reason, false)
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    async fn finish_agent_limit(
-        &self,
-        run_id: Uuid,
-        iterations: u32,
-        input_tokens: u64,
-        output_tokens: u64,
-        cost_micros: u64,
-        state: &Value,
-        budget: &Value,
-        stop_reason: &str,
-        error_code: &str,
-    ) -> WorkerExecution {
-        let tokens = input_tokens.saturating_add(output_tokens);
-        if budget.get("limitAction").and_then(Value::as_str) == Some("partial") {
-            self.finish_agent(
-                run_id,
-                "succeeded",
-                iterations,
-                tokens,
-                cost_micros,
-                0,
-                &raw_hash(state),
-                stop_reason,
-            )
-            .await;
-            let text = state
-                .get("text")
-                .and_then(Value::as_str)
-                .unwrap_or_default();
-            return WorkerExecution::succeeded(
-                json!({"text":text,"reasoningContent":null,"structuredOutput":state.as_object().cloned(),"files":[],"citations":[],"usage":{"inputTokens":input_tokens,"outputTokens":output_tokens,"totalTokens":tokens,"costMicros":cost_micros},"finishReason":stop_reason,"partial":true}),
-            );
-        }
-        self.finish_agent_failure(
-            run_id,
-            iterations,
-            tokens,
-            cost_micros,
-            &raw_hash(state),
-            stop_reason,
-            error_code,
-        )
-        .await
+    async fn execute_agent_core(&self, claim: &ClaimedWorkerAttempt) -> WorkerExecution {
+        agent_core::execute(self, claim).await
     }
 
     async fn execute_resource(&self, claim: &ClaimedWorkerAttempt) -> WorkerExecution {
@@ -799,6 +411,7 @@ impl RuntimeWorker {
             RuntimeResourceConfigurationV1::Skill {
                 entrypoint_object_id,
                 dependency_object_ids,
+                ..
             } => {
                 self.execute_skill(claim, binding, *entrypoint_object_id, dependency_object_ids)
                     .await
@@ -890,7 +503,7 @@ impl RuntimeWorker {
             .load_runtime_object(claim.task.tenant_id, entrypoint_object_id)
             .await
             .and_then(|bytes| {
-                serde_json::from_slice::<RuntimeSkillProgramV1>(&bytes).map_err(anyhow::Error::from)
+                serde_json::from_slice::<RuntimeSkillProgramV2>(&bytes).map_err(anyhow::Error::from)
             }) {
             Ok(entrypoint) => entrypoint,
             Err(error) => {
@@ -901,7 +514,11 @@ impl RuntimeWorker {
                 );
             }
         };
-        let mut declared = entrypoint.dependency_object_ids.clone();
+        let mut declared = entrypoint
+            .assets
+            .iter()
+            .map(|asset| asset.object_id)
+            .collect::<Vec<_>>();
         declared.sort_unstable();
         let mut expected = dependency_object_ids.to_vec();
         expected.sort_unstable();
@@ -1154,11 +771,24 @@ impl RuntimeWorker {
                 "authorization",
             ),
             RuntimeResourceConfigurationV1::Mcp {
-                endpoint,
+                transport,
                 tool_name,
                 credential,
                 ..
             } => {
+                let endpoint = match transport {
+                    agentx_runtime_contracts::RuntimeMcpTransportV2::StreamableHttp {
+                        endpoint,
+                    }
+                    | agentx_runtime_contracts::RuntimeMcpTransportV2::Sse { endpoint } => endpoint,
+                    agentx_runtime_contracts::RuntimeMcpTransportV2::Stdio { .. } => {
+                        return WorkerExecution::failed(
+                            "MCP_STDIO_PROCESS_UNAVAILABLE",
+                            "stdio MCP requires a Sandbox Process Session",
+                            false,
+                        );
+                    }
+                };
                 return self
                     .call_mcp_tool(
                         claim,
@@ -1212,6 +842,7 @@ impl RuntimeWorker {
                 namespace,
                 memory_version,
                 credential,
+                ..
             } => {
                 let operation = claim
                     .node_parameters
@@ -1310,7 +941,7 @@ impl RuntimeWorker {
     }
 
     #[allow(clippy::too_many_arguments)]
-    async fn call_http(
+    pub(crate) async fn call_http(
         &self,
         claim: &ClaimedWorkerAttempt,
         kind: &str,
@@ -1330,6 +961,35 @@ impl RuntimeWorker {
             secret,
             secret_header,
             binding,
+            None,
+            RuntimeHttpTransport::Provider,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn call_http_effect(
+        &self,
+        claim: &ClaimedWorkerAttempt,
+        kind: &str,
+        endpoint: &str,
+        request: Value,
+        call_index: u32,
+        effect_idempotency_key: &str,
+        secret: Option<&agentx_runtime_contracts::VaultSecretReferenceV1>,
+        secret_header: &'static str,
+        binding: Option<&RuntimeResourceBindingV1>,
+    ) -> WorkerExecution {
+        self.call_http_with_transport(
+            claim,
+            kind,
+            endpoint,
+            request,
+            call_index,
+            secret,
+            secret_header,
+            binding,
+            Some(effect_idempotency_key),
             RuntimeHttpTransport::Provider,
         )
         .await
@@ -1352,6 +1012,7 @@ impl RuntimeWorker {
             None,
             "authorization",
             binding,
+            None,
             RuntimeHttpTransport::SandboxManager,
         )
         .await
@@ -1368,14 +1029,23 @@ impl RuntimeWorker {
         secret: Option<&agentx_runtime_contracts::VaultSecretReferenceV1>,
         secret_header: &'static str,
         binding: Option<&RuntimeResourceBindingV1>,
+        effect_idempotency_key: Option<&str>,
         transport: RuntimeHttpTransport,
     ) -> WorkerExecution {
         let fingerprint = runtime_call_fingerprint(kind, &request);
-        let call_id = stable_id(
-            claim.task.attempt_id,
-            format!("{kind}:{call_index}").as_bytes(),
+        let idempotency_key = effect_idempotency_key.map_or_else(
+            || format!("{}:{kind}:{call_index}", claim.task.attempt_id),
+            |identity| format!("agent-effect:{:x}", Sha256::digest(identity.as_bytes())),
         );
-        let idempotency_key = format!("{}:{kind}:{call_index}", claim.task.attempt_id);
+        let call_id = effect_idempotency_key.map_or_else(
+            || {
+                stable_id(
+                    claim.task.attempt_id,
+                    format!("{kind}:{call_index}").as_bytes(),
+                )
+            },
+            |_| stable_id(claim.task.tenant_id, idempotency_key.as_bytes()),
+        );
         match self
             .reserve_call(
                 claim,
@@ -1608,6 +1278,12 @@ impl RuntimeWorker {
             &raw_provider_response,
         )
         .await;
+        if matches!(kind, "sandbox" | "rag" | "memory")
+            && let Some(artifact_id) = response_artifact_id
+        {
+            payload["artifactRefs"] = json!([artifact_id.to_string()]);
+            payload["truncated"] = json!(true);
+        }
         if kind == "http" {
             let response_headers = response
                 .headers
@@ -1688,7 +1364,11 @@ impl RuntimeWorker {
                 return Ok(Some(response));
             }
             let side_effect: String = row.try_get("side_effect").map_err(|error| WorkerExecution::failed("RUNTIME_CALL_STATE_INVALID", error.to_string(), false))?;
-            if runtime_call_is_replayable(&status, &side_effect) {
+            let stdio_frame_requires_reconciliation =
+                kind == "sandbox" && request.get("frame").is_some() && status == "sent";
+            if runtime_call_is_replayable(&status, &side_effect)
+                && !stdio_frame_requires_reconciliation
+            {
                 sqlx::query(
                     "UPDATE runtime_calls SET status='reserved',error_code=NULL,error_message=NULL,ended_at=NULL WHERE id=? AND status=?",
                 )
@@ -1712,6 +1392,18 @@ impl RuntimeWorker {
             }
             _ => None,
         });
+        let side_effect = binding
+            .and_then(|binding| match &binding.configuration {
+                RuntimeResourceConfigurationV1::Mcp { side_effect, .. } if kind == "mcp_tool" => {
+                    Some(match side_effect.as_str() {
+                        "none" | "read_only" => "none",
+                        "idempotent" => "idempotent",
+                        _ => "irreversible",
+                    })
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| runtime_call_side_effect(kind, request));
         sqlx::query(
             "INSERT INTO runtime_calls(id,tenant_id,execution_id,node_execution_id,attempt_id,agent_run_id,iteration_index,call_index,call_kind,idempotency_key,request_fingerprint,resource_type,resource_id,resource_version_id,tool_name_snapshot,side_effect,status,request_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'reserved',?)",
         )
@@ -1730,7 +1422,7 @@ impl RuntimeWorker {
         .bind(binding.map(|value| value.resource_id))
         .bind(binding.map(|value| value.resource_version.as_str()))
         .bind(tool_name_snapshot)
-        .bind(if kind == "mcp_tool" || kind == "sandbox" { "idempotent" } else { "none" })
+        .bind(side_effect)
         .bind(request)
         .execute(&mut *tx)
         .await

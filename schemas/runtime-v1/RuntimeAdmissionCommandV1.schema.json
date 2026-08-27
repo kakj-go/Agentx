@@ -568,8 +568,8 @@
           "format": "uuid",
           "type": "string"
         },
-        "resourceKind": {
-          "$ref": "#/$defs/RuntimeResourceKindV1"
+        "resourceType": {
+          "type": "string"
         },
         "tenantId": {
           "format": "uuid",
@@ -580,7 +580,7 @@
         "tenantId",
         "identityId",
         "grantId",
-        "resourceKind",
+        "resourceType",
         "resourceId",
         "operations",
         "policyEpoch",

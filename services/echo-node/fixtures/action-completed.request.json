@@ -1,5 +1,5 @@
 {
-  "protocolVersion": "1.0",
+  "protocolVersion": "2.0",
   "nodeType": "echo",
   "nodeVersion": 1,
   "tenantId": "018f0000-0000-7000-8000-000000000001",

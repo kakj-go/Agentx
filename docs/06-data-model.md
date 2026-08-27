@@ -193,7 +193,7 @@ mcp_servers 保存连接元数据，mcp_server_versions 固化传输、Endpoint�
 
 skills 保存租户内 Skill Definition 和工作区 Revision。skill_workspace_entries 表示目录与文件，文件内容由 Artifact 引用；skill_file_revisions 保存每次 Markdown 修改。skill_versions、skill_version_files 和 skill_file_references 固化发布时每个文件的路径、Hash 和引用目标。skill_dependencies 只允许 Model、MCP Tool、Credential、Skill、RAG 和 Memory 等当前资源类型。
 
-`resource_grant_requests` 保存设计期授权申请聚合、来源 Node/Draft Revision、依赖指纹、开放请求去重键和 `pending/approved/rejected/cancelled/stale` 状态。`open_dedupe_key` 仅在 Pending 时非空，通过 `tenant_id + open_dedupe_key` 唯一约束保证同一 Workflow Service Identity、主资源和操作只有一个开放申请；进入终态后置空，允许重新申请。资源授权相关查询始终以 `tenant_id` 为边界，并把角色 `data_scope=company`、部门闭包与 Department Grant 纳入一致的资源可见性判定。
+`resource_grant_requests` 保存设计期授权申请聚合、来源 Node/Draft Revision、依赖指纹、开放请求去重键和 `pending/approved/rejected/cancelled/stale` 状态。申请主体是封闭的 `department | workflow_service_identity`：Workflow 设计与运行授权使用 Service Identity；MCP Server 配置依赖使用 Owner Department。`open_dedupe_key` 仅在 Pending 时非空，通过 `tenant_id + open_dedupe_key` 唯一约束保证同一 Subject、主资源和操作只有一个开放申请；进入终态后置空，允许重新申请。只有 Workflow Subject 的 Grant 变化推进 Runtime Policy Epoch，Department Grant 不进入 Runtime Bundle。资源授权相关查询始终以 `tenant_id` 为边界，并把角色 `data_scope=company`、部门闭包与 Department Grant 纳入一致的资源可见性判定。
 
 `resource_grant_request_items` 是申请创建时由服务端展开的不可变授权包快照，记录每项资源、版本、操作、依赖来源和所属部门。`resource_grant_request_reviews` 按所属部门聚合会签，状态为 `pending/approved/rejected` 并使用独立 Version 做并发控制；同一申请与部门只生成一项 Review。全部 Review 通过后，服务端在同一事务按每项所属部门审批人写入 `resource_grants.created_by`；任一 Review 拒绝时不创建授权，运行时 `approval_tasks` 不参与该流程。
 

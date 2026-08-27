@@ -262,7 +262,7 @@ function nodeMetrics(node: StudioNode, manifests: Map<string, NodeManifest>) {
   if (node.data.editorKind === 'binding') return canvasNodeMetrics('default', { kind: 'binding' })
   if (node.data.editorKind !== 'action') return { width: 96, height: 96 }
   const manifest = manifests.get(`${node.data.nodeType}@${node.data.typeVersion}`)
-  const metrics = canvasNodeMetrics(canvasNodeRole(manifest), { inputs: manifest?.inputPorts.length, outputs: manifest?.outputPorts.length, bindings: manifest?.bindingSlots.length, richHeight: node.height ?? node.measured?.height })
+  const metrics = canvasNodeMetrics(canvasNodeRole(manifest), { inputs: manifest?.inputPorts.length, outputs: manifest?.outputPorts.length, bindings: manifest?.bindingSlots.filter((slot) => slot.placement === 'canvas').length, richHeight: node.height ?? node.measured?.height })
   return { width: node.width ?? node.measured?.width ?? metrics.width, height: (node.height ?? node.measured?.height ?? metrics.height) + (metrics.labelBelow ? 28 : 0) }
 }
 

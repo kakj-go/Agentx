@@ -27,7 +27,7 @@ export const ManifestNode = memo(function ManifestNode({ id, data, selected }: N
   const portSignature = useMemo(() => manifest ? JSON.stringify([
     manifest.inputPorts.map((port) => [port.name, port.kind]),
     manifest.outputPorts.map((port) => [port.name, port.kind]),
-    manifest.bindingSlots.map((slot) => [slot.name, slot.resourceType]),
+    manifest.bindingSlots.map((slot) => [slot.name, slot.resourceType, slot.placement]),
   ]) : '', [manifest])
   const occupiedHandles = useMemo(() => new Set(occupiedHandleSignature ? occupiedHandleSignature.split('\u0001') : []), [occupiedHandleSignature])
   useEffect(() => scheduleNodeInternalsUpdate(id, updateNodeInternals), [id, portSignature, updateNodeInternals])
@@ -44,7 +44,7 @@ export const ManifestNode = memo(function ManifestNode({ id, data, selected }: N
     <NodeSurface bindingSummaries={bindingSummaries} label={label} manifest={manifest} role={role} statusClass={statusClass} />
     <NodeLabel family={family} label={label} />
     {manifest?.outputPorts.map((port, index) => <PortHandle addLabel={t('studio.ports.addAfter', { label: localized?.outputPortLabel(port.name) ?? port.name })} id={port.name} key={`out-${port.name}`} kind={port.kind} label={localized?.outputPortLabel(port.name) ?? port.name} onHover={onSourceHover ? (active) => onSourceHover(id, port.name, active) : undefined} onQuickAdd={!data.disabled && onQuickAdd && (!occupiedHandles.has(port.name) || port.variadic) ? () => onQuickAdd(id, port.name, 'output') : undefined} placement={portPlacement('output', port.kind, port.name, index, manifest.outputPorts)} type="source" />)}
-    {manifest?.bindingSlots.map((slot, index) => <PortHandle addLabel={t('studio.ports.addAfter', { label: localized?.bindingSlotLabel(slot.name) ?? slot.name })} id={`binding:${slot.name}`} key={slot.name} kind="binding" label={localized?.bindingSlotLabel(slot.name) ?? slot.name} onQuickAdd={!data.disabled && onQuickAdd && (!occupiedHandles.has(`binding:${slot.name}`) || slot.multiple) ? () => onQuickAdd(id, `binding:${slot.name}`, 'binding') : undefined} placement={bindingPlacement(index, manifest.bindingSlots.length)} resourceType={slot.resourceType} type="target" />)}
+    {manifest && (() => { const slots = manifest.bindingSlots.filter((slot) => slot.placement === 'canvas'); return slots.map((slot, index) => <PortHandle addLabel={t('studio.ports.addAfter', { label: localized?.bindingSlotLabel(slot.name) ?? slot.name })} id={`binding:${slot.name}`} key={slot.name} kind="binding" label={localized?.bindingSlotLabel(slot.name) ?? slot.name} onQuickAdd={!data.disabled && onQuickAdd && (!occupiedHandles.has(`binding:${slot.name}`) || slot.multiple) ? () => onQuickAdd(id, `binding:${slot.name}`, 'binding') : undefined} placement={bindingPlacement(index, slots.length)} resourceType={slot.resourceType} type="target" />) })()}
     {data.disabled && <AlertTriangle className="absolute -right-2 -top-2 z-30 size-5 rounded-full bg-surface p-0.5 text-warning" />}
   </div>
 })

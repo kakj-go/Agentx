@@ -24,6 +24,7 @@ const ExecutionsPage = lazy(() => import('../features/executions/executions-page
 const ExecutionDetailPage = lazy(() => import('../features/executions/execution-detail-page').then((module) => ({ default: module.ExecutionDetailPage })))
 const NotificationsPage = lazy(() => import('../features/notifications/notifications-page').then((module) => ({ default: module.NotificationsPage })))
 const RuntimeStatusPage = lazy(() => import('../features/runtime/runtime-status-page').then((module) => ({ default: module.RuntimeStatusPage })))
+const AgentSessionsPage = lazy(() => import('../features/agent-sessions/agent-sessions-page').then((module) => ({ default: module.AgentSessionsPage })))
 const KnowledgePage = lazy(() => import('../features/knowledge/knowledge-page').then((module) => ({ default: module.KnowledgePage })))
 const KnowledgeDetailPage = lazy(() => import('../features/knowledge/knowledge-detail-page').then((module) => ({ default: module.KnowledgeDetailPage })))
 const MemoryPage = lazy(() => import('../features/memory/memory-page').then((module) => ({ default: module.MemoryPage })))
@@ -78,6 +79,7 @@ export const router = createBrowserRouter([
       { path: 'evaluations', element: deferred(<RequirePermission permission="evaluation:view"><EvaluationsPage /></RequirePermission>) },
       { path: 'evaluations/:id', element: deferred(<RequirePermission permission="evaluation:view"><EvaluationDetailPage /></RequirePermission>) },
       { path: 'runtime', element: deferred(<RequirePermission permission="runtime:view"><RuntimeStatusPage /></RequirePermission>) },
+      { path: 'agent-sessions', element: deferred(<RequirePermission permission="execution:view"><AgentSessionsPage /></RequirePermission>) },
       { path: 'credentials', element: deferred(<RequirePermission permission="credential:view"><CredentialsPage /></RequirePermission>) },
       { path: 'credentials/:id', element: deferred(<RequirePermission permission="credential:view"><CredentialDetailPage /></RequirePermission>) },
       { path: 'models', element: deferred(<RequirePermission permission="model:view"><ModelsPage /></RequirePermission>) },

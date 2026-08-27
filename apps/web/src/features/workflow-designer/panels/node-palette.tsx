@@ -22,7 +22,7 @@ export function NodePalette({ manifests, sourceConnection, bindingSlot, open, on
   const expanded = open ?? internalOpen
   const attachments = useMemo(() => {
     const values = new Map<ResourceType, string>()
-    for (const manifest of manifests) for (const slot of manifest.bindingSlots) values.set(slot.resourceType, slot.name)
+    for (const manifest of manifests) for (const slot of manifest.bindingSlots.filter((candidate) => candidate.placement === 'canvas')) values.set(slot.resourceType, slot.name)
     const result = [...values]
     return bindingSlot ? result.filter(([resourceType]) => resourceType === bindingSlot.resourceType).map(([resourceType]) => [resourceType, bindingSlot.name] as [ResourceType, string]) : result
   }, [bindingSlot, manifests])

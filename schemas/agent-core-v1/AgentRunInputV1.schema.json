@@ -1,0 +1,360 @@
+{
+  "$defs": {
+    "AgentMessageV1": {
+      "additionalProperties": false,
+      "properties": {
+        "content": {
+          "type": "string"
+        },
+        "isError": {
+          "default": false,
+          "type": "boolean"
+        },
+        "messageId": {
+          "type": "string"
+        },
+        "role": {
+          "$ref": "#/$defs/MessageRole"
+        },
+        "toolCallId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "toolCalls": {
+          "items": {
+            "$ref": "#/$defs/ToolCallV1"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "messageId",
+        "role",
+        "content"
+      ],
+      "type": "object"
+    },
+    "AgentSessionProjectionV1": {
+      "additionalProperties": false,
+      "description": "Projection of the durable Register supplied to one Core invocation.  The\nWorker remains authoritative for loading and CAS; Core treats this as an\nimmutable recovery hint and never derives identity from user input.",
+      "properties": {
+        "leafEntryId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "mode": {
+          "$ref": "#/$defs/SessionPolicyModeV1"
+        },
+        "openOperationId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "retention": {
+          "$ref": "#/$defs/RetentionPolicyV1",
+          "default": {
+            "protectReferencedArtifacts": false
+          }
+        },
+        "sessionKey": {
+          "type": "string"
+        },
+        "stateVersion": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "trustedSubject": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TrustedSubjectEvidenceV1"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "mode",
+        "sessionKey",
+        "stateVersion"
+      ],
+      "type": "object"
+    },
+    "ExternalContextOriginV1": {
+      "enum": [
+        "skill"
+      ],
+      "type": "string"
+    },
+    "ExternalContextV1": {
+      "additionalProperties": false,
+      "description": "An immutable, provenance-carrying context fragment resolved by the Worker\nfrom the signed Bundle. Core orders it before the invocation's user\nmessage, but never derives tool authorization from its contents.",
+      "properties": {
+        "content": {
+          "type": "string"
+        },
+        "contentHash": {
+          "type": "string"
+        },
+        "contextId": {
+          "type": "string"
+        },
+        "origin": {
+          "$ref": "#/$defs/ExternalContextOriginV1"
+        },
+        "sourceResourceId": {
+          "type": "string"
+        },
+        "sourceResourceVersionId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "contextId",
+        "origin",
+        "sourceResourceId",
+        "sourceResourceVersionId",
+        "contentHash",
+        "content"
+      ],
+      "type": "object"
+    },
+    "MessageRole": {
+      "enum": [
+        "user",
+        "assistant",
+        "tool_result",
+        "external_context"
+      ],
+      "type": "string"
+    },
+    "ReplayPolicyV1": {
+      "enum": [
+        "safe",
+        "never",
+        "idempotency_required",
+        "ledger_dependent"
+      ],
+      "type": "string"
+    },
+    "RetentionPolicyV1": {
+      "additionalProperties": false,
+      "properties": {
+        "compactionArtifactExpiresAtMillis": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "protectReferencedArtifacts": {
+          "default": false,
+          "type": "boolean"
+        },
+        "sessionExpiresAtMillis": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "SessionPolicyModeV1": {
+      "enum": [
+        "application_session",
+        "invocation"
+      ],
+      "type": "string"
+    },
+    "ToolCallV1": {
+      "additionalProperties": false,
+      "properties": {
+        "arguments": true,
+        "callId": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "callId",
+        "name",
+        "arguments"
+      ],
+      "type": "object"
+    },
+    "ToolDefinitionV1": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "inputSchema": true,
+        "name": {
+          "type": "string"
+        },
+        "origin": {
+          "$ref": "#/$defs/ToolOriginV1"
+        },
+        "replayPolicy": {
+          "$ref": "#/$defs/ReplayPolicyV1"
+        }
+      },
+      "required": [
+        "name",
+        "description",
+        "inputSchema",
+        "origin",
+        "replayPolicy"
+      ],
+      "type": "object"
+    },
+    "ToolOriginV1": {
+      "enum": [
+        "core",
+        "mcp",
+        "skill",
+        "knowledge",
+        "memory"
+      ],
+      "type": "string"
+    },
+    "TrustedSubjectEvidenceV1": {
+      "additionalProperties": false,
+      "properties": {
+        "authenticatedSubjectId": {
+          "type": "string"
+        },
+        "evidenceHash": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "authenticatedSubjectId",
+        "source",
+        "evidenceHash"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "attachmentTools": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/ToolDefinitionV1"
+      },
+      "type": "array"
+    },
+    "deadlineAtMillis": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "externalContexts": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/ExternalContextV1"
+      },
+      "type": "array"
+    },
+    "fencingToken": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "followUpInputs": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/AgentMessageV1"
+      },
+      "type": "array"
+    },
+    "modelContextWindow": {
+      "description": "模型的 context window 大小（tokens），用于自动计算压缩策略",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "modelReference": {
+      "type": "string"
+    },
+    "prompt": {
+      "type": "string"
+    },
+    "promptMessageId": {
+      "type": "string"
+    },
+    "runId": {
+      "type": "string"
+    },
+    "session": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/AgentSessionProjectionV1"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Durable Entry/Register projection used for recovery.  It is optional\nfor the offline Core spike; production Worker always supplies it."
+    },
+    "sessionId": {
+      "type": "string"
+    },
+    "steeringInputs": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/AgentMessageV1"
+      },
+      "type": "array"
+    },
+    "systemPrompt": {
+      "description": "The Agent Inspector system prompt is projected for every Model Effect\nbut is intentionally not appended to durable Session history.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "workspaceSandboxBinding": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "apiVersion",
+    "runId",
+    "sessionId",
+    "fencingToken",
+    "deadlineAtMillis",
+    "modelReference",
+    "promptMessageId",
+    "prompt",
+    "modelContextWindow"
+  ],
+  "title": "AgentRunInputV1",
+  "type": "object"
+}

@@ -7,13 +7,13 @@ use serde_json::Value;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
-pub const NODE_PROTOCOL_VERSION: &str = "1.0";
+pub const NODE_PROTOCOL_VERSION: &str = "2.0";
 
 #[derive(JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum NodeProtocolVersion {
-    #[serde(rename = "1.0")]
-    V1,
+    #[serde(rename = "2.0")]
+    V2,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema, PartialEq, Serialize)]
@@ -167,10 +167,18 @@ pub struct NodePort {
 pub struct BindingSlot {
     pub name: String,
     pub resource_type: ResourceType,
+    pub placement: BindingSlotPlacement,
     #[serde(default)]
     pub required: bool,
     #[serde(default)]
     pub multiple: bool,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BindingSlotPlacement {
+    Inspector,
+    Canvas,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
@@ -425,6 +433,25 @@ impl NodeManifestVersion {
                         ));
                     }
                 }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn validate_binding_slots(&self) -> Result<(), String> {
+        let mut names = std::collections::HashSet::new();
+        for slot in &self.binding_slots {
+            if slot.name.is_empty() {
+                return Err("binding slot name must not be empty".into());
+            }
+            if !names.insert(slot.name.as_str()) {
+                return Err(format!("duplicate binding slot '{}'", slot.name));
+            }
+            if slot.placement == BindingSlotPlacement::Inspector && slot.multiple {
+                return Err(format!(
+                    "inspector binding slot '{}' cannot accept multiple resources",
+                    slot.name
+                ));
             }
         }
         Ok(())
@@ -710,5 +737,42 @@ mod tests {
             }))
             .is_err()
         );
+    }
+
+    #[test]
+    fn binding_slot_placement_is_required_and_inspector_is_single_value() {
+        assert!(
+            serde_json::from_value::<BindingSlot>(serde_json::json!({
+                "name": "model",
+                "resourceType": "model",
+                "required": true,
+                "multiple": false
+            }))
+            .is_err()
+        );
+        let manifest_slot: BindingSlot = serde_json::from_value(serde_json::json!({
+            "name": "model",
+            "resourceType": "model",
+            "placement": "inspector",
+            "required": true,
+            "multiple": true
+        }))
+        .expect("placement is part of Manifest 2.0");
+        let mut manifest = serde_json::from_value::<NodeManifestVersion>(serde_json::json!({
+            "protocolVersion": "2.0",
+            "nodeType": "agent",
+            "version": 2,
+            "displayName": "Agent",
+            "executionStyle": "action",
+            "capability": "agent",
+            "readiness": "all",
+            "inputPorts": [],
+            "outputPorts": [],
+            "parameterSchema": {},
+            "sideEffectLevel": "irreversible"
+        }))
+        .expect("minimal manifest");
+        manifest.binding_slots = vec![manifest_slot];
+        assert!(manifest.validate_binding_slots().is_err());
     }
 }

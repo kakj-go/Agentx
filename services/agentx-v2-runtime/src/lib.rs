@@ -1,3 +1,4 @@
+pub mod agent_session_queue;
 pub mod artifact;
 pub mod auth;
 mod composite;

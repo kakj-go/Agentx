@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "destroyed": {
+      "type": "boolean"
+    },
+    "released": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "apiVersion",
+    "released",
+    "destroyed"
+  ],
+  "title": "WorkspaceReleaseResponseV1",
+  "type": "object"
+}

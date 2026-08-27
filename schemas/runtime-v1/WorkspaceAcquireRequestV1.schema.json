@@ -1,0 +1,90 @@
+{
+  "$defs": {
+    "WorkspaceIdentityV1": {
+      "additionalProperties": false,
+      "properties": {
+        "applicationId": {
+          "format": "uuid",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sandboxProfileVersionId": {
+          "type": "string"
+        },
+        "sessionKey": {
+          "type": "string"
+        },
+        "stableAgentNodeKey": {
+          "type": "string"
+        },
+        "tenantId": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tenantId",
+        "sessionKey",
+        "stableAgentNodeKey",
+        "sandboxProfileVersionId"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "attemptId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "deadline": {
+      "type": "string"
+    },
+    "executionId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "fencingToken": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "idempotencyKey": {
+      "type": "string"
+    },
+    "identity": {
+      "$ref": "#/$defs/WorkspaceIdentityV1"
+    },
+    "nodeExecutionId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "profile": true,
+    "workerId": {
+      "format": "uuid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "apiVersion",
+    "identity",
+    "executionId",
+    "nodeExecutionId",
+    "attemptId",
+    "workerId",
+    "fencingToken",
+    "profile",
+    "idempotencyKey",
+    "deadline"
+  ],
+  "title": "WorkspaceAcquireRequestV1",
+  "type": "object"
+}

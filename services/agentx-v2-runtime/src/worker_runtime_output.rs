@@ -132,18 +132,6 @@ fn json_text(value: &Value) -> String {
         .unwrap_or_else(|| value.to_string())
 }
 
-pub(super) fn provider_usage(value: &Value) -> (u64, u64) {
-    let (input, output, cost) = provider_usage_detail(value);
-    let usage = value.get("usage").unwrap_or(value);
-    let total = usage
-        .get("totalTokens")
-        .or_else(|| usage.get("tokens"))
-        .or_else(|| usage.get("total_tokens"))
-        .and_then(Value::as_u64)
-        .unwrap_or_else(|| input.saturating_add(output));
-    (total, cost)
-}
-
 pub(super) fn provider_usage_detail(value: &Value) -> (u64, u64, u64) {
     let usage = value.get("usage").unwrap_or(value);
     let input = usage
@@ -200,6 +188,7 @@ pub(super) fn apply_model_price(
     Ok((input_tokens, output_tokens, cost))
 }
 
+#[cfg(test)]
 pub(super) fn effective_agent_budget(parameters: &Value) -> Value {
     let nested = parameters.get("budget");
     let maximum_iterations = nested
@@ -246,6 +235,28 @@ pub(super) fn effective_agent_budget(parameters: &Value) -> Value {
 
 pub(super) fn runtime_call_is_replayable(status: &str, side_effect: &str) -> bool {
     status == "reserved" || (status == "sent" && matches!(side_effect, "none" | "idempotent"))
+}
+
+pub(super) fn runtime_call_side_effect(kind: &str, request: &Value) -> &'static str {
+    match (kind, request.get("toolName").and_then(Value::as_str)) {
+        ("model" | "compaction", _) => "irreversible",
+        ("sandbox", Some("write" | "edit" | "bash")) => "irreversible",
+        ("sandbox", _) if request.get("frame").is_some() => {
+            match request.get("replayPolicy").and_then(Value::as_str) {
+                Some("safe") => "none",
+                Some("idempotency_required") => "idempotent",
+                _ => "irreversible",
+            }
+        }
+        ("sandbox", _) => "idempotent",
+        ("mcp_tool", _) => match request.get("sideEffect").and_then(Value::as_str) {
+            Some("none" | "read_only") => "none",
+            Some("idempotent") => "idempotent",
+            _ => "irreversible",
+        },
+        ("memory", _) if request.get("messages").is_some() => "irreversible",
+        _ => "none",
+    }
 }
 
 pub(super) fn sandbox_execution_output(execution: WorkerExecution) -> WorkerExecution {

@@ -4,6 +4,7 @@ import { emptyEditorDocument } from './types'
 
 export function deserializeDraft(value: WorkflowDraft): StudioDocument {
   const definition = value.definition as WorkflowDefinition
+  if (definition.schemaVersion !== '6.0') throw new Error(`Unsupported Workflow Definition ${String(definition.schemaVersion)}`)
   const editor = normalizeEditor(value.editorDocument)
   const layouts = new Map(editor.nodeLayouts.map((layout) => [layout.nodeId, layout]))
   const bindingLayouts = new Map(editor.bindingLayouts.map((layout) => [layout.bindingId, layout]))
@@ -53,7 +54,7 @@ export function serializeStudio(document: StudioDocument): { definition: Workflo
   for (const values of grouped.values()) values.sort((a, b) => a.order - b.order || a.id.localeCompare(b.id)).forEach((value, index) => { value.order = index })
   return {
     definition: {
-      schemaVersion: '5.0',
+      schemaVersion: '6.0',
     start: document.start,
     settings: document.settings,
       nodes: actionNodes.map((node) => ({ id: node.id, key: node.data.key, type: node.data.nodeType, typeVersion: node.data.typeVersion, name: node.data.label, disabled: node.data.disabled, parameters: node.data.parameters, outputProjection: node.data.outputProjection, contextWrites: node.data.contextWrites, resourceReferences: [...node.data.resourceReferences.filter((reference) => !reference.bindingId), ...(bindingByTarget.get(node.id) ?? [])], settings: node.data.settings })),

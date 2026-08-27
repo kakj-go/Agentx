@@ -24,6 +24,7 @@ CREATE TABLE agent_runs (
     tenant_id BINARY(16) NOT NULL,
     execution_id BINARY(16) NOT NULL,
     node_execution_id BINARY(16) NOT NULL,
+    attempt_id BINARY(16) NOT NULL,
     status ENUM('running', 'succeeded', 'failed', 'cancelled') NOT NULL DEFAULT 'running',
     budget_json JSON NOT NULL,
     iteration_count INT UNSIGNED NOT NULL DEFAULT 0,
@@ -42,7 +43,163 @@ CREATE TABLE agent_runs (
     ended_at TIMESTAMP(6) NULL,
     PRIMARY KEY (id),
     UNIQUE KEY uq_agent_run_node (tenant_id, node_execution_id),
-    KEY idx_agent_run_execution (tenant_id, execution_id, started_at)
+    KEY idx_agent_run_execution (tenant_id, execution_id, started_at),
+    KEY idx_agent_run_attempt (tenant_id, attempt_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+-- Durable Agent Core session state (P3-05).  Entries are append-only; the
+-- Register is the only mutable recovery authority.  There is intentionally
+-- no compatibility table or migration for the removed monolithic state.
+CREATE TABLE agent_session_entries (
+    entry_id VARCHAR(191) NOT NULL,
+    tenant_id BINARY(16) NOT NULL,
+    application_id BINARY(16) NULL,
+    session_key VARCHAR(255) NOT NULL,
+    stable_agent_node_key VARCHAR(255) NOT NULL,
+    session_id VARCHAR(255) NOT NULL,
+    lane ENUM('main') NOT NULL DEFAULT 'main',
+    sequence_number BIGINT UNSIGNED NOT NULL,
+    parent_entry_id VARCHAR(191) NULL,
+    entry_kind ENUM('message.user','message.assistant','message.tool_call','message.tool_result','custom.external_context','compaction','pending.steering','pending.follow_up') NOT NULL,
+    payload_json JSON NULL,
+    payload_artifact_id BINARY(16) NULL,
+    operation_id VARCHAR(191) NULL,
+    created_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    PRIMARY KEY (entry_id),
+    UNIQUE KEY uq_agent_session_entry_identity (tenant_id, session_key, stable_agent_node_key, entry_id),
+    UNIQUE KEY uq_agent_session_entry_sequence (tenant_id, session_key, stable_agent_node_key, lane, sequence_number),
+    KEY idx_agent_session_entry_chain (tenant_id, session_key, stable_agent_node_key, lane, sequence_number),
+    KEY idx_agent_session_entry_operation (tenant_id, operation_id),
+    CONSTRAINT chk_agent_session_entry_payload CHECK ((payload_json IS NOT NULL) <> (payload_artifact_id IS NOT NULL))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+CREATE TABLE agent_session_registers (
+    tenant_id BINARY(16) NOT NULL,
+    application_id BINARY(16) NULL,
+    session_key VARCHAR(255) NOT NULL,
+    stable_agent_node_key VARCHAR(255) NOT NULL,
+    session_id VARCHAR(255) NOT NULL,
+    lane ENUM('main') NOT NULL DEFAULT 'main',
+    bundle_hash VARCHAR(128) NOT NULL,
+    definition_hash VARCHAR(128) NOT NULL,
+    model_version VARCHAR(255) NOT NULL,
+    core_contract_version VARCHAR(32) NOT NULL,
+    leaf_entry_id VARCHAR(191) NULL,
+    open_operation_id VARCHAR(191) NULL,
+    state_version BIGINT UNSIGNED NOT NULL DEFAULT 0,
+    fencing_token BIGINT UNSIGNED NOT NULL DEFAULT 0,
+    terminal_state VARCHAR(64) NULL,
+    operation_json JSON NULL,
+    register_json JSON NOT NULL,
+    retention_json JSON NULL,
+    lease_expires_at TIMESTAMP(6) NULL,
+    created_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    updated_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+    PRIMARY KEY (tenant_id, session_key, stable_agent_node_key),
+    KEY idx_agent_session_register_application (tenant_id, application_id, updated_at),
+    KEY idx_agent_session_register_open (tenant_id, open_operation_id, updated_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+CREATE TABLE agent_session_operations (
+    operation_id VARCHAR(191) NOT NULL,
+    tenant_id BINARY(16) NOT NULL,
+    session_key VARCHAR(255) NOT NULL,
+    stable_agent_node_key VARCHAR(255) NOT NULL,
+    attempt_id BINARY(16) NOT NULL,
+    fencing_token BIGINT UNSIGNED NOT NULL,
+    expected_state_version BIGINT UNSIGNED NOT NULL,
+    phase VARCHAR(64) NOT NULL,
+    operation_json JSON NOT NULL,
+    input_hash CHAR(64) NOT NULL,
+    bundle_hash VARCHAR(128) NOT NULL,
+    model_version VARCHAR(255) NOT NULL,
+    registry_hash CHAR(64) NOT NULL,
+    replay_policy VARCHAR(32) NOT NULL,
+    deadline_at TIMESTAMP(6) NOT NULL,
+    recovery_action VARCHAR(128) NULL,
+    created_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    updated_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+    PRIMARY KEY (operation_id),
+    KEY idx_agent_session_operation_phase (tenant_id, session_key, stable_agent_node_key, phase, updated_at),
+    KEY idx_agent_session_operation_recovery (tenant_id, session_key, stable_agent_node_key, updated_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+CREATE TABLE agent_session_usages (
+    usage_id VARCHAR(191) NOT NULL,
+    tenant_id BINARY(16) NOT NULL,
+    session_key VARCHAR(255) NOT NULL,
+    stable_agent_node_key VARCHAR(255) NOT NULL,
+    session_id VARCHAR(255) NOT NULL,
+    operation_id VARCHAR(191) NOT NULL,
+    effect_id VARCHAR(191) NOT NULL,
+    usage_kind ENUM('model','compaction','tool','memory') NOT NULL,
+    resource_reference VARCHAR(255) NULL,
+    input_tokens BIGINT UNSIGNED NOT NULL DEFAULT 0,
+    output_tokens BIGINT UNSIGNED NOT NULL DEFAULT 0,
+    cache_read_tokens BIGINT UNSIGNED NOT NULL DEFAULT 0,
+    cache_write_tokens BIGINT UNSIGNED NOT NULL DEFAULT 0,
+    cost_micros BIGINT UNSIGNED NOT NULL DEFAULT 0,
+    cost_currency CHAR(3) NULL,
+    created_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    PRIMARY KEY (usage_id),
+    UNIQUE KEY uq_agent_session_usage_effect (tenant_id, operation_id, effect_id, usage_kind),
+    KEY idx_agent_session_usage_session (tenant_id, session_key, stable_agent_node_key, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+CREATE TABLE agent_session_pending_entries (
+    entry_id VARCHAR(191) NOT NULL,
+    tenant_id BINARY(16) NOT NULL,
+    session_key VARCHAR(255) NOT NULL,
+    stable_agent_node_key VARCHAR(255) NOT NULL,
+    execution_id BINARY(16) NULL,
+    node_execution_id BINARY(16) NULL,
+    attempt_id BINARY(16) NULL,
+    lane ENUM('main') NOT NULL DEFAULT 'main',
+    queue_kind ENUM('steering','follow_up','retry') NOT NULL,
+    idempotency_key VARCHAR(191) NOT NULL,
+    payload_json JSON NOT NULL,
+    sequence_number BIGINT UNSIGNED NOT NULL,
+    status ENUM('pending','consumed','cancelled') NOT NULL DEFAULT 'pending',
+    wake_command_id BINARY(16) NULL,
+    created_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    consumed_at TIMESTAMP(6) NULL,
+    PRIMARY KEY (entry_id),
+    UNIQUE KEY uq_agent_session_pending_idempotency (tenant_id, session_key, stable_agent_node_key, idempotency_key),
+    KEY idx_agent_session_pending_queue (tenant_id, session_key, stable_agent_node_key, status, sequence_number),
+    KEY idx_agent_session_pending_wakeup (status, queue_kind, wake_command_id, sequence_number)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+CREATE TABLE agent_subject_memory_audit (
+    audit_id BINARY(16) NOT NULL,
+    tenant_id BINARY(16) NOT NULL,
+    application_id BINARY(16) NOT NULL,
+    authenticated_subject_id BINARY(16) NOT NULL,
+    memory_resource_version_id BINARY(16) NOT NULL,
+    operation VARCHAR(32) NOT NULL,
+    scope_hash CHAR(64) NOT NULL,
+    operation_id VARCHAR(191) NULL,
+    result_hash CHAR(64) NULL,
+    created_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    PRIMARY KEY (audit_id),
+    KEY idx_agent_subject_memory_scope (tenant_id, application_id, authenticated_subject_id, memory_resource_version_id, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+CREATE TABLE agent_subject_memory_clears (
+    clear_id BINARY(16) NOT NULL,
+    audit_id BINARY(16) NOT NULL,
+    tenant_id BINARY(16) NOT NULL,
+    application_id BINARY(16) NOT NULL,
+    authenticated_subject_id BINARY(16) NOT NULL,
+    memory_resource_version_id BINARY(16) NOT NULL,
+    scope_hash CHAR(64) NOT NULL,
+    idempotency_key VARCHAR(191) NOT NULL,
+    status ENUM('requested','applied','failed') NOT NULL DEFAULT 'requested',
+    created_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    applied_at TIMESTAMP(6) NULL,
+    last_error VARCHAR(1000) NULL,
+    PRIMARY KEY (clear_id),
+    UNIQUE KEY uq_agent_subject_memory_clear_idempotency (tenant_id, idempotency_key),
+    KEY idx_agent_subject_memory_clear_scope (tenant_id, application_id, authenticated_subject_id, memory_resource_version_id, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 CREATE TABLE api_key_admission (
@@ -87,7 +244,7 @@ CREATE TABLE deployment_bundles (
     PRIMARY KEY (id),
     UNIQUE KEY uq_deployment_bundle_sequence (tenant_id, application_id, sequence_number),
     UNIQUE KEY uq_deployment_bundle_hash (tenant_id, content_hash),
-    CONSTRAINT chk_bundle_schema_version CHECK (schema_version = 1)
+    CONSTRAINT chk_bundle_schema_version CHECK (schema_version = 2)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 CREATE TABLE application_invocations (
@@ -601,6 +758,8 @@ CREATE TABLE node_attempts (
     idempotency_key VARCHAR(192) NOT NULL,
     lease_token BINARY(16) NULL,
     worker_instance_id VARCHAR(160) NULL,
+    fencing_token BIGINT UNSIGNED NOT NULL DEFAULT 0,
+    locked_until TIMESTAMP(6) NULL,
     deadline_at TIMESTAMP(6) NULL,
     input_json JSON NULL,
     output_json JSON NULL,
@@ -613,7 +772,8 @@ CREATE TABLE node_attempts (
     PRIMARY KEY (id),
     UNIQUE KEY uq_node_attempt_number (node_execution_id, attempt_number),
     UNIQUE KEY uq_node_attempt_idempotency (tenant_id, idempotency_key),
-    KEY idx_node_attempt_execution (tenant_id, execution_id, created_at)
+    KEY idx_node_attempt_execution (tenant_id, execution_id, created_at),
+    KEY idx_node_attempt_lease (status, locked_until, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 CREATE TABLE node_executions (
@@ -845,7 +1005,7 @@ CREATE TABLE runtime_calls (
     agent_run_id BINARY(16) NULL,
     iteration_index INT UNSIGNED NOT NULL DEFAULT 0,
     call_index INT UNSIGNED NOT NULL,
-    call_kind ENUM('model', 'mcp_tool', 'rag', 'memory', 'sandbox') NOT NULL,
+    call_kind ENUM('model', 'compaction', 'mcp_tool', 'rag', 'memory', 'sandbox') NOT NULL,
     idempotency_key VARCHAR(192) NOT NULL,
     request_fingerprint CHAR(64) NOT NULL,
     resource_type VARCHAR(32) NULL,
@@ -950,6 +1110,73 @@ CREATE TABLE sandbox_leases (
     UNIQUE KEY uq_sandbox_lease_token (lease_token_hash),
     KEY idx_sandbox_lease_reaper (status, expires_at, heartbeat_at),
     KEY idx_sandbox_lease_attempt (tenant_id, attempt_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+CREATE TABLE sandbox_workspaces (
+    workspace_id BINARY(16) NOT NULL,
+    identity_hash CHAR(64) NOT NULL,
+    tenant_id BINARY(16) NOT NULL,
+    application_id BINARY(16) NULL,
+    session_key VARCHAR(255) NOT NULL,
+    stable_agent_node_key VARCHAR(255) NOT NULL,
+    profile_version_id VARCHAR(191) NOT NULL,
+    profile_json JSON NOT NULL,
+    sandbox_id VARCHAR(255) NULL,
+    status ENUM('creating','active','releasing','expired','unknown_outcome') NOT NULL DEFAULT 'creating',
+    lease_id BINARY(16) NULL,
+    attempt_id BINARY(16) NULL,
+    worker_id BINARY(16) NULL,
+    fencing_token BIGINT UNSIGNED NOT NULL DEFAULT 0,
+    lease_expires_at TIMESTAMP(6) NULL,
+    workspace_expires_at TIMESTAMP(6) NOT NULL,
+    created_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    updated_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+    PRIMARY KEY (workspace_id),
+    UNIQUE KEY uq_sandbox_workspace_identity (identity_hash),
+    KEY idx_sandbox_workspace_reaper (status, workspace_expires_at, lease_expires_at),
+    KEY idx_sandbox_workspace_tenant (tenant_id, application_id, session_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+CREATE TABLE sandbox_process_sessions (
+    process_session_id BINARY(16) NOT NULL,
+    identity_hash CHAR(64) NOT NULL,
+    tenant_id BINARY(16) NOT NULL,
+    agent_run_id BINARY(16) NOT NULL,
+    mcp_server_version_id BINARY(16) NOT NULL,
+    sandbox_profile_version_id BINARY(16) NOT NULL,
+    profile_json JSON NOT NULL,
+    command_json JSON NOT NULL,
+    credential_refs_json JSON NOT NULL,
+    sandbox_id VARCHAR(255) NULL,
+    provider_operation_id VARCHAR(255) NULL,
+    provider_output_offset BIGINT UNSIGNED NOT NULL DEFAULT 0,
+    status ENUM('acquiring','starting','running','interrupting','terminating','exited','failed','unknown_outcome','expired') NOT NULL,
+    lease_id BINARY(16) NOT NULL,
+    attempt_id BINARY(16) NOT NULL,
+    worker_id BINARY(16) NOT NULL,
+    fencing_token BIGINT UNSIGNED NOT NULL,
+    lease_expires_at TIMESTAMP(6) NOT NULL,
+    process_expires_at TIMESTAMP(6) NOT NULL,
+    exit_code BIGINT NULL,
+    last_error VARCHAR(1000) NULL,
+    created_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    updated_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+    PRIMARY KEY (process_session_id),
+    UNIQUE KEY uq_sandbox_process_identity (identity_hash),
+    KEY idx_sandbox_process_reaper (status, process_expires_at, lease_expires_at),
+    KEY idx_sandbox_process_run (tenant_id, agent_run_id, mcp_server_version_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+CREATE TABLE sandbox_process_frames (
+    process_session_id BINARY(16) NOT NULL,
+    sequence BIGINT UNSIGNED NOT NULL,
+    stream ENUM('stdout','stderr') NOT NULL,
+    payload_json JSON NULL,
+    artifact_id BINARY(16) NULL,
+    truncated BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    PRIMARY KEY (process_session_id, sequence),
+    KEY idx_sandbox_process_frame_artifact (artifact_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 CREATE TABLE side_effect_confirmations (

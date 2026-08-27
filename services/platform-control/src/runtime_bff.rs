@@ -55,6 +55,274 @@ pub fn routes() -> Router<ControlApiState> {
             "/api/v1/executions/{id}/trace/spans/{span_id}",
             get(get_trace_span),
         )
+        .route("/api/v1/agent-sessions", get(search_agent_sessions))
+        .route(
+            "/api/v1/agent-sessions/{session_key}/{node_key}",
+            get(get_agent_session),
+        )
+        .route("/api/v1/agent-sessions/clear", post(clear_agent_session))
+        .route(
+            "/api/v1/agent-subject-memory/audit",
+            post(search_agent_subject_memory),
+        )
+        .route(
+            "/api/v1/agent-subject-memory/clear",
+            post(clear_agent_subject_memory),
+        )
+}
+
+#[derive(Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentSessionListQuery {
+    application_id: Option<Uuid>,
+    session_key: Option<String>,
+    stable_agent_node_key: Option<String>,
+    limit: Option<u32>,
+    after: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentSessionClearInput {
+    session_key: String,
+    stable_agent_node_key: String,
+    idempotency_key: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentSubjectMemoryInput {
+    application_id: Uuid,
+    memory_resource_version_id: Uuid,
+    limit: Option<u32>,
+    after: Option<String>,
+    idempotency_key: Option<String>,
+}
+
+async fn search_agent_sessions(
+    State(state): State<ControlApiState>,
+    actor: Actor,
+    Query(query): Query<AgentSessionListQuery>,
+) -> ApiResult<Json<Value>> {
+    actor.require("execution:view")?;
+    let (tenant_wide, application_ids, workflow_ids) =
+        execution_query_scope(&state, &actor).await?;
+    if let Some(application_id) = query.application_id
+        && !tenant_wide
+        && !application_ids.contains(&application_id)
+    {
+        return Err(ApiError::forbidden(
+            "The application is outside your execution scope",
+        ));
+    }
+    let request = agentx_runtime_contracts::AgentSessionSearchRequestV1 {
+        api_version: 1,
+        tenant_id: actor.tenant_id,
+        application_id: query.application_id,
+        session_key: query.session_key,
+        stable_agent_node_key: query.stable_agent_node_key,
+        limit: query.limit.unwrap_or(50).clamp(1, 100),
+        after: query.after,
+    };
+    let request_hash = content_hash(&json!({"operation":"agent-session-search","request":request}))
+        .map_err(ApiError::internal)?;
+    let token = delegation_token(
+        &state,
+        &actor,
+        "runtime.query.agent_sessions",
+        application_ids,
+        workflow_ids,
+        BTreeSet::new(),
+        tenant_wide,
+        request_hash,
+    )?;
+    let response = state
+        .http
+        .post(format!(
+            "{}/internal/runtime/v1/query/agent-sessions:search",
+            state.runtime_query_url
+        ))
+        .bearer_auth(token)
+        .json(&request)
+        .send()
+        .await
+        .map_err(runtime_unavailable)?;
+    runtime_json::<Value>(response).await.map(Json)
+}
+
+async fn get_agent_session(
+    State(state): State<ControlApiState>,
+    actor: Actor,
+    Path((session_key, node_key)): Path<(String, String)>,
+) -> ApiResult<Json<Value>> {
+    actor.require("execution:view")?;
+    let (tenant_wide, application_ids, workflow_ids) =
+        execution_query_scope(&state, &actor).await?;
+    let request_hash = content_hash(&json!({
+        "operation":"agent-session-detail",
+        "sessionKey":session_key,
+        "stableAgentNodeKey":node_key,
+    }))
+    .map_err(ApiError::internal)?;
+    let token = delegation_token(
+        &state,
+        &actor,
+        "runtime.query.agent_sessions",
+        application_ids,
+        workflow_ids,
+        BTreeSet::new(),
+        tenant_wide,
+        request_hash,
+    )?;
+    let response = state
+        .http
+        .get(format!(
+            "{}/internal/runtime/v1/query/agent-sessions/{}/{}",
+            state.runtime_query_url, session_key, node_key
+        ))
+        .bearer_auth(token)
+        .send()
+        .await
+        .map_err(runtime_unavailable)?;
+    runtime_json::<Value>(response).await.map(Json)
+}
+
+async fn clear_agent_session(
+    State(state): State<ControlApiState>,
+    actor: Actor,
+    Json(input): Json<AgentSessionClearInput>,
+) -> ApiResult<Json<Value>> {
+    actor.require("execution:view")?;
+    let (tenant_wide, application_ids, workflow_ids) =
+        execution_query_scope(&state, &actor).await?;
+    let request = agentx_runtime_contracts::AgentSessionClearRequestV1 {
+        api_version: 1,
+        tenant_id: actor.tenant_id,
+        session_key: input.session_key,
+        stable_agent_node_key: input.stable_agent_node_key,
+        idempotency_key: input.idempotency_key,
+    };
+    let request_hash = content_hash(&json!({"operation":"agent-session-clear","request":request}))
+        .map_err(ApiError::internal)?;
+    let token = delegation_token(
+        &state,
+        &actor,
+        "runtime.sessions.clear",
+        application_ids,
+        workflow_ids,
+        BTreeSet::new(),
+        tenant_wide,
+        request_hash,
+    )?;
+    let response = state
+        .http
+        .post(format!(
+            "{}/internal/runtime/v1/agent-sessions:clear",
+            state.runtime_query_url
+        ))
+        .bearer_auth(token)
+        .json(&request)
+        .send()
+        .await
+        .map_err(runtime_unavailable)?;
+    runtime_json::<Value>(response).await.map(Json)
+}
+
+async fn search_agent_subject_memory(
+    State(state): State<ControlApiState>,
+    actor: Actor,
+    Json(input): Json<AgentSubjectMemoryInput>,
+) -> ApiResult<Json<Value>> {
+    actor.require("execution:view")?;
+    let (tenant_wide, application_ids, workflow_ids) =
+        execution_query_scope(&state, &actor).await?;
+    if !tenant_wide && !application_ids.contains(&input.application_id) {
+        return Err(ApiError::forbidden(
+            "The application is outside your execution scope",
+        ));
+    }
+    let request = agentx_runtime_contracts::AgentSubjectMemorySearchRequestV1 {
+        api_version: 1,
+        tenant_id: actor.tenant_id,
+        application_id: input.application_id,
+        memory_resource_version_id: input.memory_resource_version_id,
+        limit: input.limit.unwrap_or(50).clamp(1, 100),
+        after: input.after,
+    };
+    let request_hash =
+        content_hash(&json!({"operation":"agent-subject-memory-search","request":request}))
+            .map_err(ApiError::internal)?;
+    let token = delegation_token(
+        &state,
+        &actor,
+        "runtime.query.agent_subject_memory",
+        application_ids,
+        workflow_ids,
+        BTreeSet::new(),
+        tenant_wide,
+        request_hash,
+    )?;
+    let response = state
+        .http
+        .post(format!(
+            "{}/internal/runtime/v1/query/agent-subject-memory:search",
+            state.runtime_query_url
+        ))
+        .bearer_auth(token)
+        .json(&request)
+        .send()
+        .await
+        .map_err(runtime_unavailable)?;
+    runtime_json::<Value>(response).await.map(Json)
+}
+
+async fn clear_agent_subject_memory(
+    State(state): State<ControlApiState>,
+    actor: Actor,
+    Json(input): Json<AgentSubjectMemoryInput>,
+) -> ApiResult<Json<Value>> {
+    actor.require("execution:view")?;
+    let (tenant_wide, application_ids, workflow_ids) =
+        execution_query_scope(&state, &actor).await?;
+    if !tenant_wide && !application_ids.contains(&input.application_id) {
+        return Err(ApiError::forbidden(
+            "The application is outside your execution scope",
+        ));
+    }
+    let request = agentx_runtime_contracts::AgentSubjectMemoryClearRequestV1 {
+        api_version: 1,
+        tenant_id: actor.tenant_id,
+        application_id: input.application_id,
+        memory_resource_version_id: input.memory_resource_version_id,
+        idempotency_key: input
+            .idempotency_key
+            .unwrap_or_else(|| format!("web:{}", Uuid::now_v7())),
+    };
+    let request_hash =
+        content_hash(&json!({"operation":"agent-subject-memory-clear","request":request}))
+            .map_err(ApiError::internal)?;
+    let token = delegation_token(
+        &state,
+        &actor,
+        "runtime.memory.clear",
+        application_ids,
+        workflow_ids,
+        BTreeSet::new(),
+        tenant_wide,
+        request_hash,
+    )?;
+    let response = state
+        .http
+        .post(format!(
+            "{}/internal/runtime/v1/agent-subject-memory:clear",
+            state.runtime_query_url
+        ))
+        .bearer_auth(token)
+        .json(&request)
+        .send()
+        .await
+        .map_err(runtime_unavailable)?;
+    runtime_json::<Value>(response).await.map(Json)
 }
 
 #[derive(Default, Deserialize)]

@@ -208,7 +208,8 @@ async function selectSaveVersionAndRun(page: Page, workflowId: string, modelNode
   await expect(page.getByText('资源与授权校验通过')).toBeVisible()
   const version = page.waitForResponse((response) => response.request().method() === 'POST' && response.url().endsWith(`/workflows/${workflowId}/versions`))
   await page.getByRole('button', { name: '保存为版本' }).click()
-  expect((await version).status()).toBe(201)
+  const versionResponse = await version
+  expect(versionResponse.status(), await versionResponse.text()).toBe(201)
   await page.getByRole('button', { name: '测试运行' }).click()
   await expect(page).toHaveURL(/\/executions\//)
   await expect(page.getByText(/成功|succeeded/i).first()).toBeVisible({ timeout: 60_000 })

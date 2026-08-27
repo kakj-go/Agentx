@@ -67,7 +67,7 @@ test('V2-08 API-first empty-domain closure creates product facts without SQL fix
   })
   const draft = await request<Draft>(page, token, `/workflows/${workflow.id}/draft`)
   const definition = {
-    schemaVersion: '5.0',
+    schemaVersion: '6.0',
     start: { inputs: { type: 'object', properties: { message: { type: 'string' } }, required: ['message'], additionalProperties: true }, contexts: {} },
     nodes: Array.from({ length: 4 }, (_, index) => ({
       id: `step-${index + 1}`, key: `step_${index + 1}`, type: 'set', typeVersion: 1,

@@ -57,7 +57,7 @@ global:
       mount: secret
     sandbox:
       mode: external_opensandbox
-      endpoint: http://opensandbox.agentx-deps.svc:8080
+      endpoint: http://host.docker.internal:18080
       secureAccess: false
     clickhouse:
       mode: bundled
@@ -94,7 +94,12 @@ global:
         sourceCidrs:
         - 192.168.0.0/16
         serviceAnnotations: {}
-    externalEgress: {}
+    externalEgress:
+      opensandbox:
+        cidrs:
+        - 192.168.0.0/16
+        ports:
+        - 18080
   secrets:
     mode: generated-local
     control: agentx-control-secrets

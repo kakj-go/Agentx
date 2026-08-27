@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "authenticatedSubjectId": {
+      "type": "string"
+    },
+    "evidenceHash": {
+      "type": "string"
+    },
+    "source": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "authenticatedSubjectId",
+    "source",
+    "evidenceHash"
+  ],
+  "title": "TrustedSubjectEvidenceV1",
+  "type": "object"
+}

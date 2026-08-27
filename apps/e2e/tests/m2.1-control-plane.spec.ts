@@ -17,8 +17,18 @@ async function field(container: Locator, label: string) {
 }
 
 async function select(container: Locator, label: string, option: string) {
-  await container.getByRole('combobox', { name: label, exact: true }).click()
-  await container.page().getByRole('option', { name: option, exact: true }).click()
+  const direct = container.getByRole('combobox', { name: label, exact: true })
+  const target = (await direct.count()) > 0
+    ? direct
+    : container.locator('label').filter({ hasText: label }).getByRole('combobox').first()
+  await expect(target).toBeVisible({ timeout: 20_000 })
+  await target.click()
+  const escaped = option.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const exact = container.page().getByRole('option', {
+    name: new RegExp(`^\\s*${escaped}(?:\\s|$)`, 'i'),
+  }).last()
+  await expect(exact, `Option ${option} was not available for ${label}`).toBeVisible({ timeout: 5_000 })
+  await exact.click()
 }
 
 async function submit(container: Locator, name: string) {
@@ -213,8 +223,9 @@ async function createAndExerciseMcp(page: Page) {
   const create = await dialog(page, '接入 MCP 服务')
   await (await field(create, '名称')).fill('Echo MCP')
   await (await field(create, 'Endpoint')).fill(`${echoBaseUrl}/mcp`)
-  await select(create, '凭证', 'Echo Credential Renamed')
   await select(create, '所属部门', company)
+  // The dependency picker is intentionally gated by the owner department.
+  await select(create, '凭证', 'Echo Credential Renamed')
   await submit(create, '保存')
   await page.getByRole('row', { name: /Echo MCP/ }).getByRole('link', { name: '详情' }).click()
   await page.getByRole('button', { name: '测试连接' }).click()
@@ -377,6 +388,10 @@ async function configureCentralResourceGrants(page: Page) {
 }
 
 async function configureAndPublishWorkflow(page: Page) {
+  let latestDraftPayload: { definition: { nodes: Array<{ type: string; parameters: Record<string, unknown>; resourceReferences: Array<{ bindingRole?: string; resourceVersionId?: string }> }>; end: { outputs: Record<string, { value: { kind: string; selector?: { namespace: string; port?: string; path: string[] } } }> } } } | undefined
+  page.on('request', (request) => {
+    if (request.method() === 'PUT' && /\/workflows\/[^/]+\/draft$/.test(request.url())) latestDraftPayload = request.postDataJSON() as typeof latestDraftPayload
+  })
   await page.getByRole('link', { name: /^工作流/ }).click()
   await page.getByRole('row', { name: /MCP Echo Workflow/ }).getByRole('link', { name: '打开画布' }).click()
   await expect(page.getByTestId('workflow-canvas')).toBeVisible()
@@ -386,15 +401,11 @@ async function configureAndPublishWorkflow(page: Page) {
   await page.getByTestId('palette-action-agent').click()
   const agentNode = await selectedNode(page)
   await expect(page.getByTestId('node-details-view')).toBeVisible()
-  await page.getByTestId('parameter-systemPrompt').getByRole('textbox').fill('Use the attached MCP tool to answer the question.')
-  await page.getByTestId('node-details-view').getByRole('button', { name: /关闭|Close/ }).click()
-
-  await page.getByTestId('node-creator-trigger').click()
-  await page.getByTestId('palette-group-attachments').click()
-  await page.getByTestId('palette-binding-model').click()
-  const modelNode = await selectedNode(page)
-  await page.getByTestId('attachment-resource').getByRole('combobox').click()
+  await page.getByTestId('agent-inspector-model').getByRole('combobox').click()
   await page.getByRole('option', { name: /echo-chat/ }).click()
+  await page.getByTestId('agent-core-configuration').getByRole('combobox').last().click()
+  await page.getByRole('option', { name: /调用|Invocation/ }).click()
+  await page.getByTestId('parameter-systemPrompt').getByRole('textbox').fill('Use the attached MCP tool to answer the question.')
   await page.getByTestId('node-details-view').getByRole('button', { name: /关闭|Close/ }).click()
 
   await page.getByTestId('node-creator-trigger').click()
@@ -408,9 +419,8 @@ async function configureAndPublishWorkflow(page: Page) {
   await page.getByRole('button', { name: /^(适应画布|Fit View)$/ }).click()
   await connectHandles(page, page.getByTestId('workflow-start').locator('.react-flow__handle.source[data-handleid="main"]'), agentNode.locator('.react-flow__handle.target[data-handleid="main"]'))
   await connectHandles(page, agentNode.locator('.react-flow__handle.source[data-handleid="main"]'), page.getByTestId('workflow-end').locator('.react-flow__handle.target[data-handleid="main"]'))
-  await connectHandles(page, modelNode.locator('.react-flow__handle.source[data-handleid="resource"]'), agentNode.locator('.react-flow__handle.target[data-handleid="binding:ai_model"]'))
-  await connectHandles(page, toolNode.locator('.react-flow__handle.source[data-handleid="resource"]'), agentNode.locator('.react-flow__handle.target[data-handleid="binding:ai_tool"]'))
-  await expect(page.locator('.react-flow__edge')).toHaveCount(4)
+  await connectHandles(page, toolNode.locator('.react-flow__handle.source[data-handleid="resource"]'), agentNode.locator('.react-flow__handle.target[data-handleid="binding:mcp_tools"]'))
+  await expect(page.locator('.react-flow__edge')).toHaveCount(3)
   await page.getByTestId('workflow-start').click()
   const startPanel = page.getByTestId('workflow-interface-panel')
   await expect(startPanel).toBeVisible()
@@ -467,16 +477,21 @@ async function configureAndPublishWorkflow(page: Page) {
   await outputDialog.getByRole('button', { name: /保存|Save/ }).click()
   await endPanel.getByRole('button', { name: /关闭|Close/ }).click()
   const save = page.getByRole('button', { name: '保存', exact: true })
-  const draftRequest = page.waitForRequest((request) => request.method() === 'PUT' && /\/workflows\/[^/]+\/draft$/.test(request.url()))
-  const savedResponsePromise = page.waitForResponse((response) => response.request().method() === 'PUT' && /\/workflows\/[^/]+\/draft$/.test(response.url()))
-  await save.click()
-  const payload = (await draftRequest).postDataJSON() as { definition: { nodes: Array<{ type: string; parameters: Record<string, unknown>; resourceReferences: Array<{ bindingRole?: string }> }>; end: { outputs: Record<string, { value: { kind: string; selector?: { namespace: string; port?: string; path: string[] } } }> } } }
+  if (await save.isEnabled()) {
+    const savedResponsePromise = page.waitForResponse((response) => response.request().method() === 'PUT' && /\/workflows\/[^/]+\/draft$/.test(response.url()))
+    await save.click()
+    const savedResponse = await savedResponsePromise
+    expect(savedResponse.status(), await savedResponse.text()).toBe(200)
+  } else {
+    await expect(page.locator('header').getByText(/已保存|Saved/)).toBeVisible()
+  }
+  expect(latestDraftPayload).toBeDefined()
+  const payload = latestDraftPayload!
   const agent = payload.definition.nodes.find((node) => node.type === 'agent')
   expect(agent?.parameters.userQuestion).toMatchObject({ kind: 'reference', selector: { namespace: 'inputs', path: ['question'] } })
-  expect(agent?.resourceReferences.map((resource) => resource.bindingRole)).toEqual(expect.arrayContaining(['ai_model', 'ai_tool']))
+  expect(agent?.resourceReferences.filter((resource) => resource.bindingRole == null)).toHaveLength(1)
+  expect(agent?.resourceReferences.map((resource) => resource.bindingRole).filter(Boolean)).toEqual(['mcp_tools'])
   expect(payload.definition.end.outputs.answer?.value).toMatchObject({ kind: 'reference', selector: { namespace: 'outputs', port: 'main', path: ['text'] } })
-  const savedResponse = await savedResponsePromise
-  expect(savedResponse.status(), await savedResponse.text()).toBe(200)
   await page.getByRole('link', { name: '返回', exact: true }).click()
   await expect(page.getByText('资源与授权校验通过')).toBeVisible()
   const versionResponsePromise = page.waitForResponse((response) => response.request().method() === 'POST' && /\/workflows\/[^/]+\/versions$/.test(response.url()))

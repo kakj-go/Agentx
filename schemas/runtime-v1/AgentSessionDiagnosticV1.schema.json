@@ -1,0 +1,146 @@
+{
+  "$defs": {
+    "AgentSessionEntryViewV1": {
+      "additionalProperties": false,
+      "properties": {
+        "createdAt": {
+          "type": "string"
+        },
+        "entryId": {
+          "type": "string"
+        },
+        "entryKind": {
+          "type": "string"
+        },
+        "lane": {
+          "type": "string"
+        },
+        "operationId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "parentEntryId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "payload": true,
+        "sessionId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "entryId",
+        "sessionId",
+        "lane",
+        "entryKind",
+        "createdAt"
+      ],
+      "type": "object"
+    },
+    "AgentSessionSummaryV1": {
+      "additionalProperties": false,
+      "properties": {
+        "applicationId": {
+          "format": "uuid",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "bundleHash": {
+          "type": "string"
+        },
+        "fencingToken": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "leafEntryId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "modelVersion": {
+          "type": "string"
+        },
+        "openOperationId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sessionId": {
+          "type": "string"
+        },
+        "sessionKey": {
+          "type": "string"
+        },
+        "stableAgentNodeKey": {
+          "type": "string"
+        },
+        "stateVersion": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "terminalState": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "updatedAt": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionKey",
+        "sessionId",
+        "stableAgentNodeKey",
+        "stateVersion",
+        "fencingToken",
+        "bundleHash",
+        "modelVersion",
+        "updatedAt"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "compaction": true,
+    "entries": {
+      "items": {
+        "$ref": "#/$defs/AgentSessionEntryViewV1"
+      },
+      "type": "array"
+    },
+    "recovery": true,
+    "summary": {
+      "$ref": "#/$defs/AgentSessionSummaryV1"
+    },
+    "usages": {
+      "items": true,
+      "type": "array"
+    }
+  },
+  "required": [
+    "apiVersion",
+    "summary",
+    "entries",
+    "usages"
+  ],
+  "title": "AgentSessionDiagnosticV1",
+  "type": "object"
+}

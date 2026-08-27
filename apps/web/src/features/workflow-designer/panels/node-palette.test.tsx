@@ -6,8 +6,8 @@ import type { NodeManifest } from '../model/types'
 import { NodePalette } from './node-palette'
 
 const manifest = (nodeType: string, inputKind: 'main' | 'error', outputKind: 'main' | 'error' = 'main'): NodeManifest => ({
-  protocolVersion: '1.0', nodeType, version: 1, displayName: nodeType, description: `${nodeType} description`, category: 'actions', keywords: [nodeType], iconKey: 'box', executionStyle: 'action', capability: 'builtin', readiness: 'any',
-  inputPorts: [{ name: inputKind, kind: inputKind, required: false, variadic: false }], outputPorts: [{ name: outputKind, kind: outputKind, required: false, variadic: false }], bindingSlots: nodeType === 'main-target' ? [{ name: 'ai_model', resourceType: 'model', required: false, multiple: false }] : [],
+  protocolVersion: '2.0', nodeType, version: 1, displayName: nodeType, description: `${nodeType} description`, category: 'actions', keywords: [nodeType], iconKey: 'box', executionStyle: 'action', capability: 'builtin', readiness: 'any',
+  inputPorts: [{ name: inputKind, kind: inputKind, required: false, variadic: false }], outputPorts: [{ name: outputKind, kind: outputKind, required: false, variadic: false }], bindingSlots: nodeType === 'main-target' ? [{ name: 'model', resourceType: 'model', placement: 'inspector', required: true, multiple: false }, { name: 'workspace_sandbox', resourceType: 'sandbox_profile', placement: 'inspector', required: false, multiple: false }, { name: 'mcp_tools', resourceType: 'mcp_tool', placement: 'canvas', required: false, multiple: false }] : [],
   parameterSchema: {}, uiSchema: { canvas: { role: 'default' } }, providers: [], credentials: [], retryPolicy: { retryable: false, maxAttempts: 1, initialBackoffMs: 0, maxBackoffMs: 0 }, sandboxRequired: false, supportsMock: true, sideEffectLevel: 'none',
 })
 
@@ -32,9 +32,11 @@ describe('NodePalette', () => {
     expect(screen.getByTestId('palette-group-integrations')).toHaveAttribute('aria-expanded', 'true')
     expect(screen.getByTestId('palette-group-attachments')).toHaveAttribute('aria-expanded', 'false')
     expect(screen.getByTestId('palette-action-source')).toBeInTheDocument()
-    expect(screen.queryByTestId('palette-binding-model')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('palette-binding-mcp_tool')).not.toBeInTheDocument()
     fireEvent.click(screen.getByTestId('palette-group-attachments'))
-    expect(screen.getByTestId('palette-binding-model')).toBeInTheDocument()
+    expect(screen.getByTestId('palette-binding-mcp_tool')).toBeInTheDocument()
+    expect(screen.queryByTestId('palette-binding-model')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('palette-binding-sandbox_profile')).not.toBeInTheDocument()
   })
 
   it('filters by the exact source handle kind and hides binding attachments', () => {
@@ -43,7 +45,7 @@ describe('NodePalette', () => {
 
     expect(screen.getByTestId('palette-action-error-target')).toBeInTheDocument()
     expect(screen.queryByTestId('palette-action-main-target')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('palette-binding-model')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('palette-binding-mcp_tool')).not.toBeInTheDocument()
   })
 
   it('supports arrow-key navigation through creator results', () => {

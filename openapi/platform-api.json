@@ -1161,21 +1161,11 @@
       "CreateMcpServerRequest": {
         "properties": {
           "configuration": {},
-          "credentialId": {
-            "format": "uuid",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
           "description": {
             "type": [
               "string",
               "null"
             ]
-          },
-          "endpoint": {
-            "type": "string"
           },
           "name": {
             "type": "string"
@@ -1185,14 +1175,13 @@
             "type": "string"
           },
           "transport": {
-            "type": "string"
+            "$ref": "#/components/schemas/McpTransportInput"
           }
         },
         "required": [
           "name",
           "ownerDepartmentId",
-          "transport",
-          "endpoint"
+          "transport"
         ],
         "type": "object"
       },
@@ -3348,15 +3337,44 @@
         ],
         "type": "object"
       },
-      "McpServerResponse": {
+      "McpEnvironmentCredentialInput": {
+        "additionalProperties": false,
         "properties": {
           "credentialId": {
             "format": "uuid",
-            "type": [
-              "string",
-              "null"
-            ]
+            "type": "string"
           },
+          "name": {
+            "pattern": "^[A-Z_][A-Z0-9_]{0,127}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "credentialId"
+        ],
+        "type": "object"
+      },
+      "McpRuntimeSandboxInput": {
+        "additionalProperties": false,
+        "properties": {
+          "resourceId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "resourceVersionId": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "resourceId",
+          "resourceVersionId"
+        ],
+        "type": "object"
+      },
+      "McpServerResponse": {
+        "properties": {
           "currentVersionNumber": {
             "format": "int64",
             "minimum": 0,
@@ -3367,9 +3385,6 @@
               "string",
               "null"
             ]
-          },
-          "endpoint": {
-            "type": "string"
           },
           "id": {
             "format": "uuid",
@@ -3398,7 +3413,7 @@
             "type": "integer"
           },
           "transport": {
-            "type": "string"
+            "$ref": "#/components/schemas/McpTransportInput"
           },
           "updatedAt": {
             "format": "date-time",
@@ -3415,7 +3430,6 @@
           "name",
           "ownerDepartmentId",
           "transport",
-          "endpoint",
           "status",
           "currentVersionNumber",
           "version",
@@ -3504,6 +3518,96 @@
           "version"
         ],
         "type": "object"
+      },
+      "McpTransportInput": {
+        "discriminator": {
+          "propertyName": "kind"
+        },
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "bearerCredentialId": {
+                "format": "uuid",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "endpoint": {
+                "type": "string"
+              },
+              "kind": {
+                "const": "streamable_http",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "endpoint"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "bearerCredentialId": {
+                "format": "uuid",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "endpoint": {
+                "type": "string"
+              },
+              "kind": {
+                "const": "sse",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "endpoint"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "args": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "command": {
+                "type": "string"
+              },
+              "environmentCredentialRefs": {
+                "items": {
+                  "$ref": "#/components/schemas/McpEnvironmentCredentialInput"
+                },
+                "type": "array"
+              },
+              "kind": {
+                "const": "stdio",
+                "type": "string"
+              },
+              "runtimeSandbox": {
+                "$ref": "#/components/schemas/McpRuntimeSandboxInput"
+              }
+            },
+            "required": [
+              "kind",
+              "command",
+              "args",
+              "environmentCredentialRefs",
+              "runtimeSandbox"
+            ],
+            "type": "object"
+          }
+        ]
       },
       "MeResponse": {
         "properties": {
@@ -4845,6 +4949,23 @@
           "status": {
             "type": "string"
           },
+          "subjectDepartmentName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "subjectId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "subjectType": {
+            "enum": [
+              "department",
+              "workflow_service_identity"
+            ],
+            "type": "string"
+          },
           "updatedAt": {
             "format": "date-time",
             "type": "string"
@@ -4856,21 +4977,29 @@
           },
           "workflowId": {
             "format": "uuid",
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "workflowName": {
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "workflowServiceIdentityId": {
             "format": "uuid",
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
           "id",
-          "workflowId",
-          "workflowName",
-          "workflowServiceIdentityId",
+          "subjectType",
+          "subjectId",
           "primaryResourceType",
           "primaryResourceId",
           "operation",
@@ -6897,21 +7026,11 @@
       "UpdateMcpServerRequest": {
         "properties": {
           "configuration": {},
-          "credentialId": {
-            "format": "uuid",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
           "description": {
             "type": [
               "string",
               "null"
             ]
-          },
-          "endpoint": {
-            "type": "string"
           },
           "name": {
             "type": "string"
@@ -6920,7 +7039,7 @@
             "type": "string"
           },
           "transport": {
-            "type": "string"
+            "$ref": "#/components/schemas/McpTransportInput"
           },
           "version": {
             "format": "int64",
@@ -6932,7 +7051,6 @@
           "name",
           "status",
           "transport",
-          "endpoint",
           "version"
         ],
         "type": "object"
@@ -9453,6 +9571,59 @@
         "tags": [
           "iam"
         ]
+      }
+    },
+    "/api/v1/departments/{id}/resource-authorizations": {
+      "post": {
+        "operationId": "authorize_department_resource",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": { "format": "uuid", "type": "string" }
+          }
+        ],
+        "requestBody": {
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ResourceAuthorizationInput" } } },
+          "required": true
+        },
+        "responses": {},
+        "tags": ["resource_access"]
+      }
+    },
+    "/api/v1/departments/{id}/resource-grant-requests": {
+      "post": {
+        "operationId": "create_department_resource_grant_request",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": { "format": "uuid", "type": "string" }
+          }
+        ],
+        "requestBody": {
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateResourceGrantRequest" } } },
+          "required": true
+        },
+        "responses": {},
+        "tags": ["resource_access"]
+      }
+    },
+    "/api/v1/departments/{id}/resource-options": {
+      "get": {
+        "operationId": "list_department_resource_options",
+        "parameters": [
+          { "in": "path", "name": "id", "required": true, "schema": { "format": "uuid", "type": "string" } },
+          { "in": "query", "name": "resourceType", "required": true, "schema": { "type": "string" } },
+          { "in": "query", "name": "operation", "required": false, "schema": { "type": "string" } },
+          { "in": "query", "name": "search", "required": false, "schema": { "type": "string" } },
+          { "in": "query", "name": "page", "required": false, "schema": { "format": "int32", "minimum": 1, "type": "integer" } },
+          { "in": "query", "name": "pageSize", "required": false, "schema": { "format": "int32", "minimum": 1, "type": "integer" } }
+        ],
+        "responses": {},
+        "tags": ["resource_access"]
       }
     },
     "/api/v1/departments/search": {

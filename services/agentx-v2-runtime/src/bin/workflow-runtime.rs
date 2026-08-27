@@ -596,6 +596,11 @@ async fn recovery_loop(
         let started = std::time::Instant::now();
         agentx_v2_runtime::enqueue_due_waits(&pool, owner, 100).await?;
         agentx_v2_runtime::composite_execution::enqueue_overdue(&pool, 100).await?;
+        let woken =
+            agentx_v2_runtime::agent_session_queue::wake_pending_sessions(&pool, 100).await?;
+        if woken > 0 {
+            tracing::debug!(woken, "Agent Session pending inputs scheduled for resume");
+        }
         runtime_task_queue::ensure_groups(&mut redis).await?;
         for message in agentx_v2_runtime::execution::recover_dispatches(&pool, 100).await? {
             runtime_task_queue::publish(&mut redis, &message).await?;

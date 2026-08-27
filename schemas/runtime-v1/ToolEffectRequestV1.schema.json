@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "arguments": true,
+    "attemptId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "deadline": {
+      "type": "string"
+    },
+    "effectId": {
+      "type": "string"
+    },
+    "executionId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "fencingToken": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "idempotencyKey": {
+      "type": "string"
+    },
+    "leaseId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "nodeExecutionId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "operationId": {
+      "type": "string"
+    },
+    "tenantId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "toolName": {
+      "type": "string"
+    },
+    "workerId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "workspaceId": {
+      "format": "uuid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "apiVersion",
+    "tenantId",
+    "executionId",
+    "nodeExecutionId",
+    "attemptId",
+    "workerId",
+    "fencingToken",
+    "workspaceId",
+    "leaseId",
+    "operationId",
+    "effectId",
+    "idempotencyKey",
+    "toolName",
+    "arguments",
+    "deadline"
+  ],
+  "title": "ToolEffectRequestV1",
+  "type": "object"
+}

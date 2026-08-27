@@ -3,27 +3,37 @@
 use std::{fs, path::Path};
 
 use agentx_runtime_contracts::{
-    ActivateDeploymentRequestV1, ApplyChatMappingReceiptV1, ApplyChatMappingRequestV1,
+    ActivateDeploymentRequestV1, AgentKnowledgeSearchResultV1, AgentSessionClearReceiptV1,
+    AgentSessionClearRequestV1, AgentSessionDiagnosticV1, AgentSessionEntryViewV1,
+    AgentSessionSearchPageV1, AgentSessionSearchRequestV1, AgentSessionSummaryV1,
+    AgentSubjectMemoryAuditViewV1, AgentSubjectMemoryClearReceiptV1,
+    AgentSubjectMemoryClearRequestV1, AgentSubjectMemorySearchPageV1,
+    AgentSubjectMemorySearchRequestV1, ApplyChatMappingReceiptV1, ApplyChatMappingRequestV1,
     ApplyReceiptV1, CancelWorkPackageRequestV1, ChatMappingV1, CommandEnvelopeV1,
     DelegationScopeV1, DisableDeploymentRequestV1, EgressConnectClaimsV1, EventEnvelopeV1,
     EventExportPageV1, EventExportRequestV1, ExecuteWorkPackageRequestV1, ExecutionArtifactV1,
     ExecutionCheckpointV1, ExecutionCollectionPageV1, ExecutionContextSnapshotV1,
     ExecutionDetailV1, ExecutionEventPageV1, ExecutionNodeV1, ExecutionRuntimeDetailsV1,
-    ExecutionSearchPageV1, ExecutionSearchRequestV1, ExecutionSpecBundleV1, ExecutionTraceV1,
+    ExecutionSearchPageV1, ExecutionSearchRequestV1, ExecutionSpecBundleV2, ExecutionTraceV1,
     ExecutionWaitV1, GovernanceSnapshotPageV1, GovernanceSnapshotRequestV1, InvocationDetailV1,
     InvocationSearchPageV1, InvocationSearchRequestV1, ObservabilityAggregatePageV1,
     ObservabilityAggregateRequestV1, PrepareBundleRequestV1, PrepareWorkPackageRequestV1,
-    ProjectionStatusV1, PublishReceiptV1, ReferenceCheckReceiptV1, ReferenceCheckRequestV1,
-    RetentionCommandRequestV1, RollbackDeploymentRequestV1, RuntimeAdmissionCommandV1,
-    RuntimeAuthorizationSnapshotV1, RuntimeCommandApplyRequestV1, RuntimeDebugPlanV1,
-    RuntimeIntegrationEventEnvelopeV1, RuntimeObjectUploadMetadataV1, RuntimeObjectUploadReceiptV1,
-    RuntimePolicyV1, RuntimeResourceBindingV1, RuntimeResourceCheckRequestV1,
-    RuntimeResourceCheckResponseV1, RuntimeResourceOperationRequestV1,
-    RuntimeResourceOperationResponseV1, RuntimeSkillProgramV1, RuntimeTriggerSpecV1,
-    RuntimeUserAdmissionV1, RuntimeUserApplicationGrantV1, RuntimeUserWorkflowGrantV1,
-    RuntimeWorkPackageV1, SessionDetailV1, SessionSearchPageV1, SessionSearchRequestV1,
-    SessionUpgradeCommandV1, SessionUpgradeReceiptV1, TraceEventEnvelopeV1, TraceSearchPageV1,
-    TraceSearchRequestV1, TraceSpanDetailV1, WorkerAttemptLeaseV1, WorkerResultV1, WorkerTaskV1,
+    ProcessSessionControlRequestV1, ProcessSessionControlResponseV1,
+    ProcessSessionFramesResponseV1, ProcessSessionReadRequestV1, ProcessSessionStartRequestV1,
+    ProcessSessionStartResponseV1, ProcessSessionWriteRequestV1, ProjectionStatusV1,
+    PublishReceiptV1, ReferenceCheckReceiptV1, ReferenceCheckRequestV1, RetentionCommandRequestV1,
+    RollbackDeploymentRequestV1, RuntimeAdmissionCommandV1, RuntimeAuthorizationSnapshotV1,
+    RuntimeCommandApplyRequestV1, RuntimeDebugPlanV1, RuntimeIntegrationEventEnvelopeV1,
+    RuntimeObjectUploadMetadataV1, RuntimeObjectUploadReceiptV1, RuntimePolicyV1,
+    RuntimeResourceBindingV1, RuntimeResourceCheckRequestV1, RuntimeResourceCheckResponseV1,
+    RuntimeResourceOperationRequestV1, RuntimeResourceOperationResponseV1, RuntimeSkillProgramV2,
+    RuntimeTriggerSpecV1, RuntimeUserAdmissionV1, RuntimeUserApplicationGrantV1,
+    RuntimeUserWorkflowGrantV1, RuntimeWorkPackageV1, SessionDetailV1, SessionSearchPageV1,
+    SessionSearchRequestV1, SessionUpgradeCommandV1, SessionUpgradeReceiptV1, ToolEffectRequestV1,
+    ToolEffectResponseV1, TraceEventEnvelopeV1, TraceSearchPageV1, TraceSearchRequestV1,
+    TraceSpanDetailV1, WorkerAttemptLeaseV1, WorkerResultV1, WorkerTaskV1,
+    WorkspaceAcquireRequestV1, WorkspaceAcquireResponseV1, WorkspaceReleaseRequestV1,
+    WorkspaceReleaseResponseV1,
 };
 use anyhow::{Context, Result};
 use schemars::{JsonSchema, schema_for};
@@ -67,7 +77,7 @@ fn main() -> Result<()> {
 
 fn contract_schemas() -> Result<Map<String, Value>> {
     let mut schemas = Map::new();
-    insert::<ExecutionSpecBundleV1>(&mut schemas, "ExecutionSpecBundleV1")?;
+    insert::<ExecutionSpecBundleV2>(&mut schemas, "ExecutionSpecBundleV2")?;
     insert::<RuntimeWorkPackageV1>(&mut schemas, "RuntimeWorkPackageV1")?;
     insert::<ExecutionContextSnapshotV1>(&mut schemas, "ExecutionContextSnapshotV1")?;
     insert::<RuntimeDebugPlanV1>(&mut schemas, "RuntimeDebugPlanV1")?;
@@ -82,10 +92,24 @@ fn contract_schemas() -> Result<Map<String, Value>> {
         &mut schemas,
         "RuntimeResourceOperationResponseV1",
     )?;
-    insert::<RuntimeSkillProgramV1>(&mut schemas, "RuntimeSkillProgramV1")?;
+    insert::<RuntimeSkillProgramV2>(&mut schemas, "RuntimeSkillProgramV2")?;
+    insert::<AgentKnowledgeSearchResultV1>(&mut schemas, "AgentKnowledgeSearchResultV1")?;
+    insert::<ProcessSessionStartRequestV1>(&mut schemas, "ProcessSessionStartRequestV1")?;
+    insert::<ProcessSessionStartResponseV1>(&mut schemas, "ProcessSessionStartResponseV1")?;
+    insert::<ProcessSessionWriteRequestV1>(&mut schemas, "ProcessSessionWriteRequestV1")?;
+    insert::<ProcessSessionReadRequestV1>(&mut schemas, "ProcessSessionReadRequestV1")?;
+    insert::<ProcessSessionFramesResponseV1>(&mut schemas, "ProcessSessionFramesResponseV1")?;
+    insert::<ProcessSessionControlRequestV1>(&mut schemas, "ProcessSessionControlRequestV1")?;
+    insert::<ProcessSessionControlResponseV1>(&mut schemas, "ProcessSessionControlResponseV1")?;
     insert::<WorkerTaskV1>(&mut schemas, "WorkerTaskV1")?;
     insert::<WorkerAttemptLeaseV1>(&mut schemas, "WorkerAttemptLeaseV1")?;
     insert::<WorkerResultV1>(&mut schemas, "WorkerResultV1")?;
+    insert::<WorkspaceAcquireRequestV1>(&mut schemas, "WorkspaceAcquireRequestV1")?;
+    insert::<WorkspaceAcquireResponseV1>(&mut schemas, "WorkspaceAcquireResponseV1")?;
+    insert::<ToolEffectRequestV1>(&mut schemas, "ToolEffectRequestV1")?;
+    insert::<ToolEffectResponseV1>(&mut schemas, "ToolEffectResponseV1")?;
+    insert::<WorkspaceReleaseRequestV1>(&mut schemas, "WorkspaceReleaseRequestV1")?;
+    insert::<WorkspaceReleaseResponseV1>(&mut schemas, "WorkspaceReleaseResponseV1")?;
     insert::<CommandEnvelopeV1>(&mut schemas, "CommandEnvelopeV1")?;
     insert::<EventEnvelopeV1>(&mut schemas, "EventEnvelopeV1")?;
     insert::<RuntimeAdmissionCommandV1>(&mut schemas, "RuntimeAdmissionCommandV1")?;
@@ -148,6 +172,18 @@ fn contract_schemas() -> Result<Map<String, Value>> {
     insert::<SessionDetailV1>(&mut schemas, "SessionDetailV1")?;
     insert::<SessionUpgradeCommandV1>(&mut schemas, "SessionUpgradeCommandV1")?;
     insert::<SessionUpgradeReceiptV1>(&mut schemas, "SessionUpgradeReceiptV1")?;
+    insert::<AgentSessionSearchRequestV1>(&mut schemas, "AgentSessionSearchRequestV1")?;
+    insert::<AgentSessionSearchPageV1>(&mut schemas, "AgentSessionSearchPageV1")?;
+    insert::<AgentSessionSummaryV1>(&mut schemas, "AgentSessionSummaryV1")?;
+    insert::<AgentSessionEntryViewV1>(&mut schemas, "AgentSessionEntryViewV1")?;
+    insert::<AgentSessionDiagnosticV1>(&mut schemas, "AgentSessionDiagnosticV1")?;
+    insert::<AgentSessionClearRequestV1>(&mut schemas, "AgentSessionClearRequestV1")?;
+    insert::<AgentSessionClearReceiptV1>(&mut schemas, "AgentSessionClearReceiptV1")?;
+    insert::<AgentSubjectMemoryClearRequestV1>(&mut schemas, "AgentSubjectMemoryClearRequestV1")?;
+    insert::<AgentSubjectMemoryClearReceiptV1>(&mut schemas, "AgentSubjectMemoryClearReceiptV1")?;
+    insert::<AgentSubjectMemorySearchRequestV1>(&mut schemas, "AgentSubjectMemorySearchRequestV1")?;
+    insert::<AgentSubjectMemorySearchPageV1>(&mut schemas, "AgentSubjectMemorySearchPageV1")?;
+    insert::<AgentSubjectMemoryAuditViewV1>(&mut schemas, "AgentSubjectMemoryAuditViewV1")?;
     Ok(schemas)
 }
 
@@ -179,6 +215,9 @@ fn internal_openapi(schemas: Map<String, Value>) -> Value {
             "/internal/runtime/v1/retention-commands:apply": post("Apply Retention Command", "RetentionCommandRequestV1", "ApplyReceiptV1"),
             "/internal/runtime/v1/resource-checks:execute": post("Execute Resource Check", "RuntimeResourceCheckRequestV1", "RuntimeResourceCheckResponseV1"),
             "/internal/runtime/v1/resource-operations:execute": post("Execute Resource Operation", "RuntimeResourceOperationRequestV1", "RuntimeResourceOperationResponseV1"),
+            "/internal/runtime/v1/sandboxes:acquire": post("Acquire Agent Workspace", "WorkspaceAcquireRequestV1", "WorkspaceAcquireResponseV1"),
+            "/internal/runtime/v1/sandboxes:tool": post("Execute Agent Workspace Tool", "ToolEffectRequestV1", "ToolEffectResponseV1"),
+            "/internal/runtime/v1/sandboxes:release": post("Release Agent Workspace", "WorkspaceReleaseRequestV1", "WorkspaceReleaseResponseV1"),
             "/internal/runtime/v1/events:export": {
                 "get": {
                     "operationId": "exportRuntimeEventsV1",
@@ -227,6 +266,21 @@ fn internal_openapi(schemas: Map<String, Value>) -> Value {
                 }
             },
             "/internal/runtime/v1/session-commands:apply": post("Apply Session Command", "SessionUpgradeCommandV1", "SessionUpgradeReceiptV1")
+            ,"/internal/runtime/v1/query/agent-sessions:search": post("Search Agent Sessions", "AgentSessionSearchRequestV1", "AgentSessionSearchPageV1")
+            ,"/internal/runtime/v1/query/agent-sessions/{session_key}/{node_key}": {
+                "get": {
+                    "summary": "Get Agent Session Diagnostics",
+                    "parameters": [
+                        {"name":"session_key","in":"path","required":true,"schema":{"type":"string"}},
+                        {"name":"node_key","in":"path","required":true,"schema":{"type":"string"}}
+                    ],
+                    "responses": response("AgentSessionDiagnosticV1"),
+                    "security": [{"serviceJwt":["runtime.query.agent_sessions"]}]
+                }
+            }
+            ,"/internal/runtime/v1/agent-sessions:clear": post("Clear Agent Session", "AgentSessionClearRequestV1", "AgentSessionClearReceiptV1")
+            ,"/internal/runtime/v1/agent-subject-memory:clear": post("Clear Agent Subject Memory", "AgentSubjectMemoryClearRequestV1", "AgentSubjectMemoryClearReceiptV1")
+            ,"/internal/runtime/v1/query/agent-subject-memory:search": post("Search Agent Subject Memory Audit", "AgentSubjectMemorySearchRequestV1", "AgentSubjectMemorySearchPageV1")
         },
         "components": {
             "securitySchemes": {

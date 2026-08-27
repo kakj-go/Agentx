@@ -2,9 +2,9 @@ use std::collections::BTreeMap;
 
 use agentx_domain::ResourceType;
 use agentx_node_protocol::{
-    BindingSlot, CanvasAppearance, CanvasNodeRole, ExecutionStyle, NODE_PROTOCOL_VERSION,
-    NodeCapability, NodeManifestLocalization, NodeManifestVersion, NodePort, NodeUiSchema,
-    PortKind, ReadinessPolicy, SideEffectLevel,
+    BindingSlot, BindingSlotPlacement, CanvasAppearance, CanvasNodeRole, ExecutionStyle,
+    NODE_PROTOCOL_VERSION, NodeCapability, NodeManifestLocalization, NodeManifestVersion, NodePort,
+    NodeUiSchema, PortKind, ReadinessPolicy, SideEffectLevel,
 };
 use serde_json::{Value, json};
 use thiserror::Error;
@@ -41,7 +41,11 @@ impl NodeRegistry {
                 protocol_version: manifest.protocol_version,
             });
         }
-        if let Err(message) = manifest.validate_localizations() {
+        if let Err(message) = manifest
+            .validate_binding_slots()
+            .and_then(|()| manifest.validate_localizations())
+            .and_then(|()| validate_agent_manifest(&manifest))
+        {
             return Err(RegistryError::InvalidManifest {
                 node_type: manifest.node_type,
                 version: manifest.version,
@@ -82,6 +86,79 @@ impl NodeRegistry {
     pub fn m5_defaults() -> Self {
         Self::m4_defaults()
     }
+}
+
+fn validate_agent_manifest(manifest: &NodeManifestVersion) -> Result<(), String> {
+    if manifest.node_type != "agent" {
+        return Ok(());
+    }
+    if manifest.version != 2 {
+        return Err("Manifest 2.0 requires Agent node version 2".into());
+    }
+    let expected = [
+        (
+            "model",
+            ResourceType::Model,
+            BindingSlotPlacement::Inspector,
+            true,
+            false,
+        ),
+        (
+            "workspace_sandbox",
+            ResourceType::SandboxProfile,
+            BindingSlotPlacement::Inspector,
+            false,
+            false,
+        ),
+        (
+            "mcp_tools",
+            ResourceType::McpTool,
+            BindingSlotPlacement::Canvas,
+            false,
+            true,
+        ),
+        (
+            "skills",
+            ResourceType::Skill,
+            BindingSlotPlacement::Canvas,
+            false,
+            true,
+        ),
+        (
+            "knowledge",
+            ResourceType::Rag,
+            BindingSlotPlacement::Canvas,
+            false,
+            true,
+        ),
+        (
+            "long_term_memory",
+            ResourceType::Memory,
+            BindingSlotPlacement::Canvas,
+            false,
+            false,
+        ),
+    ];
+    if manifest.binding_slots.len() != expected.len() {
+        return Err("Agent manifest must declare exactly the six frozen resource slots".into());
+    }
+    for (name, resource_type, placement, required, multiple) in expected {
+        let Some(slot) = manifest.binding_slots.iter().find(|slot| slot.name == name) else {
+            return Err(format!(
+                "Agent manifest is missing frozen resource slot '{name}'"
+            ));
+        };
+        if slot.resource_type != resource_type
+            || slot.placement != placement
+            || slot.required != required
+            || slot.multiple != multiple
+        {
+            return Err(format!(
+                "Agent resource slot '{name}' does not match its frozen Manifest 2.0 contract"
+            ));
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn port(name: &str, kind: PortKind, required: bool, variadic: bool) -> NodePort {
@@ -429,6 +506,7 @@ fn m5_manifest(
         "rag" | "memory" => json!({"operation":{"control":"select"},"input":{"control":"json"}}),
         "agent" => json!({
             "systemPrompt":{"control":"prompt"},"userQuestion":{"control":"text"},
+            "sessionPolicy":{"control":"json"},
             "maxIterations":{"control":"number","unit":"calls"},"maxModelCalls":{"control":"number","unit":"calls"},
             "maxToolCalls":{"control":"number","unit":"calls"},"maxTotalTokens":{"control":"number","unit":"tokens"},
             "maxOutputTokens":{"control":"number","unit":"tokens"},"maxCostMicros":{"control":"number","unit":"micros"},
@@ -802,8 +880,10 @@ fn default_manifests() -> Vec<NodeManifestVersion> {
                 NodeCapability::Agent,
                 json!({
                     "type":"object",
+                    "required":["sessionPolicy"],
                     "properties":{
                         "systemPrompt":{"type":"string"},"userQuestion":{"type":"string","templatable":true,"allowedNamespaces":["inputs","outputs","contexts","execution","item","loop"],"expectedType":"string","multiline":false,"richText":false},
+                        "sessionPolicy":{"type":"object","required":["mode"],"properties":{"mode":{"enum":["application_session","invocation"]},"retentionPolicyId":{"type":"string","minLength":1}},"additionalProperties":false},
                         "maxIterations":{"type":"integer","minimum":1,"maximum":12,"default":12},
                         "maxModelCalls":{"type":"integer","minimum":1,"maximum":12,"default":12},
                         "maxToolCalls":{"type":"integer","minimum":0,"maximum":32,"default":32},
@@ -817,57 +897,88 @@ fn default_manifests() -> Vec<NodeManifestVersion> {
                 }),
                 SideEffectLevel::Irreversible,
             );
+            agent.version = 2;
             agent.binding_slots = vec![
                 BindingSlot {
-                    name: "ai_model".into(),
+                    name: "model".into(),
                     resource_type: ResourceType::Model,
+                    placement: BindingSlotPlacement::Inspector,
                     required: true,
                     multiple: false,
                 },
                 BindingSlot {
-                    name: "ai_tool".into(),
-                    resource_type: ResourceType::McpTool,
-                    required: false,
-                    multiple: true,
-                },
-                BindingSlot {
-                    name: "ai_memory".into(),
-                    resource_type: ResourceType::Memory,
+                    name: "workspace_sandbox".into(),
+                    resource_type: ResourceType::SandboxProfile,
+                    placement: BindingSlotPlacement::Inspector,
                     required: false,
                     multiple: false,
                 },
                 BindingSlot {
-                    name: "ai_retriever".into(),
-                    resource_type: ResourceType::Rag,
+                    name: "mcp_tools".into(),
+                    resource_type: ResourceType::McpTool,
+                    placement: BindingSlotPlacement::Canvas,
                     required: false,
                     multiple: true,
                 },
                 BindingSlot {
-                    name: "ai_skill".into(),
+                    name: "skills".into(),
                     resource_type: ResourceType::Skill,
+                    placement: BindingSlotPlacement::Canvas,
                     required: false,
                     multiple: true,
                 },
+                BindingSlot {
+                    name: "knowledge".into(),
+                    resource_type: ResourceType::Rag,
+                    placement: BindingSlotPlacement::Canvas,
+                    required: false,
+                    multiple: true,
+                },
+                BindingSlot {
+                    name: "long_term_memory".into(),
+                    resource_type: ResourceType::Memory,
+                    placement: BindingSlotPlacement::Canvas,
+                    required: false,
+                    multiple: false,
+                },
+            ];
+            agent.ui_schema.resource_selectors = vec![
+                json!({
+                    "bindingRole":"model",
+                    "resourceType":"model",
+                    "operation":"use",
+                    "required":true,
+                    "label":"Model"
+                }),
+                json!({
+                    "bindingRole":"workspace_sandbox",
+                    "resourceType":"sandbox_profile",
+                    "operation":"use",
+                    "required":false,
+                    "label":"Workspace Sandbox"
+                }),
             ];
             for (locale, labels) in [
                 (
                     "en-US",
                     [
-                        ("ai_model", "Model"),
-                        ("ai_tool", "Tool"),
-                        ("ai_memory", "Memory"),
-                        ("ai_retriever", "Knowledge"),
-                        ("ai_skill", "Skill"),
+                        ("model", "Model"),
+                        ("workspace_sandbox", "Workspace Sandbox"),
+                        ("mcp_tools", "MCP Tools"),
+                        ("skills", "Skills"),
+                        ("knowledge", "Knowledge"),
+                        ("long_term_memory", "Long-term Memory"),
                     ],
                 ),
                 (
                     "zh-CN",
                     [
-                        ("ai_model", "模型"),
-                        ("ai_tool", "工具"),
-                        ("ai_memory", "记忆"),
-                        ("ai_retriever", "知识"),
-                        ("ai_skill", "技能"),
+                        ("model", "模型"),
+                        ("workspace_sandbox", "工作区沙箱"),
+                        ("mcp_tools", "MCP 工具"),
+                        ("skills", "技能"),
+                        ("knowledge", "知识库"),
+                        ("long_term_memory", "长期记忆"),
                     ],
                 ),
             ] {
@@ -997,6 +1108,8 @@ fn chinese_parameter_name(value: &str) -> String {
         "prompt" => "提示词".into(),
         "systemPrompt" => "系统提示词".into(),
         "userQuestion" => "用户问题".into(),
+        "sessionPolicy" => "会话策略".into(),
+        "retentionPolicyId" => "保留策略".into(),
         "arguments" => "调用参数".into(),
         "endpoint" => "端点".into(),
         "url" => "地址".into(),
@@ -1416,6 +1529,13 @@ mod tests {
         let registry = NodeRegistry::m4_defaults();
         assert!(registry.get("set", 1).is_some());
         assert!(registry.get("set", 2).is_none());
+
+        let mut manifest_v1 = registry.get("set", 1).expect("set manifest").clone();
+        manifest_v1.protocol_version = "1.0".into();
+        assert!(matches!(
+            NodeRegistry::default().register(manifest_v1),
+            Err(RegistryError::UnsupportedProtocol { .. })
+        ));
     }
 
     #[test]
@@ -1491,7 +1611,8 @@ mod tests {
     fn model_and_agent_publish_only_the_ai_response_contract() {
         let registry = NodeRegistry::m5_defaults();
         for node_type in ["model", "agent"] {
-            let properties = registry.get(node_type, 1).unwrap().output_schema["properties"]
+            let version = if node_type == "agent" { 2 } else { 1 };
+            let properties = registry.get(node_type, version).unwrap().output_schema["properties"]
                 .as_object()
                 .unwrap();
             assert_eq!(
@@ -1548,7 +1669,7 @@ mod tests {
     }
 
     #[test]
-    fn every_ui_field_is_declared_by_the_parameter_contract() {
+    fn ui_fields_are_declared_and_agent_parameters_are_editable() {
         let registry = NodeRegistry::m5_defaults();
         for manifest in registry.manifests() {
             let parameters = manifest.parameter_schema["properties"]
@@ -1562,6 +1683,17 @@ mod tests {
                     manifest.node_type
                 );
             }
+        }
+        let agent = registry.get("agent", 2).expect("Agent v2 manifest");
+        for parameter in agent.parameter_schema["properties"]
+            .as_object()
+            .expect("Agent parameters")
+            .keys()
+        {
+            assert!(
+                agent.ui_schema.fields.contains_key(parameter),
+                "Agent parameter {parameter} has no UI field"
+            );
         }
     }
 
@@ -1632,7 +1764,7 @@ mod tests {
             NodeCapability::Skill
         );
 
-        let agent = registry.get("agent", 1).expect("agent manifest");
+        let agent = registry.get("agent", 2).expect("Agent v2 manifest");
         assert_eq!(
             agent.parameter_schema["properties"]["userQuestion"]["type"],
             "string"
@@ -1646,14 +1778,45 @@ mod tests {
             agent
                 .binding_slots
                 .iter()
-                .any(|slot| slot.name == "ai_tool")
+                .any(|slot| slot.name == "mcp_tools"
+                    && slot.placement == BindingSlotPlacement::Canvas)
         );
         assert!(
             agent
                 .binding_slots
                 .iter()
-                .any(|slot| slot.name == "ai_skill")
+                .any(|slot| slot.name == "skills"
+                    && slot.placement == BindingSlotPlacement::Canvas)
         );
+        assert!(agent.binding_slots.iter().any(|slot| {
+            slot.name == "model"
+                && slot.required
+                && slot.placement == BindingSlotPlacement::Inspector
+        }));
+        assert!(agent.binding_slots.iter().any(|slot| {
+            slot.name == "workspace_sandbox"
+                && !slot.required
+                && slot.placement == BindingSlotPlacement::Inspector
+        }));
+        assert!(registry.get("agent", 1).is_none());
+
+        let mut old_agent = agent.clone();
+        old_agent.version = 1;
+        assert!(matches!(
+            NodeRegistry::default().register(old_agent),
+            Err(RegistryError::InvalidManifest { .. })
+        ));
+        let mut invalid_agent = agent.clone();
+        invalid_agent
+            .binding_slots
+            .iter_mut()
+            .find(|slot| slot.name == "model")
+            .expect("model slot")
+            .placement = BindingSlotPlacement::Canvas;
+        assert!(matches!(
+            NodeRegistry::default().register(invalid_agent),
+            Err(RegistryError::InvalidManifest { .. })
+        ));
     }
 
     #[test]

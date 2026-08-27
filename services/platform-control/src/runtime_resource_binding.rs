@@ -3,14 +3,62 @@ use std::collections::BTreeSet;
 use agentx_bundle_builder::composite_ir_object_id;
 use agentx_domain::ResourceVersionSnapshot;
 use agentx_runtime_contracts::{
-    ContentHash, ExecutionDepartmentSnapshotV1, ExecutionWorkflowSnapshotV1, RuntimeModelPriceV1,
-    RuntimeResourceBindingV1, RuntimeResourceConfigurationV1, RuntimeResourceKindV1,
-    SandboxEgressModeV1, VaultSecretReferenceV1,
+    ContentHash, ExecutionDepartmentSnapshotV1, ExecutionWorkflowSnapshotV1,
+    RuntimeEnvironmentCredentialReferenceV1, RuntimeGrantBindingV1, RuntimeMcpSandboxReferenceV1,
+    RuntimeMcpTransportV2, RuntimeModelPriceV1, RuntimeResourceBindingV1,
+    RuntimeResourceConfigurationV1, RuntimeResourceKindV1, SandboxEgressModeV1,
+    VaultSecretReferenceV1,
 };
 use anyhow::{Context, Result};
 use serde_json::Value;
 use sqlx::Row;
 use uuid::Uuid;
+
+#[cfg(test)]
+pub(crate) fn runtime_resource_kind_from_control(
+    value: &str,
+) -> anyhow::Result<agentx_runtime_contracts::RuntimeResourceKindV1> {
+    use agentx_runtime_contracts::RuntimeResourceKindV1;
+    Ok(match value {
+        "model" => RuntimeResourceKindV1::Model,
+        "mcp" | "mcp_server" | "mcp_tool" => RuntimeResourceKindV1::Mcp,
+        "rag" => RuntimeResourceKindV1::Rag,
+        "memory" => RuntimeResourceKindV1::Memory,
+        "skill" => RuntimeResourceKindV1::Skill,
+        "credential" => RuntimeResourceKindV1::Credential,
+        "sandbox" | "sandbox_profile" => RuntimeResourceKindV1::SandboxProfile,
+        "composite" => RuntimeResourceKindV1::Composite,
+        unsupported => anyhow::bail!("unsupported Control Resource Grant type {unsupported}"),
+    })
+}
+
+pub(crate) async fn authorization_grants(
+    pool: &sqlx::MySqlPool,
+    tenant_id: Uuid,
+    service_identity_id: Uuid,
+) -> std::result::Result<(Vec<Uuid>, Vec<RuntimeGrantBindingV1>), sqlx::Error> {
+    let rows = sqlx::query(
+        "SELECT id,resource_type,resource_id,resource_version_id,operation_key FROM resource_grants WHERE tenant_id=? AND subject_type='workflow_service_identity' AND subject_id=? ORDER BY id",
+    )
+    .bind(tenant_id)
+    .bind(service_identity_id)
+    .fetch_all(pool)
+    .await?;
+    let mut ids = Vec::with_capacity(rows.len());
+    let mut bindings = Vec::with_capacity(rows.len());
+    for row in rows {
+        let grant_id: Uuid = row.try_get("id")?;
+        ids.push(grant_id);
+        bindings.push(RuntimeGrantBindingV1 {
+            grant_id,
+            resource_type: row.try_get("resource_type")?,
+            resource_id: row.try_get("resource_id")?,
+            resource_version_id: row.try_get("resource_version_id")?,
+            operation: row.try_get("operation_key")?,
+        });
+    }
+    Ok((ids, bindings))
+}
 
 pub(crate) fn from_row(row: &sqlx::mysql::MySqlRow) -> Result<RuntimeResourceBindingV1> {
     let resource_type: String = row.try_get("resource_type")?;
@@ -94,13 +142,33 @@ fn from_parts(
             (
                 RuntimeResourceKindV1::Mcp,
                 RuntimeResourceConfigurationV1::Mcp {
-                    endpoint: required_json_string(&snapshot, "endpoint")?,
+                    server_id: json_uuid(&snapshot, "serverId")
+                        .context("MCP Runtime binding requires serverId")?,
+                    server_version_id: json_uuid(&snapshot, "serverVersionId")
+                        .context("MCP Runtime binding requires serverVersionId")?,
+                    transport: runtime_mcp_transport(&snapshot)?,
                     tool_name: json_string(&snapshot, "toolName")
                         .unwrap_or_else(|| "__server__".into()),
                     tool_version: version_id
                         .map(|id| id.to_string())
                         .unwrap_or_else(|| resource_version.clone()),
                     input_schema_hash: ContentHash::parse(schema_hash)?,
+                    input_schema: snapshot
+                        .get("inputSchema")
+                        .cloned()
+                        .unwrap_or_else(|| serde_json::json!({"type":"object"})),
+                    output_schema: snapshot
+                        .get("outputSchema")
+                        .cloned()
+                        .filter(|value| !value.is_null()),
+                    side_effect: json_string(&snapshot, "sideEffect")
+                        .unwrap_or_else(|| "unknown".into()),
+                    timeout_seconds: snapshot
+                        .get("timeoutSeconds")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(30)
+                        .try_into()
+                        .unwrap_or(30),
                     credential: optional_vault_reference(&snapshot)?,
                 },
                 vec![],
@@ -122,21 +190,33 @@ fn from_parts(
                 endpoint: required_json_string(&snapshot, "endpoint")?,
                 namespace: required_json_string(&snapshot, "externalNamespace")?,
                 memory_version: resource_version.clone(),
+                access_mode: json_string(&snapshot, "accessMode").unwrap_or_else(|| "read".into()),
                 credential: optional_vault_reference(&snapshot)?,
             },
             vec![],
         ),
         "skill" => {
-            let entrypoint =
-                version_id.context("Skill Runtime binding requires a fixed version")?;
+            version_id.context("Skill Runtime binding requires a fixed version")?;
+            let entrypoint = json_uuid(&snapshot, "entrypointObjectId")
+                .context("Skill Runtime binding requires a signed V2 program object")?;
+            let entrypoint_content_hash =
+                ContentHash::parse(required_json_string(&snapshot, "entrypointContentHash")?)?;
             let dependency_object_ids = uuid_array(&snapshot, "dependencyObjectIds")?;
+            let dependencies = serde_json::from_value(
+                snapshot
+                    .get("dependencies")
+                    .cloned()
+                    .context("Skill Runtime binding requires frozen dependencies")?,
+            )?;
             let mut object_ids = vec![entrypoint];
             object_ids.extend(dependency_object_ids.iter().copied());
             (
                 RuntimeResourceKindV1::Skill,
                 RuntimeResourceConfigurationV1::Skill {
                     entrypoint_object_id: entrypoint,
+                    entrypoint_content_hash,
                     dependency_object_ids,
+                    dependencies,
                 },
                 object_ids,
             )
@@ -236,6 +316,64 @@ pub(crate) async fn workflow_snapshot(
     })
 }
 
+fn runtime_mcp_transport(snapshot: &Value) -> Result<RuntimeMcpTransportV2> {
+    let transport = snapshot
+        .get("transport")
+        .context("MCP Runtime binding requires tagged transport")?;
+    match transport.get("kind").and_then(Value::as_str) {
+        Some("streamable_http") => Ok(RuntimeMcpTransportV2::StreamableHttp {
+            endpoint: required_json_string(transport, "endpoint")?,
+        }),
+        Some("sse") => Ok(RuntimeMcpTransportV2::Sse {
+            endpoint: required_json_string(transport, "endpoint")?,
+        }),
+        Some("stdio") => {
+            let runtime_sandbox = transport
+                .get("runtimeSandbox")
+                .context("stdio MCP Runtime binding requires runtimeSandbox")?;
+            let environment_credential_refs = transport
+                .get("environmentCredentialRefs")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .map(|reference| {
+                    Ok(RuntimeEnvironmentCredentialReferenceV1 {
+                        name: required_json_string(reference, "name")?,
+                        credential: serde_json::from_value(
+                            reference.get("vaultSecretRef").cloned().context(
+                                "stdio MCP environment Credential requires Vault reference",
+                            )?,
+                        )?,
+                    })
+                })
+                .collect::<Result<Vec<_>>>()?;
+            Ok(RuntimeMcpTransportV2::Stdio {
+                command: required_json_string(transport, "command")?,
+                args: transport
+                    .get("args")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .map(|value| {
+                        value
+                            .as_str()
+                            .map(str::to_owned)
+                            .context("stdio MCP args must be strings")
+                    })
+                    .collect::<Result<Vec<_>>>()?,
+                environment_credential_refs,
+                runtime_sandbox: RuntimeMcpSandboxReferenceV1 {
+                    resource_id: json_uuid(runtime_sandbox, "resourceId")
+                        .context("stdio MCP runtimeSandbox.resourceId is required")?,
+                    resource_version_id: json_uuid(runtime_sandbox, "resourceVersionId")
+                        .context("stdio MCP runtimeSandbox.resourceVersionId is required")?,
+                },
+            })
+        }
+        _ => anyhow::bail!("MCP Runtime binding has an unsupported tagged transport"),
+    }
+}
+
 fn required_json_pointer_string(
     value: &Value,
     pointer: &str,
@@ -255,7 +393,8 @@ fn required_json_scalar_string(value: Option<&Value>, message: &'static str) -> 
 fn optional_vault_reference(snapshot: &Value) -> Result<Option<VaultSecretReferenceV1>> {
     let value = snapshot
         .get("vaultSecretRef")
-        .or_else(|| snapshot.get("secretRef"));
+        .or_else(|| snapshot.get("secretRef"))
+        .filter(|value| !value.is_null());
     value
         .cloned()
         .map(serde_json::from_value)
@@ -334,7 +473,7 @@ mod tests {
     use serde_json::json;
     use uuid::Uuid;
 
-    use super::{from_parts, optional_json_scalar_string};
+    use super::{from_parts, optional_json_scalar_string, optional_vault_reference};
 
     #[test]
     fn null_optional_versions_are_absent() {
@@ -348,6 +487,16 @@ mod tests {
             optional_json_scalar_string(snapshot.pointer("/price/versionId")).unwrap(),
             Some("7".into())
         );
+    }
+
+    #[test]
+    fn null_optional_vault_reference_is_absent() {
+        assert!(
+            optional_vault_reference(&json!({"vaultSecretRef": null}))
+                .unwrap()
+                .is_none()
+        );
+        assert!(optional_vault_reference(&json!({})).unwrap().is_none());
     }
 
     #[test]

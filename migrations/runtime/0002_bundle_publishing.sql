@@ -172,8 +172,3 @@ ALTER TABLE runtime_commands
 
 ALTER TABLE execution_outbox
     ADD COLUMN fencing_token BIGINT UNSIGNED NOT NULL DEFAULT 0 AFTER locked_until;
-
-ALTER TABLE node_attempts
-    ADD COLUMN locked_until TIMESTAMP(6) NULL AFTER lease_token,
-    ADD COLUMN fencing_token BIGINT UNSIGNED NOT NULL DEFAULT 0 AFTER locked_until,
-    ADD KEY idx_node_attempt_lease (status, locked_until, created_at);

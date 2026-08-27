@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "oneOf": [
+    {
+      "not": {
+        "required": [
+          "payloadArtifactId"
+        ]
+      },
+      "required": [
+        "payloadJson"
+      ]
+    },
+    {
+      "not": {
+        "required": [
+          "payloadJson"
+        ]
+      },
+      "required": [
+        "payloadArtifactId"
+      ]
+    }
+  ],
+  "properties": {
+    "createdAtMillis": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "entryId": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "entryKind": {
+      "enum": [
+        "message_user",
+        "message_assistant",
+        "message_tool_call",
+        "message_tool_result",
+        "custom_external_context",
+        "compaction",
+        "pending_steering",
+        "pending_follow_up"
+      ]
+    },
+    "lane": {
+      "const": "main"
+    },
+    "operationId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "parentEntryId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "payloadArtifactId": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "payloadJson": {},
+    "sessionId": {
+      "minLength": 1,
+      "type": "string"
+    }
+  },
+  "required": [
+    "entryId",
+    "sessionId",
+    "lane",
+    "entryKind",
+    "createdAtMillis"
+  ],
+  "title": "AgentSessionEntryV1",
+  "type": "object"
+}

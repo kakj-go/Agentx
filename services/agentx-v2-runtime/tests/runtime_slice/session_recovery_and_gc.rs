@@ -215,9 +215,109 @@ async fn session_message_appends_one_assistant_response(fixture: &Fixture) {
     assert_eq!(unchanged_title.as_deref(), Some("session-message"));
 }
 
+async fn durable_agent_pending_wakeups_are_ordered_and_idempotent(fixture: &Fixture) {
+    let session_key = format!("application:{}:pending-wakeup", fixture.application_id);
+    let node_key = "pending-agent";
+    sqlx::query("INSERT INTO agent_session_registers(tenant_id,application_id,session_key,stable_agent_node_key,session_id,bundle_hash,definition_hash,model_version,core_contract_version,open_operation_id,state_version,fencing_token,register_json,lease_expires_at) VALUES(?,?,?,?,?,'bundle','definition','model:1','1.1','open-operation',1,7,JSON_OBJECT(),DATE_ADD(UTC_TIMESTAMP(6),INTERVAL 5 MINUTE))")
+        .bind(fixture.tenant_id)
+        .bind(fixture.application_id)
+        .bind(&session_key)
+        .bind(node_key)
+        .bind("pending-session")
+        .execute(&fixture.state.pool)
+        .await
+        .unwrap();
+
+    for sequence in 1_u64..=32 {
+        let execution_id = Uuid::now_v7();
+        let node_execution_id = Uuid::now_v7();
+        let attempt_id = Uuid::now_v7();
+        sqlx::query("INSERT INTO agent_session_pending_entries(entry_id,tenant_id,session_key,stable_agent_node_key,execution_id,node_execution_id,attempt_id,queue_kind,idempotency_key,payload_json,sequence_number) VALUES(?,?,?,?,?,?,?,'retry',?,JSON_OBJECT('sequence',?),?)")
+            .bind(format!("pending:{sequence:02}"))
+            .bind(fixture.tenant_id)
+            .bind(&session_key)
+            .bind(node_key)
+            .bind(execution_id)
+            .bind(node_execution_id)
+            .bind(attempt_id)
+            .bind(format!("pending-input:{sequence:02}"))
+            .bind(sequence)
+            .bind(sequence)
+            .execute(&fixture.state.pool)
+            .await
+            .unwrap();
+    }
+
+    assert_eq!(
+        wake_pending_sessions(&fixture.state.pool, 100)
+            .await
+            .unwrap(),
+        0,
+        "an active open operation must keep pending inputs durable and asleep"
+    );
+    sqlx::query("UPDATE agent_session_registers SET open_operation_id=NULL,lease_expires_at=NULL WHERE tenant_id=? AND session_key=? AND stable_agent_node_key=?")
+        .bind(fixture.tenant_id)
+        .bind(&session_key)
+        .bind(node_key)
+        .execute(&fixture.state.pool)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        wake_pending_sessions(&fixture.state.pool, 2).await.unwrap(),
+        2
+    );
+    let first_woken = sqlx::query_scalar::<_, u64>("SELECT sequence_number FROM agent_session_pending_entries WHERE tenant_id=? AND session_key=? AND stable_agent_node_key=? AND wake_command_id IS NOT NULL ORDER BY sequence_number")
+        .bind(fixture.tenant_id)
+        .bind(&session_key)
+        .bind(node_key)
+        .fetch_all(&fixture.state.pool)
+        .await
+        .unwrap();
+    assert_eq!(first_woken, vec![1, 2]);
+    assert_eq!(
+        wake_pending_sessions(&fixture.state.pool, 100)
+            .await
+            .unwrap(),
+        30
+    );
+    assert_eq!(
+        wake_pending_sessions(&fixture.state.pool, 100)
+            .await
+            .unwrap(),
+        0
+    );
+    let command_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM runtime_commands WHERE tenant_id=? AND idempotency_key LIKE 'agent-session-wakeup:pending:%'")
+        .bind(fixture.tenant_id)
+        .fetch_one(&fixture.state.pool)
+        .await
+        .unwrap();
+    assert_eq!(command_count, 32);
+
+    sqlx::query("DELETE FROM runtime_commands WHERE tenant_id=? AND idempotency_key LIKE 'agent-session-wakeup:pending:%'")
+        .bind(fixture.tenant_id)
+        .execute(&fixture.state.pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM agent_session_pending_entries WHERE tenant_id=? AND session_key=? AND stable_agent_node_key=?")
+        .bind(fixture.tenant_id)
+        .bind(&session_key)
+        .bind(node_key)
+        .execute(&fixture.state.pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM agent_session_registers WHERE tenant_id=? AND session_key=? AND stable_agent_node_key=?")
+        .bind(fixture.tenant_id)
+        .bind(&session_key)
+        .bind(node_key)
+        .execute(&fixture.state.pool)
+        .await
+        .unwrap();
+}
+
 async fn chat_mapping_publication_is_idempotent(
     fixture: &Fixture,
-    bundle: &agentx_runtime_contracts::ExecutionSpecBundleV1,
+    bundle: &agentx_runtime_contracts::ExecutionSpecBundleV2,
 ) {
     let mapping = ChatMappingV1 {
         question_input: "message".into(),
@@ -1144,7 +1244,7 @@ async fn scoped_execution_search(
 
 async fn gc_protects_heads_references_and_holds_then_sweeps(
     fixture: &Fixture,
-    bundle: &agentx_runtime_contracts::ExecutionSpecBundleV1,
+    bundle: &agentx_runtime_contracts::ExecutionSpecBundleV2,
 ) {
     sqlx::query("UPDATE deployment_bundles SET retained_until=DATE_SUB(UTC_TIMESTAMP(6),INTERVAL 1 DAY) WHERE id=?")
         .bind(bundle.payload.bundle_id).execute(&fixture.state.pool).await.unwrap();
@@ -1399,7 +1499,7 @@ async fn ready_orphan_objects_are_swept_and_reuploadable(fixture: &Fixture) {
 
 async fn disable_is_scoped_idempotent_and_preserves_the_head(
     fixture: &Fixture,
-    active: &agentx_runtime_contracts::ExecutionSpecBundleV1,
+    active: &agentx_runtime_contracts::ExecutionSpecBundleV2,
 ) {
     let before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM publish_receipts")
         .fetch_one(&fixture.state.pool)
@@ -1668,7 +1768,7 @@ fn bearer_headers(token: String) -> HeaderMap {
 
 fn definition() -> WorkflowDefinition {
     serde_json::from_value(json!({
-        "schemaVersion":"5.0",
+        "schemaVersion":"6.0",
         "start":{"inputs":{"type":"object","properties":{"message":{"type":"string"}},"required":["message"],"additionalProperties":false},"contexts":{}},
         "nodes":[{"id":"pass","key":"pass","type":"no_op","typeVersion":1,"name":"Pass","parameters":{},"settings":{"retryOnFail":true,"maxTries":2,"waitBetweenTriesMs":5},"outputProjection":{},"contextWrites":[],"resourceReferences":[]}],
         "connections":[
@@ -1683,7 +1783,7 @@ fn definition() -> WorkflowDefinition {
 
 fn composite_definition(child_version_id: Uuid) -> WorkflowDefinition {
     serde_json::from_value(json!({
-        "schemaVersion":"5.0",
+        "schemaVersion":"6.0",
         "start":{"inputs":{"type":"object","properties":{"message":{"type":"string"}},"required":["message"],"additionalProperties":false},"contexts":{}},
         "nodes":[{
             "id":"child",

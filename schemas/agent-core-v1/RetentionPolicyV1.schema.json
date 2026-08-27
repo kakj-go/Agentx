@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "compactionArtifactExpiresAtMillis": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "protectReferencedArtifacts": {
+      "default": false,
+      "type": "boolean"
+    },
+    "sessionExpiresAtMillis": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    }
+  },
+  "title": "RetentionPolicyV1",
+  "type": "object"
+}

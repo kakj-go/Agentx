@@ -22,7 +22,7 @@
     "plane": "control",
     "authoritative_writer": "platform-control bundle builder",
     "allowed_readers": ["platform-control publisher", "platform-control API"],
-    "cross_plane_contract": "ExecutionSpecBundleV1",
+    "cross_plane_contract": "ExecutionSpecBundleV2",
     "retention_and_delete_rule": "immutable; retain while deployments or publish attempts reference the bundle",
     "owning_task": "V2P-001"
   },
@@ -58,7 +58,7 @@
     "plane": "runtime",
     "authoritative_writer": "runtime-gateway prepare transaction",
     "allowed_readers": ["runtime-gateway", "workflow-runtime", "workflow-worker", "workflow-runtime bundle GC"],
-    "cross_plane_contract": "ExecutionSpecBundleV1 object manifest",
+    "cross_plane_contract": "ExecutionSpecBundleV2 object manifest",
     "retention_and_delete_rule": "delete only through Mark/Sweep after every Bundle reference and hold is released",
     "owning_task": "V2P-007"
   },
@@ -103,7 +103,7 @@
     "plane": "control",
     "authoritative_writer": "platform-control application trigger use cases",
     "allowed_readers": ["platform-control bundle builder", "platform-control API"],
-    "cross_plane_contract": "RuntimeTriggerSpecV1 in ExecutionSpecBundleV1",
+    "cross_plane_contract": "RuntimeTriggerSpecV1 in ExecutionSpecBundleV2",
     "retention_and_delete_rule": "immutable revision; retain with every Deployment that captured the manifest hash",
     "owning_task": "V2G-004"
   },

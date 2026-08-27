@@ -4,7 +4,7 @@ use time::OffsetDateTime;
 use uuid::Uuid;
 
 use crate::{
-    ApplyReceiptV1, ContentHash, ExecutionSpecBundleV1, INTERNAL_API_VERSION,
+    ApplyReceiptV1, ContentHash, ExecutionSpecBundleV2, INTERNAL_API_VERSION,
     RuntimeObjectReferenceV1, RuntimeWorkPackageV1,
 };
 
@@ -39,7 +39,7 @@ pub struct PrepareBundleRequestV1 {
     #[serde(deserialize_with = "crate::deserialize_v1")]
     pub api_version: u32,
     pub idempotency_key: String,
-    pub bundle: ExecutionSpecBundleV1,
+    pub bundle: ExecutionSpecBundleV2,
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]

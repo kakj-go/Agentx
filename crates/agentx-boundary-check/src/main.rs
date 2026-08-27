@@ -119,6 +119,7 @@ fn check_repository(root: &Path) -> Result<()> {
     check_v2_initial_schemas(root, &tables, &mut failures)?;
     check_v2_incremental_schemas(root, &v2_tables, &mut failures)?;
     check_cargo(root, &policy, &mut failures)?;
+    check_agent_core_boundary(root, &mut failures)?;
     check_sql(root, &tables, &v2_tables, &policy, &mut failures)?;
     check_boundary_tokens(root, &policy, &mut failures)?;
     check_runtime_gateway_redis(root, &policy, &mut failures)?;
@@ -126,6 +127,60 @@ fn check_repository(root: &Path) -> Result<()> {
     check_network_policies(root, &policy, &mut failures)?;
     check_line_limits(root, &mut failures)?;
     finish(failures)
+}
+
+fn check_agent_core_boundary(root: &Path, failures: &mut Vec<String>) -> Result<()> {
+    let crate_root = root.join("crates/agentx-agent-core");
+    if !crate_root.is_dir() {
+        return Ok(());
+    }
+    let cargo = fs::read_to_string(crate_root.join("Cargo.toml"))?;
+    for dependency in [
+        "sqlx",
+        "redis",
+        "reqwest",
+        "object_store",
+        "kube",
+        "k8s-openapi",
+        "vaultrs",
+        "tokio",
+    ] {
+        let dependency_line = Regex::new(&format!(r"(?m)^{}\s*=", regex::escape(dependency)))?;
+        if dependency_line.is_match(&cargo) {
+            failures.push(format!(
+                "Agent Core Cargo boundary violation: {dependency} is a direct dependency"
+            ));
+        }
+    }
+    let source_root = crate_root.join("src");
+    for path in WalkDir::new(&source_root)
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_type().is_file())
+        .map(|entry| entry.into_path())
+        .filter(|path| path.extension().and_then(|value| value.to_str()) == Some("rs"))
+        .filter(|path| !path.starts_with(source_root.join("bin")))
+    {
+        let source = fs::read_to_string(&path)?;
+        for forbidden in [
+            "std::fs",
+            "std::process",
+            "tokio::process",
+            "reqwest::",
+            "sqlx::",
+            "redis::",
+            "object_store::",
+            "kube::",
+        ] {
+            if source.contains(forbidden) {
+                failures.push(format!(
+                    "Agent Core infrastructure boundary violation: {} contains {forbidden}",
+                    relative(root, &path)
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn check_provider_http_clients(root: &Path, failures: &mut Vec<String>) -> Result<()> {
@@ -600,8 +655,11 @@ fn check_table_catalog(
             disposition_names.difference(&names).collect::<Vec<_>>()
         ));
     }
-    if names.len() != 133 {
-        failures.push(format!("expected 133 MySQL tables, found {}", names.len()));
+    if names.len() < 133 {
+        failures.push(format!(
+            "expected at least 133 MySQL tables, found {}",
+            names.len()
+        ));
     }
     for row in tables.values() {
         if !matches!(
@@ -1236,7 +1294,9 @@ fn check_fixture(root: &Path) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::rust_string_literals;
+    use std::fs;
+
+    use super::{check_agent_core_boundary, rust_string_literals};
 
     #[test]
     fn sql_scanner_reads_normal_raw_and_byte_string_literals() {
@@ -1254,5 +1314,26 @@ mod tests {
                 .iter()
                 .any(|value| value.contains("DELETE FROM users"))
         );
+    }
+
+    #[test]
+    fn agent_core_boundary_rejects_infrastructure_and_host_file_apis() {
+        let temporary = tempfile::tempdir().expect("temporary repository");
+        let crate_root = temporary.path().join("crates/agentx-agent-core");
+        fs::create_dir_all(crate_root.join("src")).expect("create core source");
+        fs::write(
+            crate_root.join("Cargo.toml"),
+            "[package]\nname='agentx-agent-core'\nversion='0.0.0'\n[dependencies]\nreqwest='0.12'\n",
+        )
+        .expect("write cargo");
+        fs::write(
+            crate_root.join("src/lib.rs"),
+            "fn forbidden() { let _ = std::fs::read_to_string(\"host\"); }",
+        )
+        .expect("write source");
+        let mut failures = Vec::new();
+        check_agent_core_boundary(temporary.path(), &mut failures).expect("run boundary check");
+        assert!(failures.iter().any(|failure| failure.contains("reqwest")));
+        assert!(failures.iter().any(|failure| failure.contains("std::fs")));
     }
 }

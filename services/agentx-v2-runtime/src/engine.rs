@@ -37,6 +37,8 @@ use crate::{
     output_contract::validate_node_output_contract,
 };
 
+#[path = "engine_agent_projection.rs"]
+mod agent_projection;
 #[path = "engine_parameter_resolution.rs"]
 mod parameter_resolution;
 #[path = "engine_persist_machine.rs"]
@@ -357,6 +359,11 @@ pub async fn resume_execution(pool: &MySqlPool, claim: &RuntimeCommandClaim) -> 
         raw_payload
     };
     let composite_status = claim.payload.get("childStatus").and_then(Value::as_str);
+    let agent_session_wakeup = claim
+        .payload
+        .get("agentSessionPendingEntryId")
+        .and_then(Value::as_str)
+        .is_some();
     let execution = sqlx::query(
         "SELECT e.status,e.bundle_id,e.work_package_id,e.state_version,e.invocation_id,s.policy_snapshot_json,s.worker_compatibility_json,s.resource_snapshot_json,r.context_json,r.context_version,r.machine_state_json,r.state_version runtime_state_version FROM workflow_executions e JOIN execution_snapshots s ON s.execution_id=e.id JOIN execution_runtime_state r ON r.execution_id=e.id WHERE e.tenant_id=? AND e.id=? FOR UPDATE",
     )
@@ -369,6 +376,18 @@ pub async fn resume_execution(pool: &MySqlPool, claim: &RuntimeCommandClaim) -> 
         execution_status.as_str(),
         "succeeded" | "failed" | "cancelled" | "timed_out"
     ) {
+        if let Some(entry_id) = claim
+            .payload
+            .get("agentSessionPendingEntryId")
+            .and_then(Value::as_str)
+        {
+            sqlx::query(
+                "UPDATE agent_session_pending_entries SET status='cancelled',consumed_at=UTC_TIMESTAMP(6) WHERE entry_id=? AND status='pending'",
+            )
+            .bind(entry_id)
+            .execute(&mut *tx)
+            .await?;
+        }
         complete_command(
             &mut tx,
             claim,
@@ -407,6 +426,10 @@ pub async fn resume_execution(pool: &MySqlPool, claim: &RuntimeCommandClaim) -> 
                     .unwrap_or("Composite child Execution failed"),
                 false,
             )
+            .map_err(machine_error)?;
+    } else if agent_session_wakeup {
+        machine
+            .retry_waiting(NodeExecutionId::from_uuid(node_execution_id))
             .map_err(machine_error)?;
     } else {
         machine
@@ -473,11 +496,12 @@ pub async fn resume_execution(pool: &MySqlPool, claim: &RuntimeCommandClaim) -> 
     )
     .await?;
     let resume_output = single_port_output(output_port, payload.clone());
-    let resumed_status = if composite_status.is_some_and(|status| status != "succeeded") {
-        "failed"
-    } else {
-        "succeeded"
-    };
+    let resumed_status =
+        if agent_session_wakeup || composite_status.is_some_and(|status| status != "succeeded") {
+            "failed"
+        } else {
+            "succeeded"
+        };
     sqlx::query(
         "UPDATE node_attempts SET status=?,output_json=?,error_code=?,error_message=?,ended_at=UTC_TIMESTAMP(6),locked_until=NULL WHERE tenant_id=? AND execution_id=? AND node_execution_id=? AND status='suspended'",
     )
@@ -574,6 +598,19 @@ pub async fn resume_execution(pool: &MySqlPool, claim: &RuntimeCommandClaim) -> 
         .bind(claim.tenant_id)
         .bind(claim.execution_id)
         .bind(execution_version)
+        .execute(&mut *tx)
+        .await?;
+    }
+    if let Some(entry_id) = claim
+        .payload
+        .get("agentSessionPendingEntryId")
+        .and_then(Value::as_str)
+    {
+        sqlx::query(
+            "UPDATE agent_session_pending_entries SET status='consumed',consumed_at=UTC_TIMESTAMP(6) WHERE entry_id=? AND wake_command_id=? AND status='pending'",
+        )
+        .bind(entry_id)
+        .bind(claim.command_id)
         .execute(&mut *tx)
         .await?;
     }
@@ -876,7 +913,7 @@ pub async fn claim_worker_attempt(
         ));
     }
     let row = sqlx::query(
-        "SELECT a.id,a.tenant_id,a.execution_id,a.node_execution_id,a.capability,a.worker_protocol_version,a.input_json,a.fencing_token,a.deadline_at,n.node_id,n.node_type,n.node_version,n.run_index,n.iteration_index,e.input_json execution_input_json,s.compiled_ir_json,s.resource_snapshot_json,s.execution_context_json,r.context_json FROM node_attempts a JOIN node_executions n ON n.id=a.node_execution_id JOIN workflow_executions e ON e.id=a.execution_id JOIN execution_snapshots s ON s.execution_id=a.execution_id JOIN execution_runtime_state r ON r.execution_id=a.execution_id WHERE a.id=? AND a.status='queued' AND (a.locked_until IS NULL OR a.locked_until<=UTC_TIMESTAMP(6)) AND (a.deadline_at IS NULL OR a.deadline_at>UTC_TIMESTAMP(6)) FOR UPDATE",
+        "SELECT a.id,a.tenant_id,a.execution_id,a.node_execution_id,a.capability,a.worker_protocol_version,a.input_json,a.fencing_token,a.deadline_at,n.node_id,n.node_type,n.node_version,n.run_index,n.iteration_index,e.input_json execution_input_json,s.compiled_ir_json,s.resource_snapshot_json,s.execution_context_json,s.runtime_settings_json,r.context_json FROM node_attempts a JOIN node_executions n ON n.id=a.node_execution_id JOIN workflow_executions e ON e.id=a.execution_id JOIN execution_snapshots s ON s.execution_id=a.execution_id JOIN execution_runtime_state r ON r.execution_id=a.execution_id WHERE a.id=? AND a.status='queued' AND (a.locked_until IS NULL OR a.locked_until<=UTC_TIMESTAMP(6)) AND (a.deadline_at IS NULL OR a.deadline_at>UTC_TIMESTAMP(6)) FOR UPDATE",
     )
     .bind(task.attempt_id)
     .fetch_optional(&mut *tx)
@@ -930,7 +967,7 @@ pub async fn claim_worker_attempt(
     let node_type: String = row.try_get("node_type")?;
     let node_id: String = row.try_get("node_id")?;
     let node_version: u32 = row.try_get("node_version")?;
-    let raw_parameters = compiled
+    let mut raw_parameters = compiled
         .nodes
         .iter()
         .find(|node| {
@@ -938,6 +975,44 @@ pub async fn claim_worker_attempt(
         })
         .map(|node| node.parameters.clone())
         .unwrap_or_else(|| json!({}));
+    // Project the frozen Agent Bundle into the worker task without consulting
+    // Control Plane. The compiled node is used only to prove that the Bundle
+    // entry belongs to this exact immutable Workflow snapshot.
+    if let Some(agent) = compiled
+        .nodes
+        .iter()
+        .find(|node| {
+            node.id == node_id && node.node_type == node_type && node.type_version == node_version
+        })
+        .and_then(|node| node.agent.as_ref())
+    {
+        let runtime_settings: Value = row.try_get("runtime_settings_json")?;
+        let agent_bundle = runtime_settings
+            .get("agentBundle")
+            .cloned()
+            .ok_or_else(|| {
+                runtime_bad_request(
+                    "AGENT_BUNDLE_SNAPSHOT_MISSING",
+                    "Execution snapshot does not contain the frozen Agent Bundle",
+                )
+            })
+            .and_then(|value| {
+                serde_json::from_value(value).map_err(|error| {
+                    runtime_bad_request(
+                        "AGENT_BUNDLE_SNAPSHOT_INVALID",
+                        &format!("Execution snapshot Agent Bundle is invalid: {error}"),
+                    )
+                })
+            })?;
+        agent_projection::inject_agent_runtime_parameters(
+            &mut raw_parameters,
+            agent,
+            &agent_bundle,
+            &compiled.definition_hash,
+            &node_id,
+            task.bundle_id,
+        )?;
+    }
     let inputs: BTreeMap<String, Vec<Item>> = serde_json::from_value(row.try_get("input_json")?)
         .map_err(|error| RuntimeError::Internal(error.into()))?;
     let context: Value = row.try_get("context_json")?;

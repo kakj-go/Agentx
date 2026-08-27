@@ -19,6 +19,7 @@ const translations = {
   "datasets": "Datasets",
   "evaluations": "Evaluation Reports",
   "runtime": "Runtime Status",
+  "agentSessions": "Agent Sessions",
   "models": "Model Services",
   "mcp": "MCP Servers",
   "skills": "Skills",

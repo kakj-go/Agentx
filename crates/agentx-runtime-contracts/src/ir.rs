@@ -1,7 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use agentx_domain::{
-    ContextDefinition, ContextWrite, ExecutionOrder, NodeSettings, WorkflowEnd, WorkflowStart,
+    ContextDefinition, ContextWrite, ExecutionOrder, NodeSettings, ResourceOperation, ResourceType,
+    WorkflowEnd, WorkflowStart,
 };
 use agentx_node_protocol::{
     ExecutionStyle, NodeCapability, OutputCardinality, PortKind, ReadinessPolicy, SideEffectLevel,
@@ -53,9 +54,69 @@ pub struct CompiledNodeV1 {
     pub output_ports: Vec<String>,
     pub effective_output_contract: EffectiveOutputContractV1,
     pub side_effect_level: SideEffectLevel,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<CompiledAgentNodeV2>,
     pub incoming_connections: Vec<usize>,
     pub outgoing_connections: Vec<usize>,
     pub component_index: usize,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentSessionPolicyModeV2 {
+    ApplicationSession,
+    Invocation,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CompiledAgentResourceReferenceV2 {
+    pub binding_role: String,
+    pub resource_type: ResourceType,
+    pub resource_id: uuid::Uuid,
+    pub resource_version_id: uuid::Uuid,
+    pub operation: ResourceOperation,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CompiledAgentAttachmentV2 {
+    pub binding_id: String,
+    pub binding_role: String,
+    pub resource_type: ResourceType,
+    pub resource_id: uuid::Uuid,
+    pub resource_version_id: uuid::Uuid,
+    pub operation: ResourceOperation,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CoreToolReplayPolicyV2 {
+    Safe,
+    Never,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DerivedCoreToolV2 {
+    pub name: String,
+    pub replay_policy: CoreToolReplayPolicyV2,
+    pub workspace_sandbox_resource_id: uuid::Uuid,
+    pub workspace_sandbox_version_id: uuid::Uuid,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CompiledAgentNodeV2 {
+    pub contract_version: String,
+    pub session_policy: AgentSessionPolicyModeV2,
+    pub model: CompiledAgentResourceReferenceV2,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_sandbox: Option<CompiledAgentResourceReferenceV2>,
+    #[serde(default)]
+    pub canvas_attachments: Vec<CompiledAgentAttachmentV2>,
+    #[serde(default)]
+    pub core_tools: Vec<DerivedCoreToolV2>,
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]

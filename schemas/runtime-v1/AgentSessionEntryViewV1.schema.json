@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "createdAt": {
+      "type": "string"
+    },
+    "entryId": {
+      "type": "string"
+    },
+    "entryKind": {
+      "type": "string"
+    },
+    "lane": {
+      "type": "string"
+    },
+    "operationId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "parentEntryId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "payload": true,
+    "sessionId": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "entryId",
+    "sessionId",
+    "lane",
+    "entryKind",
+    "createdAt"
+  ],
+  "title": "AgentSessionEntryViewV1",
+  "type": "object"
+}

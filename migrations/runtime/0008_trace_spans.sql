@@ -1,3 +1,4 @@
-ALTER TABLE agent_runs
-    ADD COLUMN attempt_id BINARY(16) NULL AFTER node_execution_id,
-    ADD KEY idx_agent_run_attempt (tenant_id, attempt_id);
+-- `agent_runs.attempt_id` and its lookup index are part of the V2 empty-database
+-- contract in 0001_initial.sql.  Keep this migration as a recorded no-op so
+-- the historical SQLx sequence remains stable without attempting to add the
+-- column a second time on a freshly bootstrapped runtime database.

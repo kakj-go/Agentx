@@ -488,6 +488,41 @@ impl ExecutionMachine {
         Ok(())
     }
 
+    /// Requeue a suspended node without emitting its output.  This is used by
+    /// durable Agent Session wakeups: the waiting attempt yielded because the
+    /// Session had an open Operation, so the node must run again after that
+    /// Operation settles rather than being treated as a completed wait node.
+    pub fn retry_waiting(&mut self, id: NodeExecutionId) -> Result<(), MachineError> {
+        self.ensure_active()?;
+        let activation = self
+            .activations
+            .get_mut(&id)
+            .ok_or(MachineError::ActivationNotFound(id))?;
+        if activation.status != ActivationStatus::Waiting {
+            return Err(MachineError::InvalidTransition {
+                id,
+                from: activation.status,
+                to: ActivationStatus::Ready,
+            });
+        }
+        let attempt = activation
+            .attempts
+            .last_mut()
+            .expect("waiting activation has attempt");
+        if attempt.status != AttemptStatus::Suspended {
+            return Err(MachineError::InvalidTransition {
+                id,
+                from: activation.status,
+                to: ActivationStatus::Ready,
+            });
+        }
+        attempt.status = AttemptStatus::Failed;
+        activation.status = ActivationStatus::Ready;
+        self.ready.push_back(id);
+        self.status = RuntimeExecutionStatus::Running;
+        Ok(())
+    }
+
     pub fn resume(
         &mut self,
         id: NodeExecutionId,
@@ -1241,7 +1276,7 @@ mod tests {
     #[test]
     fn closes_unselected_branch_without_blocking_merge() {
         let workflow = compile(json!({
-            "schemaVersion":"5.0",
+            "schemaVersion":"6.0",
             "nodes":[
                 {"id":"trigger","type":"no_op","typeVersion":1,"name":"Root",},
                 {"id":"if","type":"if","typeVersion":1,"name":"IF","parameters":{"condition":true}},
@@ -1271,7 +1306,7 @@ mod tests {
     #[test]
     fn retry_adds_attempt_to_same_activation_and_late_transitions_fail() {
         let workflow = compile(json!({
-            "schemaVersion":"5.0",
+            "schemaVersion":"6.0",
             "nodes":[{"id":"trigger","type":"no_op","typeVersion":1,"name":"Root","settings":{"retryOnFail":true,"maxTries":2}}],
             "connections":[]
         }));
@@ -1295,7 +1330,7 @@ mod tests {
     #[test]
     fn timeout_is_terminal_and_marks_the_active_attempt_failed() {
         let workflow = compile(json!({
-            "schemaVersion":"5.0",
+            "schemaVersion":"6.0",
             "nodes":[{"id":"model","type":"model","typeVersion":1,"name":"Model"}],
             "connections":[]
         }));
@@ -1386,7 +1421,7 @@ mod tests {
     #[test]
     fn end_error_collect_finishes_when_only_unscheduled_error_handlers_remain() {
         let workflow = compile(json!({
-            "schemaVersion":"5.0",
+            "schemaVersion":"6.0",
             "end":{"outputs":{},"error":{"strategy":"collect","collectWindowMs":100,"outputs":{}}},
             "nodes":[
                 {"id":"source","type":"set","typeVersion":1,"name":"Source","settings":{"onError":"continue_error_output"}},
@@ -1419,7 +1454,7 @@ mod tests {
 
     fn error_terminal_fixture(strategy: &str) -> Value {
         json!({
-            "schemaVersion":"5.0",
+            "schemaVersion":"6.0",
             "end":{"outputs":{},"error":{"strategy":strategy,"collectWindowMs":100,"outputs":{}}},
             "nodes":[
                 {"id":"first","type":"set","typeVersion":1,"name":"First","settings":{"onError":"continue_error_output"}},
@@ -1439,7 +1474,7 @@ mod tests {
     #[test]
     fn wait_releases_execution_and_resumes_once() {
         let workflow = compile(json!({
-            "schemaVersion":"5.0",
+            "schemaVersion":"6.0",
             "nodes":[
                 {"id":"trigger","type":"no_op","typeVersion":1,"name":"Root",},
                 {"id":"wait","type":"wait","typeVersion":1,"name":"Wait",}
@@ -1467,7 +1502,7 @@ mod tests {
     #[test]
     fn suspended_composite_can_converge_to_a_failed_terminal() {
         let workflow = compile(json!({
-            "schemaVersion":"5.0",
+            "schemaVersion":"6.0",
             "nodes":[
                 {"id":"child","type":"wait","typeVersion":1,"name":"Child","settings":{"onError":"continue_error_output"}}
             ],
@@ -1496,7 +1531,7 @@ mod tests {
     #[test]
     fn partial_forks_select_the_expected_subgraph_and_inputs() {
         let workflow = compile(json!({
-            "schemaVersion":"5.0",
+            "schemaVersion":"6.0",
             "nodes":[
                 {"id":"trigger","type":"no_op","typeVersion":1,"name":"Root",},
                 {"id":"first","type":"set","typeVersion":1,"name":"First",},
@@ -1588,7 +1623,7 @@ mod tests {
     #[test]
     fn checkpoint_state_round_trips_through_json() {
         let workflow = compile(json!({
-            "schemaVersion":"5.0",
+            "schemaVersion":"6.0",
             "nodes":[{"id":"trigger","type":"no_op","typeVersion":1,"name":"Root"}],
             "connections":[]
         }));
@@ -1602,7 +1637,7 @@ mod tests {
     #[test]
     fn confirmation_wait_is_visible_and_resumes_the_same_activation() {
         let workflow = compile(json!({
-            "schemaVersion":"5.0",
+            "schemaVersion":"6.0",
             "nodes":[
                 {"id":"trigger","type":"no_op","typeVersion":1,"name":"Root",},
                 {"id":"remote","type":"remote_action","typeVersion":1,"name":"Remote","parameters":{"endpoint":"http://node"}}
@@ -1634,7 +1669,7 @@ mod tests {
     #[test]
     fn ordinary_cycle_stops_at_the_activation_budget() {
         let workflow = compile(json!({
-            "schemaVersion":"5.0",
+            "schemaVersion":"6.0",
             "settings":{"activationBudget":7},
             "nodes":[
                 {"id":"trigger","type":"no_op","typeVersion":1,"name":"Root",},

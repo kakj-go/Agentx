@@ -1,0 +1,68 @@
+{
+  "$defs": {
+    "ResourceSlotV2": {
+      "additionalProperties": false,
+      "properties": {
+        "maximum": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "minimum": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "name": {
+          "type": "string"
+        },
+        "placement": {
+          "$ref": "#/$defs/SlotPlacementV2"
+        },
+        "resourceType": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "resourceType",
+        "placement",
+        "minimum"
+      ],
+      "type": "object"
+    },
+    "SlotPlacementV2": {
+      "enum": [
+        "inspector",
+        "canvas"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "manifestVersion": {
+      "type": "string"
+    },
+    "nodeType": {
+      "type": "string"
+    },
+    "resourceSlots": {
+      "items": {
+        "$ref": "#/$defs/ResourceSlotV2"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "manifestVersion",
+    "nodeType",
+    "resourceSlots"
+  ],
+  "title": "AgentManifestV2",
+  "type": "object"
+}

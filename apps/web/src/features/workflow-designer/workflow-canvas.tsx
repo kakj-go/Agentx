@@ -235,7 +235,7 @@ export function WorkflowCanvas() {
   const creatorBindingSlot =
     creatorSource?.mode === "binding"
       ? creatorSourceManifest?.bindingSlots.find(
-          (slot) => `binding:${slot.name}` === creatorSource.handleId,
+          (slot) => slot.placement === "canvas" && `binding:${slot.name}` === creatorSource.handleId,
         )
       : undefined;
   const runtime = useExecutionEvents(executionId);
@@ -626,7 +626,7 @@ export function WorkflowCanvas() {
           : canvasNodeMetrics(canvasNodeRole(nodeManifest), {
               inputs: nodeManifest?.inputPorts.length,
               outputs: nodeManifest?.outputPorts.length,
-              bindings: nodeManifest?.bindingSlots.length,
+              bindings: nodeManifest?.bindingSlots.filter((slot) => slot.placement === "canvas").length,
               richHeight: node.height ?? node.measured?.height,
             });
       return {
@@ -666,7 +666,7 @@ export function WorkflowCanvas() {
     const metrics = canvasNodeMetrics(canvasNodeRole(manifest), {
       inputs: manifest.inputPorts.length,
       outputs: manifest.outputPorts.length,
-      bindings: manifest.bindingSlots.length,
+      bindings: manifest.bindingSlots.filter((slot) => slot.placement === "canvas").length,
     });
     return editor.addAction(
       actionData(manifest),
@@ -748,7 +748,7 @@ export function WorkflowCanvas() {
       {
         inputs: creatorSourceManifest.inputPorts.length,
         outputs: creatorSourceManifest.outputPorts.length,
-        bindings: creatorSourceManifest.bindingSlots.length,
+        bindings: creatorSourceManifest.bindingSlots.filter((slot) => slot.placement === "canvas").length,
         richHeight: sourceNode.height ?? sourceNode.measured?.height,
       },
     );

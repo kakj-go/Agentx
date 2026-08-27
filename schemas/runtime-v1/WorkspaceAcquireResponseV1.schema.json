@@ -1,0 +1,123 @@
+{
+  "$defs": {
+    "WorkspaceIdentityV1": {
+      "additionalProperties": false,
+      "properties": {
+        "applicationId": {
+          "format": "uuid",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sandboxProfileVersionId": {
+          "type": "string"
+        },
+        "sessionKey": {
+          "type": "string"
+        },
+        "stableAgentNodeKey": {
+          "type": "string"
+        },
+        "tenantId": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tenantId",
+        "sessionKey",
+        "stableAgentNodeKey",
+        "sandboxProfileVersionId"
+      ],
+      "type": "object"
+    },
+    "WorkspaceLeaseStatusV1": {
+      "enum": [
+        "acquiring",
+        "active",
+        "releasing",
+        "released",
+        "expired",
+        "unknown_outcome"
+      ],
+      "type": "string"
+    },
+    "WorkspaceLeaseV1": {
+      "additionalProperties": false,
+      "properties": {
+        "apiVersion": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "attemptId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "expiresAt": {
+          "type": "string"
+        },
+        "fencingToken": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "leaseId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/WorkspaceLeaseStatusV1"
+        },
+        "workerId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "workspaceId": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "apiVersion",
+        "workspaceId",
+        "leaseId",
+        "attemptId",
+        "workerId",
+        "fencingToken",
+        "expiresAt",
+        "status"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "identity": {
+      "$ref": "#/$defs/WorkspaceIdentityV1"
+    },
+    "lease": {
+      "$ref": "#/$defs/WorkspaceLeaseV1"
+    },
+    "providerSandboxId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "apiVersion",
+    "identity",
+    "lease"
+  ],
+  "title": "WorkspaceAcquireResponseV1",
+  "type": "object"
+}

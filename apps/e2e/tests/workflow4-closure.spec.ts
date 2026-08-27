@@ -18,7 +18,7 @@ type ExecutionPage = { items: Execution[] }
 type Approval = { id: string; executionId: string; status: string; version: number }
 type PageResponse<T> = { items: T[] }
 type Definition = {
-  schemaVersion: '5.0'
+  schemaVersion: '6.0'
   start: { inputs: Record<string, unknown>; contexts: Record<string, unknown> }
   nodes: Array<Record<string, unknown> & { id: string; key: string; type: string }>
   connections: Array<{ id: string; sourceNodeId: string; sourceHandle: string; targetNodeId: string; targetHandle: string; order: number }>
@@ -189,7 +189,7 @@ test('Workflow 5.0 closes Composite, Context, Package, Multipart and cancellatio
   expect(environment).toBeTruthy()
 
   const childDefinition: Definition = {
-    schemaVersion: '5.0',
+    schemaVersion: '6.0',
     start: {
       inputs: { type: 'object', required: ['question'], properties: { question: { type: 'string' } }, additionalProperties: false },
       contexts: counterContext,
@@ -208,7 +208,7 @@ test('Workflow 5.0 closes Composite, Context, Package, Multipart and cancellatio
   const childType = `workflow.${child.version.id.replaceAll('-', '')}`
 
   const parentDefinition: Definition = {
-    schemaVersion: '5.0',
+    schemaVersion: '6.0',
     start: {
       inputs: {
         type: 'object',
@@ -325,7 +325,7 @@ test('Workflow 5.0 closes Composite, Context, Package, Multipart and cancellatio
     resourceBindings: {},
   })
   const importedDraft = await request<Draft>(page, token, `/workflows/${imported.workflowId}/draft`)
-  expect(importedDraft.definition.schemaVersion).toBe('5.0')
+  expect(importedDraft.definition.schemaVersion).toBe('6.0')
   expect(importedDraft.definition.nodes[0].type).toBe(childType)
 
   const recursiveDefinition = structuredClone(childV2)
@@ -352,7 +352,7 @@ test('Workflow 5.0 closes Composite, Context, Package, Multipart and cancellatio
   expect(await recursiveVersion.json()).toMatchObject({ code: 'RECURSIVE_SUBWORKFLOW' })
 
   const slowChildDefinition: Definition = {
-    schemaVersion: '5.0',
+    schemaVersion: '6.0',
     start: { inputs: { type: 'object', properties: {}, additionalProperties: false }, contexts: {} },
     nodes: [node('wait', 'wait', { kind: 'duration', durationMs: 60_000 })],
     connections: [
@@ -365,7 +365,7 @@ test('Workflow 5.0 closes Composite, Context, Package, Multipart and cancellatio
   }
   const slowChild = await createWorkflow(page, token, `W4 Slow Child ${suffix}`, slowChildDefinition)
   const slowParentDefinition: Definition = {
-    schemaVersion: '5.0',
+    schemaVersion: '6.0',
     start: { inputs: { type: 'object', properties: {}, additionalProperties: false }, contexts: {} },
     nodes: [node('slow_child', `workflow.${slowChild.version.id.replaceAll('-', '')}`, { workflowVersionId: slowChild.version.id, inputs: {} }, {
       settings: { timeoutMs: 1_500, retryOnFail: false, maxTries: 1 },
@@ -403,7 +403,7 @@ test('Workflow 5.0 declarative HTTP consumes request parameters and canonically 
   const suffix = Date.now()
   const environment = (await request<Environment[]>(page, token, '/environments')).find((value) => value.code === 'development')!
   const definition: Definition = {
-    schemaVersion: '5.0',
+    schemaVersion: '6.0',
     start: { inputs: { type: 'object', properties: {}, additionalProperties: false }, contexts: {} },
     nodes: [node('http', 'declarative_http', {
       method: literal('POST'),
@@ -471,7 +471,7 @@ test('Workflow 5.0 turns concurrent Session Context CAS conflicts into a termina
   const suffix = Date.now()
   const environment = (await request<Environment[]>(page, token, '/environments')).find((value) => value.code === 'development')!
   const definition: Definition = {
-    schemaVersion: '5.0',
+    schemaVersion: '6.0',
     start: {
       inputs: { type: 'object', properties: {}, additionalProperties: false },
       contexts: {
@@ -538,7 +538,7 @@ test('Workflow 5.0 propagates fail-fast, collected and Composite End errors', as
     success: { value: reference('outputs', [], 'normal'), schema: { type: 'object' }, required: true, sensitive: false },
   }
   const errorDefinition = (strategy: 'fail_fast' | 'collect', codes: string[]): Definition => ({
-    schemaVersion: '5.0',
+    schemaVersion: '6.0',
     start: { inputs: { type: 'object', properties: {}, additionalProperties: false }, contexts: {} },
     nodes: [
       node('normal', 'no_op', {}),
@@ -583,7 +583,7 @@ test('Workflow 5.0 propagates fail-fast, collected and Composite End errors', as
   const child = await createWorkflow(page, token, `W4 Error Child ${suffix}`, errorDefinition('fail_fast', ['CHILD_FAILED']))
   const childType = `workflow.${child.version.id.replaceAll('-', '')}`
   const parentDefinition: Definition = {
-    schemaVersion: '5.0',
+    schemaVersion: '6.0',
     start: { inputs: { type: 'object', properties: {}, additionalProperties: false }, contexts: {} },
     nodes: [node('child', childType, { workflowVersionId: child.version.id, inputs: {} }, {
       settings: { onError: 'continue_error_output' },

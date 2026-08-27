@@ -1,0 +1,89 @@
+{
+  "$defs": {
+    "ProcessSessionFrameV1": {
+      "additionalProperties": false,
+      "properties": {
+        "artifactId": {
+          "format": "uuid",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "createdAt": {
+          "type": "string"
+        },
+        "payload": true,
+        "sequence": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "stream": {
+          "type": "string"
+        },
+        "truncated": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "sequence",
+        "stream",
+        "payload",
+        "truncated",
+        "createdAt"
+      ],
+      "type": "object"
+    },
+    "ProcessSessionStatusV1": {
+      "enum": [
+        "acquiring",
+        "starting",
+        "running",
+        "interrupting",
+        "terminating",
+        "exited",
+        "failed",
+        "unknown_outcome",
+        "expired"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "frames": {
+      "items": {
+        "$ref": "#/$defs/ProcessSessionFrameV1"
+      },
+      "type": "array"
+    },
+    "nextSequence": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "processSessionId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "status": {
+      "$ref": "#/$defs/ProcessSessionStatusV1"
+    }
+  },
+  "required": [
+    "apiVersion",
+    "processSessionId",
+    "status",
+    "frames",
+    "nextSequence"
+  ],
+  "title": "ProcessSessionFramesResponseV1",
+  "type": "object"
+}

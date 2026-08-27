@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "idempotencyKey": {
+      "type": "string"
+    },
+    "sessionKey": {
+      "type": "string"
+    },
+    "stableAgentNodeKey": {
+      "type": "string"
+    },
+    "tenantId": {
+      "format": "uuid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "apiVersion",
+    "tenantId",
+    "sessionKey",
+    "stableAgentNodeKey",
+    "idempotencyKey"
+  ],
+  "title": "AgentSessionClearRequestV1",
+  "type": "object"
+}

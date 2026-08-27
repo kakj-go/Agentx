@@ -47,6 +47,8 @@
 
 设计者的权限只决定他能否配置 Workflow。生产运行时使用 Workflow Service Identity，避免 Workflow 继承创建者个人权限。
 
+Execution 可以把发起人的用户、部门与角色快照作为普通业务变量，用于模板、数据映射和条件分支；这些变量不是授权主体，不能改变 Model、MCP、Credential 或其他资源的 Grant 结果。资源授权始终只认发布或调试 Work Package 中固化的 Workflow Service Identity。角色名称是展示快照，业务中的稳定判断使用角色 ID 或编码。
+
 Bootstrap Admin 是 Company Admin，可以管理全部部门、用户和角色。Department Admin 只能管理其授权部门及子部门，不能访问父级或兄弟部门；新用户由服务端设置固定的一次性初始密码 `123456`，首次登录必须修改，正式密码仍执行 12–128 位规则。
 
 ## 2. Workflow 资源授权

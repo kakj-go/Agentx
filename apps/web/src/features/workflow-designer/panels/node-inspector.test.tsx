@@ -7,12 +7,18 @@ import type { NodeManifest, ReferenceCatalog } from '../model/types'
 import { NodeInspector } from './node-inspector'
 
 const manifest: NodeManifest = {
-  protocolVersion: '1.0', nodeType: 'set', version: 1, displayName: 'Set', description: 'Set fields', category: 'actions', keywords: ['set'], iconKey: 'box', executionStyle: 'action', capability: 'builtin', readiness: 'any', inputPorts: [], outputPorts: [], bindingSlots: [], parameterSchema: { type: 'object', properties: {} }, uiSchema: { canvas: { role: 'default' } }, providers: [], credentials: [], retryPolicy: { retryable: false, maxAttempts: 1, initialBackoffMs: 0, maxBackoffMs: 0 }, sandboxRequired: false, supportsMock: true, sideEffectLevel: 'none',
+  protocolVersion: '2.0', nodeType: 'set', version: 1, displayName: 'Set', description: 'Set fields', category: 'actions', keywords: ['set'], iconKey: 'box', executionStyle: 'action', capability: 'builtin', readiness: 'any', inputPorts: [], outputPorts: [], bindingSlots: [], parameterSchema: { type: 'object', properties: {} }, uiSchema: { canvas: { role: 'default' } }, providers: [], credentials: [], retryPolicy: { retryable: false, maxAttempts: 1, initialBackoffMs: 0, maxBackoffMs: 0 }, sandboxRequired: false, supportsMock: true, sideEffectLevel: 'none',
 }
 
 const agentManifest: NodeManifest = {
   ...manifest,
   nodeType: 'agent',
+  version: 2,
+  bindingSlots: [
+    { name: 'model', resourceType: 'model', placement: 'inspector', required: true, multiple: false },
+    { name: 'workspace_sandbox', resourceType: 'sandbox_profile', placement: 'inspector', required: false, multiple: false },
+    { name: 'mcp_tools', resourceType: 'mcp_tool', placement: 'canvas', required: false, multiple: true },
+  ],
   parameterSchema: { type: 'object', properties: { systemPrompt: { type: 'string' }, userQuestion: { type: 'string', templatable: true }, maxIterations: { type: 'integer', default: 12 } } },
   uiSchema: { canvas: { role: 'agent' }, fields: { systemPrompt: { control: 'prompt' }, userQuestion: { control: 'text' }, maxIterations: { control: 'number' } } },
 }
@@ -63,6 +69,27 @@ describe('NodeInspector details view', () => {
     expect(screen.getByText('Advanced configuration')).toBeInTheDocument()
     expect(screen.getByTestId('parameter-maxIterations')).toBeInTheDocument()
     expect(screen.getByText('calls')).toBeInTheDocument()
+    expect(screen.queryByText(/Unsupported UI control|不支持的 UI 控件/)).not.toBeInTheDocument()
+  })
+
+  it('configures Agent model, optional Workspace Sandbox and explicit Session Policy in the Inspector', () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const onChange = vi.fn()
+    const model = { resourceType: 'model' as const, resourceId: 'model-1', resourceVersionId: 'model-version-1', operation: 'use' as const }
+    const sandbox = { resourceType: 'sandbox_profile' as const, resourceId: 'sandbox-1', resourceVersionId: 'sandbox-version-1', operation: 'use' as const }
+    const data = { editorKind: 'action' as const, nodeType: 'agent', typeVersion: 2, label: 'Agent', key: 'agent', parameters: { sessionPolicy: { mode: 'invocation' } }, outputProjection: {}, contextWrites: [], resourceReferences: [model, sandbox], settings: {}, disabled: false }
+    const view = render(<QueryClientProvider client={client}><ToastProvider><NodeInspector data={data} manifest={agentManifest} nodeId="agent-1" onChange={onChange} onDelete={vi.fn()} resources={{ model: [{ value: 'model-1', label: 'Model 1', resourceType: 'model', operation: 'use', versionId: 'model-version-1', accessState: 'authorized' }], sandbox_profile: [{ value: 'sandbox-1', label: 'Sandbox 1', resourceType: 'sandbox_profile', operation: 'use', versionId: 'sandbox-version-1', accessState: 'authorized' }] }} /></ToastProvider></QueryClientProvider>)
+
+    expect(screen.getByTestId('agent-core-configuration')).toBeInTheDocument()
+    expect(screen.getByTestId('agent-inspector-model')).toHaveTextContent(/Model|模型/)
+    expect(screen.getByTestId('agent-inspector-workspace_sandbox')).toHaveTextContent(/sandbox/i)
+    expect(screen.queryByText(/read.*write.*edit.*bash/i)).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /Clear resource|清除资源/ }))
+    expect(onChange).toHaveBeenCalledWith({ resourceReferences: [model] })
+
+    view.rerender(<QueryClientProvider client={client}><ToastProvider><NodeInspector data={{ ...data, resourceReferences: [model] }} manifest={agentManifest} nodeId="agent-1" onChange={onChange} onDelete={vi.fn()} resources={{}} /></ToastProvider></QueryClientProvider>)
+    expect(screen.getByText(/read.*write.*edit.*bash/i)).toBeInTheDocument()
   })
 
   it('moves node disablement into the more menu and shows disabled status in the header', () => {

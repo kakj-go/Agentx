@@ -4,13 +4,14 @@ use agentx_domain::{ContextDefinition, ExecutionOrder, WorkflowEnd, WorkflowStar
 use agentx_runtime_contracts::{
     ApplyReceiptV1, BUNDLE_SCHEMA_VERSION, CompiledNodeV1, CompiledWorkflowV1, DependencyClosureV1,
     ExecutionDetailV1, ExecutionOriginV1, ExecutionResult, ExecutionSearchPageV1,
-    ExecutionSearchRequestV1, ExecutionSpecBundleV1, ExecutionSpecPayloadV1, ExecutionSummaryV1,
+    ExecutionSearchRequestV1, ExecutionSpecBundleV2, ExecutionSpecPayloadV2, ExecutionSummaryV1,
     IR_SCHEMA_VERSION, PublishReceiptStatusV1, PublishReceiptV1, RuntimeAuthorizationSnapshotV1,
     RuntimeCallPurposeV1, RuntimeCommand, RuntimeCommandType, RuntimeEventEnvelope,
-    RuntimeEventPayloadV1, RuntimeObjectReferenceV1, RuntimePolicyV1, RuntimeRetentionItemV1,
-    RuntimeWorkPackageOverlayV1, RuntimeWorkPackagePayloadV1, RuntimeWorkPackageV1, StorageDomain,
-    TraceContentKindV1, TraceContentV1, TraceEventEnvelopeV1, TraceEventKindV1, TraceSpanDetailV1,
-    TraceSpanKindV1, TraceSpanSummaryV1, WorkPackagePurpose, WorkerCompatibilityV1,
+    RuntimeEventPayloadV1, RuntimeMcpTransportV2, RuntimeObjectReferenceV1, RuntimePolicyV1,
+    RuntimeRetentionItemV1, RuntimeWorkPackageOverlayV1, RuntimeWorkPackagePayloadV1,
+    RuntimeWorkPackageV1, StorageDomain, TraceContentKindV1, TraceContentV1, TraceEventEnvelopeV1,
+    TraceEventKindV1, TraceSpanDetailV1, TraceSpanKindV1, TraceSpanSummaryV1,
+    WORK_PACKAGE_SCHEMA_VERSION, WorkPackagePurpose, WorkerCompatibilityV1,
 };
 use ed25519_dalek::SigningKey;
 use rand::rngs::OsRng;
@@ -27,6 +28,52 @@ fn unknown_fields_and_unsupported_versions_are_rejected() {
     let mut value = serde_json::to_value(compiled_workflow()).unwrap();
     value["contractVersion"] = json!(2);
     assert!(serde_json::from_value::<CompiledWorkflowV1>(value).is_err());
+}
+
+#[test]
+fn mcp_runtime_transport_is_strictly_tagged_and_scope_safe() {
+    let sandbox_id = Uuid::now_v7();
+    let sandbox_version_id = Uuid::now_v7();
+    let valid = json!({
+        "kind":"stdio",
+        "command":"/usr/local/bin/mcp-server",
+        "args":["--stdio"],
+        "environmentCredentialRefs":[],
+        "runtimeSandbox":{
+            "resourceId":sandbox_id,
+            "resourceVersionId":sandbox_version_id
+        }
+    });
+    assert!(serde_json::from_value::<RuntimeMcpTransportV2>(valid).is_ok());
+
+    let old_flat = json!({
+        "transport":"streamable_http",
+        "endpoint":"https://mcp.example/rpc"
+    });
+    assert!(serde_json::from_value::<RuntimeMcpTransportV2>(old_flat).is_err());
+
+    let http_with_sandbox = json!({
+        "kind":"streamable_http",
+        "endpoint":"https://mcp.example/rpc",
+        "runtimeSandbox":{
+            "resourceId":sandbox_id,
+            "resourceVersionId":sandbox_version_id
+        }
+    });
+    assert!(serde_json::from_value::<RuntimeMcpTransportV2>(http_with_sandbox).is_err());
+
+    let stdio_with_endpoint = json!({
+        "kind":"stdio",
+        "command":"/usr/local/bin/mcp-server",
+        "args":[],
+        "environmentCredentialRefs":[],
+        "runtimeSandbox":{
+            "resourceId":sandbox_id,
+            "resourceVersionId":sandbox_version_id
+        },
+        "endpoint":"https://mcp.example/rpc"
+    });
+    assert!(serde_json::from_value::<RuntimeMcpTransportV2>(stdio_with_endpoint).is_err());
 }
 
 #[test]
@@ -405,7 +452,7 @@ where
 #[test]
 fn bundle_hash_and_signature_cover_the_immutable_payload() {
     let key = SigningKey::generate(&mut OsRng);
-    let mut bundle = ExecutionSpecBundleV1::signed(bundle_payload(), "bundle-current", &key)
+    let mut bundle = ExecutionSpecBundleV2::signed(bundle_payload(), "bundle-current", &key)
         .expect("sign bundle");
     bundle.verify(&key.verifying_key()).expect("verify bundle");
 
@@ -422,7 +469,7 @@ fn work_package_uses_an_independent_key_and_rejects_payload_tampering() {
     let compiled = compiled_workflow();
     let mut package = RuntimeWorkPackageV1::signed(
         RuntimeWorkPackagePayloadV1 {
-            schema_version: BUNDLE_SCHEMA_VERSION,
+            schema_version: WORK_PACKAGE_SCHEMA_VERSION,
             package_id: Uuid::now_v7(),
             tenant_id,
             workflow: agentx_runtime_contracts::ExecutionWorkflowSnapshotV1 {
@@ -441,9 +488,13 @@ fn work_package_uses_an_independent_key_and_rejects_payload_tampering() {
             },
             model_evaluator_executions: vec![],
             source_revision: "draft:7".into(),
-            definition: json!({"schemaVersion":"5.0"}),
+            definition: json!({"schemaVersion":"6.0"}),
             compiled_ir: compiled,
             node_manifests: vec![],
+            agent_bundle: agentx_runtime_contracts::AgentBundleContractV2::empty(
+                "test-definition",
+                "test-compiler",
+            ),
             overlay: RuntimeWorkPackageOverlayV1 {
                 input: json!({"question":"test"}),
                 ..RuntimeWorkPackageOverlayV1::default()
@@ -501,7 +552,7 @@ fn v2_03_v1_bundle_and_work_package_fixtures_are_rejected_after_the_destructive_
     ] {
         old_bundle.as_object_mut().unwrap().remove(field);
     }
-    assert!(serde_json::from_value::<ExecutionSpecPayloadV1>(old_bundle).is_err());
+    assert!(serde_json::from_value::<ExecutionSpecPayloadV2>(old_bundle).is_err());
 
     let tenant_id = Uuid::now_v7();
     let mut old_package = json!({
@@ -669,15 +720,19 @@ fn evaluation_work_package_payload() -> RuntimeWorkPackagePayloadV1 {
                 evaluator_id,
                 resource_id,
                 prompt_object_id,
-                definition: json!({"schemaVersion":"5.0","kind":"model_evaluator"}),
+                definition: json!({"schemaVersion":"6.0","kind":"model_evaluator"}),
                 compiled_ir: compiled_workflow(),
                 node_manifests: vec![],
             },
         ],
         source_revision: "evaluation:1".into(),
-        definition: json!({"schemaVersion":"5.0"}),
+        definition: json!({"schemaVersion":"6.0"}),
         compiled_ir: compiled_workflow(),
         node_manifests: vec![],
+        agent_bundle: agentx_runtime_contracts::AgentBundleContractV2::empty(
+            "test-definition",
+            "test-compiler",
+        ),
         overlay: RuntimeWorkPackageOverlayV1 {
             input: json!({}),
             ..RuntimeWorkPackageOverlayV1::default()
@@ -713,13 +768,13 @@ fn evaluation_work_package_payload() -> RuntimeWorkPackagePayloadV1 {
     }
 }
 
-fn bundle_payload() -> ExecutionSpecPayloadV1 {
+fn bundle_payload() -> ExecutionSpecPayloadV2 {
     let tenant_id = Uuid::now_v7();
     let workflow_id = Uuid::now_v7();
     let object_id = Uuid::now_v7();
     let object_hash =
         agentx_runtime_contracts::ContentHash::parse(format!("sha256:{}", "a".repeat(64))).unwrap();
-    ExecutionSpecPayloadV1 {
+    ExecutionSpecPayloadV2 {
         schema_version: BUNDLE_SCHEMA_VERSION,
         bundle_id: Uuid::now_v7(),
         tenant_id,
@@ -731,9 +786,13 @@ fn bundle_payload() -> ExecutionSpecPayloadV1 {
         workflow_version_number: 7,
         workflow_owner_department: None,
         bundle_sequence: 7,
-        definition: json!({"schemaVersion": "5.0"}),
+        definition: json!({"schemaVersion": "6.0"}),
         compiled_ir: compiled_workflow(),
         node_manifests: vec![],
+        agent_bundle: agentx_runtime_contracts::AgentBundleContractV2::empty(
+            "test-definition",
+            "test-compiler",
+        ),
         input_contract: json!({}),
         output_contract: json!({}),
         context_contract: json!({}),
@@ -764,6 +823,7 @@ fn authorization(tenant_id: Uuid, workflow_id: Uuid) -> RuntimeAuthorizationSnap
         workflow_id,
         policy_epoch: 4,
         grant_ids: vec![],
+        grant_bindings: vec![],
         capabilities: BTreeSet::from(["builtin".into()]),
         maximum_policy_staleness_seconds: 72 * 60 * 60,
         captured_at: OffsetDateTime::UNIX_EPOCH,
@@ -791,7 +851,7 @@ fn compatibility() -> WorkerCompatibilityV1 {
 fn compiled_workflow() -> CompiledWorkflowV1 {
     CompiledWorkflowV1 {
         contract_version: IR_SCHEMA_VERSION,
-        schema_version: "5.0".into(),
+        schema_version: "6.0".into(),
         compiler_version: "3".into(),
         canonical_hash: "canonical".into(),
         definition_hash: "definition".into(),

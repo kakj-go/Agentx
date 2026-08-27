@@ -1,0 +1,140 @@
+{
+  "$defs": {
+    "McpTransportV1": {
+      "oneOf": [
+        {
+          "properties": {
+            "credential": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ResourceReferenceV1"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "endpoint": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "streamable_http",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "endpoint"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "credential": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ResourceReferenceV1"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "endpoint": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "sse",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "endpoint"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "args": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "command": {
+              "type": "string"
+            },
+            "environment_credential_refs": {
+              "default": [],
+              "items": {
+                "$ref": "#/$defs/ResourceReferenceV1"
+              },
+              "type": "array"
+            },
+            "kind": {
+              "const": "stdio",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "command",
+            "args"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ResourceReferenceV1": {
+      "additionalProperties": false,
+      "properties": {
+        "operation": {
+          "type": "string"
+        },
+        "resourceId": {
+          "type": "string"
+        },
+        "resourceType": {
+          "type": "string"
+        },
+        "resourceVersionId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "resourceType",
+        "resourceId",
+        "resourceVersionId",
+        "operation"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "runtimeSandbox": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ResourceReferenceV1"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "serverVersionId": {
+      "type": "string"
+    },
+    "transport": {
+      "$ref": "#/$defs/McpTransportV1"
+    }
+  },
+  "required": [
+    "serverVersionId",
+    "transport"
+  ],
+  "title": "McpServerVersionV1",
+  "type": "object"
+}

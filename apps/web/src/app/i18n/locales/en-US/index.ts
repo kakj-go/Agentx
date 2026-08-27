@@ -22,5 +22,6 @@ import organization from './organization'
 import roles from './roles'
 import errors from './errors'
 import trace from './trace'
+import agentSessions from './agentSessions'
 
-export const translation = { common, navigation, auth, workflows, studio, applications, executions, approvals, notifications, datasets, evaluations, runtime, trace, credentials, models, mcp, skills, knowledge, memory, sandbox, resourceGrants, organization, roles, errors } as const
+export const translation = { common, navigation, auth, workflows, studio, applications, executions, approvals, notifications, datasets, evaluations, runtime, trace, agentSessions, credentials, models, mcp, skills, knowledge, memory, sandbox, resourceGrants, organization, roles, errors } as const

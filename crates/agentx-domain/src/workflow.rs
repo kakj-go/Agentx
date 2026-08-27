@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, HashSet};
 
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, de};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
@@ -14,6 +14,7 @@ pub const WORKFLOW_END_NODE_ID: &str = "__end__";
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WorkflowDefinition {
     #[schemars(with = "WorkflowSchemaVersion")]
+    #[serde(deserialize_with = "deserialize_workflow_schema_version")]
     pub schema_version: String,
     pub start: WorkflowStart,
     pub nodes: Vec<WorkflowNode>,
@@ -184,8 +185,22 @@ pub struct DebugPlan {
 #[derive(JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum WorkflowSchemaVersion {
-    #[serde(rename = "5.0")]
-    V5,
+    #[serde(rename = "6.0")]
+    V6,
+}
+
+fn deserialize_workflow_schema_version<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let version = String::deserialize(deserializer)?;
+    if version == "6.0" {
+        Ok(version)
+    } else {
+        Err(de::Error::custom(format!(
+            "unsupported Workflow Definition schema version '{version}'; expected 6.0"
+        )))
+    }
 }
 
 /// A persisted dynamic value is always a tagged object.  It deliberately
@@ -375,7 +390,7 @@ impl WorkflowDefinition {
     #[must_use]
     pub fn empty() -> Self {
         Self {
-            schema_version: "5.0".to_owned(),
+            schema_version: "6.0".to_owned(),
             start: WorkflowStart::default(),
             nodes: Vec::new(),
             connections: Vec::new(),
@@ -661,12 +676,12 @@ pub struct DefinitionIssue {
 #[must_use]
 pub fn validate_definition(definition: &WorkflowDefinition) -> Vec<DefinitionIssue> {
     let mut issues = Vec::new();
-    if definition.schema_version != "5.0" {
+    if definition.schema_version != "6.0" {
         issue(
             &mut issues,
             "UNSUPPORTED_SCHEMA",
             "schemaVersion",
-            "Only schema version 5.0 is supported",
+            "Only schema version 6.0 is supported",
         );
     }
     if definition.settings.activation_budget == 0 {
@@ -773,7 +788,7 @@ pub fn validate_definition(definition: &WorkflowDefinition) -> Vec<DefinitionIss
                 &mut issues,
                 "TRIGGER_NODE_REMOVED",
                 &format!("nodes[{index}].type"),
-                "Trigger nodes were removed in Workflow Definition 5.0; configure a Trigger Binding instead",
+                "Trigger nodes are not part of Workflow Definition 6.0; configure a Trigger Binding instead",
             );
         }
         if node.node_type.is_empty()
@@ -855,6 +870,9 @@ pub fn validate_definition(definition: &WorkflowDefinition) -> Vec<DefinitionIss
                     "Resource type or operation does not match the node type",
                 );
             }
+        }
+        if node.node_type == "agent" {
+            validate_agent_node(index, node, &mut issues);
         }
     }
     let mut connection_ids = HashSet::new();
@@ -938,6 +956,134 @@ pub fn validate_definition(definition: &WorkflowDefinition) -> Vec<DefinitionIss
         }
     }
     issues
+}
+
+fn validate_agent_node(index: usize, node: &WorkflowNode, issues: &mut Vec<DefinitionIssue>) {
+    let node_path = format!("nodes[{index}]");
+    if node.type_version != 2 {
+        issue(
+            issues,
+            "UNSUPPORTED_NODE_VERSION",
+            &format!("{node_path}.typeVersion"),
+            "Workflow Definition 6.0 requires Agent node version 2",
+        );
+    }
+
+    match node.parameters.get("sessionPolicy") {
+        Some(policy)
+            if policy.as_object().is_some_and(|object| {
+                matches!(
+                    object.get("mode").and_then(Value::as_str),
+                    Some("application_session" | "invocation")
+                )
+            }) => {}
+        _ => issue(
+            issues,
+            "AGENT_SESSION_POLICY_INVALID",
+            &format!("{node_path}.parameters.sessionPolicy"),
+            "Agent sessionPolicy must explicitly contain mode application_session or invocation",
+        ),
+    }
+
+    let mut model_count = 0_usize;
+    let mut workspace_sandbox_count = 0_usize;
+    let mut long_term_memory_count = 0_usize;
+    let mut binding_ids = HashSet::new();
+
+    for (reference_index, reference) in node.resource_references.iter().enumerate() {
+        let path = format!("{node_path}.resourceReferences[{reference_index}]");
+        let inspector = matches!(
+            reference.resource_type,
+            ResourceType::Model | ResourceType::SandboxProfile
+        );
+        if inspector && (reference.binding_id.is_some() || reference.binding_role.is_some()) {
+            issue(
+                issues,
+                "AGENT_RESOURCE_SLOT_INVALID",
+                &path,
+                "Inspector references must not contain bindingId or bindingRole",
+            );
+        }
+        if !inspector && (reference.binding_id.is_none() || reference.binding_role.is_none()) {
+            issue(
+                issues,
+                "AGENT_RESOURCE_SLOT_INVALID",
+                &path,
+                "Canvas attachment references must contain bindingId and bindingRole",
+            );
+        }
+        if let Some(binding_id) = reference.binding_id.as_deref() {
+            if binding_id.is_empty() || !binding_ids.insert(binding_id) {
+                issue(
+                    issues,
+                    "AGENT_RESOURCE_SLOT_INVALID",
+                    &format!("{path}.bindingId"),
+                    "Canvas attachment bindingId must be present and unique within the Agent node",
+                );
+            }
+        }
+
+        let valid = match (reference.binding_role.as_deref(), reference.resource_type) {
+            (None, ResourceType::Model) => {
+                model_count += 1;
+                reference.operation == ResourceOperation::Use
+                    && reference.resource_version_id.is_some()
+            }
+            (None, ResourceType::SandboxProfile) => {
+                workspace_sandbox_count += 1;
+                reference.operation == ResourceOperation::Use
+                    && reference.resource_version_id.is_some()
+            }
+            (Some("mcp_tools"), ResourceType::McpTool) => {
+                reference.resource_type == ResourceType::McpTool
+                    && reference.operation == ResourceOperation::Use
+            }
+            (Some("skills"), ResourceType::Skill) => {
+                reference.resource_type == ResourceType::Skill
+                    && reference.operation == ResourceOperation::Use
+            }
+            (Some("knowledge"), ResourceType::Rag) => {
+                reference.resource_type == ResourceType::Rag
+                    && reference.operation == ResourceOperation::Read
+            }
+            (Some("long_term_memory"), ResourceType::Memory) => {
+                long_term_memory_count += 1;
+                reference.resource_type == ResourceType::Memory
+                    && matches!(
+                        reference.operation,
+                        ResourceOperation::Read
+                            | ResourceOperation::Write
+                            | ResourceOperation::Manage
+                    )
+            }
+            _ => false,
+        };
+        if !valid {
+            issue(
+                issues,
+                "AGENT_RESOURCE_SLOT_INVALID",
+                &path,
+                "Agent resource reference does not match a Manifest 2.0 slot, type, operation, or exact-version requirement",
+            );
+        }
+    }
+
+    if model_count != 1 {
+        issue(
+            issues,
+            "AGENT_MODEL_REQUIRED",
+            &format!("{node_path}.resourceReferences"),
+            "Agent requires exactly one inspector Model reference",
+        );
+    }
+    if workspace_sandbox_count > 1 || long_term_memory_count > 1 {
+        issue(
+            issues,
+            "AGENT_RESOURCE_SLOT_INVALID",
+            &format!("{node_path}.resourceReferences"),
+            "Agent accepts at most one Workspace Sandbox and one long-term memory attachment",
+        );
+    }
 }
 
 fn validate_workflow_outputs(
@@ -1181,7 +1327,7 @@ fn reference_matches_node(node_type: &str, reference: &ResourceReference) -> boo
                 | ResourceType::Skill
                 | ResourceType::Rag
                 | ResourceType::Memory
-                | ResourceType::Credential
+                | ResourceType::SandboxProfile
         ),
         "code" => matches!(
             (reference.resource_type, reference.operation),
@@ -1279,6 +1425,101 @@ mod tests {
         assert!(validate_definition(&WorkflowDefinition::empty()).is_empty());
     }
 
+    fn agent_definition(resource_references: serde_json::Value) -> WorkflowDefinition {
+        serde_json::from_value(json!({
+            "schemaVersion":"6.0",
+            "start":{"inputs":{"type":"object","properties":{},"additionalProperties":false},"contexts":{}},
+            "nodes":[{
+                "id":"agent","key":"agent","type":"agent","typeVersion":2,"name":"Agent",
+                "parameters":{"sessionPolicy":{"mode":"invocation"}},
+                "resourceReferences":resource_references
+            }],
+            "connections":[],
+            "end":{"outputs":{}}
+        }))
+        .expect("Agent Definition 6.0 fixture")
+    }
+
+    #[test]
+    fn agent_definition_requires_internal_model_and_validates_inspector_references() {
+        let model = json!({
+            "resourceType":"model",
+            "resourceId":"018f47a0-7e9c-7000-8000-000000000001",
+            "resourceVersionId":"018f47a0-7e9c-7000-8000-000000000002",
+            "operation":"use"
+        });
+        let valid = agent_definition(json!([model.clone()]));
+        assert!(validate_definition(&valid).is_empty());
+
+        let missing_model = agent_definition(json!([]));
+        assert!(
+            validate_definition(&missing_model)
+                .iter()
+                .any(|issue| issue.code == "AGENT_MODEL_REQUIRED")
+        );
+
+        let model_attachment = agent_definition(json!([{
+            "bindingId":"model-binding",
+            "bindingRole":"model",
+            "resourceType":"model",
+            "resourceId":"018f47a0-7e9c-7000-8000-000000000001",
+            "resourceVersionId":"018f47a0-7e9c-7000-8000-000000000002",
+            "operation":"use"
+        }]));
+        assert!(
+            validate_definition(&model_attachment)
+                .iter()
+                .any(|issue| { issue.code == "AGENT_RESOURCE_SLOT_INVALID" })
+        );
+
+        let unversioned_model = agent_definition(json!([{
+            "resourceType":"model",
+            "resourceId":"018f47a0-7e9c-7000-8000-000000000001",
+            "operation":"use"
+        }]));
+        assert!(
+            validate_definition(&unversioned_model)
+                .iter()
+                .any(|issue| issue.code == "AGENT_RESOURCE_SLOT_INVALID")
+        );
+
+        let duplicate_sandbox = agent_definition(json!([
+            model,
+            {
+                "resourceType":"sandbox_profile",
+                "resourceId":"018f47a0-7e9c-7000-8000-000000000003",
+                "resourceVersionId":"018f47a0-7e9c-7000-8000-000000000004",
+                "operation":"use"
+            },
+            {
+                "resourceType":"sandbox_profile",
+                "resourceId":"018f47a0-7e9c-7000-8000-000000000005",
+                "resourceVersionId":"018f47a0-7e9c-7000-8000-000000000006",
+                "operation":"use"
+            }
+        ]));
+        assert!(
+            validate_definition(&duplicate_sandbox)
+                .iter()
+                .any(|issue| issue.code == "AGENT_RESOURCE_SLOT_INVALID")
+        );
+    }
+
+    #[test]
+    fn workflow_definition_5_is_rejected_without_fallback() {
+        let mut definition = WorkflowDefinition::empty();
+        definition.schema_version = "5.0".into();
+        assert!(
+            validate_definition(&definition)
+                .iter()
+                .any(|issue| issue.code == "UNSUPPORTED_SCHEMA")
+        );
+
+        let mut serialized = serde_json::to_value(WorkflowDefinition::empty()).unwrap();
+        serialized["schemaVersion"] = json!("5.0");
+        assert!(serde_json::from_value::<WorkflowDefinition>(serialized).is_err());
+    }
+
     #[test]
     fn editor_annotations_and_groups_apply_backward_compatible_defaults() {
         let document: EditorDocument = serde_json::from_value(json!({
@@ -1294,7 +1535,7 @@ mod tests {
     #[test]
     fn rejects_dangling_cycles_and_mismatched_resources() {
         let definition: WorkflowDefinition = serde_json::from_value(json!({
-            "schemaVersion":"5.0",
+            "schemaVersion":"6.0",
             "start":{"inputs":{"type":"object","properties":{},"additionalProperties":false},"contexts":{}},
             "nodes":[
                 {"id":"root","key":"root","type":"no_op","typeVersion":1,"name":"Root","outputProjection":{},"contextWrites":[],"resourceReferences":[]},
@@ -1321,7 +1562,7 @@ mod tests {
     #[test]
     fn accepts_controlled_cycles() {
         let definition: WorkflowDefinition = serde_json::from_value(json!({
-            "schemaVersion":"5.0",
+            "schemaVersion":"6.0",
             "start":{"inputs":{"type":"object","properties":{},"additionalProperties":false},"contexts":{}},
             "nodes":[
                 {"id":"root","key":"root","type":"no_op","typeVersion":1,"name":"Root","outputProjection":{},"contextWrites":[]},
@@ -1339,7 +1580,7 @@ mod tests {
     #[test]
     fn connection_order_is_scoped_to_the_source_port() {
         let definition: WorkflowDefinition = serde_json::from_value(json!({
-            "schemaVersion":"5.0",
+            "schemaVersion":"6.0",
             "start":{"inputs":{"type":"object","properties":{},"additionalProperties":false},"contexts":{}},
             "nodes":[
                 {"id":"source","key":"source","type":"switch","typeVersion":1,"name":"Source","outputProjection":{},"contextWrites":[]},

@@ -17,17 +17,16 @@ spec:
         seccompProfile: { type: RuntimeDefault }
       containers:
         - name: download
-          image: curlimages/curl:8.12.1
+          image: agentx/lightrag:dev
           command: ["/bin/sh", "-ec"]
           args:
             - |
               set -eu
+              source=/opt/tiktoken-cache/fb374d419588a4632f3f557e76b4b70aebbca790
               mkdir -p /app/data/tiktoken-cache
               target=/app/data/tiktoken-cache/fb374d419588a4632f3f557e76b4b70aebbca790
-              curl --fail --silent --show-error --location --connect-timeout 10 --max-time 60 \
-                --retry 5 --retry-delay 2 --retry-all-errors \
-                --output "${target}.tmp" \
-                https://openaipublic.blob.core.windows.net/encodings/o200k_base.tiktoken
+              test -s "${source}"
+              cp "${source}" "${target}.tmp"
               echo "446a9538cb6c348e3516120d7c08b09f57c36495e2acfffe59a5bf8b0cfb1a2d  ${target}.tmp" | sha256sum -c -
               mv "${target}.tmp" "${target}"
           resources:

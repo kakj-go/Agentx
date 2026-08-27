@@ -2431,8 +2431,10 @@
 |---|---|---:|---|---|
 | id | binary(16) | NO | ∅ |  |
 | tenant_id | binary(16) | NO | ∅ |  |
-| workflow_id | binary(16) | NO | ∅ |  |
-| workflow_service_identity_id | binary(16) | NO | ∅ |  |
+| subject_type | enum('department','workflow_service_identity') | NO | ∅ |  |
+| subject_id | binary(16) | NO | ∅ |  |
+| workflow_id | binary(16) | YES | ∅ |  |
+| workflow_service_identity_id | binary(16) | YES | ∅ |  |
 | primary_resource_type | varchar(32) | NO | ∅ |  |
 | primary_resource_id | binary(16) | NO | ∅ |  |
 | primary_resource_version_id | binary(16) | YES | ∅ |  |
@@ -2451,20 +2453,13 @@
 
 | Index | Unique | Columns |
 |---|---:|---|
-| fk_resource_grant_request_identity | no | workflow_service_identity_id |
-| fk_resource_grant_request_user | no | requested_by |
-| fk_resource_grant_request_workflow | no | workflow_id |
 | idx_resource_grant_request_inbox | no | tenant_id, status, updated_at |
+| idx_resource_grant_request_subject | no | tenant_id, subject_type, subject_id, status |
 | idx_resource_grant_request_workflow | no | tenant_id, workflow_id, status |
 | PRIMARY | yes | id |
 | uq_resource_grant_request_open | yes | tenant_id, open_dedupe_key |
 
-| Foreign key | Columns | References |
-|---|---|---|
-| fk_resource_grant_request_identity | workflow_service_identity_id | workflow_service_identities.id |
-| fk_resource_grant_request_tenant | tenant_id | tenants.id |
-| fk_resource_grant_request_user | requested_by | users.id |
-| fk_resource_grant_request_workflow | workflow_id | workflows.id |
+`subject_type + subject_id` 是申请授权主体；Workflow 两列只在 `workflow_service_identity` Subject 下存在，并由 Check Constraint 保证一致。当前初始 Schema 不为多态 Subject 建立跨表外键。
 
 ### resource_grants
 
@@ -2864,6 +2859,100 @@
 | fk_sandbox_lease_node | node_execution_id | node_executions.id |
 | fk_sandbox_lease_profile | profile_version_id | sandbox_profile_versions.id |
 | fk_sandbox_lease_tenant | tenant_id | tenants.id |
+
+### sandbox_process_frames
+
+| Column | Type | Nullable | Default | Extra |
+|---|---|---:|---|---|
+| process_session_id | binary(16) | NO | ∅ |  |
+| sequence | bigint unsigned | NO | ∅ |  |
+| stream | enum('stdout','stderr') | NO | ∅ |  |
+| payload_json | json | YES | ∅ |  |
+| artifact_id | binary(16) | YES | ∅ |  |
+| truncated | boolean | NO | FALSE |  |
+| created_at | timestamp(6) | NO | CURRENT_TIMESTAMP(6) | DEFAULT_GENERATED |
+
+| Index | Unique | Columns |
+|---|---:|---|
+| PRIMARY | yes | process_session_id, sequence |
+| idx_sandbox_process_frame_artifact | no | artifact_id |
+
+| Foreign key | Columns | References |
+|---|---|---|
+| none | ∅ | Process Session identity is validated by Sandbox Manager |
+
+### sandbox_process_sessions
+
+| Column | Type | Nullable | Default | Extra |
+|---|---|---:|---|---|
+| process_session_id | binary(16) | NO | ∅ |  |
+| identity_hash | char(64) | NO | ∅ |  |
+| tenant_id | binary(16) | NO | ∅ |  |
+| agent_run_id | binary(16) | NO | ∅ |  |
+| mcp_server_version_id | binary(16) | NO | ∅ |  |
+| sandbox_profile_version_id | binary(16) | NO | ∅ |  |
+| profile_json | json | NO | ∅ |  |
+| command_json | json | NO | ∅ |  |
+| credential_refs_json | json | NO | ∅ |  |
+| sandbox_id | varchar(255) | YES | ∅ |  |
+| provider_operation_id | varchar(255) | YES | ∅ |  |
+| provider_output_offset | bigint unsigned | NO | 0 |  |
+| status | enum('acquiring','starting','running','interrupting','terminating','exited','failed','unknown_outcome','expired') | NO | ∅ |  |
+| lease_id | binary(16) | NO | ∅ |  |
+| attempt_id | binary(16) | NO | ∅ |  |
+| worker_id | binary(16) | NO | ∅ |  |
+| fencing_token | bigint unsigned | NO | ∅ |  |
+| lease_expires_at | timestamp(6) | NO | ∅ |  |
+| process_expires_at | timestamp(6) | NO | ∅ |  |
+| exit_code | bigint | YES | ∅ |  |
+| last_error | varchar(1000) | YES | ∅ |  |
+| created_at | timestamp(6) | NO | CURRENT_TIMESTAMP(6) | DEFAULT_GENERATED |
+| updated_at | timestamp(6) | NO | CURRENT_TIMESTAMP(6) | DEFAULT_GENERATED on update CURRENT_TIMESTAMP(6) |
+
+| Index | Unique | Columns |
+|---|---:|---|
+| PRIMARY | yes | process_session_id |
+| uq_sandbox_process_identity | yes | identity_hash |
+| idx_sandbox_process_reaper | no | status, process_expires_at, lease_expires_at |
+| idx_sandbox_process_run | no | tenant_id, agent_run_id, mcp_server_version_id |
+
+| Foreign key | Columns | References |
+|---|---|---|
+| none | ∅ | immutable Bundle and Attempt lease identities are validated by Sandbox Manager |
+
+### sandbox_workspaces
+
+| Column | Type | Nullable | Default | Extra |
+|---|---|---:|---|---|
+| workspace_id | binary(16) | NO | ∅ |  |
+| identity_hash | char(64) | NO | ∅ |  |
+| tenant_id | binary(16) | NO | ∅ |  |
+| application_id | binary(16) | YES | ∅ |  |
+| session_key | varchar(255) | NO | ∅ |  |
+| stable_agent_node_key | varchar(255) | NO | ∅ |  |
+| profile_version_id | varchar(191) | NO | ∅ |  |
+| profile_json | json | NO | ∅ |  |
+| sandbox_id | varchar(255) | YES | ∅ |  |
+| status | enum('creating','active','releasing','expired','unknown_outcome') | NO | creating |  |
+| lease_id | binary(16) | YES | ∅ |  |
+| attempt_id | binary(16) | YES | ∅ |  |
+| worker_id | binary(16) | YES | ∅ |  |
+| fencing_token | bigint unsigned | NO | 0 |  |
+| lease_expires_at | timestamp(6) | YES | ∅ |  |
+| workspace_expires_at | timestamp(6) | NO | ∅ |  |
+| created_at | timestamp(6) | NO | CURRENT_TIMESTAMP(6) | DEFAULT_GENERATED |
+| updated_at | timestamp(6) | NO | CURRENT_TIMESTAMP(6) | DEFAULT_GENERATED on update CURRENT_TIMESTAMP(6) |
+
+| Index | Unique | Columns |
+|---|---:|---|
+| PRIMARY | yes | workspace_id |
+| uq_sandbox_workspace_identity | yes | identity_hash |
+| idx_sandbox_workspace_reaper | no | status, workspace_expires_at, lease_expires_at |
+| idx_sandbox_workspace_tenant | no | tenant_id, application_id, session_key |
+
+| Foreign key | Columns | References |
+|---|---|---|
+| none | ∅ | immutable Bundle snapshot identities are validated by Sandbox Manager |
 
 ### sandbox_profile_versions
 
@@ -3943,3 +4032,71 @@
 | fk_workflows_department | owner_department_id | departments.id |
 | fk_workflows_owner | owner_user_id | users.id |
 | fk_workflows_tenant | tenant_id | tenants.id |
+
+### agent_session_entries
+
+P3-05 replacement for the removed monolithic session state. Entries are append-only; large payloads use `payload_artifact_id`.
+
+| Column | Type | Nullable | Default | Extra |
+|---|---|---|---|---|
+| entry_id | varchar(191) | NO | ∅ | PRIMARY KEY |
+| tenant_id | binary(16) | NO | ∅ | |
+| application_id | binary(16) | YES | ∅ | |
+| session_key | varchar(255) | NO | ∅ | |
+| stable_agent_node_key | varchar(255) | NO | ∅ | |
+| session_id | varchar(255) | NO | ∅ | |
+| lane | enum('main') | NO | main | |
+| sequence_number | bigint unsigned | NO | ∅ | append-only order |
+| parent_entry_id | varchar(191) | YES | ∅ | |
+| entry_kind | varchar(64) | NO | ∅ | |
+| payload_json | json | YES | ∅ | exactly one payload location |
+| payload_artifact_id | binary(16) | YES | ∅ | exactly one payload location |
+| operation_id | varchar(191) | YES | ∅ | |
+| created_at | timestamp(6) | NO | CURRENT_TIMESTAMP(6) | |
+
+### agent_session_registers
+
+The mutable CAS/Fencing recovery authority for one Session, Node and main Lane.
+
+| Column | Type | Nullable | Default | Extra |
+|---|---|---|---|---|
+| tenant_id | binary(16) | NO | ∅ | PRIMARY KEY part |
+| application_id | binary(16) | YES | ∅ | |
+| session_key | varchar(255) | NO | ∅ | PRIMARY KEY part |
+| stable_agent_node_key | varchar(255) | NO | ∅ | PRIMARY KEY part |
+| session_id | varchar(255) | NO | ∅ | |
+| bundle_hash | varchar(128) | NO | ∅ | |
+| definition_hash | varchar(128) | NO | ∅ | |
+| model_version | varchar(255) | NO | ∅ | |
+| core_contract_version | varchar(32) | NO | ∅ | |
+| leaf_entry_id | varchar(191) | YES | ∅ | |
+| open_operation_id | varchar(191) | YES | ∅ | |
+| state_version | bigint unsigned | NO | 0 | CAS version |
+| fencing_token | bigint unsigned | NO | 0 | monotonic lease proof |
+| terminal_state | varchar(64) | YES | ∅ | |
+| operation_json | json | YES | ∅ | |
+| register_json | json | NO | ∅ | |
+| retention_json | json | YES | ∅ | |
+| lease_expires_at | timestamp(6) | YES | ∅ | |
+| created_at | timestamp(6) | NO | CURRENT_TIMESTAMP(6) | |
+| updated_at | timestamp(6) | NO | CURRENT_TIMESTAMP(6) | on update CURRENT_TIMESTAMP(6) |
+
+### agent_session_operations
+
+Durable Operation Intent/Effect/Settlement and recovery metadata.
+
+### agent_session_usages
+
+Unique Model, Compaction, Tool and Memory usage projections keyed by Operation and Effect.
+
+### agent_session_pending_entries
+
+ Durable steering, follow-up and retry queue with a hard 32-entry bound and idempotency key. Retry rows retain the originating Execution/Node/Attempt and an idempotent `wake_command_id`; Runtime recovery creates `resume_execution` only after the Session Register has no valid open Operation.
+
+### agent_subject_memory_audit
+
+Trusted Subject Memory operation audit; payloads are intentionally excluded.
+
+### agent_subject_memory_clears
+
+Trusted Subject Memory clear tombstones and idempotent receipts; tombstones prevent resurrection after clear.

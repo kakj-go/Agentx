@@ -220,9 +220,11 @@ async function ensureStudioResources(page: Page, token: string) {
       name: studioMcpName,
       description: 'M6 API-first MCP fixture',
       ownerDepartmentId: department.id,
-      transport: 'streamable_http',
-      endpoint: `${echoBaseUrl}/mcp`,
-      credentialId: credential.id,
+      transport: {
+        kind: 'streamable_http',
+        endpoint: `${echoBaseUrl}/mcp`,
+        bearerCredentialId: credential.id,
+      },
       configuration: {},
     })
   const tools = await api<PageResponse<NamedResource>>(page, token, `/mcp/tools?pageSize=100&search=Echo`)
@@ -232,9 +234,11 @@ async function ensureStudioResources(page: Page, token: string) {
   await mutate(page, token, `/mcp/servers/${server.id}`, 'PATCH', {
     name: studioMcpName,
     description: 'M6 API-first MCP fixture',
-    transport: 'streamable_http',
-    endpoint: `${echoBaseUrl}/mcp`,
-    credentialId: credential.id,
+    transport: {
+      kind: 'streamable_http',
+      endpoint: `${echoBaseUrl}/mcp`,
+      bearerCredentialId: credential.id,
+    },
     configuration: {},
     status: 'active',
     version: server.version,
@@ -301,12 +305,24 @@ async function choose(page: Page, scope: Locator, option: string | RegExp) {
   await page.getByRole('option', { name: option }).click()
 }
 
+async function chooseAgentSessionPolicy(page: Page, details: Locator, mode: 'application_session' | 'invocation' = 'invocation') {
+  const sessionPolicy = details.locator('[data-field-path="parameters.sessionPolicy"]')
+  await choose(page, sessionPolicy, mode === 'application_session' ? /应用会话|Application session/ : /仅本次调用|Invocation only/)
+}
+
 async function fillMonaco(page: Page, scope: Locator, value: string) {
   await scope.scrollIntoViewIfNeeded()
   const monaco = scope.getByRole('textbox', { name: 'Editor content' })
   const richText = scope.locator('[contenteditable="true"]').first()
-  const usesMonaco = await richText.count() === 0
-  const editor = usesMonaco ? monaco : richText
+  // CodeEditor renders a textarea while Monaco is lazy-loading. Treat that
+  // fallback as a first-class editor so the workflow test is deterministic
+  // in cold browser contexts as well as warm ones.
+  const fallback = scope.locator('textarea').first()
+  const richTextCount = await richText.count()
+  const fallbackCount = await fallback.count()
+  const usesMonaco = richTextCount === 0 && fallbackCount === 0
+  const usesFallback = !usesMonaco && richTextCount === 0
+  const editor = usesMonaco ? monaco : usesFallback ? fallback : richText
   await expect(editor).toBeVisible({ timeout: 30_000 })
   if (usesMonaco) {
     await editor.focus()
@@ -314,6 +330,9 @@ async function fillMonaco(page: Page, scope: Locator, value: string) {
     await page.keyboard.press('Control+A')
     await page.keyboard.insertText(value)
     await expect.poll(async () => (await scope.locator('.view-lines:visible').textContent())?.replaceAll('\u00a0', ' ')).toContain(value.split('\n')[0])
+  } else if (usesFallback) {
+    await editor.fill(value)
+    await expect(editor).toHaveValue(value)
   } else {
     await editor.fill(value)
     await expect(editor).toContainText(value.split('\n')[0])
@@ -452,6 +471,12 @@ async function configureProjectionAndContextWrite(page: Page, details: Locator) 
     const runtimeOutputName = runtimeOutput.getByLabel(/输出名称|Output name/)
     await runtimeOutputName.fill(name)
     await runtimeOutputName.blur()
+    if (name === 'initiator_role_codes') {
+      // Preserve the execution context's array shape instead of coercing it
+      // to a JSON string through the dialog's default string schema.
+      await runtimeOutput.getByLabel(/类型|Field type|Type/).click()
+      await page.getByRole('option', { name: /数组|Array/ }).click()
+    }
     await chooseReference(page, runtimeOutput, /运行信息|Execution information/, [...labels])
     await runtimeOutput.getByRole('button', { name: /保存|Save/ }).click()
   }
@@ -585,22 +610,21 @@ test('M6 Studio creates, debugs, versions and publishes a manifest-driven Workfl
   await addFromCreator(page, 'palette-action-agent')
   await expect(page.locator('.react-flow__edge')).toHaveCount(0)
   for (const type of ['code', 'approval']) await addFromCreator(page, `palette-action-${type}`)
-  for (const type of ['model', 'mcp_tool']) await addFromCreator(page, `palette-binding-${type}`)
+  await addFromCreator(page, 'palette-binding-mcp_tool')
   await page.getByRole('button', { name: /^(适应画布|Fit View)$/ }).click({ force: true })
 
   const agent = flowNode(page, 'agent')
   const code = flowNode(page, 'code')
   const approval = flowNode(page, 'approval')
-  const model = page.locator('.react-flow__node-attachment').nth(0)
-  const tool = page.locator('.react-flow__node-attachment').nth(1)
+  const tool = page.locator('.react-flow__node-attachment').first()
   await expect(approval).toBeVisible()
 
-  await openNodeDetails(page, model)
-  await choose(page, page.getByTestId('attachment-resource'), new RegExp(studioModelName))
   await openNodeDetails(page, tool)
   await choose(page, page.getByTestId('attachment-resource'), new RegExp(studioMcpName))
 
   const agentConfigDetails = await openNodeDetails(page, agent)
+  await choose(page, agentConfigDetails.getByTestId('agent-inspector-model'), new RegExp(studioModelName))
+  await chooseAgentSessionPolicy(page, agentConfigDetails)
   await expect(agentConfigDetails.getByText('节点参数', { exact: true })).toHaveCount(0)
   const prompt = agentConfigDetails.getByTestId('parameter-systemPrompt')
   await expect(prompt.locator('[contenteditable="true"]')).toHaveCount(1)
@@ -609,6 +633,8 @@ test('M6 Studio creates, debugs, versions and publishes a manifest-driven Workfl
   await expect(question.locator('[contenteditable="true"]')).toHaveCount(1)
   await chooseReference(page, question, /输入|Inputs/, ['question'])
   await expect(agentConfigDetails.getByText('高级配置', { exact: true })).toBeVisible()
+  await expect(agentConfigDetails.getByTestId('parameter-compaction')).toBeVisible()
+  await expect(agentConfigDetails.getByText('不支持的 UI 控件')).toHaveCount(0)
   await expect(agentConfigDetails.getByTestId('parameter-maxDurationMs')).toContainText('毫秒')
   await expect(agentConfigDetails.getByTestId('parameter-maxTotalTokens')).toContainText('Token')
 
@@ -636,8 +662,7 @@ test('M6 Studio creates, debugs, versions and publishes a manifest-driven Workfl
   await expect(page.getByTestId('workflow-canvas')).toHaveAttribute('data-connection-state', 'idle')
   await connect(page, agent, 'main', code, 'main')
   await connect(page, code, 'main', approval, 'main')
-  await connect(page, model, 'resource', agent, 'binding:ai_model')
-  await connect(page, tool, 'resource', agent, 'binding:ai_tool')
+  await connect(page, tool, 'resource', agent, 'binding:mcp_tools')
 
   await page.getByTestId('node-creator-trigger').click()
   await expect(page.getByTestId('node-creator')).toBeVisible()
@@ -686,12 +711,12 @@ test('M6 Studio creates, debugs, versions and publishes a manifest-driven Workfl
   await group.getByRole('button', { name: '展开分组' }).click()
 
   const draft = await saveAndReadDraft(page, token, workflowId)
-  expect(draft.definition.schemaVersion).toBe('5.0')
+  expect(draft.definition.schemaVersion).toBe('6.0')
   expect(draft.definition.nodes.map((node) => node.type)).toEqual(expect.arrayContaining(['agent', 'code', 'approval', 'error_handler']))
   expect(draft.definition.nodes.map((node) => node.type)).not.toContain('manual_trigger')
   expect(draft.definition.nodes.find((node) => node.type === 'code')?.name).toBe('M6 Python Code')
   expect(draft.definition.nodes.find((node) => node.type === 'agent')?.parameters.userQuestion).toMatchObject({ kind: 'reference', selector: { namespace: 'inputs', path: ['question'] } })
-  expect(draft.definition.nodes.find((node) => node.type === 'agent')?.resourceReferences.map((item) => item.bindingRole)).toEqual(expect.arrayContaining(['ai_model', 'ai_tool']))
+  expect(draft.definition.nodes.find((node) => node.type === 'agent')?.resourceReferences.map((item) => item.bindingRole)).toEqual(expect.arrayContaining(['mcp_tools']))
   expect(draft.definition.nodes.find((node) => node.type === 'code')?.settings.onError).toBe('continue_error_output')
   expect(draft.definition.nodes.find((node) => node.type === 'code')?.outputProjection.main.summary.value).toMatchObject({ kind: 'reference', selector: { namespace: 'item', path: ['stdout'] } })
   expect(draft.definition.nodes.find((node) => node.type === 'code')?.outputProjection.main.workflow_name.value).toMatchObject({ kind: 'reference', selector: { namespace: 'execution', path: ['workflow', 'name'] } })
@@ -721,7 +746,9 @@ test('M6 Studio creates, debugs, versions and publishes a manifest-driven Workfl
   expect(draft.definition.end.outputs.context_workflow_name.value).toMatchObject({ kind: 'reference', selector: { namespace: 'contexts', path: ['session_note'] } })
   expect(draft.definition.end.error).toMatchObject({ strategy: 'collect', collectWindowMs: 1200, outputs: { failure_message: { value: { kind: 'reference', selector: { namespace: 'item', path: ['message'] } } } } })
   expect(draft.definition.connections).toContainEqual(expect.objectContaining({ sourceNodeId: draft.definition.nodes.find((node) => node.type === 'code')!.id, sourceHandle: 'error', targetNodeId: '__end__', targetHandle: 'error' }))
-  expect(draft.editorDocument.bindingEdges).toHaveLength(2)
+  // Definition 6.0 keeps Model as an Inspector Reference; only the MCP
+  // Canvas Attachment is materialized as an editor binding edge.
+  expect(draft.editorDocument.bindingEdges).toHaveLength(1)
 
   const firstExecution = await startDebug(page, () => studioRun(page).click())
   const approvalPage = await context.newPage()
@@ -1256,27 +1283,22 @@ test('M6 Studio makes dual-Agent output selection explicit across serial, parall
   await setStartInputs(page)
   await addFromCreator(page, 'palette-action-agent')
   await addFromCreator(page, 'palette-action-agent')
-  await addFromCreator(page, 'palette-binding-model')
 
   const agents = () => page.locator('.react-flow__node').filter({ hasText: /智能体|Agent/ })
   const firstAgent = agents().first()
   const secondAgent = agents().nth(1)
   const firstDetails = await openNodeDetails(page, firstAgent)
   await firstDetails.getByLabel('名称').fill('Agent A')
+  await choose(page, firstDetails.getByTestId('agent-inspector-model'), new RegExp(studioModelName))
+  await chooseAgentSessionPolicy(page, firstDetails)
   await fillNativeText(page, firstDetails.getByTestId('parameter-systemPrompt'), 'Return the serial Agent A result.')
   const secondDetails = await openNodeDetails(page, secondAgent)
   await secondDetails.getByLabel('名称').fill('Agent B')
+  await choose(page, secondDetails.getByTestId('agent-inspector-model'), new RegExp(studioModelName))
+  await chooseAgentSessionPolicy(page, secondDetails)
   await fillNativeText(page, secondDetails.getByTestId('parameter-systemPrompt'), 'Return the selected Agent B result.')
 
-  const model = page.locator('.react-flow__node-attachment').first()
-  await openNodeDetails(page, model)
-  await choose(page, page.getByTestId('attachment-resource'), new RegExp(studioModelName))
-  await page.getByTestId('node-details-view').getByRole('button', { name: '关闭' }).first().click()
-  await page.getByRole('button', { name: /^(适应画布|Fit View)$/ }).click({ force: true })
-
   await connect(page, page.getByTestId('workflow-start'), 'main', firstAgent, 'main')
-  await connect(page, model, 'resource', firstAgent, 'binding:ai_model')
-  await connect(page, model, 'resource', secondAgent, 'binding:ai_model')
   await connect(page, firstAgent, 'main', secondAgent, 'main')
   await connect(page, secondAgent, 'main', page.getByTestId('workflow-end'), 'main')
   const draftBeforeEnd = await saveAndReadDraft(page, token, workflowId)
@@ -1298,7 +1320,7 @@ test('M6 Studio makes dual-Agent output selection explicit across serial, parall
   const deleteConnection = serialToolbar.getByRole('button', { name: /删除连线|Delete connection/ })
   await expect(deleteConnection).toBeVisible()
   await deleteConnection.click()
-  await expect(page.locator('.react-flow__edge:not([data-testid*="__start__"]):not([data-testid*="__end__"])')).toHaveCount(4)
+  await expect(page.locator('.react-flow__edge:not([data-testid*="__start__"]):not([data-testid*="__end__"])')).toHaveCount(2)
   await page.getByRole('button', { name: /^(适应画布|Fit View)$/ }).click({ force: true })
   await connect(page, page.getByTestId('workflow-start'), 'main', secondAgent, 'main')
   await connect(page, firstAgent, 'main', page.getByTestId('workflow-end'), 'main')

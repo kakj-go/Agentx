@@ -49,6 +49,15 @@ async function login(page: Page) {
   return ((await (await responsePromise).json()) as { accessToken: string }).accessToken
 }
 
+async function loginViaApi(page: Page) {
+  const response = await page.request.post('/api/v1/auth/login', {
+    data: { username: 'admin', password: adminPassword },
+  })
+  const body = await response.text()
+  expect(response.ok(), body).toBe(true)
+  return (JSON.parse(body) as { accessToken: string }).accessToken
+}
+
 async function json<T>(response: APIResponse): Promise<T> {
   const body = await response.text()
   expect(response.ok(), body).toBe(true)
@@ -76,7 +85,7 @@ async function waitDeployment(page: Page, headers: Record<string, string>, appli
 
 test('execution records use authoritative multidimensional filters, Cursor pages, and immutable origin snapshots', async ({ page }) => {
   const accessToken = await login(page)
-  const headers = { Authorization: `Bearer ${accessToken}` }
+  let headers = { Authorization: `Bearer ${accessToken}` }
   const contextPath = process.env.AGENTX_V2_08_CONTEXT_OUTPUT
   if (!contextPath) throw new Error('AGENTX_V2_08_CONTEXT_OUTPUT is required')
   const context = JSON.parse(await readFile(contextPath, 'utf8')) as RuntimeContext
@@ -263,7 +272,17 @@ test('execution records use authoritative multidimensional filters, Cursor pages
   }))
   const server = await json<McpServer>(await page.request.post('/api/v1/mcp/servers', {
     headers,
-    data: { name: `Execution Filter MCP ${Date.now()}`, description: 'Execution filter option fixture', ownerDepartmentId: rootDepartment.id, transport: 'streamable_http', endpoint: `${echoBase}/mcp`, credentialId: credential.id, configuration: {} },
+    data: {
+      name: `Execution Filter MCP ${Date.now()}`,
+      description: 'Execution filter option fixture',
+      ownerDepartmentId: rootDepartment.id,
+      transport: {
+        kind: 'streamable_http',
+        endpoint: `${echoBase}/mcp`,
+        bearerCredentialId: credential.id,
+      },
+      configuration: {},
+    },
   }))
   const discovery = await json<{ tools: McpTool[] }>(await page.request.post(`/api/v1/mcp/servers/${server.id}/discover`, { headers, data: {} }))
   const tool = discovery.tools.find((item) => item.name === 'echo') ?? discovery.tools[0]
@@ -297,10 +316,22 @@ test('execution records use authoritative multidimensional filters, Cursor pages
       headers,
       data: { name: renamed, parentId: department?.parentId ?? null, version: department?.version },
     }))
-    const historical = await executions(page, headers, executionParams({
+    // Updating a department advances the token version for affected users.
+    // Continue the assertions with a fresh token instead of using the
+    // deliberately revoked scenario token.
+    const refreshedToken = await login(page)
+    headers = { Authorization: `Bearer ${refreshedToken}` }
+    const historicalParams = executionParams({
       initiatorDepartmentIds: department?.id,
       search: origin.id,
-    }))
+    })
+    // Department updates are projected to Runtime asynchronously. Wait for
+    // the new token version to be accepted before asserting filtered results.
+    await expect.poll(
+      async () => (await page.request.get(`/api/v1/executions?${historicalParams}`, { headers })).status(),
+      { timeout: 30_000, intervals: [250, 500, 1_000, 2_000] },
+    ).toBe(200)
+    const historical = await executions(page, headers, historicalParams)
     expect(historical.items).toHaveLength(1)
     expect(historical.items[0].initiatorDepartmentName).toBe(origin.initiatorDepartmentName)
     expect(historical.items[0].initiatorDepartmentName).not.toBe(renamed)
@@ -311,8 +342,12 @@ test('execution records use authoritative multidimensional filters, Cursor pages
     await expect(row).not.toContainText(renamed)
   } finally {
     if (updated && department) {
+      // Department changes revoke affected users' access tokens by design.
+      // Re-authenticate before restoring the fixture so cleanup cannot fail
+      // with SESSION_REVOKED after the scenario has already passed.
+      const cleanupToken = await loginViaApi(page)
       await json<Department>(await page.request.patch(`/api/v1/departments/${department.id}`, {
-        headers,
+        headers: { Authorization: `Bearer ${cleanupToken}` },
         data: { name: department.name, parentId: department.parentId ?? null, version: updated.version },
       }))
     }

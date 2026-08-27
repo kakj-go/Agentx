@@ -10,6 +10,9 @@
         "name": {
           "type": "string"
         },
+        "placement": {
+          "$ref": "#/$defs/BindingSlotPlacement"
+        },
         "required": {
           "default": false,
           "type": "boolean"
@@ -20,9 +23,17 @@
       },
       "required": [
         "name",
-        "resourceType"
+        "resourceType",
+        "placement"
       ],
       "type": "object"
+    },
+    "BindingSlotPlacement": {
+      "enum": [
+        "inspector",
+        "canvas"
+      ],
+      "type": "string"
     },
     "CanvasAppearance": {
       "additionalProperties": false,
@@ -222,7 +233,7 @@
     },
     "NodeProtocolVersion": {
       "enum": [
-        "1.0"
+        "2.0"
       ],
       "type": "string"
     },

@@ -1,8 +1,9 @@
+use super::output::effective_agent_budget;
 use super::{
-    WorkerExecution, declarative_http_request, effective_agent_budget, mcp_arguments,
-    mcp_tool_binding, openai_chat_completions_endpoint, openai_execution_output,
-    provider_secret_header, provider_usage_detail, runtime_call_fingerprint,
-    runtime_call_is_replayable, sandbox_execution_output, system_prompt,
+    WorkerExecution, declarative_http_request, mcp_arguments, mcp_tool_binding,
+    openai_chat_completions_endpoint, openai_execution_output, provider_secret_header,
+    provider_usage_detail, runtime_call_fingerprint, runtime_call_is_replayable,
+    runtime_call_side_effect, sandbox_execution_output, system_prompt,
 };
 use agentx_runtime_contracts::{
     ContentHash, RuntimeResourceBindingV1, RuntimeResourceConfigurationV1, RuntimeResourceKindV1,
@@ -36,13 +37,21 @@ fn mcp_binding(resource_id: Uuid, tool_name: &str) -> RuntimeResourceBindingV1 {
         )
         .unwrap(),
         configuration: RuntimeResourceConfigurationV1::Mcp {
-            endpoint: "http://mcp.example/mcp".into(),
+            server_id: Uuid::from_u128(1),
+            server_version_id: Uuid::from_u128(2),
+            transport: agentx_runtime_contracts::RuntimeMcpTransportV2::StreamableHttp {
+                endpoint: "http://mcp.example/mcp".into(),
+            },
             tool_name: tool_name.into(),
             tool_version: "1".into(),
             input_schema_hash: ContentHash::parse(
                 "sha256:1111111111111111111111111111111111111111111111111111111111111111",
             )
             .unwrap(),
+            input_schema: json!({"type":"object"}),
+            output_schema: None,
+            side_effect: "read_only".into(),
+            timeout_seconds: 30,
             credential: None,
         },
         object_ids: Vec::new(),
@@ -147,6 +156,71 @@ fn only_uncommitted_or_idempotent_sent_runtime_calls_are_replayable() {
     assert!(!runtime_call_is_replayable("sent", "irreversible"));
     assert!(!runtime_call_is_replayable("outcome_unknown", "none"));
     assert!(!runtime_call_is_replayable("failed", "none"));
+    for kind in ["model", "compaction"] {
+        let side_effect = runtime_call_side_effect(kind, &json!({}));
+        assert_eq!(side_effect, "irreversible");
+        assert!(!runtime_call_is_replayable("sent", side_effect));
+    }
+}
+
+#[test]
+fn unsafe_workspace_tools_are_never_replayed_after_send() {
+    assert_eq!(
+        runtime_call_side_effect("sandbox", &json!({"toolName":"read"})),
+        "idempotent"
+    );
+    for tool in ["write", "edit", "bash"] {
+        let request = json!({"toolName":tool});
+        let side_effect = runtime_call_side_effect("sandbox", &request);
+        assert_eq!(side_effect, "irreversible");
+        assert!(!runtime_call_is_replayable("sent", side_effect));
+    }
+}
+
+#[test]
+fn stdio_frames_preserve_frozen_replay_policy_in_the_ledger() {
+    for (policy, expected) in [
+        ("safe", "none"),
+        ("idempotency_required", "idempotent"),
+        ("never", "irreversible"),
+    ] {
+        let request = json!({
+            "frame":{"jsonrpc":"2.0","method":"tools/call"},
+            "replayPolicy":policy,
+        });
+        assert_eq!(runtime_call_side_effect("sandbox", &request), expected);
+    }
+    let unknown_mcp = json!({"tool":"unknown"});
+    let side_effect = runtime_call_side_effect("mcp_tool", &unknown_mcp);
+    assert_eq!(side_effect, "irreversible");
+    assert!(!runtime_call_is_replayable("sent", side_effect));
+    let memory_write = json!({"messages":[{"role":"user","content":"remember"}]});
+    let side_effect = runtime_call_side_effect("memory", &memory_write);
+    assert_eq!(side_effect, "irreversible");
+    assert!(!runtime_call_is_replayable("sent", side_effect));
+}
+
+#[test]
+fn mcp_replay_uses_the_frozen_side_effect_annotation() {
+    for side_effect in ["none", "read_only"] {
+        let request = json!({"sideEffect":side_effect});
+        assert_eq!(runtime_call_side_effect("mcp_tool", &request), "none");
+        assert!(runtime_call_is_replayable("sent", "none"));
+    }
+    let idempotent = json!({"sideEffect":"idempotent"});
+    assert_eq!(
+        runtime_call_side_effect("mcp_tool", &idempotent),
+        "idempotent"
+    );
+    assert!(runtime_call_is_replayable("sent", "idempotent"));
+    for side_effect in ["unknown", "non_idempotent", "irreversible"] {
+        let request = json!({"sideEffect":side_effect});
+        assert_eq!(
+            runtime_call_side_effect("mcp_tool", &request),
+            "irreversible"
+        );
+        assert!(!runtime_call_is_replayable("sent", "irreversible"));
+    }
 }
 
 #[test]
@@ -297,6 +371,7 @@ fn every_registered_manifest_parameter_has_an_explicit_runtime_consumer() {
             &[
                 "systemPrompt",
                 "userQuestion",
+                "sessionPolicy",
                 "maxIterations",
                 "maxModelCalls",
                 "maxToolCalls",

@@ -92,10 +92,7 @@ async fn emit_identity_snapshot(
                 tenant_id,
                 identity_id,
                 grant_id,
-                resource_kind: crate::runtime_resource_kind_from_control(
-                    &row.try_get::<String, _>("resource_type")?,
-                )
-                .map_err(ApiError::internal)?,
+                resource_type: row.try_get("resource_type")?,
                 resource_id: row.try_get("resource_id")?,
                 operations: [row.try_get::<String, _>("operation_key")?]
                     .into_iter()
@@ -133,8 +130,7 @@ async fn emit_identity_snapshot(
                 tenant_id,
                 identity_id: grant.identity_id,
                 grant_id: grant.grant_id,
-                resource_kind: crate::runtime_resource_kind_from_control(&grant.resource_type)
-                    .map_err(ApiError::internal)?,
+                resource_type: grant.resource_type.clone(),
                 resource_id: grant.resource_id,
                 operations: [grant.operation.clone()].into_iter().collect(),
                 policy_epoch: epoch,

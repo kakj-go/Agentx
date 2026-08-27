@@ -447,7 +447,11 @@ async fn apply_admission_inner(
                 .bind(identity.identity_id).bind(identity.tenant_id).bind(identity.workflow_id).bind(identity.policy_epoch)
                 .bind(if identity.status == AdmissionStatusV1::Active { "active" } else { "disabled" }).bind(json!(identity.capabilities)).execute(&mut *tx).await?;
             for grant_id in &identity.grant_ids {
-                sqlx::query("INSERT INTO resource_grant_projection(grant_id,tenant_id,subject_id,resource_type,resource_id,operations_json,policy_epoch,status) VALUES(?,?,?,'bundle',?,JSON_ARRAY('use'),?,'active') ON DUPLICATE KEY UPDATE policy_epoch=GREATEST(policy_epoch,VALUES(policy_epoch)),status=IF(policy_epoch<=VALUES(policy_epoch),'active',status)")
+                // Service identity events carry only grant IDs.  Keep a
+                // placeholder for a grant that has not arrived yet, but do
+                // not overwrite the detailed ResourceGrant projection when
+                // events are delivered in the opposite order.
+                sqlx::query("INSERT INTO resource_grant_projection(grant_id,tenant_id,subject_id,resource_type,resource_id,operations_json,policy_epoch,status) VALUES(?,?,?,'bundle',?,JSON_ARRAY('use'),?,'active') ON DUPLICATE KEY UPDATE subject_id=IF(resource_type='bundle' AND policy_epoch<=VALUES(policy_epoch),VALUES(subject_id),subject_id),policy_epoch=GREATEST(policy_epoch,VALUES(policy_epoch)),status=IF(resource_type='bundle' AND policy_epoch<=VALUES(policy_epoch),'active',status)")
                     .bind(grant_id).bind(identity.tenant_id).bind(identity.identity_id).bind(grant_id).bind(identity.policy_epoch).execute(&mut *tx).await?;
             }
         }
@@ -470,15 +474,8 @@ async fn apply_admission_inner(
         }
         AdmissionTargetV1::ResourceGrant { state: grant } => {
             ensure_tenant(tenant_id, grant.tenant_id)?;
-            let resource_kind = serde_json::to_value(grant.resource_kind)
-                .map_err(|error| RuntimeError::Internal(error.into()))?
-                .as_str()
-                .ok_or_else(|| {
-                    RuntimeError::Internal(anyhow::anyhow!("resource kind is not a string"))
-                })?
-                .to_owned();
             sqlx::query("INSERT INTO resource_grant_projection(grant_id,tenant_id,subject_id,resource_type,resource_id,operations_json,policy_epoch,status) VALUES(?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE subject_id=IF(policy_epoch<=VALUES(policy_epoch),VALUES(subject_id),subject_id),resource_type=IF(policy_epoch<=VALUES(policy_epoch),VALUES(resource_type),resource_type),resource_id=IF(policy_epoch<=VALUES(policy_epoch),VALUES(resource_id),resource_id),operations_json=IF(policy_epoch<=VALUES(policy_epoch),VALUES(operations_json),operations_json),status=IF(policy_epoch<=VALUES(policy_epoch),VALUES(status),status),policy_epoch=GREATEST(policy_epoch,VALUES(policy_epoch))")
-                .bind(grant.grant_id).bind(grant.tenant_id).bind(grant.identity_id).bind(resource_kind).bind(grant.resource_id).bind(json!(grant.operations)).bind(grant.policy_epoch).bind(if grant.enabled{"active"}else{"revoked"}).execute(&mut *tx).await?;
+                .bind(grant.grant_id).bind(grant.tenant_id).bind(grant.identity_id).bind(&grant.resource_type).bind(grant.resource_id).bind(json!(grant.operations)).bind(grant.policy_epoch).bind(if grant.enabled{"active"}else{"revoked"}).execute(&mut *tx).await?;
         }
         AdmissionTargetV1::ResourceState { state: resource } => {
             ensure_tenant(tenant_id, resource.tenant_id)?;
@@ -896,7 +893,7 @@ async fn activate_inner<T: Serialize>(
         .bind(manifest.tenant_id).bind(manifest.application_id).bind(manifest.minimum_admission_epoch)
         .fetch_one(&mut *tx).await?;
     let payload: Value = bundle.try_get("payload_json")?;
-    let specification: agentx_runtime_contracts::ExecutionSpecPayloadV1 =
+    let specification: agentx_runtime_contracts::ExecutionSpecPayloadV2 =
         serde_json::from_value(payload.clone())
             .map_err(|error| RuntimeError::Internal(error.into()))?;
     let identity_id = specification.authorization.service_identity_id;

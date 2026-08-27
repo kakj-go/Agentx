@@ -134,7 +134,7 @@ async function findM6Workflow(page: Page, token: string) {
       const hasChatInputs = 'question' in properties && 'attachments' in properties
       const hasApproval = nodes.some((node) => node.type === 'approval')
       const hasModel = nodes.some((node) => node.resourceReferences?.some((reference) => reference.resourceType === 'model'))
-      return item.versionNumber === 1 && (item.schemaVersion ?? definition?.schemaVersion) === '5.0' && hasChatInputs && hasApproval && hasModel
+      return item.versionNumber === 1 && (item.schemaVersion ?? definition?.schemaVersion) === '6.0' && hasChatInputs && hasApproval && hasModel
     })
     if (version) return { workflow: candidate, version }
   }
@@ -151,7 +151,7 @@ async function verifyMissingDefaultMappingIsRejected(page: Page, token: string, 
   const saved = await request<{ revision: number }>(page, token, `/workflows/${workflow.id}/draft`, 'PUT', {
     expectedRevision: draft.revision,
     definition: {
-      schemaVersion: '5.0',
+      schemaVersion: '6.0',
       start: {
         inputs: {
           type: 'object',
@@ -209,7 +209,7 @@ async function createFileEchoPlaygroundFixture(page: Page, token: string, enviro
   const saved = await request<{ revision: number }>(page, token, `/workflows/${workflow.id}/draft`, 'PUT', {
     expectedRevision: draft.revision,
     definition: {
-      schemaVersion: '5.0',
+      schemaVersion: '6.0',
       start: {
         inputs: {
           type: 'object',
@@ -322,7 +322,7 @@ test('M7 closes Application, Trigger, Evaluation, Approval and governance paths 
   const savedTriggerDraft = await request<{ revision: number }>(page, token, `/workflows/${triggerWorkflow.id}/draft`, 'PUT', {
     expectedRevision: triggerDraft.revision,
     definition: {
-      schemaVersion: '5.0',
+      schemaVersion: '6.0',
       start: {
         inputs: { type: 'object', properties: { source: { type: 'string' } }, additionalProperties: true },
         contexts: {},

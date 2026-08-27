@@ -25,10 +25,10 @@ describe('editor store node creation', () => {
   })
 
   it('selects a newly added AI attachment so its resource can be chosen immediately', () => {
-    useEditorStore.getState().addBinding({ editorKind: 'binding', bindingId: 'model-binding', bindingRole: 'ai_model', resourceType: 'model', operation: 'use', label: 'model' })
+    useEditorStore.getState().addBinding({ editorKind: 'binding', bindingId: 'mcp-binding', bindingRole: 'mcp_tools', resourceType: 'mcp_tool', operation: 'use', label: 'MCP tool' })
 
     const state = useEditorStore.getState()
-    expect(state.selectedId).toBe('binding:model-binding')
+    expect(state.selectedId).toBe('binding:mcp-binding')
     expect(state.nodes[0].selected).toBe(true)
   })
 

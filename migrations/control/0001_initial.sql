@@ -530,9 +530,11 @@ CREATE TABLE mcp_server_versions (
     tenant_id BINARY(16) NOT NULL,
     server_id BINARY(16) NOT NULL,
     version_number BIGINT UNSIGNED NOT NULL,
-    transport ENUM('streamable_http', 'sse') NOT NULL,
-    endpoint VARCHAR(2048) NOT NULL,
+    transport ENUM('streamable_http', 'sse', 'stdio') NOT NULL,
+    endpoint VARCHAR(2048) NULL,
     credential_id BINARY(16) NULL,
+    runtime_sandbox_profile_id BINARY(16) NULL,
+    runtime_sandbox_profile_version_id BINARY(16) NULL,
     configuration_json JSON NOT NULL,
     configuration_hash CHAR(64) NOT NULL,
     created_by BINARY(16) NOT NULL,
@@ -578,6 +580,7 @@ CREATE TABLE mcp_tool_versions (
     tenant_id BINARY(16) NOT NULL,
     tool_id BINARY(16) NOT NULL,
     discovery_run_id BINARY(16) NOT NULL,
+    server_version_id BINARY(16) NOT NULL,
     version_number BIGINT UNSIGNED NOT NULL,
     input_schema JSON NOT NULL,
     output_schema JSON NULL,
@@ -587,6 +590,7 @@ CREATE TABLE mcp_tool_versions (
     PRIMARY KEY (id),
     UNIQUE KEY uq_mcp_tool_version (tenant_id, tool_id, version_number),
     UNIQUE KEY uq_mcp_tool_schema_hash (tenant_id, tool_id, schema_hash)
+    ,KEY idx_mcp_tool_server_version (tenant_id, server_version_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 CREATE TABLE mcp_tools (
@@ -924,8 +928,10 @@ CREATE TABLE resource_grant_request_reviews (
 CREATE TABLE resource_grant_requests (
     id BINARY(16) NOT NULL,
     tenant_id BINARY(16) NOT NULL,
-    workflow_id BINARY(16) NOT NULL,
-    workflow_service_identity_id BINARY(16) NOT NULL,
+    subject_type ENUM('department', 'workflow_service_identity') NOT NULL,
+    subject_id BINARY(16) NOT NULL,
+    workflow_id BINARY(16) NULL,
+    workflow_service_identity_id BINARY(16) NULL,
     primary_resource_type VARCHAR(32) NOT NULL,
     primary_resource_id BINARY(16) NOT NULL,
     primary_resource_version_id BINARY(16) NULL,
@@ -944,7 +950,12 @@ CREATE TABLE resource_grant_requests (
     PRIMARY KEY (id),
     UNIQUE KEY uq_resource_grant_request_open (tenant_id, open_dedupe_key),
     KEY idx_resource_grant_request_inbox (tenant_id, status, updated_at),
-    KEY idx_resource_grant_request_workflow (tenant_id, workflow_id, status)
+    KEY idx_resource_grant_request_subject (tenant_id, subject_type, subject_id, status),
+    KEY idx_resource_grant_request_workflow (tenant_id, workflow_id, status),
+    CONSTRAINT chk_resource_grant_request_subject CHECK (
+        (subject_type = 'workflow_service_identity' AND workflow_id IS NOT NULL AND workflow_service_identity_id = subject_id)
+        OR (subject_type = 'department' AND workflow_id IS NULL AND workflow_service_identity_id IS NULL)
+    )
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 CREATE TABLE resource_grants (

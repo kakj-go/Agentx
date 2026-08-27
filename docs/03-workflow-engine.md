@@ -135,6 +135,10 @@ Structured Value 1.0 只能读取以下命名空间：
 - `item`：当前 Item。
 - `loop`：显式循环上下文。
 
+`execution` 由 Runtime 在 Execution 创建时固化为 `ExecutionContextSnapshotV1`，统一包含执行 ID/开始时间/父执行、Workflow 名称与版本及所属部门、触发来源、发起人及多角色分配、应用、调用和会话。节点求值时只附加当前节点 ID、Node Execution ID、run/item/loop iteration 序号；参数、Output Projection、Context Write、End、Wait/Suspend 必须从同一快照加载，禁止分别拼装字段。Composite 资源携带真实子 Workflow 快照，子执行继承父执行的发起人与调用语义，但将 Workflow 字段切换为固化的子 Workflow ID、名称、版本和所属部门。用户、角色、部门或名称后续变化只影响未来执行，历史执行保持原快照。
+
+角色分配只公开 `id/code/name/dataScope/scopeDepartment`，并派生 IDs、Codes、Names 数组。无人工触发不生成用户、部门和角色字段；名称仅用于展示，稳定判断使用 ID 或角色编码。这里不公开权限集合、Token、Credential、租户内部配置或 Workflow Service Identity。
+
 服务端不得直接执行任意 JavaScript 表达式。建议：
 
 1. 定义受限表达式语法。

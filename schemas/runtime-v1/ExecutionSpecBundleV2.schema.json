@@ -1,5 +1,396 @@
 {
   "$defs": {
+    "AgentAttachmentRegistryV1": {
+      "additionalProperties": false,
+      "properties": {
+        "authorizationEvidence": {
+          "items": {
+            "$ref": "#/$defs/AgentCapabilityAuthorizationEvidenceV1"
+          },
+          "type": "array"
+        },
+        "contexts": {
+          "items": {
+            "$ref": "#/$defs/AgentExternalContextBindingV1"
+          },
+          "type": "array"
+        },
+        "tools": {
+          "items": {
+            "$ref": "#/$defs/AgentAttachmentToolV1"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "contexts",
+        "tools",
+        "authorizationEvidence"
+      ],
+      "type": "object"
+    },
+    "AgentAttachmentToolV1": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "inputSchema": true,
+        "name": {
+          "type": "string"
+        },
+        "operation": {
+          "type": "string"
+        },
+        "origin": {
+          "type": "string"
+        },
+        "replayPolicy": {
+          "type": "string"
+        },
+        "resourceId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "resourceVersionId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "scope": {
+          "description": "`run` is the P3-04 namespace; `subject` is reserved for the\nlong-term-memory slot and requires trusted subject evidence.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "description",
+        "inputSchema",
+        "origin",
+        "replayPolicy",
+        "resourceId",
+        "resourceVersionId",
+        "operation",
+        "scope"
+      ],
+      "type": "object"
+    },
+    "AgentBundleContractV2": {
+      "additionalProperties": false,
+      "properties": {
+        "agents": {
+          "items": {
+            "$ref": "#/$defs/CompiledAgentBundleEntryV2"
+          },
+          "type": "array"
+        },
+        "bundleVersion": {
+          "type": "string"
+        },
+        "compilerVersion": {
+          "type": "string"
+        },
+        "coreContractVersion": {
+          "type": "string"
+        },
+        "definitionHash": {
+          "type": "string"
+        },
+        "grantIds": {
+          "items": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "manifestHashes": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "policyEpoch": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "referenceCommit": {
+          "type": "string"
+        },
+        "referencePackageVersion": {
+          "type": "string"
+        },
+        "referenceRepository": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "bundleVersion",
+        "coreContractVersion",
+        "referenceRepository",
+        "referenceCommit",
+        "referencePackageVersion",
+        "definitionHash",
+        "compilerVersion",
+        "manifestHashes",
+        "policyEpoch",
+        "grantIds",
+        "agents"
+      ],
+      "type": "object"
+    },
+    "AgentCapabilityAuthorizationEvidenceV1": {
+      "additionalProperties": false,
+      "properties": {
+        "grantIds": {
+          "items": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "operation": {
+          "type": "string"
+        },
+        "policyEpoch": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "resourceId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "resourceType": {
+          "type": "string"
+        },
+        "resourceVersionId": {
+          "description": "Versioned resources carry their exact UUID. Fixed dependencies such as\nVault-backed credentials intentionally carry no resource version.",
+          "format": "uuid",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "resourceType",
+        "resourceId",
+        "operation",
+        "policyEpoch",
+        "grantIds"
+      ],
+      "type": "object"
+    },
+    "AgentExternalContextBindingV1": {
+      "additionalProperties": false,
+      "properties": {
+        "contentHash": {
+          "type": "string"
+        },
+        "contextId": {
+          "type": "string"
+        },
+        "objectId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "origin": {
+          "type": "string"
+        },
+        "resourceId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "resourceVersionId": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "contextId",
+        "origin",
+        "resourceId",
+        "resourceVersionId",
+        "objectId",
+        "contentHash"
+      ],
+      "type": "object"
+    },
+    "AgentResourceClosureEntryV2": {
+      "additionalProperties": false,
+      "properties": {
+        "operations": {
+          "items": {
+            "$ref": "#/$defs/ResourceOperation"
+          },
+          "type": "array",
+          "uniqueItems": true
+        },
+        "resourceId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "resourceType": {
+          "$ref": "#/$defs/ResourceType"
+        },
+        "resourceVersionId": {
+          "description": "Exact UUID for immutable versions; `None` represents a fixed\ndependency such as a Vault-backed credential.",
+          "format": "uuid",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "resourceType",
+        "resourceId",
+        "operations"
+      ],
+      "type": "object"
+    },
+    "AgentSessionPolicyModeV2": {
+      "enum": [
+        "application_session",
+        "invocation"
+      ],
+      "type": "string"
+    },
+    "CompiledAgentAttachmentV2": {
+      "additionalProperties": false,
+      "properties": {
+        "bindingId": {
+          "type": "string"
+        },
+        "bindingRole": {
+          "type": "string"
+        },
+        "operation": {
+          "$ref": "#/$defs/ResourceOperation"
+        },
+        "resourceId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "resourceType": {
+          "$ref": "#/$defs/ResourceType"
+        },
+        "resourceVersionId": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "bindingId",
+        "bindingRole",
+        "resourceType",
+        "resourceId",
+        "resourceVersionId",
+        "operation"
+      ],
+      "type": "object"
+    },
+    "CompiledAgentBundleEntryV2": {
+      "additionalProperties": false,
+      "properties": {
+        "attachmentRegistry": {
+          "$ref": "#/$defs/AgentAttachmentRegistryV1"
+        },
+        "configuration": {
+          "$ref": "#/$defs/CompiledAgentNodeV2"
+        },
+        "nodeId": {
+          "type": "string"
+        },
+        "resourceClosure": {
+          "items": {
+            "$ref": "#/$defs/AgentResourceClosureEntryV2"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "nodeId",
+        "configuration",
+        "resourceClosure",
+        "attachmentRegistry"
+      ],
+      "type": "object"
+    },
+    "CompiledAgentNodeV2": {
+      "additionalProperties": false,
+      "properties": {
+        "canvasAttachments": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/CompiledAgentAttachmentV2"
+          },
+          "type": "array"
+        },
+        "contractVersion": {
+          "type": "string"
+        },
+        "coreTools": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/DerivedCoreToolV2"
+          },
+          "type": "array"
+        },
+        "model": {
+          "$ref": "#/$defs/CompiledAgentResourceReferenceV2"
+        },
+        "sessionPolicy": {
+          "$ref": "#/$defs/AgentSessionPolicyModeV2"
+        },
+        "workspaceSandbox": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CompiledAgentResourceReferenceV2"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "contractVersion",
+        "sessionPolicy",
+        "model"
+      ],
+      "type": "object"
+    },
+    "CompiledAgentResourceReferenceV2": {
+      "additionalProperties": false,
+      "properties": {
+        "bindingRole": {
+          "type": "string"
+        },
+        "operation": {
+          "$ref": "#/$defs/ResourceOperation"
+        },
+        "resourceId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "resourceType": {
+          "$ref": "#/$defs/ResourceType"
+        },
+        "resourceVersionId": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "bindingRole",
+        "resourceType",
+        "resourceId",
+        "resourceVersionId",
+        "operation"
+      ],
+      "type": "object"
+    },
     "CompiledConnectionV1": {
       "additionalProperties": false,
       "properties": {
@@ -59,6 +450,16 @@
     "CompiledNodeV1": {
       "additionalProperties": false,
       "properties": {
+        "agent": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CompiledAgentNodeV2"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "capability": {
           "$ref": "#/$defs/NodeCapability"
         },
@@ -411,6 +812,13 @@
       ],
       "type": "string"
     },
+    "CoreToolReplayPolicyV2": {
+      "enum": [
+        "safe",
+        "never"
+      ],
+      "type": "string"
+    },
     "DependencyClosureEntryV1": {
       "additionalProperties": false,
       "properties": {
@@ -471,6 +879,32 @@
         "sandbox_profile"
       ],
       "type": "string"
+    },
+    "DerivedCoreToolV2": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "replayPolicy": {
+          "$ref": "#/$defs/CoreToolReplayPolicyV2"
+        },
+        "workspaceSandboxResourceId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "workspaceSandboxVersionId": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "replayPolicy",
+        "workspaceSandboxResourceId",
+        "workspaceSandboxVersionId"
+      ],
+      "type": "object"
     },
     "DynamicValue": {
       "description": "A persisted dynamic value is always a tagged object.  It deliberately\nlives beside ordinary JSON rather than overloading strings, so business\npayloads cannot accidentally become expressions.",
@@ -635,9 +1069,12 @@
       ],
       "type": "string"
     },
-    "ExecutionSpecPayloadV1": {
+    "ExecutionSpecPayloadV2": {
       "additionalProperties": false,
       "properties": {
+        "agentBundle": {
+          "$ref": "#/$defs/AgentBundleContractV2"
+        },
         "applicationId": {
           "format": "uuid",
           "type": "string"
@@ -749,6 +1186,7 @@
         "definition",
         "compiledIr",
         "nodeManifests",
+        "agentBundle",
         "inputContract",
         "outputContract",
         "contextContract",
@@ -1189,6 +1627,29 @@
       ],
       "type": "string"
     },
+    "ResourceOperation": {
+      "enum": [
+        "view",
+        "use",
+        "read",
+        "write",
+        "manage"
+      ],
+      "type": "string"
+    },
+    "ResourceType": {
+      "enum": [
+        "credential",
+        "model",
+        "mcp_server",
+        "mcp_tool",
+        "skill",
+        "rag",
+        "memory",
+        "sandbox_profile"
+      ],
+      "type": "string"
+    },
     "RuntimeAuthorizationSnapshotV1": {
       "additionalProperties": false,
       "properties": {
@@ -1201,6 +1662,12 @@
         },
         "capturedAt": {
           "type": "string"
+        },
+        "grantBindings": {
+          "items": {
+            "$ref": "#/$defs/RuntimeGrantBindingV1"
+          },
+          "type": "array"
         },
         "grantIds": {
           "items": {
@@ -1244,6 +1711,7 @@
         "workflowId",
         "policyEpoch",
         "grantIds",
+        "grantBindings",
         "capabilities",
         "maximumPolicyStalenessSeconds",
         "capturedAt"
@@ -1301,6 +1769,146 @@
         "compareAndSwapRequired"
       ],
       "type": "object"
+    },
+    "RuntimeEnvironmentCredentialReferenceV1": {
+      "additionalProperties": false,
+      "properties": {
+        "credential": {
+          "$ref": "#/$defs/VaultSecretReferenceV1"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "credential"
+      ],
+      "type": "object"
+    },
+    "RuntimeGrantBindingV1": {
+      "additionalProperties": false,
+      "properties": {
+        "grantId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "operation": {
+          "type": "string"
+        },
+        "resourceId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "resourceType": {
+          "type": "string"
+        },
+        "resourceVersionId": {
+          "format": "uuid",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "grantId",
+        "resourceType",
+        "resourceId",
+        "operation"
+      ],
+      "type": "object"
+    },
+    "RuntimeMcpSandboxReferenceV1": {
+      "additionalProperties": false,
+      "properties": {
+        "resourceId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "resourceVersionId": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "resourceId",
+        "resourceVersionId"
+      ],
+      "type": "object"
+    },
+    "RuntimeMcpTransportV2": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "endpoint": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "streamable_http",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "endpoint"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "endpoint": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "sse",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "endpoint"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "args": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "command": {
+              "type": "string"
+            },
+            "environmentCredentialRefs": {
+              "items": {
+                "$ref": "#/$defs/RuntimeEnvironmentCredentialReferenceV1"
+              },
+              "type": "array"
+            },
+            "kind": {
+              "const": "stdio",
+              "type": "string"
+            },
+            "runtimeSandbox": {
+              "$ref": "#/$defs/RuntimeMcpSandboxReferenceV1"
+            }
+          },
+          "required": [
+            "kind",
+            "command",
+            "args",
+            "environmentCredentialRefs",
+            "runtimeSandbox"
+          ],
+          "type": "object"
+        }
+      ]
     },
     "RuntimeModelPriceV1": {
       "additionalProperties": false,
@@ -1541,9 +2149,7 @@
                 }
               ]
             },
-            "endpoint": {
-              "type": "string"
-            },
+            "inputSchema": true,
             "inputSchemaHash": {
               "type": "string"
             },
@@ -1551,19 +2157,44 @@
               "const": "mcp",
               "type": "string"
             },
+            "outputSchema": true,
+            "serverId": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "serverVersionId": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "sideEffect": {
+              "type": "string"
+            },
+            "timeoutSeconds": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
             "toolName": {
               "type": "string"
             },
             "toolVersion": {
               "type": "string"
+            },
+            "transport": {
+              "$ref": "#/$defs/RuntimeMcpTransportV2"
             }
           },
           "required": [
             "kind",
-            "endpoint",
+            "serverId",
+            "serverVersionId",
+            "transport",
             "toolName",
             "toolVersion",
-            "inputSchemaHash"
+            "inputSchemaHash",
+            "inputSchema",
+            "sideEffect",
+            "timeoutSeconds"
           ],
           "type": "object"
         },
@@ -1605,6 +2236,9 @@
         {
           "additionalProperties": false,
           "properties": {
+            "accessMode": {
+              "type": "string"
+            },
             "credential": {
               "anyOf": [
                 {
@@ -1633,19 +2267,29 @@
             "kind",
             "endpoint",
             "namespace",
-            "memoryVersion"
+            "memoryVersion",
+            "accessMode"
           ],
           "type": "object"
         },
         {
           "additionalProperties": false,
           "properties": {
+            "dependencies": {
+              "items": {
+                "$ref": "#/$defs/RuntimeSkillDependencyV2"
+              },
+              "type": "array"
+            },
             "dependencyObjectIds": {
               "items": {
                 "format": "uuid",
                 "type": "string"
               },
               "type": "array"
+            },
+            "entrypointContentHash": {
+              "type": "string"
             },
             "entrypointObjectId": {
               "format": "uuid",
@@ -1659,7 +2303,9 @@
           "required": [
             "kind",
             "entrypointObjectId",
-            "dependencyObjectIds"
+            "entrypointContentHash",
+            "dependencyObjectIds",
+            "dependencies"
           ],
           "type": "object"
         },
@@ -1815,6 +2461,34 @@
         "initialBackoffMillis",
         "maximumBackoffMillis",
         "backoffMultiplierMilli"
+      ],
+      "type": "object"
+    },
+    "RuntimeSkillDependencyV2": {
+      "additionalProperties": false,
+      "properties": {
+        "operation": {
+          "type": "string"
+        },
+        "resourceId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "resourceType": {
+          "type": "string"
+        },
+        "resourceVersionId": {
+          "format": "uuid",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "resourceType",
+        "resourceId",
+        "operation"
       ],
       "type": "object"
     },
@@ -2367,7 +3041,7 @@
       "type": "string"
     },
     "payload": {
-      "$ref": "#/$defs/ExecutionSpecPayloadV1"
+      "$ref": "#/$defs/ExecutionSpecPayloadV2"
     },
     "signature": {
       "$ref": "#/$defs/Ed25519Signature"
@@ -2378,6 +3052,6 @@
     "contentHash",
     "signature"
   ],
-  "title": "ExecutionSpecBundleV1",
+  "title": "ExecutionSpecBundleV2",
   "type": "object"
 }

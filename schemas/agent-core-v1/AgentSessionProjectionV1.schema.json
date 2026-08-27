@@ -1,0 +1,108 @@
+{
+  "$defs": {
+    "RetentionPolicyV1": {
+      "additionalProperties": false,
+      "properties": {
+        "compactionArtifactExpiresAtMillis": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "protectReferencedArtifacts": {
+          "default": false,
+          "type": "boolean"
+        },
+        "sessionExpiresAtMillis": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "SessionPolicyModeV1": {
+      "enum": [
+        "application_session",
+        "invocation"
+      ],
+      "type": "string"
+    },
+    "TrustedSubjectEvidenceV1": {
+      "additionalProperties": false,
+      "properties": {
+        "authenticatedSubjectId": {
+          "type": "string"
+        },
+        "evidenceHash": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "authenticatedSubjectId",
+        "source",
+        "evidenceHash"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Projection of the durable Register supplied to one Core invocation.  The\nWorker remains authoritative for loading and CAS; Core treats this as an\nimmutable recovery hint and never derives identity from user input.",
+  "properties": {
+    "leafEntryId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "mode": {
+      "$ref": "#/$defs/SessionPolicyModeV1"
+    },
+    "openOperationId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "retention": {
+      "$ref": "#/$defs/RetentionPolicyV1",
+      "default": {
+        "protectReferencedArtifacts": false
+      }
+    },
+    "sessionKey": {
+      "type": "string"
+    },
+    "stateVersion": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "trustedSubject": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/TrustedSubjectEvidenceV1"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "mode",
+    "sessionKey",
+    "stateVersion"
+  ],
+  "title": "AgentSessionProjectionV1",
+  "type": "object"
+}

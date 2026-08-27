@@ -8,7 +8,7 @@ metadata:
 spec:
   backoffLimit: 0
   template:
-    metadata: { labels: { agentx.io/plane: runtime, agentx.io/runtime-data: mysql-redis, agentx.io/ops-job: "true" } }
+    metadata: { labels: { agentx.io/plane: runtime, agentx.io/runtime-data: mysql-redis, agentx.io/ops-job: "true", agentx.io/opensandbox-health: allowed } }
     spec:
       serviceAccountName: workflow-runtime
       automountServiceAccountToken: false

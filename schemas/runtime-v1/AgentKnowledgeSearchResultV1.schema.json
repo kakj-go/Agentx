@@ -1,0 +1,103 @@
+{
+  "$defs": {
+    "AgentKnowledgeCitationV1": {
+      "additionalProperties": false,
+      "properties": {
+        "chunkId": {
+          "type": "string"
+        },
+        "documentId": {
+          "type": "string"
+        },
+        "knowledgeResourceId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "score": {
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "uri": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "knowledgeResourceId",
+        "documentId",
+        "chunkId"
+      ],
+      "type": "object"
+    },
+    "AgentKnowledgeDocumentSummaryV1": {
+      "additionalProperties": false,
+      "properties": {
+        "content": {
+          "type": "string"
+        },
+        "metadata": true,
+        "truncated": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "content",
+        "truncated",
+        "metadata"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "artifactRefs": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "citations": {
+      "items": {
+        "$ref": "#/$defs/AgentKnowledgeCitationV1"
+      },
+      "type": "array"
+    },
+    "documents": {
+      "items": {
+        "$ref": "#/$defs/AgentKnowledgeDocumentSummaryV1"
+      },
+      "type": "array"
+    },
+    "promptBoundary": {
+      "type": "string"
+    },
+    "truncated": {
+      "type": "boolean"
+    },
+    "trust": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "documents",
+    "citations",
+    "trust",
+    "promptBoundary",
+    "artifactRefs",
+    "truncated"
+  ],
+  "title": "AgentKnowledgeSearchResultV1",
+  "type": "object"
+}

@@ -18,10 +18,13 @@ use thiserror::Error;
 
 use crate::{ExpressionEngine, NodeRegistry};
 
+#[path = "compiler_agent.rs"]
+mod compiler_agent;
 #[path = "compiler_normalization.rs"]
 mod normalization;
 #[path = "compiler_parameter_expressions.rs"]
 mod parameter_expressions;
+use compiler_agent::{compile_agent_node, validate_binding_slots};
 use normalization::{
     normalized_context_writes, normalized_node_parameters, normalized_output_projection,
     normalized_workflow_end, validate_parameter_reference_types,
@@ -33,6 +36,8 @@ pub const COMPILER_VERSION: &str = "agentx-workflow-5.0.1";
 pub struct CompileContext {
     pub current_workflow_version_id: Option<String>,
     pub ancestor_workflow_version_ids: BTreeSet<String>,
+    /// Immutable display/tool names resolved by the publisher for conflict checks.
+    pub resource_tool_names: BTreeMap<uuid::Uuid, String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -116,7 +121,7 @@ impl<'a> WorkflowCompiler<'a> {
                 });
             }
             if let Some(manifest) = &manifest {
-                validate_binding_slots(*definition_index, node, manifest, &mut issues);
+                validate_binding_slots(*definition_index, node, manifest, context, &mut issues);
                 validate_parameters(*definition_index, node, manifest, &mut issues);
                 validate_context_write_capability(
                     *definition_index,
@@ -544,6 +549,7 @@ impl<'a> WorkflowCompiler<'a> {
                             cardinalities: manifest.output_cardinality.clone(),
                         },
                     side_effect_level: manifest.side_effect_level.clone(),
+                    agent: compile_agent_node(node, manifest),
                     incoming_connections: Vec::new(),
                     outgoing_connections: Vec::new(),
                     component_index: component_by_node[index],
@@ -604,56 +610,6 @@ impl<'a> WorkflowCompiler<'a> {
             strongly_connected_components: components,
             subworkflow_version_ids: subworkflows.into_iter().collect(),
         })
-    }
-}
-
-fn validate_binding_slots(
-    definition_index: usize,
-    node: &agentx_domain::WorkflowNode,
-    manifest: &NodeManifestVersion,
-    issues: &mut Vec<CompileIssue>,
-) {
-    for slot in &manifest.binding_slots {
-        let count = node
-            .resource_references
-            .iter()
-            .filter(|reference| {
-                reference.binding_role.as_deref() == Some(slot.name.as_str())
-                    && reference.resource_type == slot.resource_type
-            })
-            .count();
-        if slot.required && count == 0 {
-            issues.push(CompileIssue {
-                code: "BINDING_REQUIRED".into(),
-                path: format!("nodes[{definition_index}].resourceReferences"),
-                message: format!("Binding slot '{}' is required", slot.name),
-            });
-        }
-        if !slot.multiple && count > 1 {
-            issues.push(CompileIssue {
-                code: "BINDING_MULTIPLE_NOT_ALLOWED".into(),
-                path: format!("nodes[{definition_index}].resourceReferences"),
-                message: format!("Binding slot '{}' accepts only one resource", slot.name),
-            });
-        }
-    }
-    for (reference_index, reference) in node.resource_references.iter().enumerate() {
-        let Some(role) = reference.binding_role.as_deref() else {
-            continue;
-        };
-        if !manifest
-            .binding_slots
-            .iter()
-            .any(|slot| slot.name == role && slot.resource_type == reference.resource_type)
-        {
-            issues.push(CompileIssue {
-                code: "INVALID_BINDING_SLOT".into(),
-                path: format!(
-                    "nodes[{definition_index}].resourceReferences[{reference_index}].bindingRole"
-                ),
-                message: format!("Binding role '{role}' does not accept this resource type"),
-            });
-        }
     }
 }
 

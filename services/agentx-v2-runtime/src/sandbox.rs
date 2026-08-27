@@ -1,12 +1,21 @@
-use std::{collections::BTreeMap, future::Future};
+use std::{collections::BTreeMap, future::Future, sync::Arc};
 
 use agentx_runtime_contracts::{
     EGRESS_SANDBOX_TOKEN_MAX_TTL_SECONDS, EGRESS_TOKEN_AUDIENCE, EGRESS_TOKEN_ISSUER,
     EgressConnectClaimsV1, EgressMode, EgressRole, RuntimeResourceBindingV1,
-    RuntimeResourceConfigurationV1, SandboxEgressModeV1, issue_egress_connect_token, now_unix,
+    RuntimeResourceConfigurationV1, SandboxEgressModeV1, ToolEffectRequestV1, ToolEffectResponseV1,
+    WorkspaceAcquireRequestV1, WorkspaceAcquireResponseV1, WorkspaceLeaseStatusV1,
+    WorkspaceReleaseRequestV1, issue_egress_connect_token, now_unix,
 };
-use axum::{Json, Router, extract::State, routing::post};
+use axum::{
+    Json, Router,
+    body::Bytes,
+    extract::{Path, State},
+    response::{IntoResponse, Response},
+    routing::post,
+};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
+use object_store::ObjectStore;
 use reqwest::{StatusCode, header::HeaderMap};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -19,6 +28,11 @@ use crate::error::{RuntimeError, RuntimeResult};
 const LEASE_SECONDS: u32 = 30;
 const EXECD_PORT: u16 = 44_772;
 
+#[path = "sandbox_process.rs"]
+mod process;
+#[path = "sandbox_workspace.rs"]
+mod workspace;
+
 #[derive(Clone)]
 pub struct SandboxManagerState {
     pub pool: MySqlPool,
@@ -27,6 +41,9 @@ pub struct SandboxManagerState {
     pub provider_api_key: Option<String>,
     pub provider_secure_access: bool,
     pub owner: Uuid,
+    pub vault: Option<crate::vault::RuntimeVault>,
+    pub objects: Arc<dyn ObjectStore>,
+    pub process_sockets: process::ProcessSocketRegistry,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -57,8 +74,90 @@ pub struct SandboxExecuteResponseV1 {
 
 pub fn router(state: SandboxManagerState) -> Router {
     Router::new()
+        .route(
+            "/internal/runtime/v1/sandboxes:acquire",
+            post(workspace::acquire_workspace),
+        )
+        .route(
+            "/internal/runtime/v1/sandboxes:tool",
+            post(workspace::workspace_tool),
+        )
+        .route(
+            "/internal/runtime/v1/sandboxes:release",
+            post(workspace::release_workspace),
+        )
         .route("/internal/runtime/v1/sandboxes:execute", post(execute))
+        .route(
+            "/internal/runtime/v1/sandbox-process-sessions:start",
+            post(process::start),
+        )
+        .route(
+            "/internal/runtime/v1/sandbox-process-sessions/{id_action}",
+            post(process_session_action),
+        )
         .with_state(state)
+}
+
+async fn process_session_action(
+    State(state): State<SandboxManagerState>,
+    Path(id_action): Path<String>,
+    body: Bytes,
+) -> RuntimeResult<Response> {
+    let (id, action) = id_action
+        .rsplit_once(':')
+        .ok_or_else(|| bad_request("invalid Process Session action path"))?;
+    let id = Uuid::parse_str(id).map_err(|_| bad_request("invalid Process Session id"))?;
+    match action {
+        "write" => {
+            let request = serde_json::from_slice(&body).map_err(|error| {
+                bad_request(&format!("invalid Process Session request: {error}"))
+            })?;
+            Ok(process::write(State(state), Path(id), Json(request))
+                .await?
+                .into_response())
+        }
+        "read" => {
+            let request = serde_json::from_slice(&body).map_err(|error| {
+                bad_request(&format!("invalid Process Session request: {error}"))
+            })?;
+            Ok(process::read(State(state), Path(id), Json(request))
+                .await?
+                .into_response())
+        }
+        "wait" => {
+            let request = serde_json::from_slice(&body).map_err(|error| {
+                bad_request(&format!("invalid Process Session request: {error}"))
+            })?;
+            Ok(process::wait(State(state), Path(id), Json(request))
+                .await?
+                .into_response())
+        }
+        "interrupt" => {
+            let request = serde_json::from_slice(&body).map_err(|error| {
+                bad_request(&format!("invalid Process Session request: {error}"))
+            })?;
+            Ok(process::interrupt(State(state), Path(id), Json(request))
+                .await?
+                .into_response())
+        }
+        "terminate" => {
+            let request = serde_json::from_slice(&body).map_err(|error| {
+                bad_request(&format!("invalid Process Session request: {error}"))
+            })?;
+            Ok(process::terminate(State(state), Path(id), Json(request))
+                .await?
+                .into_response())
+        }
+        "reconcile" => {
+            let request = serde_json::from_slice(&body).map_err(|error| {
+                bad_request(&format!("invalid Process Session request: {error}"))
+            })?;
+            Ok(process::reconcile(State(state), Path(id), Json(request))
+                .await?
+                .into_response())
+        }
+        _ => Err(bad_request("unsupported Process Session action")),
+    }
 }
 
 async fn execute(
@@ -640,6 +739,12 @@ async fn complete_lease(
 }
 
 pub async fn reconcile_one(state: &SandboxManagerState) -> RuntimeResult<bool> {
+    if process::reconcile_one(state).await? {
+        return Ok(true);
+    }
+    if workspace::reconcile_one(state).await? {
+        return Ok(true);
+    }
     let mut tx = state.pool.begin().await?;
     let Some(row) = sqlx::query(
         "SELECT id,sandbox_id,fencing_token,idempotency_key,status,last_error FROM sandbox_leases WHERE (status='orphaned' OR (status IN ('ready','running','interrupting','terminating') AND expires_at<=UTC_TIMESTAMP(6))) AND (locked_until IS NULL OR locked_until<=UTC_TIMESTAMP(6)) ORDER BY expires_at,id LIMIT 1 FOR UPDATE SKIP LOCKED",
@@ -1437,6 +1542,34 @@ async fn terminate_provider(
         outcome_unknown: false,
         message: format!("OpenSandbox terminate HTTP {status}: {body}"),
     })
+}
+
+async fn renew_provider_expiration(
+    state: &SandboxManagerState,
+    sandbox_id: &str,
+    ttl_seconds: u32,
+    idempotency_key: &str,
+) -> Result<(), ProviderError> {
+    let expires_at = (time::OffsetDateTime::now_utc()
+        + time::Duration::seconds(i64::from(ttl_seconds.max(60).saturating_add(30))))
+    .format(&time::format_description::well_known::Rfc3339)
+    .map_err(|error| ProviderError {
+        message: error.to_string(),
+        outcome_unknown: false,
+    })?;
+    provider_json(
+        authenticated(
+            state,
+            state.client.post(format!(
+                "{}/v1/sandboxes/{sandbox_id}/renew-expiration",
+                state.provider_endpoint.trim_end_matches('/')
+            )),
+        )
+        .header("Idempotency-Key", format!("{idempotency_key}:renew"))
+        .json(&json!({"expiresAt": expires_at})),
+    )
+    .await
+    .map(|_| ())
 }
 
 async fn advance_lease(

@@ -694,7 +694,13 @@ mod tests {
         let result = schema::<NodeActionResult>();
         assert_eq!(
             definition["$defs"]["WorkflowSchemaVersion"]["enum"][0],
-            "5.0"
+            "6.0"
+        );
+        assert_eq!(manifest["$defs"]["NodeProtocolVersion"]["enum"][0], "2.0");
+        assert!(
+            manifest["$defs"]["BindingSlot"]["required"]
+                .as_array()
+                .is_some_and(|required| required.iter().any(|field| field == "placement"))
         );
         assert!(manifest["properties"].get("readiness").is_some());
         assert!(request["properties"].get("credentialHandles").is_some());

@@ -6,7 +6,7 @@ import { useParams } from 'react-router-dom'
 
 import { useAuth } from '../../app/providers/auth-provider'
 import { apiRequest, jsonBody } from '../../shared/api/client'
-import type { Credential, HealthCheck, McpDebugResult, McpDiscovery, McpServer, McpTool, PageResponse } from '../../shared/api/types'
+import type { HealthCheck, McpDebugResult, McpDiscovery, McpServer, McpTool } from '../../shared/api/types'
 import { EntityFormDialog, type EntityFormField } from '../../shared/components/entity-form-dialog'
 import { JsonSchemaViewer } from '../../shared/components/json-schema-viewer'
 import { ResourceDetailLayout } from '../../shared/components/resource-detail-layout'
@@ -16,6 +16,8 @@ import { localizedValue } from '../../shared/lib/localized-value'
 import { Button } from '../../shared/ui/button'
 import { Card } from '../../shared/ui/card'
 import { useToast } from '../../shared/ui/toast'
+import { McpCredentialPicker, McpEnvironmentCredentials, McpRuntimeSandboxPicker } from './mcp-transport-fields'
+import { buildMcpTransport, transportArgs, transportCredential, transportEndpoint, transportEnvironment, transportKind, transportSandbox } from './mcp-transport'
 
 const sideEffectOptions = [
   { value: 'unknown', labelKey: 'mcp.sideEffects.unknown' },
@@ -41,7 +43,6 @@ export function McpServerDetailPage() {
   const [debugResult, setDebugResult] = useState<McpDebugResult>()
   const server = useQuery({ queryKey: ['mcp-server', id], queryFn: () => apiRequest<McpServer>(`/mcp/servers/${id}`) })
   const tools = useQuery({ queryKey: ['mcp-tools', id], queryFn: () => apiRequest<McpTool[]>(`/mcp/servers/${id}/tools`) })
-  const credentials = useQuery({ queryKey: ['credentials', 'mcp-options'], queryFn: () => apiRequest<PageResponse<Credential>>('/credentials?pageSize=100&status=active') })
   const selected = tools.data?.find((tool) => tool.id === selectedToolId)
   useEffect(() => { if (!selectedToolId && tools.data?.[0]) setSelectedToolId(tools.data[0].id) }, [selectedToolId, tools.data])
   const invalidate = async () => Promise.all([queryClient.invalidateQueries({ queryKey: ['mcp-server', id] }), queryClient.invalidateQueries({ queryKey: ['mcp-servers'] }), queryClient.invalidateQueries({ queryKey: ['mcp-tools', id] })])
@@ -50,7 +51,7 @@ export function McpServerDetailPage() {
   const edit = async (values: Record<string, string>) => {
     let configuration: unknown
     try { configuration = JSON.parse(values.configuration || '{}') as unknown } catch { throw new Error(t('mcp.invalidJson')) }
-    await apiRequest(`/mcp/servers/${id}`, { method: 'PATCH', body: jsonBody({ name: values.name, description: values.description || null, transport: values.transport, endpoint: values.endpoint, credentialId: values.credential || null, configuration, status: values.status, version: server.data?.version }) })
+    await apiRequest(`/mcp/servers/${id}`, { method: 'PATCH', body: jsonBody({ name: values.name, description: values.description || null, transport: buildMcpTransport(values), configuration, status: values.status, version: server.data?.version }) })
     await invalidate()
   }
   const updatePolicy = async (values: Record<string, string>) => {
@@ -69,9 +70,13 @@ export function McpServerDetailPage() {
   const value = server.data
   const editFields: EntityFormField[] = value ? [
     { name: 'name', label: t('common.name'), defaultValue: value.name, required: true }, { name: 'description', label: t('common.description'), defaultValue: value.description ?? '' },
-    { name: 'transport', label: t('mcp.transport'), type: 'select', defaultValue: value.transport, required: true, options: [{ value: 'streamable_http', label: t('mcp.streamableHttp') }, { value: 'sse', label: t('mcp.legacySse') }] },
-    { name: 'endpoint', label: t('mcp.endpoint'), defaultValue: value.endpoint, required: true },
-    { name: 'credential', label: t('mcp.credential'), type: 'select', defaultValue: value.credentialId ?? '', options: [{ value: '', label: t('mcp.noCredential') }, ...(credentials.data?.items ?? []).map((item) => ({ value: item.id, label: item.name }))] },
+    { name: 'transport', label: t('mcp.transport'), type: 'select', defaultValue: transportKind(value.transport), required: true, options: [{ value: 'streamable_http', label: t('mcp.streamableHttp') }, { value: 'sse', label: t('mcp.legacySse') }, { value: 'stdio', label: t('mcp.stdio') }] },
+    { name: 'endpoint', label: t('mcp.endpoint'), defaultValue: value.transport.kind === 'stdio' ? '' : value.transport.endpoint, visible: (values) => values.transport !== 'stdio' },
+    { name: 'credential', label: t('mcp.credential'), defaultValue: transportCredential(value.transport), visible: (values) => values.transport !== 'stdio', render: ({ value: credential, update }) => <McpCredentialPicker departmentId={value.ownerDepartmentId} onChange={update} value={credential} /> },
+    { name: 'command', label: t('mcp.command'), defaultValue: value.transport.kind === 'stdio' ? value.transport.command : '', required: true, visible: (values) => values.transport === 'stdio' },
+    { name: 'args', label: t('mcp.args'), type: 'textarea', defaultValue: transportArgs(value.transport), description: t('mcp.argsDescription'), visible: (values) => values.transport === 'stdio' },
+    { name: 'environmentCredentials', label: t('mcp.environmentCredentials'), defaultValue: transportEnvironment(value.transport), description: t('mcp.environmentCredentialsDescription'), visible: (values) => values.transport === 'stdio', render: ({ value: environment, update }) => <McpEnvironmentCredentials departmentId={value.ownerDepartmentId} onChange={update} value={environment} /> },
+    { name: 'runtimeSandbox', label: t('mcp.runtimeSandbox'), defaultValue: transportSandbox(value.transport), required: true, description: t('mcp.runtimeSandboxDescription'), visible: (values) => values.transport === 'stdio', render: ({ value: sandbox, update }) => <McpRuntimeSandboxPicker departmentId={value.ownerDepartmentId} onChange={update} value={sandbox} /> },
     { name: 'status', label: t('common.status'), type: 'select', defaultValue: value.status, required: true, options: [{ value: 'active', label: t('common.active') }, { value: 'disabled', label: t('common.inactive') }] },
     { name: 'configuration', label: t('mcp.configuration'), type: 'textarea', defaultValue: '{}' },
   ] : []
@@ -92,7 +97,7 @@ export function McpServerDetailPage() {
   </div>
   return <>
     <ResourceDetailLayout actions={actions} description={value?.description ?? t('mcp.description')} details={value ? [
-      { label: t('mcp.transport'), value: value.transport }, { label: t('mcp.endpoint'), value: value.endpoint },
+      { label: t('mcp.transport'), value: transportKind(value.transport) }, { label: t('mcp.endpoint'), value: transportEndpoint(value.transport) },
       { label: t('mcp.discoveredTools'), value: value.toolCount }, { label: t('mcp.lastDiscovered'), value: value.lastDiscoveredAt ? formatDateTime(value.lastDiscoveredAt) : undefined },
       { label: t('mcp.serverVersion'), value: `v${value.currentVersionNumber}` }, { label: t('mcp.department'), value: value.ownerDepartmentId },
     ] : []} error={server.error} loading={server.isLoading} name={value?.name} status={value?.status}>

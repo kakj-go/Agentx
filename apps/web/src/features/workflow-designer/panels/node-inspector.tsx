@@ -441,6 +441,20 @@ function Parameters({
           value={data.key}
         />
       </Field>
+      {data.nodeType === "agent" && manifest && (
+        <AgentCoreConfiguration
+          data={data}
+          fieldErrors={fieldErrors}
+          localized={localized}
+          manifest={manifest}
+          onChange={onChange}
+          onResourceAuthorize={onResourceAuthorize}
+          onResourceRequest={onResourceRequest}
+          resources={resources}
+          sourceNodeId={sourceNodeId}
+          t={t}
+        />
+      )}
       {parameterEntries(manifest).filter(([name]) => data.nodeType !== "agent" || name === "systemPrompt" || name === "userQuestion").map(([name, schema]) => (
         <div data-field-path={`parameters.${name}`} key={name}>
           <ParameterField
@@ -474,7 +488,7 @@ function Parameters({
           />
         </div>
       ))}
-      {data.nodeType === "agent" && parameterEntries(manifest).some(([name]) => name !== "systemPrompt" && name !== "userQuestion") && (
+      {data.nodeType === "agent" && parameterEntries(manifest).some(([name]) => !["systemPrompt", "userQuestion", "sessionPolicy"].includes(name)) && (
         <section className="rounded-md border border-border/70">
           <div className="flex items-center gap-2 px-3 py-3">
             <Settings2 className="size-3.5 text-primary" />
@@ -482,7 +496,7 @@ function Parameters({
             <Button aria-label={t("studio.inspector.toggleAdvanced")} onClick={() => setAdvancedOpen((value) => !value)} size="icon" variant="ghost">{advancedOpen ? <ChevronUp className="size-3.5" /> : <ChevronDown className="size-3.5" />}</Button>
           </div>
           {advancedOpen && <div className="space-y-4 border-t border-border p-3">
-            {parameterEntries(manifest).filter(([name]) => name !== "systemPrompt" && name !== "userQuestion").map(([name, schema]) => (
+            {parameterEntries(manifest).filter(([name]) => !["systemPrompt", "userQuestion", "sessionPolicy"].includes(name)).map(([name, schema]) => (
               <div data-field-path={`parameters.${name}`} key={name}>
                 <ParameterField
                   error={fieldErrors[`parameters.${name}`]}
@@ -506,7 +520,7 @@ function Parameters({
           </div>}
         </section>
       )}
-      {resourceSelectors(manifest).map((selector) => (
+      {resourceSelectors(manifest).filter((selector) => !selector.bindingRole).map((selector) => (
         <ResourceSelect
           fieldPath="resourceReferences"
           key={`${selector.resourceType}-${selector.operation}`}
@@ -596,13 +610,13 @@ function Parameters({
           </span>
         )}
       </Field>
-      {manifest?.bindingSlots.length ? (
+      {manifest?.bindingSlots.some((slot) => slot.placement === "canvas") ? (
         <div className="border-t border-border pt-4">
           <div className="mb-2 flex items-center gap-2 text-xs font-semibold">
             <Settings2 className="size-3.5 text-primary" />
             {t("studio.inspector.bindings")}
           </div>
-          {manifest.bindingSlots.map((slot) => (
+          {manifest.bindingSlots.filter((slot) => slot.placement === "canvas").map((slot) => (
             <div
               className="flex items-center justify-between py-1.5 text-[11px]"
               data-field-path={`resourceReferences.${slot.name}`}
@@ -627,6 +641,115 @@ function Parameters({
         </div>
       ) : null}
     </div>
+  );
+}
+
+function AgentCoreConfiguration({
+  data,
+  manifest,
+  localized,
+  resources,
+  fieldErrors,
+  onChange,
+  onResourceAuthorize,
+  onResourceRequest,
+  sourceNodeId,
+  t,
+}: {
+  data: ActionNodeData;
+  manifest: NodeManifest;
+  localized?: ReturnType<typeof localizeManifest>;
+  resources: Partial<Record<ResourceType, ResourceOption[]>>;
+  fieldErrors: Record<string, string>;
+  onChange: (data: Partial<ActionNodeData>) => void;
+  onResourceAuthorize?: (option: ResourceOption) => Promise<void>;
+  onResourceRequest?: (option: ResourceOption, context?: ResourceRequestContext) => Promise<void>;
+  sourceNodeId?: string;
+  t: (key: string, fallback?: string) => string;
+}) {
+  const sessionPolicy = data.parameters.sessionPolicy as { mode?: string } | undefined;
+  const selectors = resourceSelectors(manifest);
+  const inspectorSlots = manifest.bindingSlots.filter((slot) => slot.placement === "inspector");
+  return (
+    <section className="space-y-4 rounded-md border border-border/70 p-3" data-testid="agent-core-configuration">
+      <div>
+        <div className="text-xs font-semibold">{t("studio.inspector.agentCore")}</div>
+        <div className="mt-0.5 text-[10px] text-muted-foreground">
+          {t("studio.inspector.agentCoreDescription")}
+        </div>
+      </div>
+      {inspectorSlots.map((slot) => {
+        const selector = selectors.find((candidate) => candidate.bindingRole === slot.name);
+        const operation = selector?.operation ?? "use";
+        const reference = data.resourceReferences.find(
+          (candidate) =>
+            !candidate.bindingId && candidate.resourceType === slot.resourceType,
+        );
+        return (
+          <div key={slot.name}>
+            <ResourceSelect
+              error={fieldErrors[`resourceReferences.${slot.name}`]}
+              fieldPath={`resourceReferences.${slot.name}`}
+              label={localized?.bindingSlotLabel(slot.name) ?? selector?.label ?? slot.name.replaceAll("_", " ")}
+              onAuthorize={onResourceAuthorize}
+              onChange={(resourceId, versionId) =>
+                onChange({
+                  resourceReferences: [
+                    ...data.resourceReferences.filter(
+                      (candidate) =>
+                        candidate.bindingId || candidate.resourceType !== slot.resourceType,
+                    ),
+                    {
+                      resourceType: slot.resourceType,
+                      resourceId,
+                      resourceVersionId: versionId,
+                      operation,
+                    },
+                  ],
+                })
+              }
+              onClear={slot.required ? undefined : () =>
+                onChange({
+                  resourceReferences: data.resourceReferences.filter(
+                    (candidate) =>
+                      candidate.bindingId || candidate.resourceType !== slot.resourceType,
+                  ),
+                })
+              }
+              onRequest={onResourceRequest}
+              options={resourceOptionsFor(resources, slot.resourceType, operation)}
+              optionsMissing={slot.required && !resourceOptionsFor(resources, slot.resourceType, operation).length}
+              required={slot.required}
+              sourceNodeId={sourceNodeId}
+              testId={`agent-inspector-${slot.name}`}
+          value={reference?.resourceId}
+            />
+            {slot.name === "workspace_sandbox" && !reference && (
+              <p className="mt-1.5 text-[10px] leading-4 text-warning">
+                {t("studio.inspector.sandboxToolsDisabled")}
+              </p>
+            )}
+          </div>
+        );
+      })}
+      <Field
+        error={fieldErrors["parameters.sessionPolicy"]}
+        fieldPath="parameters.sessionPolicy"
+        label={t("studio.inspector.sessionPolicy")}
+        required
+      >
+        <Select
+          className="w-full"
+          onValueChange={(mode) => onChange({ parameters: { ...data.parameters, sessionPolicy: { mode } } })}
+          options={[
+            { value: "application_session", label: t("studio.inspector.sessionApplication") },
+            { value: "invocation", label: t("studio.inspector.sessionInvocation") },
+          ]}
+          placeholder={t("studio.inspector.selectSessionPolicy")}
+          value={sessionPolicy?.mode ?? ""}
+        />
+      </Field>
+    </section>
   );
 }
 
@@ -1026,6 +1149,8 @@ function ResourceSelect({
   testId,
   fieldPath,
   onChange,
+  onClear,
+  error,
   onAuthorize,
   onRequest,
   sourceNodeId,
@@ -1038,6 +1163,8 @@ function ResourceSelect({
   testId?: string;
   fieldPath?: string;
   onChange: (id: string, versionId?: string | null, label?: string) => void;
+  onClear?: () => void;
+  error?: string;
   onAuthorize?: (option: ResourceOption) => Promise<void>;
   onRequest?: (option: ResourceOption, context?: ResourceRequestContext) => Promise<void>;
   sourceNodeId?: string;
@@ -1049,8 +1176,10 @@ function ResourceSelect({
       label={label}
       required={required}
       testId={testId}
+      error={error}
     >
       <ResourcePicker onAuthorize={onAuthorize} onChange={onChange} onRequest={onRequest ? (option, message) => onRequest(option, { sourceNodeId, message }) : undefined} options={options} value={value} />
+      {onClear && value && <Button className="mt-1.5" onClick={onClear} size="sm" variant="ghost">{t("studio.inspector.clearResource")}</Button>}
       {optionsMissing && (
         <span className="mt-1 block text-[10px] text-warning">
           {t("studio.inspector.noResource")}
@@ -1096,6 +1225,7 @@ function JsonValue({ value }: { value: unknown }) {
   );
 }
 type ResourceSelector = {
+  bindingRole?: string;
   resourceType: ResourceType;
   operation: "view" | "use" | "read" | "write" | "manage";
   required?: boolean;

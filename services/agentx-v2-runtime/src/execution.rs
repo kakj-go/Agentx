@@ -1,5 +1,5 @@
 use agentx_runtime::ExecutionMachine;
-use agentx_runtime_contracts::{ExecutionSpecPayloadV1, RuntimePublishErrorCodeV1, WorkerTaskV1};
+use agentx_runtime_contracts::{ExecutionSpecPayloadV2, RuntimePublishErrorCodeV1, WorkerTaskV1};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -457,7 +457,7 @@ async fn create_runtime_invocation_tx_inner(
         sqlx::query_scalar("SELECT payload_json FROM deployment_bundles WHERE tenant_id=? AND id=? AND status IN ('active','superseded','retained')")
             .bind(tenant_id).bind(selected_bundle_id).fetch_optional(&mut **tx).await?.ok_or(RuntimeError::NotFound)?
     };
-    let spec: ExecutionSpecPayloadV1 = serde_json::from_value(payload.clone())
+    let spec: ExecutionSpecPayloadV2 = serde_json::from_value(payload.clone())
         .map_err(|error| RuntimeError::Internal(error.into()))?;
     let (mut input, chat_mapping_version, chat_mapping_json) = if chat_message {
         let row = sqlx::query("SELECT version,mapping_json FROM application_chat_mappings WHERE tenant_id=? AND application_id=? AND bundle_id=? FOR SHARE")
@@ -588,7 +588,10 @@ async fn create_runtime_invocation_tx_inner(
     .bind(execution_context)
     .bind(worker_compatibility)
     .bind(object_manifest)
-    .bind(&policy_snapshot)
+    .bind(json!({
+        "runtimePolicy": &spec.runtime_policy,
+        "agentBundle": &spec.agent_bundle,
+    }))
     .bind(state_hash.as_str())
     .execute(&mut **tx)
     .await?;

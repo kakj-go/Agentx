@@ -335,7 +335,7 @@ async fn create_workflow(
         true,
     )
     .await?;
-    sqlx::query("INSERT INTO workflow_drafts(id,tenant_id,workflow_id,schema_version,revision,definition_json,editor_json,content_hash,editor_hash,updated_by) VALUES(?,?,?,'5.0',0,?,?,?,?,?)")
+    sqlx::query("INSERT INTO workflow_drafts(id,tenant_id,workflow_id,schema_version,revision,definition_json,editor_json,content_hash,editor_hash,updated_by) VALUES(?,?,?,'6.0',0,?,?,?,?,?)")
         .bind(draft_id).bind(actor.tenant_id).bind(workflow_id).bind(&definition).bind(&editor).bind(&definition_hash).bind(&editor_hash).bind(actor.user_id).execute(&mut *tx).await?;
     audit(
         &mut tx,
@@ -490,9 +490,9 @@ async fn save_draft(
     let next = current
         .checked_add(1)
         .ok_or_else(|| ApiError::internal("draft revision exhausted"))?;
-    sqlx::query("UPDATE workflow_drafts SET revision=?,schema_version='5.0',definition_json=?,editor_json=?,content_hash=?,editor_hash=?,updated_by=? WHERE tenant_id=? AND workflow_id=? AND revision=?")
+    sqlx::query("UPDATE workflow_drafts SET revision=?,schema_version='6.0',definition_json=?,editor_json=?,content_hash=?,editor_hash=?,updated_by=? WHERE tenant_id=? AND workflow_id=? AND revision=?")
         .bind(next).bind(&definition).bind(&editor).bind(&definition_hash).bind(&editor_hash).bind(actor.user_id).bind(actor.tenant_id).bind(id).bind(current).execute(&mut *tx).await?;
-    sqlx::query("INSERT INTO workflow_draft_revisions(id,tenant_id,workflow_id,draft_id,revision,schema_version,definition_json,editor_json,content_hash,editor_hash,created_by) VALUES(?,?,?,?,?,'5.0',?,?,?,?,?)")
+    sqlx::query("INSERT INTO workflow_draft_revisions(id,tenant_id,workflow_id,draft_id,revision,schema_version,definition_json,editor_json,content_hash,editor_hash,created_by) VALUES(?,?,?,?,?,'6.0',?,?,?,?,?)")
         .bind(Uuid::now_v7()).bind(actor.tenant_id).bind(id).bind(draft_id).bind(next).bind(&definition).bind(&editor).bind(&definition_hash).bind(&editor_hash).bind(actor.user_id).execute(&mut *tx).await?;
     replace_draft_resources(&mut tx, actor.tenant_id, id, draft_id, &parsed_definition).await?;
     audit(

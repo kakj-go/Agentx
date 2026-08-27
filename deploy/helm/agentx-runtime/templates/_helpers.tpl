@@ -42,7 +42,7 @@
 - name: wait-for-runtime-schema
   image: mysql:8.4
   command: [sh, -ec]
-  args: ['until test "$(MYSQL_PWD="$AGENTX_RUNTIME_MYSQL_PASSWORD" mysql {{ if eq $root.Values.global.environment "production" }}--ssl-mode=VERIFY_IDENTITY --ssl-ca=/etc/agentx-ca/mysql.pem{{ else }}--ssl-mode=DISABLED --get-server-public-key{{ end }} -N -B -h "$AGENTX_RUNTIME_MYSQL_HOST" -u "$AGENTX_RUNTIME_MYSQL_USER" "$AGENTX_RUNTIME_MYSQL_DATABASE" -e "SELECT COUNT(*) FROM _sqlx_migrations WHERE version=6 AND success=1" 2>/dev/null)" = "1"; do sleep 2; done']
+  args: ['until test "$(MYSQL_PWD="$AGENTX_RUNTIME_MYSQL_PASSWORD" mysql --connect-timeout=5 {{ if eq $root.Values.global.environment "production" }}--ssl-mode=VERIFY_IDENTITY --ssl-ca=/etc/agentx-ca/mysql.pem{{ else }}--ssl-mode=DISABLED --get-server-public-key{{ end }} -N -B -h "$AGENTX_RUNTIME_MYSQL_HOST" -u "$AGENTX_RUNTIME_MYSQL_USER" "$AGENTX_RUNTIME_MYSQL_DATABASE" -e "SELECT COUNT(*) FROM _sqlx_migrations WHERE version=6 AND success=1" 2>/dev/null)" = "1"; do sleep 2; done']
   env:
     - { name: AGENTX_RUNTIME_MYSQL_HOST, value: {{ $root.Values.global.components.runtimeMysql.host | quote }} }
     - { name: AGENTX_RUNTIME_MYSQL_DATABASE, value: {{ $root.Values.global.components.runtimeMysql.database | quote }} }

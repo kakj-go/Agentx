@@ -1,5 +1,9 @@
 use agentx_api_types::{PageRequest, PageResponse};
-use agentx_runtime_contracts::{RuntimeResourceOperationV1, RuntimeResourceProbeV1};
+use agentx_domain::{ResourceOperation, ResourceReference, ResourceType, ResourceVersionSnapshot};
+use agentx_runtime_contracts::{
+    RuntimeMcpTransportV2, RuntimeResourceBindingV1, RuntimeResourceConfigurationV1,
+    RuntimeResourceOperationV1, RuntimeResourceProbeV1,
+};
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
@@ -65,9 +69,7 @@ struct ServerResponse {
     name: String,
     description: Option<String>,
     owner_department_id: Uuid,
-    transport: String,
-    endpoint: String,
-    credential_id: Option<Uuid>,
+    transport: McpTransportInput,
     status: String,
     current_version_number: u64,
     version: u64,
@@ -77,15 +79,53 @@ struct ServerResponse {
     #[serde(with = "time::serde::rfc3339")]
     updated_at: OffsetDateTime,
 }
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+enum McpTransportInput {
+    StreamableHttp {
+        endpoint: String,
+        bearer_credential_id: Option<Uuid>,
+    },
+    Sse {
+        endpoint: String,
+        bearer_credential_id: Option<Uuid>,
+    },
+    Stdio {
+        command: String,
+        #[serde(default)]
+        args: Vec<String>,
+        #[serde(default)]
+        environment_credential_refs: Vec<EnvironmentCredentialInput>,
+        runtime_sandbox: RuntimeSandboxInput,
+    },
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct EnvironmentCredentialInput {
+    name: String,
+    credential_id: Uuid,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RuntimeSandboxInput {
+    resource_id: Uuid,
+    resource_version_id: Uuid,
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct CreateServerRequest {
     name: String,
     description: Option<String>,
     owner_department_id: Uuid,
-    transport: String,
-    endpoint: String,
-    credential_id: Option<Uuid>,
+    transport: McpTransportInput,
     #[serde(default)]
     configuration: Value,
 }
@@ -95,9 +135,7 @@ struct UpdateServerRequest {
     name: String,
     description: Option<String>,
     status: String,
-    transport: String,
-    endpoint: String,
-    credential_id: Option<Uuid>,
+    transport: McpTransportInput,
     #[serde(default)]
     configuration: Value,
     version: u64,
@@ -168,8 +206,9 @@ struct HealthResponse {
 #[derive(Clone)]
 struct ServerConfig {
     version_id: Uuid,
-    endpoint: String,
-    credential_id: Option<Uuid>,
+    transport: RuntimeMcpTransportV2,
+    credential: Option<agentx_runtime_contracts::VaultSecretReferenceV1>,
+    runtime_sandbox_profile: Option<RuntimeResourceBindingV1>,
 }
 struct RemoteTool {
     name: String,
@@ -192,11 +231,11 @@ async fn list_servers(
     let status = query.status.unwrap_or_default();
     let administrator = actor.roles.iter().any(|role| role == "company_admin");
     let (rows, total) = if administrator {
-        let rows=sqlx::query("SELECT s.id,s.name,s.description,s.owner_department_id,s.status,s.current_version_number,s.version,s.last_discovered_at,s.updated_at,sv.transport,sv.endpoint,sv.credential_id,(SELECT COUNT(*) FROM mcp_tools t WHERE t.tenant_id=s.tenant_id AND t.server_id=s.id AND t.availability='available') tool_count FROM mcp_servers s JOIN mcp_server_versions sv ON sv.tenant_id=s.tenant_id AND sv.server_id=s.id AND sv.version_number=s.current_version_number WHERE s.tenant_id=? AND (?='' OR s.status=?) AND (?='%%' OR s.name LIKE ?) ORDER BY s.updated_at DESC,s.id DESC LIMIT ? OFFSET ?").bind(actor.tenant_id).bind(&status).bind(&status).bind(&search).bind(&search).bind(page_size).bind(u64::from((page-1)*page_size)).fetch_all(&state.pool).await?;
+        let rows=sqlx::query("SELECT s.id,s.name,s.description,s.owner_department_id,s.status,s.current_version_number,s.version,s.last_discovered_at,s.updated_at,sv.transport,sv.endpoint,sv.credential_id,sv.configuration_json,(SELECT COUNT(*) FROM mcp_tools t WHERE t.tenant_id=s.tenant_id AND t.server_id=s.id AND t.availability='available') tool_count FROM mcp_servers s JOIN mcp_server_versions sv ON sv.tenant_id=s.tenant_id AND sv.server_id=s.id AND sv.version_number=s.current_version_number WHERE s.tenant_id=? AND (?='' OR s.status=?) AND (?='%%' OR s.name LIKE ?) ORDER BY s.updated_at DESC,s.id DESC LIMIT ? OFFSET ?").bind(actor.tenant_id).bind(&status).bind(&status).bind(&search).bind(&search).bind(page_size).bind(u64::from((page-1)*page_size)).fetch_all(&state.pool).await?;
         let total:i64=sqlx::query_scalar("SELECT COUNT(*) FROM mcp_servers s WHERE s.tenant_id=? AND (?='' OR s.status=?) AND (?='%%' OR s.name LIKE ?)").bind(actor.tenant_id).bind(&status).bind(&status).bind(&search).bind(&search).fetch_one(&state.pool).await?;
         (rows, total)
     } else {
-        let rows=sqlx::query("SELECT s.id,s.name,s.description,s.owner_department_id,s.status,s.current_version_number,s.version,s.last_discovered_at,s.updated_at,sv.transport,sv.endpoint,sv.credential_id,(SELECT COUNT(*) FROM mcp_tools t WHERE t.tenant_id=s.tenant_id AND t.server_id=s.id AND t.availability='available') tool_count FROM mcp_servers s JOIN mcp_server_versions sv ON sv.tenant_id=s.tenant_id AND sv.server_id=s.id AND sv.version_number=s.current_version_number WHERE s.tenant_id=? AND EXISTS(SELECT 1 FROM department_closure dc WHERE dc.tenant_id=s.tenant_id AND dc.ancestor_id=? AND dc.descendant_id=s.owner_department_id) AND (?='' OR s.status=?) AND (?='%%' OR s.name LIKE ?) ORDER BY s.updated_at DESC,s.id DESC LIMIT ? OFFSET ?").bind(actor.tenant_id).bind(actor.department_id).bind(&status).bind(&status).bind(&search).bind(&search).bind(page_size).bind(u64::from((page-1)*page_size)).fetch_all(&state.pool).await?;
+        let rows=sqlx::query("SELECT s.id,s.name,s.description,s.owner_department_id,s.status,s.current_version_number,s.version,s.last_discovered_at,s.updated_at,sv.transport,sv.endpoint,sv.credential_id,sv.configuration_json,(SELECT COUNT(*) FROM mcp_tools t WHERE t.tenant_id=s.tenant_id AND t.server_id=s.id AND t.availability='available') tool_count FROM mcp_servers s JOIN mcp_server_versions sv ON sv.tenant_id=s.tenant_id AND sv.server_id=s.id AND sv.version_number=s.current_version_number WHERE s.tenant_id=? AND EXISTS(SELECT 1 FROM department_closure dc WHERE dc.tenant_id=s.tenant_id AND dc.ancestor_id=? AND dc.descendant_id=s.owner_department_id) AND (?='' OR s.status=?) AND (?='%%' OR s.name LIKE ?) ORDER BY s.updated_at DESC,s.id DESC LIMIT ? OFFSET ?").bind(actor.tenant_id).bind(actor.department_id).bind(&status).bind(&status).bind(&search).bind(&search).bind(page_size).bind(u64::from((page-1)*page_size)).fetch_all(&state.pool).await?;
         let total:i64=sqlx::query_scalar("SELECT COUNT(*) FROM mcp_servers s WHERE s.tenant_id=? AND EXISTS(SELECT 1 FROM department_closure dc WHERE dc.tenant_id=s.tenant_id AND dc.ancestor_id=? AND dc.descendant_id=s.owner_department_id) AND (?='' OR s.status=?) AND (?='%%' OR s.name LIKE ?)").bind(actor.tenant_id).bind(actor.department_id).bind(&status).bind(&status).bind(&search).bind(&search).fetch_one(&state.pool).await?;
         (rows, total)
     };
@@ -218,18 +257,24 @@ async fn create_server(
 ) -> ApiResult<(StatusCode, Json<ServerResponse>)> {
     actor.require("mcp:manage")?;
     require_department_scope(&state, &actor, input.owner_department_id).await?;
-    validate_config(&input.transport, &input.endpoint, &input.configuration)?;
-    require_credential(&state, actor.tenant_id, input.credential_id).await?;
-    let id = Uuid::now_v7();
-    let hash = config_hash(
+    let frozen = validate_transport(&state, actor.tenant_id, &input.transport).await?;
+    ensure_transport_dependencies_authorized(
+        &state,
+        actor.tenant_id,
+        input.owner_department_id,
         &input.transport,
-        &input.endpoint,
-        input.credential_id,
-        &input.configuration,
-    )?;
+    )
+    .await?;
+    validate_configuration(&input.configuration)?;
+    let id = Uuid::now_v7();
+    let hash = config_hash(&input.transport, &input.configuration)?;
     let mut tx = state.pool.begin().await?;
     sqlx::query("INSERT INTO mcp_servers(id,tenant_id,name,description,owner_department_id,created_by) VALUES(?,?,?,?,?,?)").bind(id).bind(actor.tenant_id).bind(required_name(&input.name)?).bind(input.description).bind(input.owner_department_id).bind(actor.user_id).execute(&mut *tx).await.map_err(map_name_error)?;
-    sqlx::query("INSERT INTO mcp_server_versions(id,tenant_id,server_id,version_number,transport,endpoint,credential_id,configuration_json,configuration_hash,created_by) VALUES(?,?,?,1,?,?,?,?,?,?)").bind(Uuid::now_v7()).bind(actor.tenant_id).bind(id).bind(input.transport).bind(input.endpoint).bind(input.credential_id).bind(input.configuration).bind(hash).bind(actor.user_id).execute(&mut *tx).await?;
+    sqlx::query("INSERT INTO mcp_server_versions(id,tenant_id,server_id,version_number,transport,endpoint,credential_id,runtime_sandbox_profile_id,runtime_sandbox_profile_version_id,configuration_json,configuration_hash,created_by) VALUES(?,?,?,1,?,?,?,?,?,?,?,?)")
+        .bind(Uuid::now_v7()).bind(actor.tenant_id).bind(id).bind(frozen.kind).bind(frozen.endpoint)
+        .bind(frozen.credential_id).bind(frozen.runtime_sandbox_profile_id).bind(frozen.runtime_sandbox_profile_version_id)
+        .bind(json!({"transport":input.transport,"options":input.configuration})).bind(hash).bind(actor.user_id)
+        .execute(&mut *tx).await?;
     tx.commit().await?;
     Ok((
         StatusCode::CREATED,
@@ -253,20 +298,29 @@ async fn update_server(
 ) -> ApiResult<Json<ServerResponse>> {
     actor.require("mcp:manage")?;
     require_server(&state, &actor, id).await?;
-    validate_config(&input.transport, &input.endpoint, &input.configuration)?;
-    require_credential(&state, actor.tenant_id, input.credential_id).await?;
+    let owner_department_id: Uuid = sqlx::query_scalar(
+        "SELECT owner_department_id FROM mcp_servers WHERE tenant_id=? AND id=?",
+    )
+    .bind(actor.tenant_id)
+    .bind(id)
+    .fetch_one(&state.pool)
+    .await?;
+    let frozen = validate_transport(&state, actor.tenant_id, &input.transport).await?;
+    ensure_transport_dependencies_authorized(
+        &state,
+        actor.tenant_id,
+        owner_department_id,
+        &input.transport,
+    )
+    .await?;
+    validate_configuration(&input.configuration)?;
     if !matches!(input.status.as_str(), "active" | "disabled") {
         return Err(ApiError::bad_request(
             "INVALID_STATUS",
             "MCP server status is invalid",
         ));
     }
-    let hash = config_hash(
-        &input.transport,
-        &input.endpoint,
-        input.credential_id,
-        &input.configuration,
-    )?;
+    let hash = config_hash(&input.transport, &input.configuration)?;
     let mut tx = state.pool.begin().await?;
     let current=sqlx::query("SELECT current_version_number,version FROM mcp_servers WHERE tenant_id=? AND id=? FOR UPDATE").bind(actor.tenant_id).bind(id).fetch_optional(&mut *tx).await?.ok_or_else(||ApiError::not_found("MCP server"))?;
     if current.try_get::<u64, _>("version")? != input.version {
@@ -283,7 +337,11 @@ async fn update_server(
             .try_get::<u64, _>("current_version_number")?
             .checked_add(1)
             .ok_or_else(|| ApiError::internal("MCP server version exhausted"))?;
-        sqlx::query("INSERT INTO mcp_server_versions(id,tenant_id,server_id,version_number,transport,endpoint,credential_id,configuration_json,configuration_hash,created_by) VALUES(?,?,?,?,?,?,?,?,?,?)").bind(Uuid::now_v7()).bind(actor.tenant_id).bind(id).bind(next).bind(input.transport).bind(input.endpoint).bind(input.credential_id).bind(input.configuration).bind(hash).bind(actor.user_id).execute(&mut *tx).await?;
+        sqlx::query("INSERT INTO mcp_server_versions(id,tenant_id,server_id,version_number,transport,endpoint,credential_id,runtime_sandbox_profile_id,runtime_sandbox_profile_version_id,configuration_json,configuration_hash,created_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)")
+            .bind(Uuid::now_v7()).bind(actor.tenant_id).bind(id).bind(next).bind(frozen.kind).bind(frozen.endpoint)
+            .bind(frozen.credential_id).bind(frozen.runtime_sandbox_profile_id).bind(frozen.runtime_sandbox_profile_version_id)
+            .bind(json!({"transport":input.transport,"options":input.configuration})).bind(hash).bind(actor.user_id)
+            .execute(&mut *tx).await?;
         next
     };
     let changed=sqlx::query("UPDATE mcp_servers SET name=?,description=?,status=?,current_version_number=?,version=version+1 WHERE tenant_id=? AND id=? AND version=?").bind(required_name(&input.name)?).bind(input.description).bind(input.status).bind(target).bind(actor.tenant_id).bind(id).bind(input.version).execute(&mut *tx).await.map_err(map_name_error)?;
@@ -365,30 +423,54 @@ async fn test_connection(
     actor.require("mcp:manage")?;
     require_server(&state, &actor, id).await?;
     let config = load_config(&state, actor.tenant_id, id).await?;
-    let check = crate::model_api::execute_runtime_resource_check(
+    let checked_at = OffsetDateTime::now_utc();
+    if let RuntimeMcpTransportV2::StreamableHttp { endpoint }
+    | RuntimeMcpTransportV2::Sse { endpoint } = &config.transport
+    {
+        let check = crate::model_api::execute_runtime_resource_check_with_reference(
+            &state,
+            actor.tenant_id,
+            endpoint.clone(),
+            config.credential.clone(),
+            RuntimeResourceProbeV1::McpInitialize,
+        )
+        .await?;
+        record_health(
+            &state,
+            &actor,
+            id,
+            &check.status,
+            check.latency_ms,
+            check.error_code.as_deref(),
+            check.error_message.as_deref(),
+        )
+        .await?;
+        return Ok(Json(HealthResponse {
+            status: check.status,
+            latency_ms: Some(check.latency_ms),
+            error_code: check.error_code,
+            error_message: check.error_message,
+            checked_at,
+        }));
+    }
+    let check = crate::model_api::execute_runtime_resource_operation(
         &state,
         actor.tenant_id,
-        config.endpoint,
-        config.credential_id,
-        RuntimeResourceProbeV1::McpInitialize,
+        config.version_id,
+        config.transport,
+        config.credential,
+        config.runtime_sandbox_profile,
+        30,
+        RuntimeResourceOperationV1::McpInitialize,
     )
     .await?;
-    record_health(
-        &state,
-        &actor,
-        id,
-        &check.status,
-        check.latency_ms,
-        check.error_code.as_deref(),
-        check.error_message.as_deref(),
-    )
-    .await?;
+    record_health(&state, &actor, id, "healthy", check.duration_ms, None, None).await?;
     Ok(Json(HealthResponse {
-        status: check.status,
-        latency_ms: Some(check.latency_ms),
-        error_code: check.error_code,
-        error_message: check.error_message,
-        checked_at: check.checked_at,
+        status: "healthy".into(),
+        latency_ms: Some(check.duration_ms),
+        error_code: None,
+        error_message: None,
+        checked_at,
     }))
 }
 async fn discover_tools(
@@ -404,8 +486,10 @@ async fn discover_tools(
     let discovered = match crate::model_api::execute_runtime_resource_operation(
         &state,
         actor.tenant_id,
-        config.endpoint.clone(),
-        config.credential_id,
+        config.version_id,
+        config.transport.clone(),
+        config.credential.clone(),
+        config.runtime_sandbox_profile.clone(),
         30,
         RuntimeResourceOperationV1::McpDiscover,
     )
@@ -427,7 +511,7 @@ async fn discover_tools(
     .execute(&mut *tx)
     .await?;
     for tool in &discovered {
-        upsert_tool(&mut tx, &actor, id, run_id, tool).await?;
+        upsert_tool(&mut tx, &actor, id, config.version_id, run_id, tool).await?;
     }
     sqlx::query("UPDATE mcp_discovery_runs SET status='succeeded',discovered_count=?,finished_at=UTC_TIMESTAMP(6) WHERE id=?").bind(discovered.len() as u32).bind(run_id).execute(&mut *tx).await?;
     sqlx::query(
@@ -516,8 +600,10 @@ async fn debug_invoke(
     let response = crate::model_api::execute_runtime_resource_operation(
         &state,
         actor.tenant_id,
-        config.endpoint,
-        config.credential_id,
+        config.version_id,
+        config.transport,
+        config.credential,
+        config.runtime_sandbox_profile,
         tool.timeout_seconds,
         RuntimeResourceOperationV1::McpCall {
             tool_name: tool.name,
@@ -612,10 +698,11 @@ async fn upsert_tool(
     tx: &mut sqlx::Transaction<'_, sqlx::MySql>,
     actor: &Actor,
     server: Uuid,
+    server_version: Uuid,
     run: Uuid,
     tool: &RemoteTool,
 ) -> ApiResult<()> {
-    let hash=format!("{:x}",Sha256::digest(serde_json::to_vec(&json!({"input":tool.input_schema,"output":tool.output_schema,"annotations":tool.annotations})).map_err(ApiError::internal)?));
+    let hash=format!("{:x}",Sha256::digest(serde_json::to_vec(&json!({"serverVersionId":server_version,"input":tool.input_schema,"output":tool.output_schema,"annotations":tool.annotations})).map_err(ApiError::internal)?));
     let existing=sqlx::query("SELECT id,current_version_number FROM mcp_tools WHERE tenant_id=? AND server_id=? AND name=? FOR UPDATE").bind(actor.tenant_id).bind(server).bind(&tool.name).fetch_optional(&mut **tx).await?;
     let (id, current) = if let Some(row) = existing {
         (row.try_get("id")?, row.try_get("current_version_number")?)
@@ -633,7 +720,7 @@ async fn upsert_tool(
     let known:Option<u64>=sqlx::query_scalar("SELECT version_number FROM mcp_tool_versions WHERE tenant_id=? AND tool_id=? AND schema_hash=?").bind(actor.tenant_id).bind(id).bind(&hash).fetch_optional(&mut **tx).await?;
     let version = known.unwrap_or_else(|| if current == 1 { 1 } else { current + 1 });
     if known.is_none() {
-        sqlx::query("INSERT INTO mcp_tool_versions(id,tenant_id,tool_id,discovery_run_id,version_number,input_schema,output_schema,annotations_json,schema_hash) VALUES(?,?,?,?,?,?,?,?,?)").bind(Uuid::now_v7()).bind(actor.tenant_id).bind(id).bind(run).bind(version).bind(&tool.input_schema).bind(&tool.output_schema).bind(&tool.annotations).bind(hash).execute(&mut **tx).await?;
+        sqlx::query("INSERT INTO mcp_tool_versions(id,tenant_id,tool_id,discovery_run_id,server_version_id,version_number,input_schema,output_schema,annotations_json,schema_hash) VALUES(?,?,?,?,?,?,?,?,?,?)").bind(Uuid::now_v7()).bind(actor.tenant_id).bind(id).bind(run).bind(server_version).bind(version).bind(&tool.input_schema).bind(&tool.output_schema).bind(&tool.annotations).bind(hash).execute(&mut **tx).await?;
     }
     sqlx::query("UPDATE mcp_tools SET title=?,description=?,availability='available',current_version_number=?,version=version+1,last_seen_at=UTC_TIMESTAMP(6) WHERE tenant_id=? AND id=?").bind(&tool.title).bind(&tool.description).bind(version).bind(actor.tenant_id).bind(id).execute(&mut **tx).await?;
     Ok(())
@@ -665,19 +752,74 @@ fn remote_tool(value: &Value) -> ApiResult<RemoteTool> {
     })
 }
 async fn load_config(state: &ControlApiState, tenant: Uuid, id: Uuid) -> ApiResult<ServerConfig> {
-    let row=sqlx::query("SELECT sv.id,sv.endpoint,sv.credential_id,sv.transport FROM mcp_servers s JOIN mcp_server_versions sv ON sv.tenant_id=s.tenant_id AND sv.server_id=s.id AND sv.version_number=s.current_version_number WHERE s.tenant_id=? AND s.id=? AND s.status='active'").bind(tenant).bind(id).fetch_optional(&state.pool).await?.ok_or_else(||ApiError::not_found("MCP server"))?;
-    let transport: String = row.try_get("transport")?;
-    if transport != "streamable_http" {
+    let version_id: Uuid = sqlx::query_scalar("SELECT sv.id FROM mcp_servers s JOIN mcp_server_versions sv ON sv.tenant_id=s.tenant_id AND sv.server_id=s.id AND sv.version_number=s.current_version_number WHERE s.tenant_id=? AND s.id=? AND s.status='active'")
+        .bind(tenant)
+        .bind(id)
+        .fetch_optional(&state.pool)
+        .await?
+        .ok_or_else(|| ApiError::not_found("MCP server"))?;
+    let mut reference = ResourceReference {
+        binding_id: None,
+        binding_role: None,
+        resource_type: ResourceType::McpServer,
+        resource_id: id,
+        resource_version_id: Some(version_id),
+        operation: ResourceOperation::Use,
+    };
+    let snapshot =
+        crate::workflow_resources::resource_snapshot(state, tenant, &mut reference).await?;
+    let binding = binding_from_snapshot(reference, snapshot)?;
+    let RuntimeResourceConfigurationV1::Mcp {
+        transport,
+        credential,
+        ..
+    } = binding.configuration
+    else {
         return Err(ApiError::unprocessable(
-            "MCP_SSE_UNSUPPORTED",
-            "Legacy SSE transport is not supported by the V2 Control debug client",
+            "MCP_CONFIGURATION_INVALID",
+            "MCP Server Version has an invalid Runtime binding",
         ));
-    }
+    };
+    let runtime_sandbox_profile = if let RuntimeMcpTransportV2::Stdio {
+        runtime_sandbox, ..
+    } = &transport
+    {
+        let mut reference = ResourceReference {
+            binding_id: None,
+            binding_role: None,
+            resource_type: ResourceType::SandboxProfile,
+            resource_id: runtime_sandbox.resource_id,
+            resource_version_id: Some(runtime_sandbox.resource_version_id),
+            operation: ResourceOperation::Use,
+        };
+        let snapshot =
+            crate::workflow_resources::resource_snapshot(state, tenant, &mut reference).await?;
+        Some(binding_from_snapshot(reference, snapshot)?)
+    } else {
+        None
+    };
     Ok(ServerConfig {
-        version_id: row.try_get("id")?,
-        endpoint: row.try_get("endpoint")?,
-        credential_id: row.try_get("credential_id")?,
+        version_id,
+        transport,
+        credential,
+        runtime_sandbox_profile,
     })
+}
+
+fn binding_from_snapshot(
+    reference: ResourceReference,
+    snapshot: Value,
+) -> ApiResult<RuntimeResourceBindingV1> {
+    let snapshot_hash = agentx_runtime_contracts::content_hash(&snapshot)
+        .map_err(ApiError::internal)?
+        .to_string();
+    crate::runtime_resource_binding::from_snapshot(&ResourceVersionSnapshot {
+        node_id: "mcp-control-diagnostic".into(),
+        reference,
+        snapshot_hash,
+        snapshot,
+    })
+    .map_err(ApiError::internal)
 }
 async fn load_config_for_tool(
     state: &ControlApiState,
@@ -694,7 +836,7 @@ async fn load_config_for_tool(
     load_config(state, tenant, server).await
 }
 async fn load_server(state: &ControlApiState, tenant: Uuid, id: Uuid) -> ApiResult<ServerResponse> {
-    let row=sqlx::query("SELECT s.id,s.name,s.description,s.owner_department_id,s.status,s.current_version_number,s.version,s.last_discovered_at,s.updated_at,sv.transport,sv.endpoint,sv.credential_id,(SELECT COUNT(*) FROM mcp_tools t WHERE t.tenant_id=s.tenant_id AND t.server_id=s.id AND t.availability='available') tool_count FROM mcp_servers s JOIN mcp_server_versions sv ON sv.tenant_id=s.tenant_id AND sv.server_id=s.id AND sv.version_number=s.current_version_number WHERE s.tenant_id=? AND s.id=?").bind(tenant).bind(id).fetch_optional(&state.pool).await?.ok_or_else(||ApiError::not_found("MCP server"))?;
+    let row=sqlx::query("SELECT s.id,s.name,s.description,s.owner_department_id,s.status,s.current_version_number,s.version,s.last_discovered_at,s.updated_at,sv.transport,sv.endpoint,sv.credential_id,sv.configuration_json,(SELECT COUNT(*) FROM mcp_tools t WHERE t.tenant_id=s.tenant_id AND t.server_id=s.id AND t.availability='available') tool_count FROM mcp_servers s JOIN mcp_server_versions sv ON sv.tenant_id=s.tenant_id AND sv.server_id=s.id AND sv.version_number=s.current_version_number WHERE s.tenant_id=? AND s.id=?").bind(tenant).bind(id).fetch_optional(&state.pool).await?.ok_or_else(||ApiError::not_found("MCP server"))?;
     Ok(server_from_row(row)?)
 }
 async fn load_tools(
@@ -731,14 +873,20 @@ async fn load_tool(state: &ControlApiState, tenant: Uuid, id: Uuid) -> ApiResult
     Ok(tool_from_row(row)?)
 }
 fn server_from_row(row: MySqlRow) -> Result<ServerResponse, sqlx::Error> {
+    let configuration: Value = row.try_get("configuration_json")?;
+    let transport = serde_json::from_value::<McpTransportInput>(
+        configuration
+            .get("transport")
+            .cloned()
+            .unwrap_or(Value::Null),
+    )
+    .map_err(|error| sqlx::Error::Decode(Box::new(error)))?;
     Ok(ServerResponse {
         id: row.try_get("id")?,
         name: row.try_get("name")?,
         description: row.try_get("description")?,
         owner_department_id: row.try_get("owner_department_id")?,
-        transport: row.try_get("transport")?,
-        endpoint: row.try_get("endpoint")?,
-        credential_id: row.try_get("credential_id")?,
+        transport,
         status: row.try_get("status")?,
         current_version_number: row.try_get("current_version_number")?,
         version: row.try_get("version")?,
@@ -847,13 +995,152 @@ async fn record_health(
     sqlx::query("INSERT INTO resource_health_checks(id,tenant_id,resource_type,resource_id,check_sequence,status,latency_ms,error_code,error_message,checked_by) VALUES(?,?,'mcp_server',?,?,?,?,?,?,?)").bind(Uuid::now_v7()).bind(actor.tenant_id).bind(id).bind(next).bind(status).bind(latency).bind(error_code).bind(error_message).bind(actor.user_id).execute(&state.pool).await?;
     Ok(())
 }
-fn validate_config(transport: &str, endpoint: &str, configuration: &Value) -> ApiResult<()> {
-    if !matches!(transport, "streamable_http" | "sse") {
-        return Err(ApiError::bad_request(
-            "INVALID_MCP_TRANSPORT",
-            "MCP transport is invalid",
-        ));
+struct FrozenMcpTransport {
+    kind: &'static str,
+    endpoint: Option<String>,
+    credential_id: Option<Uuid>,
+    runtime_sandbox_profile_id: Option<Uuid>,
+    runtime_sandbox_profile_version_id: Option<Uuid>,
+}
+
+async fn validate_transport(
+    state: &ControlApiState,
+    tenant_id: Uuid,
+    transport: &McpTransportInput,
+) -> ApiResult<FrozenMcpTransport> {
+    match transport {
+        McpTransportInput::StreamableHttp {
+            endpoint,
+            bearer_credential_id,
+        }
+        | McpTransportInput::Sse {
+            endpoint,
+            bearer_credential_id,
+        } => {
+            validate_http_endpoint(endpoint)?;
+            require_credential(state, tenant_id, *bearer_credential_id).await?;
+            Ok(FrozenMcpTransport {
+                kind: if matches!(transport, McpTransportInput::StreamableHttp { .. }) {
+                    "streamable_http"
+                } else {
+                    "sse"
+                },
+                endpoint: Some(endpoint.clone()),
+                credential_id: *bearer_credential_id,
+                runtime_sandbox_profile_id: None,
+                runtime_sandbox_profile_version_id: None,
+            })
+        }
+        McpTransportInput::Stdio {
+            command,
+            args,
+            environment_credential_refs,
+            runtime_sandbox,
+        } => {
+            if command.is_empty()
+                || !command.starts_with('/')
+                || command.contains(['\n', '\r', '\0'])
+                || args.iter().any(|arg| arg.contains(['\n', '\r', '\0']))
+                || args.len() > 128
+            {
+                return Err(ApiError::bad_request(
+                    "INVALID_MCP_STDIO_COMMAND",
+                    "stdio MCP command and args are invalid",
+                ));
+            }
+            let mut names = std::collections::BTreeSet::new();
+            for reference in environment_credential_refs {
+                if !valid_environment_name(&reference.name) || !names.insert(&reference.name) {
+                    return Err(ApiError::bad_request(
+                        "INVALID_MCP_STDIO_ENVIRONMENT",
+                        "stdio MCP environment Credential names must be unique safe names",
+                    ));
+                }
+                require_credential(state, tenant_id, Some(reference.credential_id)).await?;
+            }
+            let valid_sandbox: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM sandbox_profile_versions v JOIN sandbox_profiles p ON p.tenant_id=v.tenant_id AND p.id=v.profile_id WHERE v.tenant_id=? AND v.profile_id=? AND v.id=? AND p.status='active')",
+            )
+            .bind(tenant_id)
+            .bind(runtime_sandbox.resource_id)
+            .bind(runtime_sandbox.resource_version_id)
+            .fetch_one(&state.pool)
+            .await?;
+            if !valid_sandbox {
+                return Err(ApiError::unprocessable(
+                    "MCP_STDIO_SANDBOX_REQUIRED",
+                    "stdio MCP requires an active exact Runtime Sandbox version",
+                ));
+            }
+            Ok(FrozenMcpTransport {
+                kind: "stdio",
+                endpoint: None,
+                credential_id: None,
+                runtime_sandbox_profile_id: Some(runtime_sandbox.resource_id),
+                runtime_sandbox_profile_version_id: Some(runtime_sandbox.resource_version_id),
+            })
+        }
     }
+}
+
+async fn ensure_transport_dependencies_authorized(
+    state: &ControlApiState,
+    tenant_id: Uuid,
+    owner_department_id: Uuid,
+    transport: &McpTransportInput,
+) -> ApiResult<()> {
+    match transport {
+        McpTransportInput::StreamableHttp {
+            bearer_credential_id,
+            ..
+        }
+        | McpTransportInput::Sse {
+            bearer_credential_id,
+            ..
+        } => {
+            if let Some(credential_id) = bearer_credential_id {
+                crate::resource_api::ensure_department_resource_authorized(
+                    state,
+                    tenant_id,
+                    owner_department_id,
+                    "credential",
+                    *credential_id,
+                    None,
+                )
+                .await?;
+            }
+        }
+        McpTransportInput::Stdio {
+            environment_credential_refs,
+            runtime_sandbox,
+            ..
+        } => {
+            for reference in environment_credential_refs {
+                crate::resource_api::ensure_department_resource_authorized(
+                    state,
+                    tenant_id,
+                    owner_department_id,
+                    "credential",
+                    reference.credential_id,
+                    None,
+                )
+                .await?;
+            }
+            crate::resource_api::ensure_department_resource_authorized(
+                state,
+                tenant_id,
+                owner_department_id,
+                "sandbox_profile",
+                runtime_sandbox.resource_id,
+                Some(runtime_sandbox.resource_version_id),
+            )
+            .await?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_http_endpoint(endpoint: &str) -> ApiResult<()> {
     let url = Url::parse(endpoint)
         .map_err(|_| ApiError::bad_request("INVALID_ENDPOINT", "MCP endpoint is invalid"))?;
     if !matches!(url.scheme(), "http" | "https") {
@@ -875,6 +1162,10 @@ fn validate_config(transport: &str, endpoint: &str, configuration: &Value) -> Ap
             "MCP endpoint targets a blocked network address",
         ));
     }
+    Ok(())
+}
+
+fn validate_configuration(configuration: &Value) -> ApiResult<()> {
     if !configuration.is_object() {
         return Err(ApiError::bad_request(
             "INVALID_MCP_CONFIGURATION",
@@ -882,6 +1173,13 @@ fn validate_config(transport: &str, endpoint: &str, configuration: &Value) -> Ap
         ));
     }
     Ok(())
+}
+
+fn valid_environment_name(name: &str) -> bool {
+    let mut bytes = name.bytes();
+    matches!(bytes.next(), Some(b'A'..=b'Z' | b'_'))
+        && bytes.all(|byte| matches!(byte, b'A'..=b'Z' | b'0'..=b'9' | b'_'))
+        && name.len() <= 128
 }
 
 fn blocked_literal_address(address: std::net::IpAddr) -> bool {
@@ -903,13 +1201,14 @@ fn blocked_literal_address(address: std::net::IpAddr) -> bool {
         }
     }
 }
-fn config_hash(
-    transport: &str,
-    endpoint: &str,
-    credential: Option<Uuid>,
-    configuration: &Value,
-) -> ApiResult<String> {
-    Ok(format!("{:x}",Sha256::digest(serde_json::to_vec(&json!({"transport":transport,"endpoint":endpoint,"credentialId":credential,"configuration":configuration})).map_err(ApiError::internal)?)))
+fn config_hash(transport: &McpTransportInput, configuration: &Value) -> ApiResult<String> {
+    Ok(format!(
+        "{:x}",
+        Sha256::digest(
+            serde_json::to_vec(&json!({"transport":transport,"configuration":configuration}))
+                .map_err(ApiError::internal)?
+        )
+    ))
 }
 fn validate_arguments(schema: &Value, args: &Value) -> ApiResult<()> {
     let object = args.as_object().ok_or_else(|| {
@@ -952,21 +1251,19 @@ mod tests {
             "http://10.0.0.8/mcp",
             "http://[::1]/mcp",
         ] {
-            assert!(validate_config("streamable_http", endpoint, &json!({})).is_err());
+            assert!(validate_http_endpoint(endpoint).is_err());
         }
         assert!(
-            validate_config(
-                "streamable_http",
-                "http://echo-mcp.agentx-deps.svc.cluster.local:8090/mcp",
-                &json!({}),
-            )
-            .is_ok()
+            validate_http_endpoint("http://echo-mcp.agentx-deps.svc.cluster.local:8090/mcp")
+                .is_ok()
         );
     }
     #[test]
     fn validates_mcp_contract() {
-        assert!(validate_config("streamable_http", "http://mcp.test/mcp", &json!({})).is_ok());
-        assert!(validate_config("stdio", "http://mcp.test", &json!({})).is_err());
+        assert!(validate_http_endpoint("http://mcp.test/mcp").is_ok());
+        assert!(validate_http_endpoint("stdio://mcp.test").is_err());
+        assert!(validate_configuration(&json!({})).is_ok());
+        assert!(validate_configuration(&json!([])).is_err());
         assert!(validate_arguments(&json!({"required":["text"]}), &json!({"text":"ok"})).is_ok());
     }
 }

@@ -1,0 +1,168 @@
+{
+  "$defs": {
+    "OperationKindV1": {
+      "enum": [
+        "model",
+        "tool",
+        "compaction",
+        "state_transition"
+      ],
+      "type": "string"
+    },
+    "OperationPhaseV1": {
+      "oneOf": [
+        {
+          "properties": {
+            "phase": {
+              "const": "intent_persisted",
+              "type": "string"
+            }
+          },
+          "required": [
+            "phase"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "phase": {
+              "const": "effect_started",
+              "type": "string"
+            }
+          },
+          "required": [
+            "phase"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "phase": {
+              "const": "effect_completed",
+              "type": "string"
+            },
+            "result": true
+          },
+          "required": [
+            "phase",
+            "result"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "phase": {
+              "const": "settled_success",
+              "type": "string"
+            },
+            "result": true
+          },
+          "required": [
+            "phase",
+            "result"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "error": {
+              "type": "string"
+            },
+            "phase": {
+              "const": "settled_failure",
+              "type": "string"
+            }
+          },
+          "required": [
+            "phase",
+            "error"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "phase": {
+              "const": "unknown_outcome",
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "phase",
+            "reason"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ReplayPolicyV1": {
+      "enum": [
+        "safe",
+        "never",
+        "idempotency_required",
+        "ledger_dependent"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "attempt": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "createdAtMillis": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "effectId": {
+      "type": "string"
+    },
+    "effectIdentity": {
+      "type": "string"
+    },
+    "fencingToken": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "intent": true,
+    "operationId": {
+      "type": "string"
+    },
+    "operationKind": {
+      "$ref": "#/$defs/OperationKindV1"
+    },
+    "phase": {
+      "$ref": "#/$defs/OperationPhaseV1"
+    },
+    "replayPolicy": {
+      "$ref": "#/$defs/ReplayPolicyV1"
+    },
+    "updatedAtMillis": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "operationId",
+    "effectId",
+    "operationKind",
+    "attempt",
+    "intent",
+    "effectIdentity",
+    "replayPolicy",
+    "phase",
+    "fencingToken",
+    "createdAtMillis",
+    "updatedAtMillis"
+  ],
+  "title": "OperationRecordV1",
+  "type": "object"
+}

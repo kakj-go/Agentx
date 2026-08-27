@@ -1,0 +1,84 @@
+{
+  "$defs": {
+    "WorkspaceIdentityV1": {
+      "additionalProperties": false,
+      "properties": {
+        "applicationId": {
+          "format": "uuid",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sandboxProfileVersionId": {
+          "type": "string"
+        },
+        "sessionKey": {
+          "type": "string"
+        },
+        "stableAgentNodeKey": {
+          "type": "string"
+        },
+        "tenantId": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tenantId",
+        "sessionKey",
+        "stableAgentNodeKey",
+        "sandboxProfileVersionId"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "attemptId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "destroy": {
+      "type": "boolean"
+    },
+    "fencingToken": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "identity": {
+      "$ref": "#/$defs/WorkspaceIdentityV1"
+    },
+    "leaseId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "workerId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "workspaceId": {
+      "format": "uuid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "apiVersion",
+    "identity",
+    "workspaceId",
+    "leaseId",
+    "attemptId",
+    "workerId",
+    "fencingToken",
+    "destroy"
+  ],
+  "title": "WorkspaceReleaseRequestV1",
+  "type": "object"
+}

@@ -13,15 +13,15 @@ import { WorkflowCanvas } from './workflow-canvas'
 
 const editorDocument = { nodeLayouts: [{ nodeId: 'trigger', x: 100, y: 100 }], boundaryLayouts: [], bindingLayouts: [], edges: [], bindingEdges: [], annotations: [], groups: [], viewport: { x: 0, y: 0, zoom: 1 } }
 const draft = {
-  id: 'draft-1', workflowId: 'workflow-1', revision: 1, schemaVersion: '5.0', definitionHash: 'sha256:def', editorHash: 'sha256:editor', updatedAt: '2026-08-02T10:00:00Z', editorDocument,
-  definition: { schemaVersion: '5.0', start: { inputs: {}, contexts: {} }, settings: { executionOrder: 'deterministic', activationBudget: 10000 }, nodes: [{ id: 'trigger', key: 'source', type: 'set', typeVersion: 1, name: 'Set', disabled: false, parameters: {}, outputProjection: {}, contextWrites: [], resourceReferences: [], settings: {} }], connections: [], end: { outputs: {}, error: { strategy: 'fail_fast', collectWindowMs: 5000, outputs: {} } } },
+  id: 'draft-1', workflowId: 'workflow-1', revision: 1, schemaVersion: '6.0', definitionHash: 'sha256:def', editorHash: 'sha256:editor', updatedAt: '2026-08-02T10:00:00Z', editorDocument,
+  definition: { schemaVersion: '6.0', start: { inputs: {}, contexts: {} }, settings: { executionOrder: 'deterministic', activationBudget: 10000 }, nodes: [{ id: 'trigger', key: 'source', type: 'set', typeVersion: 1, name: 'Set', disabled: false, parameters: {}, outputProjection: {}, contextWrites: [], resourceReferences: [], settings: {} }], connections: [], end: { outputs: {}, error: { strategy: 'fail_fast', collectWindowMs: 5000, outputs: {} } } },
 }
 
 let requiredAgentBinding = false
 let saveConflict = false
 
 const manifest = (nodeType: string, executionStyle = 'action'): NodeManifest => ({
-  protocolVersion: '1.0', nodeType, version: 1, displayName: nodeType === 'agent' ? 'Agent' : 'Manual Trigger', description: '', category: nodeType === 'agent' ? 'ai' : 'triggers', keywords: [nodeType], iconKey: nodeType === 'agent' ? 'bot' : 'mouse-pointer-click', executionStyle: executionStyle as NodeManifest['executionStyle'], capability: nodeType === 'agent' ? 'agent' : 'builtin', readiness: 'any', inputPorts: nodeType === 'agent' ? [{ name: 'main', kind: 'main', required: true, variadic: false }] : [], outputPorts: [{ name: 'main', kind: 'main', required: false, variadic: false }], bindingSlots: nodeType === 'agent' ? [{ name: 'ai_model', resourceType: 'model', required: requiredAgentBinding, multiple: false }] : [], parameterSchema: { type: 'object', properties: {} }, uiSchema: { canvas: { role: nodeType === 'agent' ? 'agent' : 'trigger' } }, providers: [], credentials: [], retryPolicy: { retryable: false, maxAttempts: 1, initialBackoffMs: 0, maxBackoffMs: 0 }, sandboxRequired: false, supportsMock: true, sideEffectLevel: 'none',
+  protocolVersion: '2.0', nodeType, version: nodeType === 'agent' ? 2 : 1, displayName: nodeType === 'agent' ? 'Agent' : 'Manual Trigger', description: '', category: nodeType === 'agent' ? 'ai' : 'triggers', keywords: [nodeType], iconKey: nodeType === 'agent' ? 'bot' : 'mouse-pointer-click', executionStyle: executionStyle as NodeManifest['executionStyle'], capability: nodeType === 'agent' ? 'agent' : 'builtin', readiness: 'any', inputPorts: nodeType === 'agent' ? [{ name: 'main', kind: 'main', required: true, variadic: false }] : [], outputPorts: [{ name: 'main', kind: 'main', required: false, variadic: false }], bindingSlots: nodeType === 'agent' ? [{ name: 'model', resourceType: 'model', placement: 'inspector', required: requiredAgentBinding, multiple: false }] : [], parameterSchema: { type: 'object', properties: {} }, uiSchema: { canvas: { role: nodeType === 'agent' ? 'agent' : 'trigger' } }, providers: [], credentials: [], retryPolicy: { retryable: false, maxAttempts: 1, initialBackoffMs: 0, maxBackoffMs: 0 }, sandboxRequired: false, supportsMock: true, sideEffectLevel: 'none',
 })
 
 function json(value: unknown, status = 200) { return new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } }) }
@@ -39,9 +39,9 @@ describe('workflow studio shell', () => {
         return json({ ...draft, revision: draft.revision + 1 })
       }
       if (path.endsWith('/draft')) return json(draft)
-      if (path.endsWith('/node-definitions')) return json({ items: [{ nodeType: 'set', version: 1 }, { nodeType: 'agent', version: 1 }] })
+      if (path.endsWith('/node-definitions')) return json({ items: [{ nodeType: 'set', version: 1 }, { nodeType: 'agent', version: 2 }] })
       if (path.includes('/node-definitions/set/')) return json({ nodeType: 'set', version: 1, manifest: manifest('set') })
-      if (path.includes('/node-definitions/agent/')) return json({ nodeType: 'agent', version: 1, manifest: manifest('agent') })
+      if (path.includes('/node-definitions/agent/')) return json({ nodeType: 'agent', version: 2, manifest: manifest('agent') })
       if (path.endsWith('/workflows/workflow-1')) return json({ id: 'workflow-1', name: 'Conflict Workflow' })
       if (path.endsWith('/environments') || path.endsWith('/versions') || path.endsWith('/mcp/tools')) return json([])
       return json({ items: [], page: 1, pageSize: 100, total: 0 })
@@ -54,8 +54,8 @@ describe('workflow studio shell', () => {
     render(<QueryClientProvider client={queryClient}><Tooltip.Provider><ToastProvider><MemoryRouter initialEntries={['/workflows/workflow-1/editor']}><Routes><Route element={<WorkflowCanvas />} path="/workflows/:workflowId/editor" /></Routes></MemoryRouter></ToastProvider></Tooltip.Provider></QueryClientProvider>)
 
     fireEvent.click(await screen.findByRole('button', { name: 'Search nodes' }))
-    fireEvent.change(screen.getByRole('textbox', { name: 'Search nodes' }), { target: { value: 'agent' } })
-    fireEvent.click(screen.getByTestId('palette-action-agent'))
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search nodes' }), { target: { value: 'set' } })
+    fireEvent.click(screen.getByTestId('palette-action-set'))
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
 
     expect((await screen.findAllByText('Draft revision conflict')).length).toBeGreaterThan(0)
@@ -65,7 +65,7 @@ describe('workflow studio shell', () => {
     await waitFor(() => expect(screen.getByText(/Unsaved/)).toBeInTheDocument())
   })
 
-  it('saves an incomplete draft and defers strict validation until execution', async () => {
+  it('blocks saving an Agent with incomplete inspector configuration', async () => {
     requiredAgentBinding = true
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
     render(<QueryClientProvider client={queryClient}><Tooltip.Provider><ToastProvider><MemoryRouter initialEntries={['/workflows/workflow-1/editor']}><Routes><Route element={<WorkflowCanvas />} path="/workflows/:workflowId/editor" /></Routes></MemoryRouter></ToastProvider></Tooltip.Provider></QueryClientProvider>)
@@ -74,8 +74,9 @@ describe('workflow studio shell', () => {
     fireEvent.change(screen.getByRole('textbox', { name: 'Search nodes' }), { target: { value: 'agent' } })
     fireEvent.click(screen.getByTestId('palette-action-agent'))
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
-    await waitFor(() => expect(screen.getByText(/Saved|已保存/)).toBeInTheDocument())
-    expect(screen.queryByRole('dialog', { name: 'Validation failed' })).not.toBeInTheDocument()
+    expect(await screen.findByText('AGENT_MODEL_REQUIRED')).toBeInTheDocument()
+    const draftWrites = vi.mocked(fetch).mock.calls.filter(([input, init]) => new URL(String(input), 'http://agentx.test').pathname.endsWith('/draft') && init?.method === 'PUT')
+    expect(draftWrites).toHaveLength(0)
   })
 
   it('does not submit or autosave a structurally invalid definition', async () => {
@@ -109,17 +110,16 @@ describe('workflow studio shell', () => {
     fireEvent.change(screen.getByRole('textbox', { name: 'Search nodes' }), { target: { value: 'agent' } })
     fireEvent.click(screen.getByTestId('palette-action-agent'))
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
-    await waitFor(() => expect(screen.getByText(/Saved|已保存/)).toBeInTheDocument())
-    fireEvent.click(screen.getAllByRole('button', { name: 'Run' })[0])
-    const issue = await screen.findByText('AI_BINDING_REQUIRED')
-    expect(issue.closest('button')).toHaveTextContent('Connect the required ai_model attachment.')
+    const issue = await screen.findByText('AGENT_MODEL_REQUIRED')
+    expect(issue.closest('button')).toHaveTextContent(/model/i)
 
     await i18n.changeLanguage('zh-CN')
-    await waitFor(() => expect(issue.closest('button')).toHaveTextContent('请连接必需的 ai_model 附件。'))
+    await waitFor(() => expect(issue.closest('button')).toHaveTextContent(/模型|model/i))
     fireEvent.click(issue.closest('button')!)
 
-    const field = document.querySelector<HTMLElement>('[data-field-path="resourceReferences.ai_model"]')
-    await waitFor(() => expect(field).toHaveFocus())
+    const field = document.querySelector<HTMLElement>('[data-field-path="resourceReferences.model"]')
+    const picker = field?.querySelector<HTMLElement>('[role="combobox"]')
+    await waitFor(() => expect(picker).toHaveFocus())
     expect(field).toHaveClass('studio-field-located')
     await i18n.changeLanguage('en-US')
   })
@@ -127,29 +127,40 @@ describe('workflow studio shell', () => {
 })
 
 describe('workflow studio serializer', () => {
-  it('keeps layouts outside Definition 4.0 and compiles AI attachments into agent references', () => {
+  it('rejects Definition 5.0 without conversion or fallback', () => {
+    expect(() => deserializeDraft({
+      ...draft,
+      definition: { ...draft.definition, schemaVersion: '5.0' },
+    } as never)).toThrow(/Unsupported Workflow Definition 5\.0/)
+  })
+
+  it('keeps inspector references internal and materializes only canvas attachments', () => {
     const definition: WorkflowDefinition = {
-      schemaVersion: '5.0', start: { inputs: {}, contexts: {} }, settings: { executionOrder: 'deterministic', activationBudget: 10000 }, connections: [], end: { outputs: {}, error: { strategy: 'fail_fast', collectWindowMs: 5000, outputs: {} } },
-      nodes: [{ id: 'agent-1', key: 'agent', type: 'agent', typeVersion: 1, name: 'Agent', disabled: false, parameters: {}, outputProjection: {}, contextWrites: [], settings: {}, resourceReferences: [{ bindingId: 'binding-1', bindingRole: 'ai_model', resourceType: 'model', resourceId: 'model-1', resourceVersionId: 'model-version-1', operation: 'use' }] }],
+      schemaVersion: '6.0', start: { inputs: {}, contexts: {} }, settings: { executionOrder: 'deterministic', activationBudget: 10000 }, connections: [], end: { outputs: {}, error: { strategy: 'fail_fast', collectWindowMs: 5000, outputs: {} } },
+      nodes: [{ id: 'agent-1', key: 'agent', type: 'agent', typeVersion: 2, name: 'Agent', disabled: false, parameters: { sessionPolicy: { mode: 'invocation' } }, outputProjection: {}, contextWrites: [], settings: {}, resourceReferences: [{ resourceType: 'model', resourceId: '11111111-1111-4111-8111-111111111111', resourceVersionId: '22222222-2222-4222-8222-222222222222', operation: 'use' }, { bindingId: 'binding-1', bindingRole: 'mcp_tools', resourceType: 'mcp_tool', resourceId: '33333333-3333-4333-8333-333333333333', resourceVersionId: '44444444-4444-4444-8444-444444444444', operation: 'use' }] }],
     }
-    const source = { ...draft, definition, editorDocument: { ...editorDocument, nodeLayouts: [{ nodeId: 'agent-1', x: 410, y: 230 }], bindingLayouts: [{ bindingId: 'binding-1', x: 390, y: 410 }], bindingEdges: [{ edgeId: 'binding-edge-1', sourceBindingId: 'binding-1', targetNodeId: 'agent-1', targetSlot: 'ai_model' }] } }
+    const source = { ...draft, definition, editorDocument: { ...editorDocument, nodeLayouts: [{ nodeId: 'agent-1', x: 410, y: 230 }], bindingLayouts: [{ bindingId: 'binding-1', x: 390, y: 410 }], bindingEdges: [{ edgeId: 'binding-edge-1', sourceBindingId: 'binding-1', targetNodeId: 'agent-1', targetSlot: 'mcp_tools' }] } }
     const serialized = serializeStudio(deserializeDraft(source))
 
-    expect(serialized.definition.schemaVersion).toBe('5.0')
+    expect(serialized.definition.schemaVersion).toBe('6.0')
     expect(serialized.definition.nodes).toHaveLength(1)
     expect(serialized.definition.nodes[0]).not.toHaveProperty('position')
-    expect(serialized.definition.nodes[0].resourceReferences[0]).toMatchObject({ bindingId: 'binding-1', bindingRole: 'ai_model', resourceId: 'model-1' })
+    expect(serialized.definition.nodes[0].resourceReferences).toEqual(expect.arrayContaining([
+      expect.objectContaining({ resourceType: 'model' }),
+      expect.objectContaining({ bindingId: 'binding-1', bindingRole: 'mcp_tools' }),
+    ]))
+    expect(serialized.definition.nodes[0].resourceReferences[0]).not.toHaveProperty('bindingId')
     expect(serialized.editorDocument.bindingLayouts[0]).toMatchObject({ bindingId: 'binding-1', x: 390, y: 410 })
-    expect(serialized.editorDocument.bindingEdges[0]).toMatchObject({ targetSlot: 'ai_model' })
+    expect(serialized.editorDocument.bindingEdges[0]).toMatchObject({ targetSlot: 'mcp_tools' })
   })
 
   it('omits incomplete attachment nodes from autosave until they form a resource binding', () => {
     const document = deserializeDraft(draft)
     document.nodes.push({
-      id: 'binding:pending-model',
+      id: 'binding:pending-mcp',
       type: 'attachment',
       position: { x: 390, y: 410 },
-      data: { editorKind: 'binding', bindingId: 'pending-model', bindingRole: 'ai_model', resourceType: 'model', operation: 'use', label: 'model' },
+      data: { editorKind: 'binding', bindingId: 'pending-mcp', bindingRole: 'mcp_tools', resourceType: 'mcp_tool', operation: 'use', label: 'MCP tool' },
     })
 
     const serialized = serializeStudio(document)

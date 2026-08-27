@@ -19,7 +19,7 @@ export async function autoLayout(nodes: StudioNode[], edges: StudioEdge[], manif
       const metrics = canvasNodeMetrics(canvasNodeRole(manifest), {
         inputs: manifest?.inputPorts.length,
         outputs: manifest?.outputPorts.length,
-        bindings: manifest?.bindingSlots.length,
+        bindings: manifest?.bindingSlots.filter((slot) => slot.placement === 'canvas').length,
         richHeight: node.height ?? node.measured?.height,
       })
       return { id: node.id, width: metrics.width, height: metrics.height }
@@ -69,7 +69,7 @@ export function largeGraphLayout(nodes: StudioNode[], edges: StudioEdge[], manif
     const metrics = canvasNodeMetrics(canvasNodeRole(manifest), {
       inputs: manifest?.inputPorts.length,
       outputs: manifest?.outputPorts.length,
-      bindings: manifest?.bindingSlots.length,
+      bindings: manifest?.bindingSlots.filter((slot) => slot.placement === 'canvas').length,
       richHeight: node?.height ?? node?.measured?.height,
     })
     positions.set(id, { x: 80 + level * 280, y: 60 + index * Math.max(120, metrics.height + 32) })

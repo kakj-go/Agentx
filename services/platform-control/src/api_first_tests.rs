@@ -312,7 +312,7 @@ async fn api_first_control_closure_uses_empty_schema_and_public_routes() {
     .await;
     assert_eq!(status, 200, "workflow draft response: {draft}");
     let definition = json!({
-        "schemaVersion":"5.0",
+        "schemaVersion":"6.0",
         "start":{"inputs":{"type":"object","additionalProperties":true},"contexts":{}},
         "nodes":[{
             "id":"root","key":"root","type":"no_op","typeVersion":1,"name":"Root",
@@ -415,6 +415,67 @@ async fn api_first_control_closure_uses_empty_schema_and_public_routes() {
     assert_eq!(status, 201, "credential response: {credential}");
     assert_eq!(credential["storageMode"], "external_reference");
     let credential_id = credential["id"].as_str().unwrap();
+    let mcp_owner_department_id = projection_department["id"].as_str().unwrap();
+    let (status, dependency_options) = request(
+        &app,
+        "GET",
+        &format!(
+            "/api/v1/departments/{mcp_owner_department_id}/resource-options?resourceType=credential&operation=use&page=1&pageSize=100"
+        ),
+        Some(&token),
+        None,
+    )
+    .await;
+    assert_eq!(status, 200, "MCP dependency options: {dependency_options}");
+    let credential_option = dependency_options["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["id"] == credential_id)
+        .unwrap();
+    assert_eq!(credential_option["accessState"], "grantable");
+    let (status, dependency_grant) = request(
+        &app,
+        "POST",
+        &format!("/api/v1/departments/{mcp_owner_department_id}/resource-authorizations"),
+        Some(&token),
+        Some(json!({
+            "resourceType":"credential","resourceId":credential_id,
+            "resourceVersionId":null,"operation":"use"
+        })),
+    )
+    .await;
+    assert_eq!(status, 200, "MCP dependency grant: {dependency_grant}");
+    assert_eq!(dependency_grant["grantedCount"], 1);
+    let department_runtime_events: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM outbox WHERE event_type='ResourceGrantAdmissionChanged' AND JSON_UNQUOTE(JSON_EXTRACT(payload_json,'$.identityId'))=?",
+    )
+    .bind(mcp_owner_department_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        department_runtime_events, 0,
+        "configuration grants must not enter Runtime admission"
+    );
+    let (status, cross_department_mcp) = request(
+        &app,
+        "POST",
+        "/api/v1/mcp/servers",
+        Some(&token),
+        Some(json!({
+            "name":"Department MCP","description":"Department configuration grant",
+            "ownerDepartmentId":mcp_owner_department_id,
+            "transport":{
+                "kind":"streamable_http",
+                "endpoint":"http://echo-mcp.test.svc.cluster.local:8090/mcp",
+                "bearerCredentialId":credential_id
+            },
+            "configuration":{}
+        })),
+    )
+    .await;
+    assert_eq!(status, 201, "cross-department MCP: {cross_department_mcp}");
 
     let (status, rag_connection) = request(
         &app,
@@ -453,8 +514,12 @@ async fn api_first_control_closure_uses_empty_schema_and_public_routes() {
         Some(&token),
         Some(json!({
             "name":"API MCP","description":"API-first MCP","ownerDepartmentId":department_id,
-            "transport":"streamable_http","endpoint":"http://echo-mcp.test.svc.cluster.local:8090/mcp",
-            "credentialId":credential_id,"configuration":{}
+            "transport":{
+                "kind":"streamable_http",
+                "endpoint":"http://echo-mcp.test.svc.cluster.local:8090/mcp",
+                "bearerCredentialId":credential_id
+            },
+            "configuration":{}
         })),
     )
     .await;
@@ -607,7 +672,7 @@ async fn api_first_control_closure_uses_empty_schema_and_public_routes() {
     .await;
     assert_eq!(status, 200, "resource draft response: {resource_draft}");
     let resource_definition = json!({
-        "schemaVersion":"5.0",
+        "schemaVersion":"6.0",
         "start":{"inputs":{"type":"object","additionalProperties":true},"contexts":{}},
         "nodes":[{
             "id":"credential-node","key":"credential_node","type":"no_op","typeVersion":1,

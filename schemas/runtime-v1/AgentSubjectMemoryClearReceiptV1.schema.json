@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "auditId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "clearId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "scopeHash": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "apiVersion",
+    "clearId",
+    "auditId",
+    "scopeHash",
+    "status"
+  ],
+  "title": "AgentSubjectMemoryClearReceiptV1",
+  "type": "object"
+}

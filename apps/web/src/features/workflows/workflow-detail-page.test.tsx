@@ -107,7 +107,7 @@ const workflowResponse = {
 }
 
 const version1 = {
-  id: 'version-1', workflowId: 'workflow-1', versionNumber: 1, sourceRevision: 12, schemaVersion: '5.0', contentHash: 'sha256:version-one',
+  id: 'version-1', workflowId: 'workflow-1', versionNumber: 1, sourceRevision: 12, schemaVersion: '6.0', contentHash: 'sha256:version-one',
   definition: {}, editorDocument: {}, createdBy: 'user-1', createdAt: '2026-08-21T09:00:00Z',
 }
 

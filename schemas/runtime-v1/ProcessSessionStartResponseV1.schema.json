@@ -1,0 +1,116 @@
+{
+  "$defs": {
+    "ProcessSessionIdentityV1": {
+      "additionalProperties": false,
+      "properties": {
+        "agentRunId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "mcpServerVersionId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "sandboxProfileVersionId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "tenantId": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tenantId",
+        "agentRunId",
+        "mcpServerVersionId",
+        "sandboxProfileVersionId"
+      ],
+      "type": "object"
+    },
+    "ProcessSessionLeaseV1": {
+      "additionalProperties": false,
+      "properties": {
+        "attemptId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "expiresAt": {
+          "type": "string"
+        },
+        "fencingToken": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "leaseId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "processSessionId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/ProcessSessionStatusV1"
+        },
+        "workerId": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "processSessionId",
+        "leaseId",
+        "workerId",
+        "attemptId",
+        "fencingToken",
+        "expiresAt",
+        "status"
+      ],
+      "type": "object"
+    },
+    "ProcessSessionStatusV1": {
+      "enum": [
+        "acquiring",
+        "starting",
+        "running",
+        "interrupting",
+        "terminating",
+        "exited",
+        "failed",
+        "unknown_outcome",
+        "expired"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "identity": {
+      "$ref": "#/$defs/ProcessSessionIdentityV1"
+    },
+    "lease": {
+      "$ref": "#/$defs/ProcessSessionLeaseV1"
+    },
+    "providerSandboxId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "apiVersion",
+    "identity",
+    "lease"
+  ],
+  "title": "ProcessSessionStartResponseV1",
+  "type": "object"
+}

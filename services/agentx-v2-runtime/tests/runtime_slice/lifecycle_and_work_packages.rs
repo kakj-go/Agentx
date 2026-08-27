@@ -192,7 +192,7 @@ impl Fixture {
         }
     }
 
-    async fn bundle(&self, sequence: u64) -> agentx_runtime_contracts::ExecutionSpecBundleV1 {
+    async fn bundle(&self, sequence: u64) -> agentx_runtime_contracts::ExecutionSpecBundleV2 {
         let definition = definition();
         let workflow_version_id = Uuid::now_v7();
         let bytes = agentx_runtime_contracts::canonical_bytes(&definition).unwrap();
@@ -236,6 +236,7 @@ impl Fixture {
                     policy_epoch: 1,
                     capabilities: BTreeSet::from(["builtin".into()]),
                     grant_ids: vec![],
+                    grant_bindings: vec![],
                     maximum_policy_staleness_seconds: 72 * 60 * 60,
                     captured_at: OffsetDateTime::UNIX_EPOCH,
                 },
@@ -297,6 +298,7 @@ impl Fixture {
                 policy_epoch: 1,
                 capabilities: BTreeSet::from(["builtin".into()]),
                 grant_ids: vec![],
+                grant_bindings: vec![],
                 maximum_policy_staleness_seconds: 72 * 60 * 60,
                 captured_at: created_at,
             },
@@ -344,7 +346,7 @@ impl Fixture {
 
     async fn upload_bundle_object(
         &self,
-        bundle: &agentx_runtime_contracts::ExecutionSpecBundleV1,
+        bundle: &agentx_runtime_contracts::ExecutionSpecBundleV2,
         idempotency_key: &str,
     ) -> agentx_runtime_contracts::RuntimeObjectUploadReceiptV1 {
         let object = bundle.payload.objects[0].clone();
@@ -1040,7 +1042,7 @@ async fn complete_model_evaluators(fixture: &Fixture, package_id: Uuid) {
 
 async fn object_upload_is_immutable_and_replayable(
     fixture: &Fixture,
-    bundle: &agentx_runtime_contracts::ExecutionSpecBundleV1,
+    bundle: &agentx_runtime_contracts::ExecutionSpecBundleV2,
 ) {
     let first = fixture
         .upload_bundle_object(bundle, "bundle-object:first")
@@ -1072,7 +1074,7 @@ async fn object_upload_is_immutable_and_replayable(
 
 async fn prepare_is_idempotent_and_does_not_route_traffic(
     fixture: &Fixture,
-    bundle: &agentx_runtime_contracts::ExecutionSpecBundleV1,
+    bundle: &agentx_runtime_contracts::ExecutionSpecBundleV2,
 ) {
     let first = prepare(fixture, bundle, "prepare:first").await;
     let replay = prepare(fixture, bundle, "prepare:first").await;
@@ -1100,7 +1102,7 @@ async fn prepare_is_idempotent_and_does_not_route_traffic(
 
 async fn prepare(
     fixture: &Fixture,
-    bundle: &agentx_runtime_contracts::ExecutionSpecBundleV1,
+    bundle: &agentx_runtime_contracts::ExecutionSpecBundleV2,
     key: &str,
 ) -> agentx_runtime_contracts::PublishReceiptV1 {
     prepare_bundle(
@@ -1266,7 +1268,7 @@ async fn concurrent_admission_delivery_converges_to_one_receipt(fixture: &Fixtur
 
 async fn activate(
     fixture: &Fixture,
-    bundle: &agentx_runtime_contracts::ExecutionSpecBundleV1,
+    bundle: &agentx_runtime_contracts::ExecutionSpecBundleV2,
     expected: Option<u64>,
     sequence: u64,
     epoch: u64,
@@ -1299,7 +1301,7 @@ async fn activate(
 }
 
 fn activation_request(
-    bundle: &agentx_runtime_contracts::ExecutionSpecBundleV1,
+    bundle: &agentx_runtime_contracts::ExecutionSpecBundleV2,
     expected: Option<u64>,
     sequence: u64,
     epoch: u64,
@@ -1330,7 +1332,7 @@ fn activation_request(
 
 async fn rollback(
     fixture: &Fixture,
-    bundle: &agentx_runtime_contracts::ExecutionSpecBundleV1,
+    bundle: &agentx_runtime_contracts::ExecutionSpecBundleV2,
     expected: Option<u64>,
     sequence: u64,
     epoch: u64,
@@ -1349,7 +1351,7 @@ async fn rollback(
 
 async fn rollback_request(
     fixture: &Fixture,
-    bundle: &agentx_runtime_contracts::ExecutionSpecBundleV1,
+    bundle: &agentx_runtime_contracts::ExecutionSpecBundleV2,
     expected: Option<u64>,
     sequence: u64,
     epoch: u64,
@@ -1388,7 +1390,7 @@ async fn rollback_request(
 
 async fn stale_head_and_sequence_are_rejected(
     fixture: &Fixture,
-    first: &agentx_runtime_contracts::ExecutionSpecBundleV1,
+    first: &agentx_runtime_contracts::ExecutionSpecBundleV2,
 ) {
     let stale = rollback_request(fixture, first, Some(1), 3, 1, "rollback:stale-head").await;
     assert_eq!(stale.status, PublishReceiptStatusV1::Rejected);

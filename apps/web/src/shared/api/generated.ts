@@ -262,12 +262,10 @@ export interface components {
         };
         CreateMcpServerRequest: {
             configuration?: unknown;
-            credentialId?: string | null;
             description?: string | null;
-            endpoint: string;
             name: string;
             ownerDepartmentId: string;
-            transport: string;
+            transport: components["schemas"]["McpTransportInput"];
         };
         CreateMemoryRequest: {
             accessMode: string;
@@ -744,18 +742,24 @@ export interface components {
             runId: string;
             tools: components["schemas"]["McpToolResponse"][];
         };
+        McpEnvironmentCredentialInput: {
+            credentialId: string;
+            name: string;
+        };
+        McpRuntimeSandboxInput: {
+            resourceId: string;
+            resourceVersionId: string;
+        };
         McpServerResponse: {
-            credentialId?: string | null;
             currentVersionNumber: number;
             description?: string | null;
-            endpoint: string;
             id: string;
             lastDiscoveredAt?: string | null;
             name: string;
             ownerDepartmentId: string;
             status: string;
             toolCount: number;
-            transport: string;
+            transport: components["schemas"]["McpTransportInput"];
             updatedAt: string;
             version: number;
         };
@@ -777,6 +781,24 @@ export interface components {
             timeoutSeconds: number;
             title?: string | null;
             version: number;
+        };
+        McpTransportInput: {
+            bearerCredentialId?: string | null;
+            endpoint: string;
+            /** @constant */
+            kind: "streamable_http";
+        } | {
+            bearerCredentialId?: string | null;
+            endpoint: string;
+            /** @constant */
+            kind: "sse";
+        } | {
+            args: string[];
+            command: string;
+            environmentCredentialRefs: components["schemas"]["McpEnvironmentCredentialInput"][];
+            /** @constant */
+            kind: "stdio";
+            runtimeSandbox: components["schemas"]["McpRuntimeSandboxInput"];
         };
         MeResponse: {
             companyId: string;
@@ -1062,11 +1084,15 @@ export interface components {
             sourceNodeId?: string | null;
             sourceRevision?: number | null;
             status: string;
+            subjectDepartmentName?: string | null;
+            subjectId: string;
+            /** @enum {string} */
+            subjectType: "department" | "workflow_service_identity";
             updatedAt: string;
             version: number;
-            workflowId: string;
-            workflowName: string;
-            workflowServiceIdentityId: string;
+            workflowId?: string | null;
+            workflowName?: string | null;
+            workflowServiceIdentityId?: string | null;
         };
         ResourceGrantRequestReviewResponse: {
             canAct: boolean;
@@ -1477,12 +1503,10 @@ export interface components {
         };
         UpdateMcpServerRequest: {
             configuration?: unknown;
-            credentialId?: string | null;
             description?: string | null;
-            endpoint: string;
             name: string;
             status: string;
-            transport: string;
+            transport: components["schemas"]["McpTransportInput"];
             version: number;
         };
         UpdateMcpToolPolicyRequest: {

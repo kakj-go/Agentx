@@ -55,6 +55,113 @@
       ],
       "type": "object"
     },
+    "RuntimeEnvironmentCredentialReferenceV1": {
+      "additionalProperties": false,
+      "properties": {
+        "credential": {
+          "$ref": "#/$defs/VaultSecretReferenceV1"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "credential"
+      ],
+      "type": "object"
+    },
+    "RuntimeMcpSandboxReferenceV1": {
+      "additionalProperties": false,
+      "properties": {
+        "resourceId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "resourceVersionId": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "resourceId",
+        "resourceVersionId"
+      ],
+      "type": "object"
+    },
+    "RuntimeMcpTransportV2": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "endpoint": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "streamable_http",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "endpoint"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "endpoint": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "sse",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "endpoint"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "args": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "command": {
+              "type": "string"
+            },
+            "environmentCredentialRefs": {
+              "items": {
+                "$ref": "#/$defs/RuntimeEnvironmentCredentialReferenceV1"
+              },
+              "type": "array"
+            },
+            "kind": {
+              "const": "stdio",
+              "type": "string"
+            },
+            "runtimeSandbox": {
+              "$ref": "#/$defs/RuntimeMcpSandboxReferenceV1"
+            }
+          },
+          "required": [
+            "kind",
+            "command",
+            "args",
+            "environmentCredentialRefs",
+            "runtimeSandbox"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "RuntimeModelPriceV1": {
       "additionalProperties": false,
       "properties": {
@@ -133,9 +240,7 @@
                 }
               ]
             },
-            "endpoint": {
-              "type": "string"
-            },
+            "inputSchema": true,
             "inputSchemaHash": {
               "type": "string"
             },
@@ -143,19 +248,44 @@
               "const": "mcp",
               "type": "string"
             },
+            "outputSchema": true,
+            "serverId": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "serverVersionId": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "sideEffect": {
+              "type": "string"
+            },
+            "timeoutSeconds": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
             "toolName": {
               "type": "string"
             },
             "toolVersion": {
               "type": "string"
+            },
+            "transport": {
+              "$ref": "#/$defs/RuntimeMcpTransportV2"
             }
           },
           "required": [
             "kind",
-            "endpoint",
+            "serverId",
+            "serverVersionId",
+            "transport",
             "toolName",
             "toolVersion",
-            "inputSchemaHash"
+            "inputSchemaHash",
+            "inputSchema",
+            "sideEffect",
+            "timeoutSeconds"
           ],
           "type": "object"
         },
@@ -197,6 +327,9 @@
         {
           "additionalProperties": false,
           "properties": {
+            "accessMode": {
+              "type": "string"
+            },
             "credential": {
               "anyOf": [
                 {
@@ -225,19 +358,29 @@
             "kind",
             "endpoint",
             "namespace",
-            "memoryVersion"
+            "memoryVersion",
+            "accessMode"
           ],
           "type": "object"
         },
         {
           "additionalProperties": false,
           "properties": {
+            "dependencies": {
+              "items": {
+                "$ref": "#/$defs/RuntimeSkillDependencyV2"
+              },
+              "type": "array"
+            },
             "dependencyObjectIds": {
               "items": {
                 "format": "uuid",
                 "type": "string"
               },
               "type": "array"
+            },
+            "entrypointContentHash": {
+              "type": "string"
             },
             "entrypointObjectId": {
               "format": "uuid",
@@ -251,7 +394,9 @@
           "required": [
             "kind",
             "entrypointObjectId",
-            "dependencyObjectIds"
+            "entrypointContentHash",
+            "dependencyObjectIds",
+            "dependencies"
           ],
           "type": "object"
         },
@@ -376,6 +521,34 @@
         "composite"
       ],
       "type": "string"
+    },
+    "RuntimeSkillDependencyV2": {
+      "additionalProperties": false,
+      "properties": {
+        "operation": {
+          "type": "string"
+        },
+        "resourceId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "resourceType": {
+          "type": "string"
+        },
+        "resourceVersionId": {
+          "format": "uuid",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "resourceType",
+        "resourceId",
+        "operation"
+      ],
+      "type": "object"
     },
     "SandboxEgressModeV1": {
       "enum": [

@@ -215,13 +215,29 @@ fn images(root: &Path, args: Images) -> Result<()> {
         .iter()
         .map(|value| value.as_str().unwrap().to_owned())
         .collect();
-    let selected = if args.service.is_empty() {
+    let explicit_selection = !args.service.is_empty();
+    let local_runtime_fixture = values
+        .pointer("/global/environment")
+        .and_then(Value::as_str)
+        == Some("local");
+    let mut selected = if !explicit_selection {
         known.clone()
     } else {
         args.service
     };
+    // The runtime-provider Kustomize overlay deploys this fixture from the
+    // local Docker image, so a full local image build must refresh it too.
+    if !explicit_selection && local_runtime_fixture {
+        for fixture in ["echo-node", "echo-mcp"] {
+            if !selected.iter().any(|service| service == fixture) {
+                selected.push(fixture.to_owned());
+            }
+        }
+    }
     for service in &selected {
-        if !known.contains(service) {
+        if !known.contains(service)
+            && !(local_runtime_fixture && matches!(service.as_str(), "echo-node" | "echo-mcp"))
+        {
             bail!("unknown image service: {service}");
         }
     }
@@ -251,6 +267,7 @@ fn images(root: &Path, args: Images) -> Result<()> {
                 "observability" => Some("agentx-observability"),
                 "workflow-worker" | "sandbox-manager" => Some("agentx-v2-runtime"),
                 "agentx-egress-gateway" => Some("agentx-egress-gateway"),
+                "echo-mcp" => Some("echo-mcp"),
                 _ => None,
             };
             if let Some(package) = package {

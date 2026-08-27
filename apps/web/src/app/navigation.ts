@@ -3,6 +3,7 @@ import {
   Blocks,
   BrainCircuit,
   CircleGauge,
+  History,
   Database,
   FlaskConical,
   KeyRound,
@@ -41,6 +42,7 @@ export const navigationGroups: NavigationGroup[] = [
       { labelKey: 'navigation.datasets', path: '/datasets', icon: Database, keywords: ['cases', 'test'], requiredPermission: 'dataset:view' },
       { labelKey: 'navigation.evaluations', path: '/evaluations', icon: FlaskConical, keywords: ['report', 'quality'], requiredPermission: 'evaluation:view' },
       { labelKey: 'navigation.runtime', path: '/runtime', icon: RadioTower, keywords: ['worker', 'queue'], requiredPermission: 'runtime:view' },
+      { labelKey: 'navigation.agentSessions', path: '/agent-sessions', icon: History, keywords: ['agent', 'session', 'compaction', 'memory'], requiredPermission: 'execution:view' },
     ],
   },
   {

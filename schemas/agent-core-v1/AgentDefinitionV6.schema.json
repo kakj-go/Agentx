@@ -1,0 +1,108 @@
+{
+  "$defs": {
+    "ResourceReferenceV1": {
+      "additionalProperties": false,
+      "properties": {
+        "operation": {
+          "type": "string"
+        },
+        "resourceId": {
+          "type": "string"
+        },
+        "resourceType": {
+          "type": "string"
+        },
+        "resourceVersionId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "resourceType",
+        "resourceId",
+        "resourceVersionId",
+        "operation"
+      ],
+      "type": "object"
+    },
+    "SessionPolicyModeV1": {
+      "enum": [
+        "application_session",
+        "invocation"
+      ],
+      "type": "string"
+    },
+    "SessionPolicyV1": {
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "$ref": "#/$defs/SessionPolicyModeV1"
+        }
+      },
+      "required": [
+        "mode"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {
+      "type": "string"
+    },
+    "knowledge": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/ResourceReferenceV1"
+      },
+      "type": "array"
+    },
+    "longTermMemory": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ResourceReferenceV1"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "mcpTools": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/ResourceReferenceV1"
+      },
+      "type": "array"
+    },
+    "model": {
+      "$ref": "#/$defs/ResourceReferenceV1"
+    },
+    "sessionPolicy": {
+      "$ref": "#/$defs/SessionPolicyV1"
+    },
+    "skills": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/ResourceReferenceV1"
+      },
+      "type": "array"
+    },
+    "workspaceSandbox": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ResourceReferenceV1"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "apiVersion",
+    "model",
+    "sessionPolicy"
+  ],
+  "title": "AgentDefinitionV6",
+  "type": "object"
+}

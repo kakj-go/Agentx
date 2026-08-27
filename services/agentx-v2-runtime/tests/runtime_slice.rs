@@ -1,8 +1,8 @@
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     fmt,
-    sync::Arc,
     sync::atomic::{AtomicBool, Ordering},
+    sync::{Arc, Mutex},
     time::Duration,
 };
 
@@ -30,6 +30,7 @@ use agentx_runtime_contracts::{
 };
 use agentx_v2_runtime::{
     RuntimeState,
+    agent_session_queue::wake_pending_sessions,
     auth::RuntimeTrust,
     error::RuntimeError,
     execution::{
@@ -105,7 +106,17 @@ struct StubTriggerProvider {
 enum StubWorkerMode {
     Reject,
     Agent(Arc<std::sync::atomic::AtomicUsize>),
+    AgentAuthorization(Arc<AgentAuthorizationProbe>),
     Evaluator,
+}
+
+struct AgentAuthorizationProbe {
+    pool: MySqlPool,
+    tenant_id: Uuid,
+    revoked_grant_id: Uuid,
+    tool_to_call: String,
+    model_calls: std::sync::atomic::AtomicUsize,
+    visible_tools: Mutex<Vec<Vec<String>>>,
 }
 
 struct StubWorkerProvider {
@@ -138,12 +149,14 @@ impl WorkerProvider for StubWorkerProvider {
                 "finishReason":"stop",
                 "partial":false
             }),
-            StubWorkerMode::Agent(calls) if endpoint.ends_with("/model") => {
-                if calls.fetch_add(1, Ordering::SeqCst) == 0 {
-                    json!({"toolCall":{"query":"agentx"},"usage":{"inputTokens":5,"outputTokens":5,"totalTokens":10}})
-                } else {
-                    json!({"done":true,"answer":"agentx-v2","usage":{"inputTokens":5,"outputTokens":5,"totalTokens":10}})
-                }
+            StubWorkerMode::Agent(calls) if endpoint.ends_with("/chat/completions") => {
+                let index = calls.fetch_add(1, Ordering::SeqCst);
+                json!({
+                    "id":format!("fixture-response-{index}"),
+                    "object":"chat.completion",
+                    "choices":[{"index":0,"message":{"role":"assistant","content":if index == 0 { "first-turn" } else { "second-turn" }},"finish_reason":"stop"}],
+                    "usage":{"prompt_tokens":5,"completion_tokens":5,"total_tokens":10}
+                })
             }
             StubWorkerMode::Agent(_) if endpoint.ends_with("/mcp") => {
                 if body.get("id").is_none() {
@@ -159,10 +172,66 @@ impl WorkerProvider for StubWorkerProvider {
                     "unexpected Agent fixture endpoint: {endpoint}"
                 )));
             }
+            StubWorkerMode::AgentAuthorization(probe)
+                if endpoint.ends_with("/chat/completions") =>
+            {
+                let index = probe.model_calls.fetch_add(1, Ordering::SeqCst);
+                let visible = body
+                    .get("tools")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|tool| {
+                        tool.pointer("/function/name")
+                            .and_then(Value::as_str)
+                            .map(str::to_owned)
+                    })
+                    .collect::<Vec<_>>();
+                probe.visible_tools.lock().unwrap().push(visible);
+                if index == 0 {
+                    sqlx::query("UPDATE resource_grant_projection SET status='revoked',policy_epoch=policy_epoch+1 WHERE tenant_id=? AND grant_id=?")
+                        .bind(probe.tenant_id)
+                        .bind(probe.revoked_grant_id)
+                        .execute(&probe.pool)
+                        .await
+                        .unwrap();
+                    json!({
+                        "id":"authorization-turn-1",
+                        "object":"chat.completion",
+                        "choices":[{"index":0,"message":{"role":"assistant","content":null,"tool_calls":[{"id":"call-authorized-tool","type":"function","function":{"name":probe.tool_to_call,"arguments":"{\"value\":\"ok\"}"}}]},"finish_reason":"tool_calls"}],
+                        "usage":{"prompt_tokens":5,"completion_tokens":5,"total_tokens":10}
+                    })
+                } else {
+                    json!({
+                        "id":"authorization-turn-2",
+                        "object":"chat.completion",
+                        "choices":[{"index":0,"message":{"role":"assistant","content":"authorized tool remained available"},"finish_reason":"stop"}],
+                        "usage":{"prompt_tokens":5,"completion_tokens":5,"total_tokens":10}
+                    })
+                }
+            }
+            StubWorkerMode::AgentAuthorization(_) if endpoint.ends_with("/mcp") => {
+                if body.get("id").is_none() {
+                    Value::Null
+                } else if body.get("method").and_then(Value::as_str) == Some("initialize") {
+                    json!({"jsonrpc":"2.0","id":body["id"],"result":{}})
+                } else {
+                    json!({"jsonrpc":"2.0","id":body["id"],"result":{"content":[{"type":"text","text":"tool-result"}]}})
+                }
+            }
+            StubWorkerMode::AgentAuthorization(_) => {
+                return Err(WorkerProviderError::Denied(format!(
+                    "unexpected Agent authorization fixture endpoint: {endpoint}"
+                )));
+            }
         };
+        let mut headers = reqwest::header::HeaderMap::new();
+        if let Some(request_id) = payload.get("id").and_then(Value::as_str) {
+            headers.insert("x-request-id", request_id.parse().unwrap());
+        }
         Ok(WorkerProviderResponse {
             status: reqwest::StatusCode::OK,
-            headers: reqwest::header::HeaderMap::new(),
+            headers,
             body: Bytes::from(serde_json::to_vec(&payload).unwrap()),
         })
     }
@@ -193,5 +262,6 @@ impl TriggerProvider for StubTriggerProvider {
 
 include!("runtime_slice/publish_and_suspension.rs");
 include!("runtime_slice/fork_sandbox_and_retention.rs");
+include!("runtime_slice/agent_attachments.rs");
 include!("runtime_slice/lifecycle_and_work_packages.rs");
 include!("runtime_slice/session_recovery_and_gc.rs");

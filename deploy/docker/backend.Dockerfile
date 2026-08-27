@@ -24,6 +24,12 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     else \
         cargo build --release --locked --bin "$APP" \
         && cp "target/release/$APP" /tmp/agentx-service; \
+    fi \
+    && if [ "$APP" = "platform-control" ]; then \
+        cargo build --release --locked --package platform-control --bin v2-04-fixture \
+        && cp target/release/v2-04-fixture /tmp/agentx-p3-fixture; \
+    else \
+        cp /bin/false /tmp/agentx-p3-fixture; \
     fi
 
 FROM debian:bookworm-slim AS runtime
@@ -33,6 +39,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /tmp/agentx-service /usr/local/bin/agentx-service
+COPY --from=builder /tmp/agentx-p3-fixture /usr/local/bin/agentx-p3-fixture
 
 ENV AGENTX_BIND_ADDR=0.0.0.0:8080
 EXPOSE 8080 3128 3129 9091 9092

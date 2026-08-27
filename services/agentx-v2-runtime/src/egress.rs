@@ -1,4 +1,4 @@
-use std::{env, fmt, sync::Arc, time::Duration};
+use std::{collections::BTreeMap, env, fmt, sync::Arc, time::Duration};
 
 use agentx_runtime_contracts::{
     EGRESS_RUNTIME_TOKEN_TTL_SECONDS, EGRESS_TOKEN_AUDIENCE, EGRESS_TOKEN_ISSUER,
@@ -13,6 +13,8 @@ use reqwest::{
     },
 };
 use serde::Serialize;
+use serde_json::Value;
+use tokio::sync::{Mutex, mpsc, oneshot};
 use uuid::Uuid;
 
 const MAX_PROVIDER_REDIRECTS: usize = 5;
@@ -52,6 +54,26 @@ pub struct ProviderHttpClient {
     key_id: Arc<str>,
     private_key_pem: Arc<Vec<u8>>,
     direct: reqwest::Client,
+    pub(crate) legacy_sse_sessions: Arc<Mutex<BTreeMap<String, mpsc::Sender<LegacySseExchange>>>>,
+}
+
+pub(crate) struct LegacySseExchange {
+    pub headers: reqwest::header::HeaderMap,
+    pub body: Value,
+    pub timeout: Duration,
+    pub response: oneshot::Sender<Result<LegacySseExchangeResponse, LegacySseExchangeError>>,
+}
+
+pub(crate) struct LegacySseExchangeResponse {
+    pub status: reqwest::StatusCode,
+    pub headers: reqwest::header::HeaderMap,
+    pub body: bytes::Bytes,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct LegacySseExchangeError {
+    pub message: String,
+    pub is_connect: bool,
 }
 
 pub struct ProviderRequestBuilder {
@@ -250,7 +272,26 @@ impl ProviderHttpClient {
             key_id: key_id.into(),
             private_key_pem: Arc::new(private_key_pem),
             direct,
+            legacy_sse_sessions: Arc::new(Mutex::new(BTreeMap::new())),
         })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn direct_for_test(address: std::net::SocketAddr) -> Self {
+        let direct = provider_builder()
+            .expect("test provider client")
+            .resolve("echo-mcp", address)
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .expect("test provider client build");
+        Self {
+            role: EgressRole::WorkflowWorker,
+            proxy_url: "http://127.0.0.1:1".parse().expect("test proxy URL"),
+            key_id: Arc::from("test-key"),
+            private_key_pem: Arc::new(Vec::new()),
+            direct,
+            legacy_sse_sessions: Arc::new(Mutex::new(BTreeMap::new())),
+        }
     }
 
     pub fn get(
@@ -374,8 +415,27 @@ pub fn validate_sandbox_manager_execute_url(endpoint: &str) -> Result<Url> {
     if url.query().is_some() || url.fragment().is_some() {
         bail!("Sandbox Manager endpoint query and fragment are forbidden");
     }
-    if url.path() != "/internal/runtime/v1/sandboxes:execute" {
-        bail!("Sandbox Manager endpoint path is not the runtime execute contract");
+    let path = url.path();
+    let process_action = path
+        .strip_prefix("/internal/runtime/v1/sandbox-process-sessions/")
+        .and_then(|tail| tail.rsplit_once(':'))
+        .is_some_and(|(id, action)| {
+            uuid::Uuid::parse_str(id).is_ok()
+                && matches!(
+                    action,
+                    "write" | "read" | "wait" | "interrupt" | "terminate" | "reconcile"
+                )
+        });
+    if !matches!(
+        path,
+        "/internal/runtime/v1/sandboxes:execute"
+            | "/internal/runtime/v1/sandboxes:acquire"
+            | "/internal/runtime/v1/sandboxes:tool"
+            | "/internal/runtime/v1/sandboxes:release"
+            | "/internal/runtime/v1/sandbox-process-sessions:start"
+    ) && !process_action
+    {
+        bail!("Sandbox Manager endpoint path is not an approved runtime contract");
     }
     let host = url
         .host_str()
@@ -436,12 +496,38 @@ mod tests {
     }
 
     #[test]
-    fn only_the_fixed_sandbox_manager_execute_endpoint_is_trusted() {
+    fn only_the_fixed_sandbox_manager_contract_endpoints_are_trusted() {
         assert!(
             validate_sandbox_manager_execute_url(
                 "http://sandbox-manager:8080/internal/runtime/v1/sandboxes:execute"
             )
             .is_ok()
+        );
+        for operation in ["acquire", "tool", "release"] {
+            assert!(
+                validate_sandbox_manager_execute_url(&format!(
+                    "http://sandbox-manager:8080/internal/runtime/v1/sandboxes:{operation}"
+                ))
+                .is_ok()
+            );
+        }
+        assert!(
+            validate_sandbox_manager_execute_url(
+                "http://sandbox-manager:8080/internal/runtime/v1/sandbox-process-sessions:start"
+            )
+            .is_ok()
+        );
+        assert!(
+            validate_sandbox_manager_execute_url(
+                "http://sandbox-manager:8080/internal/runtime/v1/sandbox-process-sessions/00000000-0000-0000-0000-000000000001:write"
+            )
+            .is_ok()
+        );
+        assert!(
+            validate_sandbox_manager_execute_url(
+                "http://sandbox-manager:8080/internal/runtime/v1/sandbox-process-sessions/not-a-uuid:terminate"
+            )
+            .is_err()
         );
         assert!(
             validate_sandbox_manager_execute_url(

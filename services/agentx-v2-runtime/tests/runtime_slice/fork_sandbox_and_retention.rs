@@ -519,8 +519,19 @@ async fn composite_child_uses_immutable_runtime_snapshot_and_merges_on_success(f
 async fn agent_worker_runs_a_bounded_tool_loop_and_persists_usage(fixture: &Fixture) {
     let model_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let endpoint = "https://provider.example.test";
+    // Trace projection is anchored to an existing workflow execution. The
+    // synthetic claim may use a fresh attempt/node id, but its execution must
+    // resolve through the Runtime authority row.
+    let execution_id: Uuid = sqlx::query_scalar(
+        "SELECT id FROM workflow_executions WHERE tenant_id=? ORDER BY created_at LIMIT 1",
+    )
+    .bind(fixture.tenant_id)
+    .fetch_one(&fixture.state.pool)
+    .await
+    .unwrap();
+    let model_id = Uuid::now_v7();
     let model_configuration = agentx_runtime_contracts::RuntimeResourceConfigurationV1::Model {
-        provider: "fixture".into(),
+        provider: "openai_compatible".into(),
         endpoint: format!("{endpoint}/model"),
         model: "fixture-model".into(),
         price: agentx_runtime_contracts::RuntimeModelPriceV1 {
@@ -529,14 +540,6 @@ async fn agent_worker_runs_a_bounded_tool_loop_and_persists_usage(fixture: &Fixt
             input_per_million: "0.5".into(),
             output_per_million: "0.5".into(),
         },
-        credential: None,
-    };
-    let mcp_configuration = agentx_runtime_contracts::RuntimeResourceConfigurationV1::Mcp {
-        endpoint: format!("{endpoint}/mcp"),
-        tool_name: "search".into(),
-        tool_version: "1".into(),
-        input_schema_hash: agentx_runtime_contracts::content_hash(&json!({"type":"object"}))
-            .unwrap(),
         credential: None,
     };
     let attempt_id = Uuid::now_v7();
@@ -553,7 +556,7 @@ async fn agent_worker_runs_a_bounded_tool_loop_and_persists_usage(fixture: &Fixt
             protocol_version: 1,
             task_id: Uuid::now_v7(),
             tenant_id: fixture.tenant_id,
-            execution_id: Uuid::now_v7(),
+            execution_id,
             node_execution_id,
             attempt_id,
             capability: agentx_node_protocol::NodeCapability::Agent,
@@ -568,7 +571,18 @@ async fn agent_worker_runs_a_bounded_tool_loop_and_persists_usage(fixture: &Fixt
         node_version: 1,
         run_index: 0,
         iteration_index: 0,
-        node_parameters: json!({"budget":{"maxIterations":3,"maxTokens":100,"maxCostMicros":100}}),
+        node_parameters: json!({
+            "budget":{"maxIterations":3,"maxModelCalls":3,"maxTokens":100,"maxCostMicros":100},
+            "_agent":{
+                "contractVersion":"1.1",
+                "bundleHash":"bundle-fixture",
+                "definitionHash":"definition-fixture",
+                "stableAgentNodeKey":"agent-fixture",
+                "sessionPolicy":"invocation",
+                "model":{"resourceId":model_id.to_string(),"resourceVersionId":"model:1"},
+                "canvasAttachments":[],"coreTools":[],"followUpInputs":[{"messageId":"follow-up-1","role":"user","content":"continue","toolCalls":[],"toolCallId":null,"isError":false}]
+            }
+        }),
         per_item_parameters: vec![],
         string_conversions: json!({"common":[],"perItem":[]}),
         inputs: BTreeMap::from([(
@@ -581,26 +595,41 @@ async fn agent_worker_runs_a_bounded_tool_loop_and_persists_usage(fixture: &Fixt
         resources: vec![
             agentx_runtime_contracts::RuntimeResourceBindingV1 {
                 resource_kind: agentx_runtime_contracts::RuntimeResourceKindV1::Model,
-                resource_id: Uuid::now_v7(),
+                resource_id: model_id,
                 resource_version: "model:1".into(),
                 state_epoch: 1,
                 content_hash: agentx_runtime_contracts::content_hash(&model_configuration).unwrap(),
                 configuration: model_configuration,
                 object_ids: vec![],
             },
-            agentx_runtime_contracts::RuntimeResourceBindingV1 {
-                resource_kind: agentx_runtime_contracts::RuntimeResourceKindV1::Mcp,
-                resource_id: Uuid::now_v7(),
-                resource_version: "mcp:1".into(),
-                state_epoch: 1,
-                content_hash: agentx_runtime_contracts::content_hash(&mcp_configuration).unwrap(),
-                configuration: mcp_configuration,
-                object_ids: vec![],
-            },
         ],
         context: json!({}),
     };
     let worker = test_worker(fixture, StubWorkerMode::Agent(model_calls.clone()));
+    let mut unsupported_contract_claim = claim.clone();
+    unsupported_contract_claim.node_parameters["_agent"]["contractVersion"] = json!("1.0");
+    let unsupported_contract = worker.execute(&unsupported_contract_claim).await;
+    assert_eq!(
+        unsupported_contract.error_code.as_deref(),
+        Some("AGENT_CORE_CONTRACT_UNSUPPORTED")
+    );
+    let mut attachment_claim = claim.clone();
+    attachment_claim.node_parameters["_agent"]["canvasAttachments"] =
+        json!([{"resourceType":"mcp_tool"}]);
+    let rejected_attachment = worker.execute(&attachment_claim).await;
+    assert_eq!(
+        rejected_attachment.error_code.as_deref(),
+        Some("AGENT_ATTACHMENT_REGISTRY_MISSING")
+    );
+    let mut sandbox_claim = claim.clone();
+    sandbox_claim.node_parameters["_agent"]["workspaceSandbox"] =
+        json!({"resourceId":Uuid::now_v7(),"resourceVersionId":"sandbox:1"});
+    let rejected_sandbox = worker.execute(&sandbox_claim).await;
+    assert_eq!(
+        rejected_sandbox.error_code.as_deref(),
+        Some("AGENT_WORKSPACE_PROFILE_BINDING_MISSING")
+    );
+    assert_eq!(model_calls.load(Ordering::SeqCst), 0);
     let output = worker.execute(&claim).await;
     assert_eq!(
         output.status,
@@ -609,7 +638,13 @@ async fn agent_worker_runs_a_bounded_tool_loop_and_persists_usage(fixture: &Fixt
         output.error_code,
         output.error_message
     );
-    assert_eq!(model_calls.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        model_calls.load(Ordering::SeqCst),
+        2,
+        "agent output: {:?} {:?}",
+        output.error_code,
+        output.error_message
+    );
     let run = sqlx::query(
         "SELECT iteration_count,model_call_count,tool_call_count,input_tokens,cost_micros,status FROM agent_runs WHERE node_execution_id=?",
     )
@@ -619,8 +654,8 @@ async fn agent_worker_runs_a_bounded_tool_loop_and_persists_usage(fixture: &Fixt
     .unwrap();
     assert_eq!(run.try_get::<u32, _>("iteration_count").unwrap(), 2);
     assert_eq!(run.try_get::<u32, _>("model_call_count").unwrap(), 2);
-    assert_eq!(run.try_get::<u32, _>("tool_call_count").unwrap(), 1);
-    assert_eq!(run.try_get::<u64, _>("input_tokens").unwrap(), 20);
+    assert_eq!(run.try_get::<u32, _>("tool_call_count").unwrap(), 0);
+    assert_eq!(run.try_get::<u64, _>("input_tokens").unwrap(), 10);
     assert_eq!(run.try_get::<u64, _>("cost_micros").unwrap(), 10);
     assert_eq!(run.try_get::<String, _>("status").unwrap(), "succeeded");
     let call_count: i64 =
@@ -629,15 +664,155 @@ async fn agent_worker_runs_a_bounded_tool_loop_and_persists_usage(fixture: &Fixt
             .fetch_one(&fixture.state.pool)
             .await
             .unwrap();
-    assert_eq!(call_count, 3);
+    assert_eq!(call_count, 2);
+    let ledger = sqlx::query("SELECT COUNT(DISTINCT provider_request_id) provider_requests,CAST(SUM(input_tokens) AS UNSIGNED) input_tokens,CAST(SUM(output_tokens) AS UNSIGNED) output_tokens,CAST(SUM(cost_micros) AS UNSIGNED) cost_micros FROM runtime_calls WHERE attempt_id=? AND status='succeeded'")
+        .bind(attempt_id)
+        .fetch_one(&fixture.state.pool)
+        .await
+        .unwrap();
+    assert_eq!(ledger.try_get::<i64, _>("provider_requests").unwrap(), 2);
+    assert_eq!(ledger.try_get::<u64, _>("input_tokens").unwrap(), 10);
+    assert_eq!(ledger.try_get::<u64, _>("output_tokens").unwrap(), 10);
+    assert_eq!(ledger.try_get::<u64, _>("cost_micros").unwrap(), 10);
+
+    let recovered = worker.execute(&claim).await;
+    assert_eq!(
+        recovered.status,
+        WorkerResultStatusV1::Succeeded,
+        "Agent recovery failed: {:?} {:?}",
+        recovered.error_code,
+        recovered.error_message
+    );
+    assert_eq!(
+        model_calls.load(Ordering::SeqCst),
+        2,
+        "a recovered Agent run must reconcile settled Model Effects"
+    );
+    let recovered_call_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM runtime_calls WHERE attempt_id=?")
+            .bind(attempt_id)
+            .fetch_one(&fixture.state.pool)
+            .await
+            .unwrap();
+    assert_eq!(recovered_call_count, 2);
+    let core_trace_events: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM execution_events WHERE tenant_id=? AND execution_id=? AND event_type IN ('agent_run.started','agent_turn.started','agent_model.intent','agent_model.settled','agent_message.added','agent_run.finished')")
+        .bind(fixture.tenant_id)
+        .bind(claim.task.execution_id)
+        .fetch_one(&fixture.state.pool)
+        .await
+        .unwrap();
+    assert!(core_trace_events >= 6, "Core events must be projected into Trace");
+}
+
+async fn application_session_agent_restores_context_across_executions(fixture: &Fixture) {
+    let session_id: Uuid = sqlx::query_scalar("SELECT session_id FROM application_invocations WHERE tenant_id=? AND session_id IS NOT NULL GROUP BY session_id HAVING COUNT(*)>=2 ORDER BY MIN(created_at) LIMIT 1")
+        .bind(fixture.tenant_id)
+        .fetch_one(&fixture.state.pool)
+        .await
+        .unwrap();
+    let execution_ids = sqlx::query_scalar::<_, Uuid>("SELECT e.id FROM workflow_executions e JOIN application_invocations i ON i.tenant_id=e.tenant_id AND i.id=e.invocation_id WHERE e.tenant_id=? AND i.session_id=? ORDER BY e.created_at,e.id LIMIT 2")
+        .bind(fixture.tenant_id)
+        .bind(session_id)
+        .fetch_all(&fixture.state.pool)
+        .await
+        .unwrap();
+    assert_eq!(execution_ids.len(), 2);
+
+    let model_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let model_id = Uuid::now_v7();
+    let configuration = agentx_runtime_contracts::RuntimeResourceConfigurationV1::Model {
+        provider: "openai_compatible".into(),
+        endpoint: "https://provider.example.test/model".into(),
+        model: "fixture-model".into(),
+        price: agentx_runtime_contracts::RuntimeModelPriceV1 {
+            version_id: "price:1".into(),
+            currency: "USD".into(),
+            input_per_million: "0.5".into(),
+            output_per_million: "0.5".into(),
+        },
+        credential: None,
+    };
+    let worker = test_worker(fixture, StubWorkerMode::Agent(model_calls.clone()));
+    for (index, execution_id) in execution_ids.into_iter().enumerate() {
+        let attempt_id = Uuid::now_v7();
+        let claim = agentx_v2_runtime::engine::ClaimedWorkerAttempt {
+            lease: agentx_runtime_contracts::WorkerAttemptLeaseV1 {
+                protocol_version: 1,
+                attempt_id,
+                worker_id: Uuid::now_v7(),
+                fencing_token: index as u64 + 1,
+                locked_until: OffsetDateTime::now_utc() + time::Duration::seconds(30),
+            },
+            task: agentx_runtime_contracts::WorkerTaskV1 {
+                protocol_version: 1,
+                task_id: Uuid::now_v7(),
+                tenant_id: fixture.tenant_id,
+                execution_id,
+                node_execution_id: Uuid::now_v7(),
+                attempt_id,
+                capability: agentx_node_protocol::NodeCapability::Agent,
+                bundle_id: Uuid::now_v7(),
+                work_package_id: None,
+                state_version: 1,
+                compatibility_hash: agentx_runtime_contracts::content_hash(&json!({"agent":1})).unwrap(),
+                deadline_at: OffsetDateTime::now_utc() + time::Duration::seconds(30),
+            },
+            node_type: "agent".into(),
+            node_version: 1,
+            run_index: 0,
+            iteration_index: 0,
+            node_parameters: json!({
+                "budget":{"maxIterations":2,"maxModelCalls":2,"maxTokens":100,"maxCostMicros":100},
+                "_agent":{
+                    "contractVersion":"1.1","bundleHash":"session-bundle","definitionHash":"session-definition",
+                    "stableAgentNodeKey":"session-agent","sessionPolicy":"application_session",
+                    "model":{"resourceId":model_id.to_string(),"resourceVersionId":"model:1"},
+                    "canvasAttachments":[],"coreTools":[]
+                }
+            }),
+            per_item_parameters: vec![],
+            string_conversions: json!({"common":[],"perItem":[]}),
+            inputs: BTreeMap::from([(
+                "main".into(),
+                vec![agentx_node_protocol::Item {
+                    json: json!(format!("session-prompt-{index}")),
+                    ..Default::default()
+                }],
+            )]),
+            resources: vec![agentx_runtime_contracts::RuntimeResourceBindingV1 {
+                resource_kind: agentx_runtime_contracts::RuntimeResourceKindV1::Model,
+                resource_id: model_id,
+                resource_version: "model:1".into(),
+                state_epoch: 1,
+                content_hash: agentx_runtime_contracts::content_hash(&configuration).unwrap(),
+                configuration: configuration.clone(),
+                object_ids: vec![],
+            }],
+            context: json!({}),
+        };
+        let output = worker.execute(&claim).await;
+        assert_eq!(output.status, WorkerResultStatusV1::Succeeded);
+    }
+    assert_eq!(model_calls.load(Ordering::SeqCst), 2);
+    let entries: Vec<Value> = sqlx::query_scalar("SELECT payload_json FROM agent_session_entries WHERE tenant_id=? AND application_id=? AND session_key=? AND stable_agent_node_key='session-agent' AND entry_kind IN ('message.user','message.assistant') ORDER BY sequence_number")
+        .bind(fixture.tenant_id)
+        .bind(fixture.application_id)
+        .bind(format!("application:{}:{}", fixture.application_id, session_id))
+        .fetch_all(&fixture.state.pool)
+        .await
+        .unwrap();
+    assert!(entries.iter().any(|message| message["content"] == "session-prompt-0"));
+    assert!(entries.iter().any(|message| message["content"] == "session-prompt-1"));
 }
 
 async fn skill_worker_loads_and_verifies_the_runtime_object_closure(fixture: &Fixture) {
     let entrypoint_id = Uuid::now_v7();
-    let program = agentx_runtime_contracts::RuntimeSkillProgramV1 {
-        schema_version: 1,
+    let program = agentx_runtime_contracts::RuntimeSkillProgramV2 {
+        schema_version: 2,
+        skill_version_id: entrypoint_id,
         instructions: "Return the immutable Skill result".into(),
-        dependency_object_ids: vec![],
+        assets: vec![],
+        dependencies: vec![],
     };
     let bytes = agentx_runtime_contracts::canonical_bytes(&program).unwrap();
     let raw_hash = format!("sha256:{:x}", Sha256::digest(&bytes));
@@ -647,7 +822,7 @@ async fn skill_worker_loads_and_verifies_the_runtime_object_closure(fixture: &Fi
         object_id: entrypoint_id,
         content_hash: agentx_runtime_contracts::ContentHash::parse(&raw_hash).unwrap(),
         size_bytes: bytes.len() as u64,
-        media_type: "application/vnd.agentx.skill-program.v1+json".into(),
+        media_type: "application/vnd.agentx.skill-program.v2+json".into(),
         object_key: format!(
             "runtime/{}/{}/{}",
             fixture.tenant_id,
@@ -672,7 +847,9 @@ async fn skill_worker_loads_and_verifies_the_runtime_object_closure(fixture: &Fi
     .unwrap();
     let configuration = agentx_runtime_contracts::RuntimeResourceConfigurationV1::Skill {
         entrypoint_object_id: entrypoint_id,
+        entrypoint_content_hash: object.content_hash.clone(),
         dependency_object_ids: vec![],
+        dependencies: vec![],
     };
     let skill_binding_id = Uuid::now_v7();
     let attempt_id = Uuid::now_v7();
@@ -798,6 +975,14 @@ async fn sandbox_manager_is_fenced_and_idempotent(fixture: &Fixture) {
             }),
         )
         .route(
+            "/v1/sandboxes/{id}/proxy/44772/pty/{process_id}",
+            axum::routing::delete(
+                |Path((_id, process_id)): Path<(String, String)>| async move {
+                    Json(json!({"sessionId":process_id,"terminated":true}))
+                },
+            ),
+        )
+        .route(
             "/v1/sandboxes/{id}",
             axum::routing::delete(|Path(id): Path<String>| async move {
                 Json(json!({"sandboxId":id,"terminated":true}))
@@ -866,6 +1051,9 @@ async fn sandbox_manager_is_fenced_and_idempotent(fixture: &Fixture) {
         provider_api_key: None,
         provider_secure_access: false,
         owner: Uuid::now_v7(),
+        vault: None,
+        objects: std::sync::Arc::new(object_store::memory::InMemory::new()),
+        process_sockets: Default::default(),
     };
     let manager = agentx_v2_runtime::sandbox::router(manager_state.clone());
     let first = call_sandbox_manager(manager.clone(), &request).await;
@@ -900,6 +1088,76 @@ async fn sandbox_manager_is_fenced_and_idempotent(fixture: &Fixture) {
     assert_eq!(replay_after_takeover.0, axum::http::StatusCode::OK);
     assert!(replay_after_takeover.1.replayed);
     assert_eq!(replay_after_takeover.1.output, first.1.output);
+
+    let process_session_id = Uuid::now_v7();
+    let process_lease_id = Uuid::now_v7();
+    let agent_run_id = Uuid::now_v7();
+    sqlx::query("INSERT INTO sandbox_process_sessions(process_session_id,identity_hash,tenant_id,agent_run_id,mcp_server_version_id,sandbox_profile_version_id,profile_json,command_json,credential_refs_json,sandbox_id,provider_operation_id,status,lease_id,attempt_id,worker_id,fencing_token,lease_expires_at,process_expires_at) VALUES(?,REPEAT('a',64),?,?,?,?,?,?,?,'sandbox-v2','process-v2','running',?,?,?,?,DATE_ADD(UTC_TIMESTAMP(6),INTERVAL 30 SECOND),DATE_ADD(UTC_TIMESTAMP(6),INTERVAL 5 MINUTE))")
+        .bind(process_session_id)
+        .bind(fixture.tenant_id)
+        .bind(agent_run_id)
+        .bind(Uuid::now_v7())
+        .bind(Uuid::now_v7())
+        .bind(json!({"profile":"runtime"}))
+        .bind(json!({"argv":["/usr/bin/mcp"]}))
+        .bind(json!([]))
+        .bind(process_lease_id)
+        .bind(attempt_id)
+        .bind(replacement_worker_id)
+        .bind(8_u64)
+        .execute(&fixture.state.pool)
+        .await
+        .unwrap();
+    let proof = agentx_runtime_contracts::ProcessSessionProofV1 {
+        api_version: 1,
+        tenant_id: fixture.tenant_id,
+        execution_id,
+        node_execution_id,
+        attempt_id,
+        agent_run_id,
+        worker_id: replacement_worker_id,
+        fencing_token: 8,
+        process_session_id,
+        lease_id: process_lease_id,
+        operation_id: "process:terminate".into(),
+        effect_id: "process:terminate:effect".into(),
+        idempotency_key: "process:terminate:idempotency".into(),
+        deadline: OffsetDateTime::now_utc() + time::Duration::seconds(30),
+    };
+    let mut stale_proof = proof.clone();
+    stale_proof.fencing_token = 7;
+    let stale_process = process_control_request(
+        manager.clone(),
+        process_session_id,
+        "terminate",
+        &agentx_runtime_contracts::ProcessSessionControlRequestV1 { proof: stale_proof },
+    )
+    .await;
+    assert_eq!(stale_process.status(), axum::http::StatusCode::CONFLICT);
+    let terminated_process = process_control_request(
+        manager.clone(),
+        process_session_id,
+        "terminate",
+        &agentx_runtime_contracts::ProcessSessionControlRequestV1 { proof },
+    )
+    .await;
+    assert_eq!(terminated_process.status(), axum::http::StatusCode::OK);
+    let terminated_process_body =
+        to_bytes(terminated_process.into_body(), 1024 * 1024).await.unwrap();
+    let terminated_process: agentx_runtime_contracts::ProcessSessionControlResponseV1 =
+        serde_json::from_slice(&terminated_process_body).unwrap();
+    assert_eq!(
+        terminated_process.status,
+        agentx_runtime_contracts::ProcessSessionStatusV1::Exited
+    );
+    let persisted_process: (String, Option<i64>) = sqlx::query_as(
+        "SELECT status,exit_code FROM sandbox_process_sessions WHERE process_session_id=?",
+    )
+    .bind(process_session_id)
+    .fetch_one(&fixture.state.pool)
+    .await
+    .unwrap();
+    assert_eq!(persisted_process, ("exited".into(), Some(143)));
 
     let abandoned_attempt_id = Uuid::now_v7();
     sqlx::query(
@@ -1153,6 +1411,25 @@ async fn sandbox_request(
                 .header("content-type", "application/json")
                 .body(Body::from(serde_json::to_vec(request).unwrap()))
                 .unwrap(),
+        )
+        .await
+        .unwrap()
+}
+
+async fn process_control_request(
+    manager: Router,
+    process_session_id: Uuid,
+    action: &str,
+    request: &agentx_runtime_contracts::ProcessSessionControlRequestV1,
+) -> axum::response::Response {
+    manager
+        .oneshot(
+            Request::post(format!(
+                "/internal/runtime/v1/sandbox-process-sessions/{process_session_id}:{action}"
+            ))
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_vec(request).unwrap()))
+            .unwrap(),
         )
         .await
         .unwrap()

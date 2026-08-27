@@ -51,7 +51,7 @@ export function definitionIssues(document: StudioDocument): StudioIssue[] {
     else if (keys.has(node.key)) issues.push(nodeIssue("DUPLICATE_NODE_KEY", "key", "Node key must be unique within the workflow."));
     keys.add(node.key);
 
-    if (node.type === "manual_trigger" || node.type === "remote_trigger") issues.push(nodeIssue("TRIGGER_NODE_REMOVED", "type", "Trigger nodes are not supported in Workflow Definition 5.0."));
+    if (node.type === "manual_trigger" || node.type === "remote_trigger") issues.push(nodeIssue("TRIGGER_NODE_REMOVED", "type", "Trigger nodes are not supported in Workflow Definition 6.0."));
     if (!NODE_TYPE_PATTERN.test(node.type)) issues.push(nodeIssue("INVALID_NODE_TYPE", "type", "Node type may contain only lowercase letters, digits, dots, underscores, and hyphens."));
     if (!node.name.trim() || [...node.name].length > 160) issues.push(nodeIssue("INVALID_NODE_NAME", "name", "Node name must contain 1 to 160 characters."));
     if (!isUnsignedInteger(node.typeVersion, 32) || node.typeVersion === 0) issues.push(nodeIssue("UNSUPPORTED_NODE_VERSION", "typeVersion", "Node type version must be greater than zero."));
@@ -69,6 +69,20 @@ export function definitionIssues(document: StudioDocument): StudioIssue[] {
     if (isResourceNode(node.type)) {
       for (const reference of node.resourceReferences) {
         if (!referenceMatchesNode(node.type, reference)) issues.push(nodeIssue("INVALID_RESOURCE_REFERENCE", "resourceReferences", "Resource type or operation does not match the node type."));
+      }
+    }
+    if (node.type === "agent") {
+      const sessionMode = (node.parameters.sessionPolicy as { mode?: unknown } | undefined)?.mode;
+      if (sessionMode !== "application_session" && sessionMode !== "invocation") issues.push(nodeIssue("AGENT_SESSION_POLICY_INVALID", "parameters.sessionPolicy", "Select application_session or invocation explicitly."));
+      const modelReferences = node.resourceReferences.filter((reference) => !reference.bindingId && !reference.bindingRole && reference.resourceType === "model");
+      const sandboxReferences = node.resourceReferences.filter((reference) => !reference.bindingId && !reference.bindingRole && reference.resourceType === "sandbox_profile");
+      const memoryReferences = node.resourceReferences.filter((reference) => reference.bindingRole === "long_term_memory");
+      if (modelReferences.length !== 1) issues.push(nodeIssue("AGENT_MODEL_REQUIRED", "resourceReferences.model", "Agent requires exactly one internal Model reference."));
+      if (sandboxReferences.length > 1 || memoryReferences.length > 1) issues.push(nodeIssue("AGENT_RESOURCE_SLOT_INVALID", "resourceReferences", "Agent accepts at most one Workspace Sandbox and one Long-term Memory attachment."));
+      for (const reference of node.resourceReferences) {
+        const inspector = reference.resourceType === "model" || reference.resourceType === "sandbox_profile";
+        if (inspector && (reference.bindingId || reference.bindingRole || !reference.resourceVersionId)) issues.push(nodeIssue("AGENT_RESOURCE_SLOT_INVALID", "resourceReferences", "Inspector resources must use an exact version and must not have bindingId or bindingRole."));
+        if (!inspector && (!reference.bindingId || !reference.bindingRole)) issues.push(nodeIssue("AGENT_RESOURCE_SLOT_INVALID", "resourceReferences", "Canvas attachments require bindingId and bindingRole."));
       }
     }
   }
@@ -118,7 +132,14 @@ function referenceMatchesNode(nodeType: string, reference: ResourceReference) {
   if (nodeType === "rag") return reference.resourceType === "rag" && (reference.operation === "read" || reference.operation === "write");
   if (nodeType === "memory") return reference.resourceType === "memory" && (reference.operation === "read" || reference.operation === "write");
   if (nodeType === "code") return (reference.resourceType === "sandbox_profile" || reference.resourceType === "credential") && reference.operation === "use";
-  return nodeType === "agent" && ["model", "mcp_tool", "skill", "rag", "memory", "credential"].includes(reference.resourceType);
+  if (nodeType !== "agent") return false;
+  if (!reference.bindingId && !reference.bindingRole && reference.resourceType === "model") return reference.operation === "use" && Boolean(reference.resourceVersionId);
+  if (!reference.bindingId && !reference.bindingRole && reference.resourceType === "sandbox_profile") return reference.operation === "use" && Boolean(reference.resourceVersionId);
+  const role = reference.bindingRole;
+  if (role === "mcp_tools") return Boolean(reference.bindingId) && reference.resourceType === "mcp_tool" && reference.operation === "use";
+  if (role === "skills") return Boolean(reference.bindingId) && reference.resourceType === "skill" && reference.operation === "use";
+  if (role === "knowledge") return Boolean(reference.bindingId) && reference.resourceType === "rag" && reference.operation === "read";
+  return role === "long_term_memory" && Boolean(reference.bindingId) && reference.resourceType === "memory" && (reference.operation === "read" || reference.operation === "write");
 }
 
 function isResourceNode(nodeType: string) {

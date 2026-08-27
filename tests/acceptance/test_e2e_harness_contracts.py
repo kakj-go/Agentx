@@ -78,8 +78,28 @@ def test_lightrag_tokenizer_cache_is_pinned_and_separate_from_the_runtime_pod() 
     assert {item["name"]: item["value"] for item in pod_spec["containers"][0]["env"]}["TIKTOKEN_CACHE_DIR"] == (
         "/app/data/tiktoken-cache"
     )
-    download = cache_job["spec"]["template"]["spec"]["containers"][0]["args"][0]
-    assert "446a9538cb6c348e3516120d7c08b09f57c36495e2acfffe59a5bf8b0cfb1a2d" in download
-    assert "--retry 5 --retry-delay 2 --retry-all-errors" in download
+    container = cache_job["spec"]["template"]["spec"]["containers"][0]
+    assert container["image"] == "agentx/lightrag:dev"
+    copy = container["args"][0]
+    assert "/opt/tiktoken-cache/fb374d419588a4632f3f557e76b4b70aebbca790" in copy
+    assert "446a9538cb6c348e3516120d7c08b09f57c36495e2acfffe59a5bf8b0cfb1a2d" in copy
+    assert "curl" not in copy
     assert cache_job["spec"]["backoffLimit"] == 5
     assert policy["spec"]["podSelector"]["matchLabels"]["app.kubernetes.io/name"] == "lightrag-tokenizer-cache"
+
+
+def test_local_image_build_includes_the_runtime_node_fixture() -> None:
+    xtask = Path("xtask/src/main.rs").read_text(encoding="utf-8")
+    assert '== Some("local")' in xtask
+    assert 'for fixture in ["echo-node", "echo-mcp"]' in xtask
+    assert 'selected.push(fixture.to_owned())' in xtask
+
+    rendered = run(("kubectl", "kustomize", "deploy/kustomize/e2e-fixtures/runtime-providers"), timeout=120).stdout
+    resources = [document for document in yaml.safe_load_all(rendered) if isinstance(document, dict)]
+    deployment = next(
+        resource
+        for resource in resources
+        if resource.get("kind") == "Deployment" and resource.get("metadata", {}).get("name") == "echo-node"
+    )
+    container = deployment["spec"]["template"]["spec"]["containers"][0]
+    assert container["image"] == "agentx/echo-node:dev"

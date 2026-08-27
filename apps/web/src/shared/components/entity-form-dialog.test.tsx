@@ -6,6 +6,16 @@ import { ApiClientError } from '../api/client'
 import { EntityFormDialog } from './entity-form-dialog'
 
 describe('EntityFormDialog field errors', () => {
+  it('does not validate a required field hidden by another field value', async () => {
+    const submit = vi.fn().mockResolvedValue(undefined)
+    render(<EntityFormDialog cancelLabel="Cancel" fields={[
+      { name: 'transport', label: 'Transport', defaultValue: 'http' },
+      { name: 'runtimeSandbox', label: 'Runtime Sandbox', required: true, visible: (values) => values.transport === 'stdio' },
+    ]} onClose={vi.fn()} onSubmit={submit} open submitLabel="Save" title="Create" />)
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(submit).toHaveBeenCalledWith({ transport: 'http', runtimeSandbox: '' }))
+  })
+
   it('marks and validates required input and select fields before submission', async () => {
     const submit = vi.fn()
     render(<EntityFormDialog cancelLabel="Cancel" fields={[{ name: 'name', label: 'Name', required: true }, { name: 'department', label: 'Department', type: 'select', required: true, options: [{ value: 'one', label: 'One' }] }]} onClose={vi.fn()} onSubmit={submit} open submitLabel="Save" title="Create" />)

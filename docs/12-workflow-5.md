@@ -21,6 +21,8 @@ Runtime 对一次节点激活同时生成 `ResolvedParameters.common` 与按输�
 
 `ValueSelector` 包含 namespace、可选 stable `sourceNodeId`、port、run、item 与类型化 path。可访问命名空间仅为 `inputs`、`outputs`、`contexts`、`execution`、`item` 和 `loop`。Output 引用必须指向拓扑可达的前驱节点；显示名称不参与持久身份。
 
+Studio 在字段的 `allowedNamespaces` 包含 `execution` 时显示统一“运行信息”目录，按执行信息、当前节点、工作流、触发信息、发起人、应用与会话分组。Prompt、URL、Header、Body、条件、映射、Projection、Context Write 和 End Output 可按自身类型契约开放该命名空间；Credential、资源选择、固定绑定及非 DynamicValue 字段不得开放。可能缺失的人工发起人、会话和外部用户继续使用既有 `error/null/default/omit` 策略。
+
 缺失策略为：
 
 - `error`：确定性失败。

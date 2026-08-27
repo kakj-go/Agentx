@@ -1,0 +1,56 @@
+{
+  "$defs": {
+    "CompactionKindV1": {
+      "enum": [
+        "threshold",
+        "overflow"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "cutEntryId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "kind": {
+      "$ref": "#/$defs/CompactionKindV1"
+    },
+    "retainedEntryIds": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "snapshotId": {
+      "type": "string"
+    },
+    "summaryHash": {
+      "type": "string"
+    },
+    "tokensAfter": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "tokensBefore": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "snapshotId",
+    "kind",
+    "summaryHash",
+    "retainedEntryIds",
+    "tokensBefore",
+    "tokensAfter"
+  ],
+  "title": "CompactionRegisterV1",
+  "type": "object"
+}

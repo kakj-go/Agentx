@@ -10,7 +10,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use sqlx::Row;
+use sqlx::{MySql, Row, Transaction};
 use time::OffsetDateTime;
 use uuid::Uuid;
 
@@ -45,6 +45,18 @@ pub fn routes() -> Router<ControlApiState> {
         .route(
             "/api/v1/workflows/{id}/resource-validation",
             get(validate_resources),
+        )
+        .route(
+            "/api/v1/departments/{id}/resource-options",
+            get(department_resource_options),
+        )
+        .route(
+            "/api/v1/departments/{id}/resource-authorizations",
+            post(authorize_department_resource),
+        )
+        .route(
+            "/api/v1/departments/{id}/resource-grant-requests",
+            post(create_department_request),
         )
         .route("/api/v1/resource-grant-requests", get(list_requests))
         .route("/api/v1/resource-grant-requests/{id}", get(get_request))
@@ -186,6 +198,38 @@ struct Requirement {
     operation: String,
     required_by: Option<Uuid>,
     owner_department_id: Uuid,
+}
+
+#[derive(Clone, Copy)]
+enum GrantSubject {
+    Department(Uuid),
+    WorkflowServiceIdentity {
+        workflow_id: Uuid,
+        identity_id: Uuid,
+    },
+}
+
+impl GrantSubject {
+    fn kind(self) -> &'static str {
+        match self {
+            Self::Department(_) => "department",
+            Self::WorkflowServiceIdentity { .. } => "workflow_service_identity",
+        }
+    }
+
+    fn id(self) -> Uuid {
+        match self {
+            Self::Department(id) => id,
+            Self::WorkflowServiceIdentity { identity_id, .. } => identity_id,
+        }
+    }
+
+    fn workflow(self) -> Option<Uuid> {
+        match self {
+            Self::Department(_) => None,
+            Self::WorkflowServiceIdentity { workflow_id, .. } => Some(workflow_id),
+        }
+    }
 }
 
 async fn list_grantable(
@@ -384,13 +428,16 @@ async fn resource_options(
     let mut items = Vec::new();
     for row in rows {
         let resource_id: Uuid = row.try_get("id")?;
+        let resource_version_id =
+            current_resource_version(&state, actor.tenant_id, &query.resource_type, resource_id)
+                .await?;
         let requirements = expand_requirements(
             &state,
             actor.tenant_id,
             &AuthorizationInput {
                 resource_type: query.resource_type.clone(),
                 resource_id,
-                resource_version_id: None,
+                resource_version_id,
                 operation: operation.clone(),
             },
         )
@@ -431,9 +478,9 @@ async fn resource_options(
         let access_state =
             resource_access_state(authorized, pending.is_some(), can_grant, rejected, &status);
         items.push(json!({
-            "id":resource_id,"resourceType":query.resource_type,"name":name,
+                "id":resource_id,"resourceType":query.resource_type,"name":name,
             "detail":row.try_get::<String,_>("detail")?,"status":status,
-            "resourceVersionId":Value::Null,
+            "resourceVersionId":resource_version_id,
             "accessState":access_state,
             "pendingRequestId":pending,
             "requirements":requirement_values
@@ -445,6 +492,153 @@ async fn resource_options(
         page_size,
         total,
     }))
+}
+
+async fn department_resource_options(
+    State(state): State<ControlApiState>,
+    actor: Actor,
+    Path(department): Path<Uuid>,
+    Query(query): Query<OptionQuery>,
+) -> ApiResult<Json<PageResponse<Value>>> {
+    actor.require("mcp:manage")?;
+    ensure_department_in_actor_scope(&state, &actor, department).await?;
+    validate_mcp_dependency_kind(&query.resource_type)?;
+    let operation = query.operation.unwrap_or_else(|| "use".into());
+    if operation != "use" {
+        return Err(ApiError::bad_request(
+            "MCP_DEPENDENCY_OPERATION_INVALID",
+            "MCP configuration dependencies only support the use operation",
+        ));
+    }
+    let can_grant = actor
+        .permissions
+        .iter()
+        .any(|value| value == "resource:grant");
+    let page = query.page.unwrap_or(1).max(1);
+    let page_size = query.page_size.unwrap_or(100).clamp(1, 100);
+    let search = format!("%{}%", query.search.unwrap_or_default());
+    let rows = sqlx::query(grantable_query!(
+        "SELECT r.*,COUNT(*) OVER() total_count FROM grantable r WHERE r.tenant_id=? AND r.resource_type=? AND (?='%%' OR r.name LIKE ? OR r.detail LIKE ?) ORDER BY r.name LIMIT ? OFFSET ?"
+    ))
+    .bind(actor.tenant_id)
+    .bind(&query.resource_type)
+    .bind(&search)
+    .bind(&search)
+    .bind(&search)
+    .bind(page_size)
+    .bind(u64::from((page - 1) * page_size))
+    .fetch_all(&state.pool)
+    .await?;
+    let total = rows
+        .first()
+        .map_or(Ok(0_i64), |row| row.try_get("total_count"))? as u64;
+    let mut items = Vec::with_capacity(rows.len());
+    for row in rows {
+        let resource_id: Uuid = row.try_get("id")?;
+        let owner_department_id: Uuid = row.try_get("owner_department_id")?;
+        let version_id =
+            current_resource_version(&state, actor.tenant_id, &query.resource_type, resource_id)
+                .await?;
+        let authorized = department_resource_authorized(
+            &state,
+            actor.tenant_id,
+            department,
+            &query.resource_type,
+            resource_id,
+            version_id,
+            owner_department_id,
+        )
+        .await?;
+        let can_direct_grant =
+            can_grant && actor_in_department_scope(&state, &actor, owner_department_id).await?;
+        let pending: Option<Uuid> = sqlx::query_scalar("SELECT id FROM resource_grant_requests WHERE tenant_id=? AND subject_type='department' AND subject_id=? AND primary_resource_type=? AND primary_resource_id=? AND operation_key='use' AND status='pending' LIMIT 1")
+            .bind(actor.tenant_id).bind(department).bind(&query.resource_type).bind(resource_id).fetch_optional(&state.pool).await?;
+        let rejected: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM resource_grant_requests WHERE tenant_id=? AND subject_type='department' AND subject_id=? AND primary_resource_type=? AND primary_resource_id=? AND operation_key='use' AND status='rejected')")
+            .bind(actor.tenant_id).bind(department).bind(&query.resource_type).bind(resource_id).fetch_one(&state.pool).await?;
+        let status: String = row.try_get("status")?;
+        items.push(json!({
+            "id":resource_id,
+            "resourceType":query.resource_type,
+            "name":row.try_get::<String,_>("name")?,
+            "detail":row.try_get::<String,_>("detail")?,
+            "status":status,
+            "resourceVersionId":version_id,
+            "accessState":resource_access_state(authorized,pending.is_some(),can_direct_grant,rejected,&status),
+            "pendingRequestId":pending,
+            "requirements":[{
+                "resourceType":query.resource_type,
+                "resourceId":resource_id,
+                "resourceVersionId":version_id,
+                "operation":"use",
+                "name":row.try_get::<String,_>("name")?,
+                "requiredByResourceId":Value::Null,
+                "ownerDepartmentId":owner_department_id,
+                "authorized":authorized,
+                "active":status=="active"
+            }]
+        }));
+    }
+    Ok(Json(PageResponse {
+        items,
+        page,
+        page_size,
+        total,
+    }))
+}
+
+async fn authorize_department_resource(
+    State(state): State<ControlApiState>,
+    actor: Actor,
+    Path(department): Path<Uuid>,
+    Json(input): Json<AuthorizationInput>,
+) -> ApiResult<Json<Value>> {
+    actor.require("mcp:manage")?;
+    actor.require("resource:grant")?;
+    ensure_department_in_actor_scope(&state, &actor, department).await?;
+    validate_mcp_dependency(&state, actor.tenant_id, &input).await?;
+    let requirements = expand_requirements(&state, actor.tenant_id, &input).await?;
+    for requirement in &requirements {
+        if !actor_in_department_scope(&state, &actor, requirement.owner_department_id).await? {
+            return Err(ApiError::forbidden(
+                "Resource owner department review is required",
+            ));
+        }
+    }
+    let subject = GrantSubject::Department(department);
+    let mut tx = state.pool.begin().await?;
+    let (granted, existing) = insert_subject_grants(&mut tx, &actor, subject, requirements).await?;
+    sqlx::query("UPDATE resource_grant_requests SET status='approved',open_dedupe_key=NULL,resolved_at=UTC_TIMESTAMP(6),version=version+1 WHERE tenant_id=? AND subject_type='department' AND subject_id=? AND primary_resource_type=? AND primary_resource_id=? AND operation_key='use' AND status='pending'")
+        .bind(actor.tenant_id).bind(department).bind(&input.resource_type).bind(input.resource_id).execute(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(Json(json!({
+        "departmentId":department,
+        "resourceType":input.resource_type,
+        "resourceId":input.resource_id,
+        "grantedCount":granted,
+        "alreadyGrantedCount":existing
+    })))
+}
+
+async fn create_department_request(
+    State(state): State<ControlApiState>,
+    actor: Actor,
+    Path(department): Path<Uuid>,
+    Json(input): Json<RequestInput>,
+) -> ApiResult<(StatusCode, Json<Value>)> {
+    actor.require("mcp:manage")?;
+    ensure_department_in_actor_scope(&state, &actor, department).await?;
+    validate_mcp_dependency(
+        &state,
+        actor.tenant_id,
+        &AuthorizationInput {
+            resource_type: input.resource_type.clone(),
+            resource_id: input.resource_id,
+            resource_version_id: input.resource_version_id,
+            operation: input.operation.clone(),
+        },
+    )
+    .await?;
+    create_subject_request(&state, &actor, GrantSubject::Department(department), input).await
 }
 
 async fn authorize_resource(
@@ -530,13 +724,31 @@ async fn create_request(
 ) -> ApiResult<(StatusCode, Json<Value>)> {
     actor.require("workflow:edit")?;
     let identity = workflow_identity(&state, actor.tenant_id, workflow).await?;
+    create_subject_request(
+        &state,
+        &actor,
+        GrantSubject::WorkflowServiceIdentity {
+            workflow_id: workflow,
+            identity_id: identity,
+        },
+        input,
+    )
+    .await
+}
+
+async fn create_subject_request(
+    state: &ControlApiState,
+    actor: &Actor,
+    subject: GrantSubject,
+    input: RequestInput,
+) -> ApiResult<(StatusCode, Json<Value>)> {
     let root = AuthorizationInput {
         resource_type: input.resource_type.clone(),
         resource_id: input.resource_id,
         resource_version_id: input.resource_version_id,
         operation: input.operation.clone(),
     };
-    let requirements = expand_requirements(&state, actor.tenant_id, &root).await?;
+    let requirements = expand_requirements(state, actor.tenant_id, &root).await?;
     if input
         .message
         .as_ref()
@@ -547,18 +759,25 @@ async fn create_request(
             "Request message must not exceed 1000 characters",
         ));
     }
-    if let Some(id) = sqlx::query_scalar::<_,Uuid>("SELECT id FROM resource_grant_requests WHERE tenant_id=? AND workflow_service_identity_id=? AND primary_resource_type=? AND primary_resource_id=? AND operation_key=? AND status='pending'")
-        .bind(actor.tenant_id).bind(identity).bind(&input.resource_type).bind(input.resource_id).bind(&input.operation).fetch_optional(&state.pool).await? {
-        return Ok((StatusCode::OK,Json(load_request(&state,&actor,id).await?)));
+    if let Some(id) = sqlx::query_scalar::<_,Uuid>("SELECT id FROM resource_grant_requests WHERE tenant_id=? AND subject_type=? AND subject_id=? AND primary_resource_type=? AND primary_resource_id=? AND operation_key=? AND status='pending'")
+        .bind(actor.tenant_id).bind(subject.kind()).bind(subject.id()).bind(&input.resource_type).bind(input.resource_id).bind(&input.operation).fetch_optional(&state.pool).await? {
+        return Ok((StatusCode::OK,Json(load_request(state,actor,id).await?)));
     }
     let hash = format!(
         "sha256:{:x}",
-        Sha256::digest(serde_json::to_vec(&input).map_err(ApiError::internal)?)
+        Sha256::digest(
+            serde_json::to_vec(&json!({
+                "subjectType":subject.kind(),
+                "subjectId":subject.id(),
+                "request":input
+            }))
+            .map_err(ApiError::internal)?,
+        )
     );
     let request = Uuid::now_v7();
     let mut tx = state.pool.begin().await?;
-    sqlx::query("INSERT INTO resource_grant_requests(id,tenant_id,workflow_id,workflow_service_identity_id,primary_resource_type,primary_resource_id,primary_resource_version_id,operation_key,source_node_id,source_revision,request_message,dependency_hash,open_dedupe_key,requested_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
-        .bind(request).bind(actor.tenant_id).bind(workflow).bind(identity).bind(&input.resource_type).bind(input.resource_id).bind(input.resource_version_id).bind(&input.operation).bind(input.source_node_id).bind(input.source_revision).bind(input.message).bind(&hash).bind(&hash).bind(actor.user_id).execute(&mut *tx).await?;
+    sqlx::query("INSERT INTO resource_grant_requests(id,tenant_id,subject_type,subject_id,workflow_id,workflow_service_identity_id,primary_resource_type,primary_resource_id,primary_resource_version_id,operation_key,source_node_id,source_revision,request_message,dependency_hash,open_dedupe_key,requested_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+        .bind(request).bind(actor.tenant_id).bind(subject.kind()).bind(subject.id()).bind(subject.workflow()).bind(match subject { GrantSubject::WorkflowServiceIdentity { identity_id, .. } => Some(identity_id), GrantSubject::Department(_) => None }).bind(&input.resource_type).bind(input.resource_id).bind(input.resource_version_id).bind(&input.operation).bind(input.source_node_id).bind(input.source_revision).bind(input.message).bind(&hash).bind(&hash).bind(actor.user_id).execute(&mut *tx).await?;
     let mut departments = BTreeSet::new();
     for item in requirements {
         departments.insert(item.owner_department_id);
@@ -575,7 +794,7 @@ async fn create_request(
     tx.commit().await?;
     Ok((
         StatusCode::CREATED,
-        Json(load_request(&state, &actor, request).await?),
+        Json(load_request(state, actor, request).await?),
     ))
 }
 
@@ -708,31 +927,56 @@ async fn finalize_approved(
     actor: &Actor,
     id: Uuid,
 ) -> ApiResult<Vec<agentx_runtime_contracts::RuntimeAdmissionCommandV1>> {
-    let identity:Uuid=sqlx::query_scalar("SELECT workflow_service_identity_id FROM resource_grant_requests WHERE tenant_id=? AND id=? AND status='pending' FOR UPDATE").bind(actor.tenant_id).bind(id).fetch_optional(&mut **tx).await?.ok_or_else(||ApiError::conflict("RESOURCE_GRANT_REQUEST_STATE_CONFLICT","Request is no longer pending"))?;
+    let row=sqlx::query("SELECT subject_type,subject_id,workflow_id,workflow_service_identity_id FROM resource_grant_requests WHERE tenant_id=? AND id=? AND status='pending' FOR UPDATE").bind(actor.tenant_id).bind(id).fetch_optional(&mut **tx).await?.ok_or_else(||ApiError::conflict("RESOURCE_GRANT_REQUEST_STATE_CONFLICT","Request is no longer pending"))?;
+    let subject_type: String = row.try_get("subject_type")?;
+    let subject_id: Uuid = row.try_get("subject_id")?;
+    let subject = match subject_type.as_str() {
+        "department" => GrantSubject::Department(subject_id),
+        "workflow_service_identity" => GrantSubject::WorkflowServiceIdentity {
+            workflow_id: row
+                .try_get::<Option<Uuid>, _>("workflow_id")?
+                .ok_or_else(|| {
+                    ApiError::internal("Workflow grant request is missing workflow_id")
+                })?,
+            identity_id: row
+                .try_get::<Option<Uuid>, _>("workflow_service_identity_id")?
+                .ok_or_else(|| {
+                    ApiError::internal("Workflow grant request is missing service identity")
+                })?,
+        },
+        _ => {
+            return Err(ApiError::internal(
+                "Resource grant request subject is invalid",
+            ));
+        }
+    };
     let items=sqlx::query("SELECT resource_type,resource_id,resource_version_id,operation_key FROM resource_grant_request_items WHERE tenant_id=? AND request_id=?").bind(actor.tenant_id).bind(id).fetch_all(&mut **tx).await?;
-    let mut changed = false;
-    for item in items {
-        let resource_type: String = item.try_get("resource_type")?;
-        let resource_id: Uuid = item.try_get("resource_id")?;
-        let operation: String = item.try_get("operation_key")?;
-        let grant_id = stable_grant_id(
-            actor.tenant_id,
-            "workflow_service_identity",
-            identity,
-            &resource_type,
-            resource_id,
-            &operation,
-        );
-        let result = sqlx::query("INSERT IGNORE INTO resource_grants(id,tenant_id,subject_type,subject_id,resource_type,resource_id,resource_version_id,operation_key,created_by) VALUES(?,?,'workflow_service_identity',?,?,?,?,?,?)")
-        .bind(grant_id).bind(actor.tenant_id).bind(identity).bind(resource_type).bind(resource_id).bind(item.try_get::<Option<Uuid>,_>("resource_version_id")?).bind(operation).bind(actor.user_id).execute(&mut **tx).await?;
-        changed |= result.rows_affected() == 1;
-    }
+    let requirements = items
+        .into_iter()
+        .map(|item| {
+            Ok(Requirement {
+                resource_type: item.try_get("resource_type")?,
+                resource_id: item.try_get("resource_id")?,
+                resource_version_id: item.try_get("resource_version_id")?,
+                operation: item.try_get("operation_key")?,
+                required_by: None,
+                owner_department_id: Uuid::nil(),
+            })
+        })
+        .collect::<Result<Vec<_>, sqlx::Error>>()?;
+    let (granted, _) = insert_subject_grants(tx, actor, subject, requirements).await?;
     sqlx::query("UPDATE resource_grant_requests SET status='approved',open_dedupe_key=NULL,resolved_at=UTC_TIMESTAMP(6),version=version+1 WHERE tenant_id=? AND id=?").bind(actor.tenant_id).bind(id).execute(&mut **tx).await?;
-    let commands = if changed {
-        crate::runtime_admission::advance_service_identity(tx, actor.tenant_id, identity, &[])
+    let commands = match subject {
+        GrantSubject::WorkflowServiceIdentity { identity_id, .. } if granted != 0 => {
+            crate::runtime_admission::advance_service_identity(
+                tx,
+                actor.tenant_id,
+                identity_id,
+                &[],
+            )
             .await?
-    } else {
-        Vec::new()
+        }
+        _ => Vec::new(),
     };
     notify_requester(
         tx,
@@ -745,6 +989,34 @@ async fn finalize_approved(
     )
     .await?;
     Ok(commands)
+}
+
+async fn insert_subject_grants(
+    tx: &mut Transaction<'_, MySql>,
+    actor: &Actor,
+    subject: GrantSubject,
+    requirements: Vec<Requirement>,
+) -> ApiResult<(u64, u64)> {
+    let mut granted = 0;
+    let mut existing = 0;
+    for item in requirements {
+        let grant_id = stable_grant_id(
+            actor.tenant_id,
+            subject.kind(),
+            subject.id(),
+            &item.resource_type,
+            item.resource_id,
+            &item.operation,
+        );
+        let result = sqlx::query("INSERT IGNORE INTO resource_grants(id,tenant_id,subject_type,subject_id,resource_type,resource_id,resource_version_id,operation_key,created_by) VALUES(?,?,?,?,?,?,?,?,?)")
+            .bind(grant_id).bind(actor.tenant_id).bind(subject.kind()).bind(subject.id()).bind(item.resource_type).bind(item.resource_id).bind(item.resource_version_id).bind(item.operation).bind(actor.user_id).execute(&mut **tx).await?;
+        if result.rows_affected() == 1 {
+            granted += 1;
+        } else {
+            existing += 1;
+        }
+    }
+    Ok((granted, existing))
 }
 
 async fn notify_department_reviewers(
@@ -847,12 +1119,13 @@ async fn actor_in_department_scope(
 }
 
 async fn load_request(state: &ControlApiState, actor: &Actor, id: Uuid) -> ApiResult<Value> {
-    let row=sqlx::query("SELECT r.*,w.name workflow_name,u.display_name requester_name FROM resource_grant_requests r JOIN workflows w ON w.tenant_id=r.tenant_id AND w.id=r.workflow_id JOIN users u ON u.tenant_id=r.tenant_id AND u.id=r.requested_by WHERE r.tenant_id=? AND r.id=?").bind(actor.tenant_id).bind(id).fetch_optional(&state.pool).await?.ok_or_else(||ApiError::not_found("Resource grant request"))?;
+    let row=sqlx::query("SELECT r.*,w.name workflow_name,d.name subject_department_name,u.display_name requester_name FROM resource_grant_requests r LEFT JOIN workflows w ON w.tenant_id=r.tenant_id AND w.id=r.workflow_id LEFT JOIN departments d ON d.tenant_id=r.tenant_id AND r.subject_type='department' AND d.id=r.subject_id JOIN users u ON u.tenant_id=r.tenant_id AND u.id=r.requested_by WHERE r.tenant_id=? AND r.id=?").bind(actor.tenant_id).bind(id).fetch_optional(&state.pool).await?.ok_or_else(||ApiError::not_found("Resource grant request"))?;
     let item_rows=sqlx::query("SELECT * FROM resource_grant_request_items WHERE tenant_id=? AND request_id=? ORDER BY created_at,id").bind(actor.tenant_id).bind(id).fetch_all(&state.pool).await?;
     let requester: Uuid = row.try_get("requested_by")?;
     let full_view =
         requester == actor.user_id || actor.roles.iter().any(|role| role == "company_admin");
-    let identity: Uuid = row.try_get("workflow_service_identity_id")?;
+    let subject_type: String = row.try_get("subject_type")?;
+    let subject_id: Uuid = row.try_get("subject_id")?;
     let mut items = Vec::new();
     let mut visible_resources = BTreeSet::new();
     for item in item_rows {
@@ -876,8 +1149,8 @@ async fn load_request(state: &ControlApiState, actor: &Actor, id: Uuid) -> ApiRe
         .bind(resource_id)
         .fetch_optional(&state.pool)
         .await?;
-        let authorized: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM resource_grants WHERE tenant_id=? AND subject_type='workflow_service_identity' AND subject_id=? AND resource_type=? AND resource_id=? AND operation_key IN (?, 'manage'))")
-            .bind(actor.tenant_id).bind(identity).bind(&resource_type).bind(resource_id).bind(&operation).fetch_one(&state.pool).await?;
+        let authorized: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM resource_grants WHERE tenant_id=? AND subject_type=? AND subject_id=? AND resource_type=? AND resource_id=? AND operation_key IN (?, 'manage'))")
+            .bind(actor.tenant_id).bind(&subject_type).bind(subject_id).bind(&resource_type).bind(resource_id).bind(&operation).fetch_one(&state.pool).await?;
         let (name, active) = summary.map_or((None, false), |summary| {
             let name = resource_visible
                 .then(|| summary.try_get::<String, _>("name").ok())
@@ -938,9 +1211,31 @@ async fn load_request(state: &ControlApiState, actor: &Actor, id: Uuid) -> ApiRe
             "reviewedAt":review.try_get::<Option<OffsetDateTime>,_>("reviewed_at")?
         }));
     }
-    Ok(
-        json!({"id":id,"workflowId":row.try_get::<Uuid,_>("workflow_id")?,"workflowName":row.try_get::<String,_>("workflow_name")?,"workflowServiceIdentityId":identity,"primaryResourceType":primary_resource_type,"primaryResourceId":primary_resource_id,"primaryResourceName":primary_resource_name,"operation":row.try_get::<String,_>("operation_key")?,"sourceNodeId":row.try_get::<Option<String>,_>("source_node_id")?,"sourceRevision":row.try_get::<Option<u64>,_>("source_revision")?,"message":row.try_get::<Option<String>,_>("request_message")?,"status":row.try_get::<String,_>("status")?,"requestedBy":requester,"requestedByName":row.try_get::<String,_>("requester_name")?,"version":row.try_get::<u64,_>("version")?,"items":items,"reviews":reviews,"history":[],"createdAt":row.try_get::<OffsetDateTime,_>("created_at")?,"updatedAt":row.try_get::<OffsetDateTime,_>("updated_at")?}),
-    )
+    Ok(json!({
+        "id":id,
+        "subjectType":subject_type,
+        "subjectId":subject_id,
+        "subjectDepartmentName":row.try_get::<Option<String>,_>("subject_department_name")?,
+        "workflowId":row.try_get::<Option<Uuid>,_>("workflow_id")?,
+        "workflowName":row.try_get::<Option<String>,_>("workflow_name")?,
+        "workflowServiceIdentityId":row.try_get::<Option<Uuid>,_>("workflow_service_identity_id")?,
+        "primaryResourceType":primary_resource_type,
+        "primaryResourceId":primary_resource_id,
+        "primaryResourceName":primary_resource_name,
+        "operation":row.try_get::<String,_>("operation_key")?,
+        "sourceNodeId":row.try_get::<Option<String>,_>("source_node_id")?,
+        "sourceRevision":row.try_get::<Option<u64>,_>("source_revision")?,
+        "message":row.try_get::<Option<String>,_>("request_message")?,
+        "status":row.try_get::<String,_>("status")?,
+        "requestedBy":requester,
+        "requestedByName":row.try_get::<String,_>("requester_name")?,
+        "version":row.try_get::<u64,_>("version")?,
+        "items":items,
+        "reviews":reviews,
+        "history":[],
+        "createdAt":row.try_get::<OffsetDateTime,_>("created_at")?,
+        "updatedAt":row.try_get::<OffsetDateTime,_>("updated_at")?
+    }))
 }
 
 async fn expand_requirements(
@@ -1123,6 +1418,168 @@ async fn ensure_resource(
         .fetch_optional(&state.pool)
         .await?
         .ok_or_else(|| ApiError::not_found("Active resource"))
+}
+
+async fn validate_mcp_dependency(
+    state: &ControlApiState,
+    tenant: Uuid,
+    input: &AuthorizationInput,
+) -> ApiResult<()> {
+    validate_mcp_dependency_kind(&input.resource_type)?;
+    if input.operation != "use" {
+        return Err(ApiError::bad_request(
+            "MCP_DEPENDENCY_OPERATION_INVALID",
+            "MCP configuration dependencies only support the use operation",
+        ));
+    }
+    ensure_resource(state, tenant, &input.resource_type, input.resource_id).await?;
+    if input.resource_type == "sandbox_profile" {
+        let Some(version_id) = input.resource_version_id else {
+            return Err(ApiError::bad_request(
+                "MCP_STDIO_SANDBOX_REQUIRED",
+                "stdio MCP requires an exact Runtime Sandbox version",
+            ));
+        };
+        let current =
+            current_resource_version(state, tenant, &input.resource_type, input.resource_id)
+                .await?;
+        if current != Some(version_id) {
+            let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sandbox_profile_versions WHERE tenant_id=? AND profile_id=? AND id=?)")
+                .bind(tenant).bind(input.resource_id).bind(version_id).fetch_one(&state.pool).await?;
+            if !exists {
+                return Err(ApiError::bad_request(
+                    "MCP_STDIO_SANDBOX_VERSION_INVALID",
+                    "Runtime Sandbox version does not belong to the selected profile",
+                ));
+            }
+        }
+    } else if input.resource_version_id.is_some() {
+        return Err(ApiError::bad_request(
+            "MCP_CREDENTIAL_VERSION_INVALID",
+            "Credential dependencies do not accept a resource version",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_mcp_dependency_kind(kind: &str) -> ApiResult<()> {
+    if matches!(kind, "credential" | "sandbox_profile") {
+        Ok(())
+    } else {
+        Err(ApiError::bad_request(
+            "MCP_DEPENDENCY_RESOURCE_TYPE_INVALID",
+            "MCP configuration dependencies must be Credential or Sandbox Profile resources",
+        ))
+    }
+}
+
+async fn current_resource_version(
+    state: &ControlApiState,
+    tenant: Uuid,
+    kind: &str,
+    resource_id: Uuid,
+) -> ApiResult<Option<Uuid>> {
+    let version = match kind {
+        "model" => sqlx::query_scalar(
+            "SELECT a.deployment_id FROM model_aliases a WHERE a.tenant_id=? AND a.id=? AND a.status='active'",
+        )
+        .bind(tenant)
+        .bind(resource_id)
+        .fetch_optional(&state.pool)
+        .await?,
+        "mcp_server" => sqlx::query_scalar(
+            "SELECT v.id FROM mcp_servers s JOIN mcp_server_versions v ON v.tenant_id=s.tenant_id AND v.server_id=s.id AND v.version_number=s.current_version_number WHERE s.tenant_id=? AND s.id=? AND s.status='active'",
+        )
+        .bind(tenant)
+        .bind(resource_id)
+        .fetch_optional(&state.pool)
+        .await?,
+        "mcp_tool" => sqlx::query_scalar(
+            "SELECT v.id FROM mcp_tools t JOIN mcp_tool_versions v ON v.tenant_id=t.tenant_id AND v.tool_id=t.id WHERE t.tenant_id=? AND t.id=? AND t.availability='available' ORDER BY v.version_number DESC LIMIT 1",
+        )
+        .bind(tenant)
+        .bind(resource_id)
+        .fetch_optional(&state.pool)
+        .await?,
+        "skill" => sqlx::query_scalar(
+            "SELECT v.id FROM skills s JOIN skill_versions v ON v.tenant_id=s.tenant_id AND v.skill_id=s.id WHERE s.tenant_id=? AND s.id=? AND s.status='active' ORDER BY v.version_number DESC LIMIT 1",
+        )
+        .bind(tenant)
+        .bind(resource_id)
+        .fetch_optional(&state.pool)
+        .await?,
+        "sandbox_profile" => sqlx::query_scalar(
+            "SELECT v.id FROM sandbox_profiles p JOIN sandbox_profile_versions v ON v.tenant_id=p.tenant_id AND v.profile_id=p.id AND v.version_number=p.current_version_number WHERE p.tenant_id=? AND p.id=? AND p.status='active'",
+        )
+        .bind(tenant)
+        .bind(resource_id)
+        .fetch_optional(&state.pool)
+        .await?,
+        _ => None,
+    };
+    Ok(version)
+}
+
+async fn department_resource_authorized(
+    state: &ControlApiState,
+    tenant: Uuid,
+    department: Uuid,
+    resource_type: &str,
+    resource_id: Uuid,
+    resource_version_id: Option<Uuid>,
+    owner_department_id: Uuid,
+) -> ApiResult<bool> {
+    let owned: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM department_closure WHERE tenant_id=? AND ancestor_id=? AND descendant_id=?)")
+        .bind(tenant).bind(department).bind(owner_department_id).fetch_one(&state.pool).await?;
+    if owned {
+        return Ok(true);
+    }
+    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM resource_grants WHERE tenant_id=? AND subject_type='department' AND subject_id=? AND resource_type=? AND resource_id=? AND operation_key IN ('use','manage') AND (resource_version_id IS NULL OR resource_version_id=?))")
+        .bind(tenant).bind(department).bind(resource_type).bind(resource_id).bind(resource_version_id).fetch_one(&state.pool).await?)
+}
+
+pub(crate) async fn ensure_department_resource_authorized(
+    state: &ControlApiState,
+    tenant: Uuid,
+    department: Uuid,
+    resource_type: &str,
+    resource_id: Uuid,
+    resource_version_id: Option<Uuid>,
+) -> ApiResult<()> {
+    let owner = ensure_resource(state, tenant, resource_type, resource_id).await?;
+    if department_resource_authorized(
+        state,
+        tenant,
+        department,
+        resource_type,
+        resource_id,
+        resource_version_id,
+        owner,
+    )
+    .await?
+    {
+        Ok(())
+    } else {
+        Err(ApiError::unprocessable(
+            "MCP_DEPENDENCY_GRANT_REQUIRED",
+            "MCP owner department is not authorized to use the selected dependency",
+        ))
+    }
+}
+
+async fn ensure_department_in_actor_scope(
+    state: &ControlApiState,
+    actor: &Actor,
+    department: Uuid,
+) -> ApiResult<()> {
+    let allowed: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM departments d JOIN department_closure dc ON dc.tenant_id=d.tenant_id AND dc.descendant_id=d.id WHERE d.tenant_id=? AND d.id=? AND d.status='active' AND dc.ancestor_id=?)")
+        .bind(actor.tenant_id).bind(department).bind(actor.department_id).fetch_one(&state.pool).await?;
+    if !allowed {
+        return Err(ApiError::forbidden(
+            "MCP owner department is outside the actor scope",
+        ));
+    }
+    Ok(())
 }
 async fn ensure_department(state: &ControlApiState, tenant: Uuid, id: Uuid) -> ApiResult<()> {
     let value: bool = sqlx::query_scalar(

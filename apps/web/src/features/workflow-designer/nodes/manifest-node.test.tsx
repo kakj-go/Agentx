@@ -10,19 +10,19 @@ import { ManifestNode } from './manifest-node'
 const roles: CanvasNodeRole[] = ['default', 'trigger', 'branch', 'flow', 'merge', 'loop', 'suspend', 'approval', 'sub_workflow', 'agent', 'code', 'error_handler']
 
 const manifest = (role: CanvasNodeRole): NodeManifest => ({
-  protocolVersion: '1.0', nodeType: role, version: 1, displayName: role, description: `${role} node`, category: 'actions', keywords: [role], iconKey: 'box', executionStyle: 'action', capability: 'builtin', readiness: 'any',
-  inputPorts: [{ name: 'main', kind: 'main', required: false, variadic: false }], outputPorts: [{ name: 'error', kind: 'error', required: false, variadic: false }], bindingSlots: role === 'agent' ? [{ name: 'ai_model', resourceType: 'model', required: false, multiple: false }] : [],
+  protocolVersion: '2.0', nodeType: role, version: role === 'agent' ? 2 : 1, displayName: role, description: `${role} node`, category: 'actions', keywords: [role], iconKey: 'box', executionStyle: 'action', capability: 'builtin', readiness: 'any',
+  inputPorts: [{ name: 'main', kind: 'main', required: false, variadic: false }], outputPorts: [{ name: 'error', kind: 'error', required: false, variadic: false }], bindingSlots: role === 'agent' ? [{ name: 'model', resourceType: 'model', placement: 'inspector', required: true, multiple: false }, { name: 'workspace_sandbox', resourceType: 'sandbox_profile', placement: 'inspector', required: false, multiple: false }, { name: 'mcp_tools', resourceType: 'mcp_tool', placement: 'canvas', required: false, multiple: false }] : [],
   parameterSchema: {}, uiSchema: { canvas: { role } }, providers: [], credentials: [], retryPolicy: { retryable: false, maxAttempts: 1, initialBackoffMs: 0, maxBackoffMs: 0 }, sandboxRequired: false, supportsMock: true, sideEffectLevel: 'none',
 })
 
 const props = (role: CanvasNodeRole): NodeProps<StudioNode> => ({
-  id: `node-${role}`, type: 'manifest', data: { editorKind: 'action', nodeType: role, typeVersion: 1, label: `${role} label`, parameters: {}, resourceReferences: [], settings: {}, disabled: false }, selected: false,
+  id: `node-${role}`, type: 'manifest', data: { editorKind: 'action', nodeType: role, typeVersion: role === 'agent' ? 2 : 1, label: `${role} label`, parameters: {}, resourceReferences: [], settings: {}, disabled: false }, selected: false,
 } as unknown as NodeProps<StudioNode>)
 
 describe('ManifestNode roles', () => {
   for (const role of roles) it(`renders the controlled ${role} role`, () => {
     const value = manifest(role)
-    useCanvasRenderStore.setState({ manifests: new Map([[`${role}@1`, value]]), runtimeStatuses: new Map(), bindingSummaries: new Map(), occupiedHandlesByNodeId: new Map(), zoomTier: 'full' })
+    useCanvasRenderStore.setState({ manifests: new Map([[`${role}@${value.version}`, value]]), runtimeStatuses: new Map(), bindingSummaries: new Map(), occupiedHandlesByNodeId: new Map(), zoomTier: 'full' })
     render(<ReactFlowProvider><ManifestNode {...props(role)} /></ReactFlowProvider>)
     expect(screen.getByTestId(`studio-node-node-${role}`)).toHaveAttribute('data-role', role)
   })
@@ -30,16 +30,18 @@ describe('ManifestNode roles', () => {
   it('keeps handles interactive at low zoom and shows actual Agent bindings', () => {
     const onSourceHover = vi.fn()
     useCanvasRenderStore.setState({
-      manifests: new Map([['agent@1', manifest('agent')]]), runtimeStatuses: new Map(),
-      bindingSummaries: new Map([['node-agent', [{ role: 'ai_model', resourceType: 'model', label: 'Production model' }]]]),
+      manifests: new Map([['agent@2', manifest('agent')]]), runtimeStatuses: new Map(),
+      bindingSummaries: new Map([['node-agent', [{ role: 'mcp_tools', resourceType: 'mcp_tool', label: 'Weather tool' }]]]),
       occupiedHandlesByNodeId: new Map(),
       zoomTier: 'compact', onQuickAdd: () => undefined, onSourceHover,
     })
     render(<ReactFlowProvider><ManifestNode {...props('agent')} /></ReactFlowProvider>)
     const node = screen.getByTestId('studio-node-node-agent')
     expect(node).toHaveClass('studio-node-zoom-compact')
-    expect(screen.getByTitle(/Production model/)).toBeInTheDocument()
+    expect(screen.getByTitle(/Weather tool/)).toBeInTheDocument()
     expect(node.querySelectorAll('.react-flow__handle')).toHaveLength(3)
+    expect(node.querySelector('[data-handleid="binding:model"]')).not.toBeInTheDocument()
+    expect(node.querySelector('[data-handleid="binding:workspace_sandbox"]')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Add node after error|在错误后添加节点/i })).toBeInTheDocument()
     const source = node.querySelector('.react-flow__handle.source')!
     fireEvent.mouseEnter(source)
@@ -72,11 +74,11 @@ describe('ManifestNode roles', () => {
 
   it('centers bottom resource labels beneath their handles', () => {
     const value = manifest('agent')
-    useCanvasRenderStore.setState({ manifests: new Map([['agent@1', value]]), runtimeStatuses: new Map(), bindingSummaries: new Map(), occupiedHandlesByNodeId: new Map(), zoomTier: 'full' })
+    useCanvasRenderStore.setState({ manifests: new Map([['agent@2', value]]), runtimeStatuses: new Map(), bindingSummaries: new Map(), occupiedHandlesByNodeId: new Map(), zoomTier: 'full' })
     render(<ReactFlowProvider><ManifestNode {...props('agent')} /></ReactFlowProvider>)
     const node = screen.getByTestId('studio-node-node-agent')
-    const handle = node.querySelector<HTMLElement>('.react-flow__handle.target[data-handleid="binding:ai_model"]')!
-    const label = node.querySelector<HTMLElement>('[data-port-type="target"][data-port-id="binding:ai_model"]')!
+    const handle = node.querySelector<HTMLElement>('.react-flow__handle.target[data-handleid="binding:mcp_tools"]')!
+    const label = node.querySelector<HTMLElement>('[data-port-type="target"][data-port-id="binding:mcp_tools"]')!
     expect(label.style.left).toBe(handle.style.left)
     expect(label).toHaveClass('w-16', 'text-center', '-translate-x-1/2')
   })
@@ -84,8 +86,8 @@ describe('ManifestNode roles', () => {
   it('keeps quick add visible only for unoccupied or repeatable ports', () => {
     const single = manifest('agent')
     useCanvasRenderStore.setState({
-      manifests: new Map([['agent@1', single]]), runtimeStatuses: new Map(), bindingSummaries: new Map(),
-      occupiedHandlesByNodeId: new Map([['node-agent', 'binding:ai_model\u0001error']]), zoomTier: 'full', onQuickAdd: () => undefined,
+      manifests: new Map([['agent@2', single]]), runtimeStatuses: new Map(), bindingSummaries: new Map(),
+      occupiedHandlesByNodeId: new Map([['node-agent', 'binding:mcp_tools\u0001error']]), zoomTier: 'full', onQuickAdd: () => undefined,
     })
     render(<ReactFlowProvider><ManifestNode {...props('agent')} /></ReactFlowProvider>)
     const node = screen.getByTestId('studio-node-node-agent')
@@ -93,8 +95,8 @@ describe('ManifestNode roles', () => {
 
     const repeatable = manifest('agent')
     repeatable.outputPorts[0].variadic = true
-    repeatable.bindingSlots[0].multiple = true
-    act(() => useCanvasRenderStore.setState({ manifests: new Map([['agent@1', repeatable]]) }))
+    repeatable.bindingSlots.find((slot) => slot.placement === 'canvas')!.multiple = true
+    act(() => useCanvasRenderStore.setState({ manifests: new Map([['agent@2', repeatable]]) }))
     expect(node.querySelectorAll('.studio-port-add')).toHaveLength(2)
   })
 

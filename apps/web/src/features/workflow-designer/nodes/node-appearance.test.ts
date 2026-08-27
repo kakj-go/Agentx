@@ -4,7 +4,7 @@ import type { NodeManifest } from '../model/types'
 import { canvasNodeMetrics, findOpenCanvasPosition, nodeCategory, nodeShape } from './node-appearance'
 
 const manifest = (overrides: Partial<NodeManifest>): NodeManifest => ({
-  protocolVersion: '1.0', nodeType: 'node', version: 1, displayName: 'Node', description: '', category: 'actions', keywords: [], iconKey: 'box', executionStyle: 'action', capability: 'builtin', readiness: 'any', inputPorts: [], outputPorts: [], bindingSlots: [], parameterSchema: {}, uiSchema: {}, providers: [], credentials: [], retryPolicy: { retryable: false, maxAttempts: 1, initialBackoffMs: 0, maxBackoffMs: 0 }, sandboxRequired: false, supportsMock: true, sideEffectLevel: 'none', ...overrides,
+  protocolVersion: '2.0', nodeType: 'node', version: 1, displayName: 'Node', description: '', category: 'actions', keywords: [], iconKey: 'box', executionStyle: 'action', capability: 'builtin', readiness: 'any', inputPorts: [], outputPorts: [], bindingSlots: [], parameterSchema: {}, uiSchema: {}, providers: [], credentials: [], retryPolicy: { retryable: false, maxAttempts: 1, initialBackoffMs: 0, maxBackoffMs: 0 }, sandboxRequired: false, supportsMock: true, sideEffectLevel: 'none', ...overrides,
 })
 
 describe('workflow node appearance', () => {

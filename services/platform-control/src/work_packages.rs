@@ -307,11 +307,12 @@ pub(crate) async fn start_version_execution(
     let (dependencies, resources, pending_objects) =
         load_published_version_closure(state, actor.tenant_id, version_id, &definition).await?;
     let service_identity_id: Uuid = version.try_get("service_identity_id")?;
-    let grant_ids = sqlx::query_scalar::<_, Uuid>("SELECT id FROM resource_grants WHERE tenant_id=? AND subject_type='workflow_service_identity' AND subject_id=? ORDER BY id")
-        .bind(actor.tenant_id)
-        .bind(service_identity_id)
-        .fetch_all(&state.pool)
-        .await?;
+    let (grant_ids, grant_bindings) = crate::runtime_resource_binding::authorization_grants(
+        &state.pool,
+        actor.tenant_id,
+        service_identity_id,
+    )
+    .await?;
     let package_id = Uuid::now_v7();
     let debug_run_id = Uuid::now_v7();
     let created_at = OffsetDateTime::now_utc();
@@ -324,13 +325,7 @@ pub(crate) async fn start_version_execution(
                     format!("Workflow Version could not be compiled: {error}"),
                 )
             })?;
-    let debug_plan = build_debug_plan(
-        &compiled,
-        PartialExecutionModeV1::Whole,
-        None,
-        None,
-        BTreeMap::new(),
-    )?;
+    let debug_plan = build_whole_execution_plan(&compiled)?;
     let package = build_work_package(
         WorkPackageBuildSource {
             package_id,
@@ -369,6 +364,7 @@ pub(crate) async fn start_version_execution(
                 workflow_id,
                 policy_epoch: version.try_get("identity_version")?,
                 grant_ids,
+                grant_bindings,
                 capabilities: agentx_node_protocol::ALL_RUNTIME_CAPABILITIES
                     .iter()
                     .map(ToString::to_string)
@@ -517,11 +513,12 @@ pub(crate) async fn start_debug_run(
     )
     .await?;
     let service_identity_id: Uuid = draft.try_get("service_identity_id")?;
-    let grant_ids = sqlx::query_scalar::<_, Uuid>("SELECT id FROM resource_grants WHERE tenant_id=? AND subject_type='workflow_service_identity' AND subject_id=? ORDER BY id")
-        .bind(actor.tenant_id)
-        .bind(service_identity_id)
-        .fetch_all(&state.pool)
-        .await?;
+    let (grant_ids, grant_bindings) = crate::runtime_resource_binding::authorization_grants(
+        &state.pool,
+        actor.tenant_id,
+        service_identity_id,
+    )
+    .await?;
     let package_id = Uuid::now_v7();
     let debug_run_id = Uuid::now_v7();
     let created_at = OffsetDateTime::now_utc();
@@ -581,6 +578,7 @@ pub(crate) async fn start_debug_run(
                 workflow_id,
                 policy_epoch: draft.try_get("identity_version")?,
                 grant_ids,
+                grant_bindings,
                 capabilities: agentx_node_protocol::ALL_RUNTIME_CAPABILITIES
                     .iter()
                     .map(ToString::to_string)
@@ -1466,7 +1464,12 @@ pub(crate) async fn start_evaluation(
             "Evaluation Profile has no evaluators",
         ));
     }
-    let grant_ids=sqlx::query_scalar::<_,Uuid>("SELECT id FROM resource_grants WHERE tenant_id=? AND subject_type='workflow_service_identity' AND subject_id=? ORDER BY id").bind(actor.tenant_id).bind(service_identity_id).fetch_all(&state.pool).await?;
+    let (grant_ids, grant_bindings) = crate::runtime_resource_binding::authorization_grants(
+        &state.pool,
+        actor.tenant_id,
+        service_identity_id,
+    )
+    .await?;
     let package_id = Uuid::now_v7();
     let created_at = OffsetDateTime::now_utc();
     let expires_at = created_at + time::Duration::hours(24);
@@ -1513,6 +1516,7 @@ pub(crate) async fn start_evaluation(
                 workflow_id,
                 policy_epoch: row.try_get("identity_version")?,
                 grant_ids,
+                grant_bindings,
                 capabilities: agentx_node_protocol::ALL_RUNTIME_CAPABILITIES
                     .iter()
                     .map(ToString::to_string)
@@ -1759,13 +1763,33 @@ fn build_debug_plan(
     })
 }
 
+fn build_whole_execution_plan(
+    compiled: &agentx_runtime_contracts::CompiledWorkflowV1,
+) -> ApiResult<RuntimeDebugPlanV1> {
+    let side_effect_decisions = compiled
+        .nodes
+        .iter()
+        .filter(|node| {
+            node.side_effect_level == agentx_node_protocol::SideEffectLevel::Irreversible
+        })
+        .map(|node| (node.id.clone(), SideEffectResolutionV1::Execute))
+        .collect();
+    build_debug_plan(
+        compiled,
+        PartialExecutionModeV1::Whole,
+        None,
+        None,
+        side_effect_decisions,
+    )
+}
+
 #[cfg(test)]
 mod debug_plan_tests {
     use super::*;
 
     fn compiled() -> agentx_runtime_contracts::CompiledWorkflowV1 {
         let definition: WorkflowDefinition = serde_json::from_value(json!({
-            "schemaVersion":"5.0",
+            "schemaVersion":"6.0",
             "start":{"inputs":{"type":"object","additionalProperties":true},"contexts":{}},
             "nodes":[
                 {"id":"root","key":"root","type":"no_op","typeVersion":1,"name":"Root","disabled":false,"parameters":{},"outputProjection":{},"contextWrites":[],"resourceReferences":[],"settings":{}},
@@ -1821,5 +1845,17 @@ mod debug_plan_tests {
         )
         .unwrap();
         assert_eq!(from.included_node_ids, ["target", "tail"]);
+    }
+
+    #[test]
+    fn whole_published_execution_authorizes_all_irreversible_nodes() {
+        let mut compiled = compiled();
+        compiled.nodes[1].side_effect_level = agentx_node_protocol::SideEffectLevel::Irreversible;
+        let plan = build_whole_execution_plan(&compiled).unwrap();
+        assert_eq!(plan.included_node_ids, ["root", "target", "tail"]);
+        assert_eq!(
+            plan.side_effect_decisions.get("target"),
+            Some(&SideEffectResolutionV1::Execute)
+        );
     }
 }

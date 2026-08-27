@@ -19,6 +19,7 @@ const translations = {
   "datasets": "测试集",
   "evaluations": "评测报告",
   "runtime": "运行状态",
+  "agentSessions": "智能体会话",
   "models": "模型服务",
   "mcp": "MCP 服务",
   "skills": "技能",

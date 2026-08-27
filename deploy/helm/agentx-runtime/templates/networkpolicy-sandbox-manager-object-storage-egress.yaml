@@ -1,0 +1,11 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: sandbox-manager-object-storage-egress, namespace: {{ .Values.global.namespaces.runtime }} }
+spec:
+  podSelector: { matchLabels: { app.kubernetes.io/name: sandbox-manager } }
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector: { matchLabels: { agentx.io/plane: dependencies } }
+          podSelector: { matchLabels: { app.kubernetes.io/name: object-storage } }
+      ports: [{ protocol: TCP, port: 9000 }]

@@ -69,6 +69,8 @@ mod workflow_operations;
 mod workflow_resources;
 
 use control_helpers::{payload_strings, payload_uuid, payload_uuids};
+#[cfg(test)]
+use runtime_resource_binding::runtime_resource_kind_from_control;
 
 #[cfg(test)]
 mod api_first_tests;
@@ -559,13 +561,12 @@ impl Publisher {
                             tenant_id: event.tenant_id,
                             identity_id: payload_uuid(&event.payload, "identityId")?,
                             grant_id: payload_uuid(&event.payload, "grantId")?,
-                            resource_kind: runtime_resource_kind_from_control(
-                                event
-                                    .payload
-                                    .get("resourceType")
-                                    .and_then(Value::as_str)
-                                    .context("Resource Grant resourceType")?,
-                            )?,
+                            resource_type: event
+                                .payload
+                                .get("resourceType")
+                                .and_then(Value::as_str)
+                                .context("Resource Grant resourceType")?
+                                .to_owned(),
                             resource_id: payload_uuid(&event.payload, "resourceId")?,
                             operations: payload_strings(&event.payload, "operations")?
                                 .into_iter()
@@ -976,7 +977,12 @@ impl Publisher {
                 object_ids: vec![dependency_id, composite_ir_object_id(dependency_id)],
             });
         }
-        let grants=sqlx::query_scalar::<_,Uuid>("SELECT id FROM resource_grants WHERE tenant_id=? AND subject_type='workflow_service_identity' AND subject_id=? ORDER BY id").bind(a.tenant_id).bind(row.try_get::<Uuid,_>("identity_id")?).fetch_all(&self.pool).await?;
+        let (grants, grant_bindings) = runtime_resource_binding::authorization_grants(
+            &self.pool,
+            a.tenant_id,
+            row.try_get::<Uuid, _>("identity_id")?,
+        )
+        .await?;
         let trigger_revision: u64 = row.try_get("trigger_revision")?;
         let trigger_rows = sqlx::query("SELECT manifest_json FROM application_runtime_trigger_revisions WHERE tenant_id=? AND application_id=? AND revision=?")
             .bind(a.tenant_id).bind(a.application_id).bind(trigger_revision).fetch_optional(&self.pool).await?;
@@ -1032,6 +1038,7 @@ impl Publisher {
                     policy_epoch: row.try_get("identity_version")?,
                     capabilities: required_capabilities,
                     grant_ids: grants,
+                    grant_bindings,
                     maximum_policy_staleness_seconds: 72 * 60 * 60,
                     captured_at: OffsetDateTime::UNIX_EPOCH,
                 },
@@ -1135,7 +1142,7 @@ impl Publisher {
 
     async fn apply_admission(&self, a: &Attempt) -> Result<()> {
         let row=sqlx::query("SELECT app.slug,b.payload_json FROM applications app JOIN execution_spec_bundles b ON b.application_id=app.id AND b.tenant_id=app.tenant_id WHERE b.id=?").bind(a.bundle_id).fetch_one(&self.pool).await?;
-        let payload: agentx_runtime_contracts::ExecutionSpecPayloadV1 =
+        let payload: agentx_runtime_contracts::ExecutionSpecPayloadV2 =
             serde_json::from_value(row.try_get("payload_json")?)?;
         let identity_id = payload.authorization.service_identity_id;
         let workflow_id = payload.workflow_id;
@@ -1159,9 +1166,7 @@ impl Publisher {
                     tenant_id: a.tenant_id,
                     identity_id,
                     grant_id,
-                    resource_kind: runtime_resource_kind_from_control(
-                        &grant.try_get::<String, _>("resource_type")?,
-                    )?,
+                    resource_type: grant.try_get("resource_type")?,
                     resource_id: grant.try_get("resource_id")?,
                     operations: BTreeSet::from([grant.try_get("operation_key")?]),
                     policy_epoch: a.minimum_admission_epoch,
@@ -1282,7 +1287,7 @@ impl Publisher {
     async fn prepare(&self, a: &Attempt) -> Result<()> {
         let row=sqlx::query("SELECT payload_json,content_hash,signature_key_id,signature FROM execution_spec_bundles WHERE id=?").bind(a.bundle_id).fetch_one(&self.pool).await?;
         let payload = serde_json::from_value(row.try_get("payload_json")?)?;
-        let bundle = agentx_runtime_contracts::ExecutionSpecBundleV1 {
+        let bundle = agentx_runtime_contracts::ExecutionSpecBundleV2 {
             payload,
             content_hash: ContentHash::parse(row.try_get::<String, _>("content_hash")?)?,
             signature: agentx_runtime_contracts::Ed25519Signature {
@@ -1472,20 +1477,6 @@ impl Publisher {
             .map_err(RuntimeCallError::transport)?;
         Ok(decode_runtime_response(response).await?.json().await?)
     }
-}
-
-fn runtime_resource_kind_from_control(value: &str) -> Result<RuntimeResourceKindV1> {
-    Ok(match value {
-        "model" => RuntimeResourceKindV1::Model,
-        "mcp" | "mcp_server" | "mcp_tool" => RuntimeResourceKindV1::Mcp,
-        "rag" => RuntimeResourceKindV1::Rag,
-        "memory" => RuntimeResourceKindV1::Memory,
-        "skill" => RuntimeResourceKindV1::Skill,
-        "credential" => RuntimeResourceKindV1::Credential,
-        "sandbox" | "sandbox_profile" => RuntimeResourceKindV1::SandboxProfile,
-        "composite" => RuntimeResourceKindV1::Composite,
-        unsupported => anyhow::bail!("unsupported Control Resource Grant type {unsupported}"),
-    })
 }
 
 #[derive(Debug, Error)]

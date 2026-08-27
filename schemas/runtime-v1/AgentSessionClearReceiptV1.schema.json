@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "auditId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "clearedEntries": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "clearedPending": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "sessionKey": {
+      "type": "string"
+    },
+    "stableAgentNodeKey": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "apiVersion",
+    "sessionKey",
+    "stableAgentNodeKey",
+    "clearedEntries",
+    "clearedPending",
+    "auditId"
+  ],
+  "title": "AgentSessionClearReceiptV1",
+  "type": "object"
+}

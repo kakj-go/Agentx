@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "auditId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "createdAt": {
+      "type": "string"
+    },
+    "operation": {
+      "type": "string"
+    },
+    "operationId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "scopeHash": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "auditId",
+    "operation",
+    "scopeHash",
+    "createdAt"
+  ],
+  "title": "AgentSubjectMemoryAuditViewV1",
+  "type": "object"
+}

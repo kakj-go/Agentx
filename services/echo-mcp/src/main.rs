@@ -251,6 +251,29 @@ async fn chat_completions(headers: HeaderMap, AxumJson(request): AxumJson<Value>
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
+    let agent_purpose = request
+        .pointer("/metadata/agentPurpose")
+        .and_then(Value::as_str)
+        .unwrap_or("agent_turn");
+    let p3_overflow_requested = messages.iter().any(|message| {
+        message
+            .get("content")
+            .and_then(Value::as_str)
+            .is_some_and(|content| content.contains("P3_CONTEXT_OVERFLOW"))
+    });
+    let p3_overflow_compacted = messages.iter().any(|message| {
+        message
+            .get("content")
+            .and_then(Value::as_str)
+            .is_some_and(|content| content.contains("P3_OVERFLOW_COMPACTED"))
+    });
+    if agent_purpose == "agent_turn" && p3_overflow_requested && !p3_overflow_compacted {
+        return (
+            StatusCode::BAD_REQUEST,
+            AxumJson(json!({"error":{"code":"context_length_exceeded","message":"maximum context length exceeded by P3 fixture"}})),
+        )
+            .into_response();
+    }
     let tool_messages = messages
         .iter()
         .filter(|message| message.get("role").and_then(Value::as_str) == Some("tool"))
@@ -272,16 +295,67 @@ async fn chat_completions(headers: HeaderMap, AxumJson(request): AxumJson<Value>
             .and_then(Value::as_str)
             .is_some_and(|content| content.contains("TRACE_LARGE_RESPONSE"))
     });
+    let p3_skill_context = messages.iter().any(|message| {
+        message.get("role").and_then(Value::as_str) == Some("system")
+            && message
+                .get("content")
+                .and_then(Value::as_str)
+                .is_some_and(|content| content.contains("immutable V2-04 Skill result"))
+    });
     let tool = request
         .pointer("/tools/0/function/name")
         .and_then(Value::as_str);
-    let tool_call = tool
+    let latest_user_content = messages
+        .iter()
+        .rev()
+        .find(|message| message.get("role").and_then(Value::as_str) == Some("user"))
+        .and_then(|message| message.get("content"))
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let requested_memory_write = latest_user_content.contains("P3_MEMORY_WRITE");
+    let requested_memory_recall = latest_user_content.contains("P3_MEMORY_RECALL");
+    let selected_tool = if requested_memory_write {
+        request
+            .get("tools")
+            .and_then(Value::as_array)
+            .and_then(|tools| {
+                tools.iter().find_map(|candidate| {
+                    (candidate.pointer("/function/name").and_then(Value::as_str)
+                        == Some("memory_write"))
+                    .then(|| "memory_write")
+                })
+            })
+            .or(tool)
+    } else if requested_memory_recall {
+        request
+            .get("tools")
+            .and_then(Value::as_array)
+            .and_then(|tools| {
+                tools.iter().find_map(|candidate| {
+                    (candidate.pointer("/function/name").and_then(Value::as_str)
+                        == Some("memory_recall"))
+                    .then(|| "memory_recall")
+                })
+            })
+            .or(tool)
+    } else {
+        tool
+    };
+    let tool_call = selected_tool
         .filter(|_| requested_loop || tool_messages == 0)
         .map(|name| {
+            let arguments = match name {
+                "memory_write" => json!({
+                    "text":"p3-subject-memory",
+                    "metadata":{"fixture":true}
+                }),
+                "memory_recall" => json!({"query":"p3-subject-memory","topK":5}),
+                _ => json!({"text":"m5-tool-result"}),
+            };
             json!({
                 "id": format!("m5-call-{tool_messages}"),
                 "type": "function",
-                "function": {"name": name, "arguments": "{\"text\":\"m5-tool-result\"}"}
+                "function": {"name": name, "arguments": arguments.to_string()}
             })
         });
     let finish_reason = if tool_call.is_some() {
@@ -289,11 +363,20 @@ async fn chat_completions(headers: HeaderMap, AxumJson(request): AxumJson<Value>
     } else {
         "stop"
     };
-    let content = tool_call.is_none().then_some(if kakj_identity {
-        "你好，我叫 kakj。"
-    } else {
-        "M5 Agent completed after the MCP tool result"
-    });
+    let content =
+        tool_call
+            .is_none()
+            .then_some(if agent_purpose == "compaction" && p3_overflow_requested {
+                "P3_OVERFLOW_COMPACTED"
+            } else if agent_purpose == "compaction" {
+                "P3_THRESHOLD_COMPACTED"
+            } else if kakj_identity {
+                "你好，我叫 kakj。"
+            } else if p3_skill_context {
+                "P3-04 Agent attachment completed; skill_context=true"
+            } else {
+                "M5 Agent completed after the MCP tool result"
+            });
     let usage = json!({"prompt_tokens": 24 + tool_messages, "completion_tokens": if tool_call.is_some() { 12 } else { 9 }, "total_tokens": 45 + tool_messages});
     if request
         .get("stream")
@@ -379,6 +462,34 @@ mod tests {
         assert_eq!(
             value.pointer("/choices/0/message/content"),
             Some(&json!("你好，我叫 kakj。"))
+        );
+    }
+
+    #[tokio::test]
+    async fn model_fixture_reports_p3_skill_external_context() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer m5-model-secret"),
+        );
+        let response = chat_completions(
+            headers,
+            Json(json!({"messages":[
+                {"role":"system","content":"Return the immutable V2-04 Skill result."},
+                {"role":"tool","content":"mcp complete"}
+            ],"tools":[{"function":{"name":"echo"}}]})),
+        )
+        .await
+        .into_response();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            value.pointer("/choices/0/message/content"),
+            Some(&json!(
+                "P3-04 Agent attachment completed; skill_context=true"
+            ))
         );
     }
 

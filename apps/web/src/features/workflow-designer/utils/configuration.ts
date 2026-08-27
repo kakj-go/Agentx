@@ -24,11 +24,15 @@ export function configurationIssues(document: StudioDocument, manifests: Map<str
       const value = node.data.parameters[name]
       if (value === undefined || value === null || value === '') issues.push({ code: 'REQUIRED_PARAMETER_MISSING', nodeId: node.id, fieldPath: `parameters.${name}`, message: `Field '${name}' is required.`, values: { field: name } })
     }
-    for (const selector of resourceSelectors(manifest)) {
+    for (const selector of resourceSelectors(manifest).filter((candidate) => !candidate.bindingRole)) {
       if (selector.required && !node.data.resourceReferences.some((reference) => !reference.bindingId && reference.resourceType === selector.resourceType)) issues.push({ code: 'RESOURCE_REQUIRED', nodeId: node.id, fieldPath: 'resourceReferences', message: `Select a ${selector.resourceType} resource.`, values: { resourceType: selector.resourceType } })
     }
     for (const slot of manifest.bindingSlots) {
-      if (slot.required && !document.edges.some((edge) => edge.data?.edgeKind === 'binding' && edge.target === node.id && edge.data.targetSlot === slot.name)) issues.push({ code: 'AI_BINDING_REQUIRED', nodeId: node.id, fieldPath: `resourceReferences.${slot.name}`, message: `Connect the required ${slot.name} attachment.`, values: { slot: slot.name } })
+      if (slot.placement === 'inspector') {
+        const reference = node.data.resourceReferences.find((candidate) => !candidate.bindingId && !candidate.bindingRole && candidate.resourceType === slot.resourceType)
+        if (slot.required && !reference) issues.push({ code: 'RESOURCE_REQUIRED', nodeId: node.id, fieldPath: `resourceReferences.${slot.name}`, message: `Select the required ${slot.name} resource.`, values: { slot: slot.name } })
+        if (reference && !reference.resourceVersionId) issues.push({ code: 'RESOURCE_VERSION_REQUIRED', nodeId: node.id, fieldPath: `resourceReferences.${slot.name}`, message: `${slot.name} must use an exact resource version.`, values: { slot: slot.name } })
+      } else if (slot.required && !document.edges.some((edge) => edge.data?.edgeKind === 'binding' && edge.target === node.id && edge.data.targetSlot === slot.name)) issues.push({ code: 'AI_BINDING_REQUIRED', nodeId: node.id, fieldPath: `resourceReferences.${slot.name}`, message: `Connect the required ${slot.name} attachment.`, values: { slot: slot.name } })
     }
     const hasErrorEdge = document.edges.some((edge) => edge.data?.edgeKind === 'execution' && edge.source === node.id && (edge.data.sourcePortKind === 'error' || edge.sourceHandle === 'error'))
     if (hasErrorEdge && node.data.settings.onError !== 'continue_error_output') issues.push({ code: 'ERROR_POLICY_MISMATCH', nodeId: node.id, fieldPath: 'settings.onError', message: "Error connections require the 'continue_error_output' policy." })
@@ -36,7 +40,7 @@ export function configurationIssues(document: StudioDocument, manifests: Map<str
   return issues
 }
 
-function resourceSelectors(manifest: NodeManifest): Array<{ resourceType: string; required?: boolean }> {
+function resourceSelectors(manifest: NodeManifest): Array<{ bindingRole?: string; resourceType: string; required?: boolean }> {
   const selectors = manifest.uiSchema.resourceSelectors
-  return Array.isArray(selectors) ? selectors.filter((value): value is { resourceType: string; required?: boolean } => Boolean(value && typeof value === 'object' && typeof (value as { resourceType?: unknown }).resourceType === 'string')) : []
+  return Array.isArray(selectors) ? selectors.filter((value): value is { bindingRole?: string; resourceType: string; required?: boolean } => Boolean(value && typeof value === 'object' && typeof (value as { resourceType?: unknown }).resourceType === 'string')) : []
 }

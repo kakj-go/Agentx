@@ -1,5 +1,6 @@
 [workspace]
 members = [
+  "crates/agentx-agent-core",
   "crates/agentx-key-material",
   "crates/agentxctl",
   "crates/agentx-api-types",
@@ -84,6 +85,8 @@ sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-r
 thiserror = "2.0"
 time = { version = "0.3", features = ["serde", "formatting", "parsing", "macros"] }
 tokio = { version = "1.0", features = ["macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+tokio-tungstenite = { version = "0.27", default-features = false, features = ["connect", "handshake", "rustls-tls-webpki-roots"] }
+futures-util = "0.3"
 tempfile = "3.20"
 tokio-rustls = "0.26"
 tokio-util = "0.7"
@@ -102,6 +105,7 @@ zeroize = "1.8"
 zip = { version = "2.4", default-features = false, features = ["deflate"] }
 
 agentx-api-types = { path = "crates/agentx-api-types" }
+agentx-agent-core = { path = "crates/agentx-agent-core" }
 agentx-key-material = { path = "crates/agentx-key-material" }
 agentx-bundle-builder = { path = "crates/agentx-bundle-builder" }
 agentx-application = { path = "crates/agentx-application" }

@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentx.local/schemas/plan3/agent-core-fixture-v1.json",
+  "title": "Plan3 Agent Core behavior fixture v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "reference_repository",
+    "reference_commit",
+    "reference_package_version",
+    "case_id",
+    "capability",
+    "initial_session",
+    "model_responses",
+    "tool_responses",
+    "steering_inputs",
+    "follow_up_inputs",
+    "expected_normalized_events",
+    "expected_final_context",
+    "expected_compaction",
+    "expected_terminal_state"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "reference_repository": { "const": "https://github.com/earendil-works/pi" },
+    "reference_commit": { "const": "a69bef789bc95abf0acee16f7b4660b70b650bb9" },
+    "reference_package_version": { "const": "0.84.2" },
+    "case_id": { "type": "string", "minLength": 1 },
+    "capability": { "type": "string", "minLength": 1 },
+    "initial_session": { "type": "object" },
+    "model_responses": { "type": "array", "items": { "type": "object" } },
+    "tool_responses": { "type": "array", "items": { "type": "object" } },
+    "steering_inputs": { "type": "array", "items": { "type": "object" } },
+    "follow_up_inputs": { "type": "array", "items": { "type": "object" } },
+    "expected_normalized_events": { "type": "array", "items": { "type": "string" } },
+    "expected_final_context": { "type": "array", "items": { "type": "string" } },
+    "expected_compaction": { "type": ["object", "null"] },
+    "expected_terminal_state": {
+      "enum": ["completed", "cancelled", "budget_exhausted", "model_error", "tool_error", "outcome_unknown", "context_overflow"]
+    }
+  }
+}

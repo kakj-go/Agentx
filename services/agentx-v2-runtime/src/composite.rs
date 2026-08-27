@@ -93,6 +93,7 @@ pub(crate) async fn materialize(
                 &CompileContext {
                     current_workflow_version_id: Some(workflow_version_id.to_string()),
                     ancestor_workflow_version_ids: BTreeSet::new(),
+                    resource_tool_names: BTreeMap::new(),
                 },
             )
             .map_err(|error| {

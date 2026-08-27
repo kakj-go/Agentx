@@ -1,0 +1,365 @@
+{
+  "$defs": {
+    "AgentMessageV1": {
+      "additionalProperties": false,
+      "properties": {
+        "content": {
+          "type": "string"
+        },
+        "isError": {
+          "default": false,
+          "type": "boolean"
+        },
+        "messageId": {
+          "type": "string"
+        },
+        "role": {
+          "$ref": "#/$defs/MessageRole"
+        },
+        "toolCallId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "toolCalls": {
+          "items": {
+            "$ref": "#/$defs/ToolCallV1"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "messageId",
+        "role",
+        "content"
+      ],
+      "type": "object"
+    },
+    "CompactionKindV1": {
+      "enum": [
+        "threshold",
+        "overflow"
+      ],
+      "type": "string"
+    },
+    "CompactionSnapshotV1": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/CompactionKindV1"
+        },
+        "retainedTail": {
+          "items": {
+            "$ref": "#/$defs/AgentMessageV1"
+          },
+          "type": "array"
+        },
+        "snapshotId": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "throughMessageIndex": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "tokensBefore": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "snapshotId",
+        "kind",
+        "summary",
+        "throughMessageIndex",
+        "retainedTail",
+        "tokensBefore"
+      ],
+      "type": "object"
+    },
+    "MessageRole": {
+      "enum": [
+        "user",
+        "assistant",
+        "tool_result",
+        "external_context"
+      ],
+      "type": "string"
+    },
+    "OperationKindV1": {
+      "enum": [
+        "model",
+        "tool",
+        "compaction",
+        "state_transition"
+      ],
+      "type": "string"
+    },
+    "OperationPhaseV1": {
+      "oneOf": [
+        {
+          "properties": {
+            "phase": {
+              "const": "intent_persisted",
+              "type": "string"
+            }
+          },
+          "required": [
+            "phase"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "phase": {
+              "const": "effect_started",
+              "type": "string"
+            }
+          },
+          "required": [
+            "phase"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "phase": {
+              "const": "effect_completed",
+              "type": "string"
+            },
+            "result": true
+          },
+          "required": [
+            "phase",
+            "result"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "phase": {
+              "const": "settled_success",
+              "type": "string"
+            },
+            "result": true
+          },
+          "required": [
+            "phase",
+            "result"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "error": {
+              "type": "string"
+            },
+            "phase": {
+              "const": "settled_failure",
+              "type": "string"
+            }
+          },
+          "required": [
+            "phase",
+            "error"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "phase": {
+              "const": "unknown_outcome",
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "phase",
+            "reason"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "OperationRecordV1": {
+      "additionalProperties": false,
+      "properties": {
+        "attempt": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "createdAtMillis": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "effectId": {
+          "type": "string"
+        },
+        "effectIdentity": {
+          "type": "string"
+        },
+        "fencingToken": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "intent": true,
+        "operationId": {
+          "type": "string"
+        },
+        "operationKind": {
+          "$ref": "#/$defs/OperationKindV1"
+        },
+        "phase": {
+          "$ref": "#/$defs/OperationPhaseV1"
+        },
+        "replayPolicy": {
+          "$ref": "#/$defs/ReplayPolicyV1"
+        },
+        "updatedAtMillis": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "operationId",
+        "effectId",
+        "operationKind",
+        "attempt",
+        "intent",
+        "effectIdentity",
+        "replayPolicy",
+        "phase",
+        "fencingToken",
+        "createdAtMillis",
+        "updatedAtMillis"
+      ],
+      "type": "object"
+    },
+    "ReplayPolicyV1": {
+      "enum": [
+        "safe",
+        "never",
+        "idempotency_required",
+        "ledger_dependent"
+      ],
+      "type": "string"
+    },
+    "TerminalReasonV1": {
+      "enum": [
+        "completed",
+        "cancelled",
+        "budget_exhausted",
+        "model_error",
+        "tool_error",
+        "outcome_unknown",
+        "context_overflow"
+      ],
+      "type": "string"
+    },
+    "ToolCallV1": {
+      "additionalProperties": false,
+      "properties": {
+        "arguments": true,
+        "callId": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "callId",
+        "name",
+        "arguments"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "compaction": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CompactionSnapshotV1"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "followUpQueue": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/AgentMessageV1"
+      },
+      "type": "array"
+    },
+    "messages": {
+      "items": {
+        "$ref": "#/$defs/AgentMessageV1"
+      },
+      "type": "array"
+    },
+    "operation": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/OperationRecordV1"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "overflowRetryOperationId": {
+      "description": "Durable marker for the one overflow-triggered retry allowed for a\nModel Effect.  It is tied to the retry operation identity rather than\nthe latest compaction kind, so a later Session turn can compact again.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "sessionId": {
+      "type": "string"
+    },
+    "steeringQueue": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/AgentMessageV1"
+      },
+      "type": "array"
+    },
+    "terminal": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/TerminalReasonV1"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "version": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "sessionId",
+    "version",
+    "messages"
+  ],
+  "title": "AgentSessionStateV1",
+  "type": "object"
+}

@@ -94,7 +94,7 @@ async fn export_workflow(
     let hash = canonical_content_hash(&package_body).map_err(ApiError::internal)?;
     let signature = state.work_packages.sign_content_hash(&hash);
     Ok(Json(
-        json!({"manifest":{"packageSchemaVersion":"1.0","workflowSchemaVersion":"5.0","name":row.try_get::<String,_>("name")?,"contentHash":hash,"signatureAlgorithm":"ed25519","signingKeyId":state.work_packages.signing_key_id(),"signature":signature},"workflowDefinition":definition,"editorDocument":editor,"nodeLock":[],"subWorkflowReferences":[],"resourceBindingPlaceholders":[],"apiBinding":{}}),
+        json!({"manifest":{"packageSchemaVersion":"1.0","workflowSchemaVersion":"6.0","name":row.try_get::<String,_>("name")?,"contentHash":hash,"signatureAlgorithm":"ed25519","signingKeyId":state.work_packages.signing_key_id(),"signature":signature},"workflowDefinition":definition,"editorDocument":editor,"nodeLock":[],"subWorkflowReferences":[],"resourceBindingPlaceholders":[],"apiBinding":{}}),
     ))
 }
 
@@ -113,7 +113,7 @@ async fn import_workflow(
         || manifest
             .get("workflowSchemaVersion")
             .and_then(Value::as_str)
-            != Some("5.0")
+            != Some("6.0")
     {
         return Err(ApiError::unprocessable(
             "WORKFLOW_PACKAGE_VERSION_UNSUPPORTED",
@@ -191,7 +191,7 @@ async fn import_workflow(
         true,
     )
     .await?;
-    sqlx::query("INSERT INTO workflow_drafts(id,tenant_id,workflow_id,schema_version,revision,definition_json,editor_json,content_hash,editor_hash,updated_by) VALUES(?,?,?,'5.0',0,?,?,?,?,?)").bind(draft).bind(actor.tenant_id).bind(workflow).bind(definition).bind(editor).bind(&definition_hash).bind(editor_hash).bind(actor.user_id).execute(&mut *tx).await?;
+    sqlx::query("INSERT INTO workflow_drafts(id,tenant_id,workflow_id,schema_version,revision,definition_json,editor_json,content_hash,editor_hash,updated_by) VALUES(?,?,?,'6.0',0,?,?,?,?,?)").bind(draft).bind(actor.tenant_id).bind(workflow).bind(definition).bind(editor).bind(&definition_hash).bind(editor_hash).bind(actor.user_id).execute(&mut *tx).await?;
     tx.commit().await?;
     Ok((
         StatusCode::CREATED,

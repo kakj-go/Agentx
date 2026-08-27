@@ -164,6 +164,9 @@ async fn v2_publish_execution_query_recovery_and_gc_are_fenced_and_idempotent() 
     sandbox_manager_is_fenced_and_idempotent(&fixture).await;
     skill_worker_loads_and_verifies_the_runtime_object_closure(&fixture).await;
     agent_worker_runs_a_bounded_tool_loop_and_persists_usage(&fixture).await;
+    agent_attachment_revocation_is_tool_scoped(&fixture).await;
+    application_session_agent_restores_context_across_executions(&fixture).await;
+    durable_agent_pending_wakeups_are_ordered_and_idempotent(&fixture).await;
     quota_projection_covers_all_dimensions_and_has_no_terminal_residue(&fixture).await;
     retention_dry_run_reference_block_and_object_sweep_are_fenced(&fixture).await;
     event_sequencer_quarantines_invalid_payload_without_blocking_valid_events(&fixture).await;
@@ -758,7 +761,7 @@ async fn revoked_grant_rejection_is_terminal_and_monotonic(fixture: &Fixture) {
             tenant_id: fixture.tenant_id,
             identity_id: fixture.identity_id,
             grant_id,
-            resource_kind: RuntimeResourceKindV1::Model,
+            resource_type: "model".into(),
             resource_id,
             operations: BTreeSet::from(["use".into()]),
             policy_epoch,
@@ -767,15 +770,15 @@ async fn revoked_grant_rejection_is_terminal_and_monotonic(fixture: &Fixture) {
     };
     apply_target(fixture, 2, grant_target(2, false)).await;
     apply_target(fixture, 1, grant_target(1, true)).await;
-    let projection: (String, u64) = sqlx::query_as(
-        "SELECT status,policy_epoch FROM resource_grant_projection WHERE tenant_id=? AND grant_id=?",
+    let projection: (String, u64, String) = sqlx::query_as(
+        "SELECT status,policy_epoch,resource_type FROM resource_grant_projection WHERE tenant_id=? AND grant_id=?",
     )
     .bind(fixture.tenant_id)
     .bind(grant_id)
     .fetch_one(&fixture.state.pool)
     .await
     .unwrap();
-    assert_eq!(projection, ("revoked".into(), 2));
+    assert_eq!(projection, ("revoked".into(), 2, "model".into()));
 
     let owner = Uuid::now_v7();
     let claim = claim_commands(&fixture.state.pool, owner, 100)
@@ -1268,7 +1271,7 @@ fn suspension_definition(node_type: &str, parameters: Value) -> WorkflowDefiniti
         connections.push(json!({"id":"resumed-end","sourceNodeId":"suspend","sourceHandle":"resumed","targetNodeId":"__end__","targetHandle":"main","order":0}));
     }
     serde_json::from_value(json!({
-        "schemaVersion":"5.0",
+        "schemaVersion":"6.0",
         "start":{"inputs":{"type":"object","properties":{"missingCandidate":{"type":"string"}},"additionalProperties":true},"contexts":{}},
         "nodes":[{
             "id":"suspend",

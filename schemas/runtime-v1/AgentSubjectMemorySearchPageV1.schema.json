@@ -1,0 +1,62 @@
+{
+  "$defs": {
+    "AgentSubjectMemoryAuditViewV1": {
+      "additionalProperties": false,
+      "properties": {
+        "auditId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string"
+        },
+        "operation": {
+          "type": "string"
+        },
+        "operationId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "scopeHash": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "auditId",
+        "operation",
+        "scopeHash",
+        "createdAt"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "items": {
+      "items": {
+        "$ref": "#/$defs/AgentSubjectMemoryAuditViewV1"
+      },
+      "type": "array"
+    },
+    "next": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "apiVersion",
+    "items"
+  ],
+  "title": "AgentSubjectMemorySearchPageV1",
+  "type": "object"
+}

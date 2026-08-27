@@ -46,9 +46,8 @@ def test_chart_schemas_are_identical() -> None:
 @pytest.mark.parametrize("values_name", ["local.yaml", "dockerhub-beta.yaml", "production.example.yaml"])
 def test_all_charts_lint_and_render(values_name: str) -> None:
     rendered = "\n".join(render(f"deploy/values/{values_name}", target) for target in TARGETS)
-    for document in yaml.safe_load_all(rendered):
-        if not isinstance(document, dict):
-            continue
+    documents = [document for document in yaml.safe_load_all(rendered) if isinstance(document, dict)]
+    for document in documents:
         pod_spec = document.get("spec", {})
         if document.get("kind") in {"Deployment", "StatefulSet", "DaemonSet", "Job"}:
             pod_spec = pod_spec.get("template", {}).get("spec", {})
@@ -69,6 +68,27 @@ def test_all_charts_lint_and_render(values_name: str) -> None:
     assert "wait-for-runtime-schema" in rendered
     assert "wait-for-observability-schema" in rendered
     assert "database=$AGENTX_CLICKHOUSE_DATABASE" in rendered
+    sandbox_manager = next(
+        document
+        for document in documents
+        if document.get("kind") == "Deployment"
+        and document.get("metadata", {}).get("name") == "sandbox-manager"
+    )
+    sandbox_env = {
+        item["name"]
+        for item in sandbox_manager["spec"]["template"]["spec"]["containers"][0]["env"]
+    }
+    assert {
+        "AGENTX_RUNTIME_S3_ENDPOINT",
+        "AGENTX_RUNTIME_S3_BUCKET",
+        "AGENTX_RUNTIME_S3_ACCESS_KEY",
+        "AGENTX_RUNTIME_S3_SECRET_KEY",
+    } <= sandbox_env
+    assert any(
+        document.get("kind") == "NetworkPolicy"
+        and document.get("metadata", {}).get("name") == "sandbox-manager-object-storage-egress"
+        for document in documents
+    )
 
 
 @pytest.mark.skipif(shutil.which("helm") is None, reason="Helm is not installed")

@@ -1,0 +1,100 @@
+{
+  "$defs": {
+    "RuntimeSkillAssetV2": {
+      "additionalProperties": false,
+      "properties": {
+        "contentHash": {
+          "type": "string"
+        },
+        "mediaType": {
+          "type": "string"
+        },
+        "objectId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "sizeBytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "path",
+        "objectId",
+        "contentHash",
+        "mediaType",
+        "sizeBytes"
+      ],
+      "type": "object"
+    },
+    "RuntimeSkillDependencyV2": {
+      "additionalProperties": false,
+      "properties": {
+        "operation": {
+          "type": "string"
+        },
+        "resourceId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "resourceType": {
+          "type": "string"
+        },
+        "resourceVersionId": {
+          "format": "uuid",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "resourceType",
+        "resourceId",
+        "operation"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "assets": {
+      "items": {
+        "$ref": "#/$defs/RuntimeSkillAssetV2"
+      },
+      "type": "array"
+    },
+    "dependencies": {
+      "items": {
+        "$ref": "#/$defs/RuntimeSkillDependencyV2"
+      },
+      "type": "array"
+    },
+    "instructions": {
+      "type": "string"
+    },
+    "schemaVersion": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "skillVersionId": {
+      "format": "uuid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "skillVersionId",
+    "instructions",
+    "assets",
+    "dependencies"
+  ],
+  "title": "RuntimeSkillProgramV2",
+  "type": "object"
+}

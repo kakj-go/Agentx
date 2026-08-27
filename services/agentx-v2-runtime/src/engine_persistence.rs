@@ -753,6 +753,31 @@ pub(super) async fn authorize_snapshot(
     tx: &mut Transaction<'_, MySql>,
     authorization: &RuntimeAuthorizationSnapshotV1,
 ) -> RuntimeResult<()> {
+    authorize_identity_snapshot(tx, authorization).await?;
+    for grant_id in &authorization.grant_ids {
+        let grant_ok: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM resource_grant_projection WHERE tenant_id=? AND grant_id=? AND subject_id=? AND status='active' AND policy_epoch>=?)",
+        )
+        .bind(authorization.tenant_id)
+        .bind(grant_id)
+        .bind(authorization.service_identity_id)
+        .bind(authorization.policy_epoch)
+        .fetch_one(&mut **tx)
+        .await?;
+        if !grant_ok {
+            return Err(runtime_bad_request(
+                "RUNTIME_GRANT_REVOKED",
+                "Runtime grant is missing or revoked",
+            ));
+        }
+    }
+    Ok(())
+}
+
+pub(super) async fn authorize_identity_snapshot(
+    tx: &mut Transaction<'_, MySql>,
+    authorization: &RuntimeAuthorizationSnapshotV1,
+) -> RuntimeResult<()> {
     if authorization.maximum_policy_staleness_seconds
         > agentx_runtime_contracts::MAX_POLICY_STALENESS_SECONDS
     {
@@ -776,23 +801,6 @@ pub(super) async fn authorize_snapshot(
             "RUNTIME_AUTHORIZATION_STALE",
             "Runtime identity state is revoked, missing, or outside the Last Known Good window",
         ));
-    }
-    for grant_id in &authorization.grant_ids {
-        let grant_ok: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM resource_grant_projection WHERE tenant_id=? AND grant_id=? AND subject_id=? AND status='active' AND policy_epoch>=?)",
-        )
-        .bind(authorization.tenant_id)
-        .bind(grant_id)
-        .bind(authorization.service_identity_id)
-        .bind(authorization.policy_epoch)
-        .fetch_one(&mut **tx)
-        .await?;
-        if !grant_ok {
-            return Err(runtime_bad_request(
-                "RUNTIME_GRANT_REVOKED",
-                "Runtime grant is missing or revoked",
-            ));
-        }
     }
     Ok(())
 }

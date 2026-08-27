@@ -1,6 +1,8 @@
 use std::{env, time::Duration};
 
-use agentx_runtime_infrastructure::{RuntimeMySqlSettings, connect_runtime_mysql};
+use agentx_runtime_infrastructure::{
+    RuntimeMySqlSettings, RuntimeObjectStorageSettings, connect_runtime_mysql, runtime_object_store,
+};
 use anyhow::{Context, Result};
 
 #[tokio::main]
@@ -32,6 +34,9 @@ async fn main() -> Result<()> {
         provider_api_key: env::var("AGENTX_OPENSANDBOX_API_KEY").ok(),
         provider_secure_access,
         owner,
+        vault: Some(agentx_v2_runtime::vault::RuntimeVault::from_env()?),
+        objects: runtime_object_store(&RuntimeObjectStorageSettings::from_env()?)?,
+        process_sockets: Default::default(),
     };
     let reaper_state = state.clone();
     let reaper_lifecycle = lifecycle.clone();

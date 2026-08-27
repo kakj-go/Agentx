@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "after": {
+      "default": null,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "apiVersion": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "applicationId": {
+      "format": "uuid",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "limit": {
+      "default": 0,
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "sessionKey": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "stableAgentNodeKey": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "tenantId": {
+      "format": "uuid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "apiVersion",
+    "tenantId"
+  ],
+  "title": "AgentSessionSearchRequestV1",
+  "type": "object"
+}

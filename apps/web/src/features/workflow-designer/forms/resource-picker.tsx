@@ -12,12 +12,13 @@ import type { ResourceOption } from '../model/types'
 
 type ResourceAction = { option: ResourceOption; kind: 'grant' | 'request' }
 
-export function ResourcePicker({ options, value, onChange, onAuthorize, onRequest }: {
+export function ResourcePicker({ options, value, onChange, onAuthorize, onRequest, ariaLabel }: {
   options: ResourceOption[]
   value?: string
   onChange: (id: string, versionId?: string | null, label?: string) => void
   onAuthorize?: (option: ResourceOption) => Promise<void>
   onRequest?: (option: ResourceOption, message?: string) => Promise<void>
+  ariaLabel?: string
 }) {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
@@ -53,13 +54,13 @@ export function ResourcePicker({ options, value, onChange, onAuthorize, onReques
   return <>
     <Popover.Root onOpenChange={(next) => { setOpen(next); if (!next) setSearch('') }} open={open}>
       <Popover.Trigger asChild>
-        <button aria-expanded={open} aria-haspopup="listbox" aria-invalid={selectedUnavailable || undefined} aria-label={selectedUnavailable ? t('studio.inspector.selectedResourceUnavailable') : selected?.label ?? t('studio.inspector.selectResource')} className={`inline-flex h-9 w-full items-center justify-between gap-3 rounded-lg border bg-surface px-3 text-left text-xs outline-none transition-colors hover:bg-muted/45 focus:ring-2 ${selectedUnavailable ? 'border-danger/60 text-danger focus:ring-danger/15' : 'border-border text-foreground focus:border-primary/60 focus:ring-primary/15'}`} role="combobox" type="button">
+        <button aria-expanded={open} aria-haspopup="listbox" aria-invalid={selectedUnavailable || undefined} aria-label={ariaLabel ?? (selectedUnavailable ? t('studio.inspector.selectedResourceUnavailable') : selected?.label ?? t('studio.inspector.selectResource'))} className={`inline-flex h-9 w-full items-center justify-between gap-3 rounded-lg border bg-surface px-3 text-left text-xs outline-none transition-colors hover:bg-muted/45 focus:ring-2 ${selectedUnavailable ? 'border-danger/60 text-danger focus:ring-danger/15' : 'border-border text-foreground focus:border-primary/60 focus:ring-primary/15'}`} role="combobox" type="button">
           <span className={selected || selectedUnavailable ? 'truncate' : 'truncate text-muted-foreground'}>{selectedUnavailable ? t('studio.inspector.selectedResourceUnavailable') : selected?.label ?? t('studio.inspector.selectResource')}</span>
           <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
         </button>
       </Popover.Trigger>
       <Popover.Portal>
-        <Popover.Content align="start" className="z-[120] max-h-80 w-[var(--radix-popover-trigger-width)] overflow-hidden rounded-lg border border-border bg-surface shadow-xl" sideOffset={4}>
+        <Popover.Content align="start" className="z-[220] max-h-80 w-[var(--radix-popover-trigger-width)] overflow-hidden rounded-lg border border-border bg-surface shadow-xl" sideOffset={4}>
           <div className="relative border-b border-border p-2">
             <Search className="pointer-events-none absolute left-4 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
             <Input aria-label={t('common.search')} className="h-8 pl-8 text-xs" onChange={(event) => setSearch(event.target.value)} value={search} />

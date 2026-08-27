@@ -1,0 +1,105 @@
+{
+  "$defs": {
+    "ProcessLeaseV1": {
+      "additionalProperties": false,
+      "properties": {
+        "expiresAtMillis": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "fencingToken": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "leaseId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "leaseId",
+        "fencingToken",
+        "expiresAtMillis"
+      ],
+      "type": "object"
+    },
+    "ResourceReferenceV1": {
+      "additionalProperties": false,
+      "properties": {
+        "operation": {
+          "type": "string"
+        },
+        "resourceId": {
+          "type": "string"
+        },
+        "resourceType": {
+          "type": "string"
+        },
+        "resourceVersionId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "resourceType",
+        "resourceId",
+        "resourceVersionId",
+        "operation"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "args": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "command": {
+      "type": "string"
+    },
+    "heartbeatIntervalMillis": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "idleTimeoutMillis": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "lease": {
+      "$ref": "#/$defs/ProcessLeaseV1"
+    },
+    "maxFrameBytes": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "processSessionId": {
+      "type": "string"
+    },
+    "runtimeSandbox": {
+      "$ref": "#/$defs/ResourceReferenceV1"
+    },
+    "serverVersionId": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "processSessionId",
+    "serverVersionId",
+    "runtimeSandbox",
+    "command",
+    "args",
+    "maxFrameBytes",
+    "idleTimeoutMillis",
+    "heartbeatIntervalMillis",
+    "lease"
+  ],
+  "title": "SandboxProcessSessionContractV1",
+  "type": "object"
+}

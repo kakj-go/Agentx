@@ -1,6 +1,224 @@
 use super::*;
 
 impl RuntimeWorker {
+    pub(super) async fn emit_agent_core_events(
+        &self,
+        run_id: Uuid,
+        claim: &ClaimedWorkerAttempt,
+        events: &[agentx_agent_core::CoreEventV1],
+    ) {
+        let mut turn = 0_u32;
+        for (index, event) in events.iter().enumerate() {
+            let (
+                entity_id,
+                parent,
+                span_kind,
+                span_name,
+                event_type,
+                event_kind,
+                status,
+                error_code,
+                attributes,
+            ) = match event {
+                agentx_agent_core::CoreEventV1::AgentStarted { .. } => (
+                    run_id,
+                    Some((
+                        claim.task.attempt_id,
+                        agentx_runtime_contracts::TraceSpanKindV1::Attempt,
+                    )),
+                    agentx_runtime_contracts::TraceSpanKindV1::AgentRun,
+                    "Agent run",
+                    "agent_run.started",
+                    agentx_runtime_contracts::TraceEventKindV1::Started,
+                    "running",
+                    None,
+                    json!({"source":"agent_core"}),
+                ),
+                agentx_agent_core::CoreEventV1::TurnStarted { turn: current } => {
+                    turn = *current;
+                    let id = crate::worker_support::stable_id(
+                        run_id,
+                        format!("turn-{current}").as_bytes(),
+                    );
+                    (
+                        id,
+                        Some((run_id, agentx_runtime_contracts::TraceSpanKindV1::AgentRun)),
+                        agentx_runtime_contracts::TraceSpanKindV1::AgentIteration,
+                        "Agent turn",
+                        "agent_turn.started",
+                        agentx_runtime_contracts::TraceEventKindV1::Started,
+                        "running",
+                        None,
+                        json!({"turn":current}),
+                    )
+                }
+                agentx_agent_core::CoreEventV1::TurnEnded { turn: current } => {
+                    let id = crate::worker_support::stable_id(
+                        run_id,
+                        format!("turn-{current}").as_bytes(),
+                    );
+                    (
+                        id,
+                        Some((run_id, agentx_runtime_contracts::TraceSpanKindV1::AgentRun)),
+                        agentx_runtime_contracts::TraceSpanKindV1::AgentIteration,
+                        "Agent turn",
+                        "agent_turn.finished",
+                        agentx_runtime_contracts::TraceEventKindV1::Finished,
+                        "succeeded",
+                        None,
+                        json!({"turn":current}),
+                    )
+                }
+                agentx_agent_core::CoreEventV1::ModelIntent { operation_id } => (
+                    crate::worker_support::stable_id(run_id, operation_id.as_bytes()),
+                    Some((
+                        crate::worker_support::stable_id(run_id, format!("turn-{turn}").as_bytes()),
+                        agentx_runtime_contracts::TraceSpanKindV1::AgentIteration,
+                    )),
+                    agentx_runtime_contracts::TraceSpanKindV1::RuntimeCall,
+                    "Agent model operation",
+                    "agent_model.intent",
+                    agentx_runtime_contracts::TraceEventKindV1::Started,
+                    "running",
+                    None,
+                    json!({"operationId":operation_id,"turn":turn}),
+                ),
+                agentx_agent_core::CoreEventV1::ModelSettled { operation_id } => (
+                    crate::worker_support::stable_id(run_id, operation_id.as_bytes()),
+                    Some((
+                        crate::worker_support::stable_id(run_id, format!("turn-{turn}").as_bytes()),
+                        agentx_runtime_contracts::TraceSpanKindV1::AgentIteration,
+                    )),
+                    agentx_runtime_contracts::TraceSpanKindV1::RuntimeCall,
+                    "Agent model operation",
+                    "agent_model.settled",
+                    agentx_runtime_contracts::TraceEventKindV1::Finished,
+                    "succeeded",
+                    None,
+                    json!({"operationId":operation_id,"turn":turn}),
+                ),
+                agentx_agent_core::CoreEventV1::MessageAdded { message_id } => (
+                    crate::worker_support::stable_id(
+                        run_id,
+                        format!("message-{message_id}").as_bytes(),
+                    ),
+                    Some((
+                        crate::worker_support::stable_id(run_id, format!("turn-{turn}").as_bytes()),
+                        agentx_runtime_contracts::TraceSpanKindV1::AgentIteration,
+                    )),
+                    agentx_runtime_contracts::TraceSpanKindV1::AgentIteration,
+                    "Agent message",
+                    "agent_message.added",
+                    agentx_runtime_contracts::TraceEventKindV1::Finished,
+                    "succeeded",
+                    None,
+                    json!({"messageId":message_id,"turn":turn}),
+                ),
+                agentx_agent_core::CoreEventV1::RecoveryRequired { operation_id } => (
+                    crate::worker_support::stable_id(run_id, operation_id.as_bytes()),
+                    Some((run_id, agentx_runtime_contracts::TraceSpanKindV1::AgentRun)),
+                    agentx_runtime_contracts::TraceSpanKindV1::RuntimeCall,
+                    "Agent recovery required",
+                    "agent_recovery.required",
+                    agentx_runtime_contracts::TraceEventKindV1::Updated,
+                    "paused",
+                    Some("AGENT_RECOVERY_REQUIRED"),
+                    json!({"operationId":operation_id}),
+                ),
+                agentx_agent_core::CoreEventV1::AgentEnded { reason } => (
+                    run_id,
+                    Some((
+                        claim.task.attempt_id,
+                        agentx_runtime_contracts::TraceSpanKindV1::Attempt,
+                    )),
+                    agentx_runtime_contracts::TraceSpanKindV1::AgentRun,
+                    "Agent run",
+                    "agent_run.finished",
+                    agentx_runtime_contracts::TraceEventKindV1::Finished,
+                    match reason {
+                        agentx_agent_core::TerminalReasonV1::Completed => "succeeded",
+                        agentx_agent_core::TerminalReasonV1::Cancelled => "cancelled",
+                        agentx_agent_core::TerminalReasonV1::OutcomeUnknown => "outcome_unknown",
+                        _ => "failed",
+                    },
+                    None,
+                    json!({"stopReason":format!("{reason:?}")}),
+                ),
+                agentx_agent_core::CoreEventV1::ToolIntent {
+                    operation_id,
+                    tool_name,
+                } => (
+                    crate::worker_support::stable_id(run_id, operation_id.as_bytes()),
+                    Some((
+                        crate::worker_support::stable_id(run_id, format!("turn-{turn}").as_bytes()),
+                        agentx_runtime_contracts::TraceSpanKindV1::AgentIteration,
+                    )),
+                    agentx_runtime_contracts::TraceSpanKindV1::RuntimeCall,
+                    "Agent tool operation",
+                    "agent_tool.intent",
+                    agentx_runtime_contracts::TraceEventKindV1::Started,
+                    "running",
+                    None,
+                    json!({"operationId":operation_id,"toolName":tool_name,"turn":turn}),
+                ),
+                agentx_agent_core::CoreEventV1::ToolSettled {
+                    operation_id,
+                    tool_name,
+                    is_error,
+                } => (
+                    crate::worker_support::stable_id(run_id, operation_id.as_bytes()),
+                    Some((
+                        crate::worker_support::stable_id(run_id, format!("turn-{turn}").as_bytes()),
+                        agentx_runtime_contracts::TraceSpanKindV1::AgentIteration,
+                    )),
+                    agentx_runtime_contracts::TraceSpanKindV1::RuntimeCall,
+                    "Agent tool operation",
+                    "agent_tool.settled",
+                    agentx_runtime_contracts::TraceEventKindV1::Finished,
+                    if *is_error { "failed" } else { "succeeded" },
+                    None,
+                    json!({"operationId":operation_id,"toolName":tool_name,"isError":is_error,"turn":turn}),
+                ),
+                agentx_agent_core::CoreEventV1::CompactionCompleted { kind } => (
+                    crate::worker_support::stable_id(
+                        run_id,
+                        format!("compaction-{index}").as_bytes(),
+                    ),
+                    Some((run_id, agentx_runtime_contracts::TraceSpanKindV1::AgentRun)),
+                    agentx_runtime_contracts::TraceSpanKindV1::RuntimeCall,
+                    "Agent compaction",
+                    "agent_compaction.finished",
+                    agentx_runtime_contracts::TraceEventKindV1::Finished,
+                    "succeeded",
+                    None,
+                    json!({"kind":kind}),
+                ),
+            };
+            let mut trace = crate::trace_delivery::TraceDraft::span(
+                claim.task.tenant_id,
+                claim.task.execution_id,
+                entity_id,
+                parent,
+                span_kind,
+                span_name,
+                event_kind,
+                event_type,
+                status,
+            );
+            trace.node_execution_id = Some(claim.task.node_execution_id);
+            trace.attempt_id = Some(claim.task.attempt_id);
+            trace.agent_run_id = Some(run_id);
+            trace.error_code = error_code.map(str::to_owned);
+            trace.attributes = attributes;
+            let Ok(mut tx) = self.pool.begin().await else {
+                continue;
+            };
+            if crate::trace_delivery::enqueue(&mut tx, trace).await.is_ok() {
+                let _ = tx.commit().await;
+            }
+        }
+    }
+
     pub(super) async fn emit_resolved_parameters(&self, claim: &ClaimedWorkerAttempt) {
         let mut trace = crate::trace_delivery::TraceDraft::span(
             claim.task.tenant_id,
@@ -29,32 +247,6 @@ impl RuntimeWorker {
         };
         if crate::trace_delivery::enqueue(&mut tx, trace).await.is_ok() {
             let _ = tx.commit().await;
-        }
-    }
-
-    pub(super) async fn emit_agent_iteration_finish(
-        &self,
-        iteration_id: Uuid,
-        status: &str,
-        stop_reason: &str,
-    ) {
-        let run_id =
-            sqlx::query_scalar::<_, Uuid>("SELECT agent_run_id FROM agent_iterations WHERE id=?")
-                .bind(iteration_id)
-                .fetch_optional(&self.pool)
-                .await
-                .ok()
-                .flatten();
-        if let Some(run_id) = run_id {
-            self.emit_agent_span(
-                run_id,
-                Some(iteration_id),
-                agentx_runtime_contracts::TraceEventKindV1::Finished,
-                status,
-                (status == "failed").then_some(stop_reason),
-                None,
-            )
-            .await;
         }
     }
 

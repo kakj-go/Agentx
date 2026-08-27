@@ -6,7 +6,7 @@ spec:
   podSelector: { matchExpressions: [{ key: agentx.io/plane, operator: In, values: [runtime] }] }
   policyTypes: [Egress]
   egress:
-    {{- range $name := list "runtimeMysql" "runtimeRedis" "objectStorage" "vault" "opensandbox" }}
+    {{- range $name := list "runtimeMysql" "runtimeRedis" "objectStorage" "vault" }}
     {{- with index $.Values.global.network.externalEgress $name }}
     - to:
         {{- range .cidrs }}

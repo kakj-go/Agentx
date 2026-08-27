@@ -22,6 +22,7 @@ where
 pub(crate) fn runtime_call_span_name(kind: &str) -> String {
     match kind {
         "model" => "Model call",
+        "compaction" => "Compaction model call",
         "mcp_tool" => "MCP tool call",
         "rag" => "RAG query",
         "memory" => "Memory operation",

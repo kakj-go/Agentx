@@ -458,6 +458,7 @@ async fn insert_evaluator_execution(
         "runtimePolicy": &package.runtime_policy,
         "workPackageSpec": &package.spec,
         "workPackageOverlay": &package.overlay,
+        "agentBundle": &package.agent_bundle,
     }))
     .bind(state_hash.as_str())
     .execute(&mut **tx)
@@ -951,6 +952,7 @@ async fn insert_execution(
         "runtimePolicy": &package.runtime_policy,
         "workPackageSpec": &package.spec,
         "workPackageOverlay": &package.overlay,
+        "agentBundle": &package.agent_bundle,
     }))
     .bind(state_hash.as_str())
     .execute(&mut **tx)

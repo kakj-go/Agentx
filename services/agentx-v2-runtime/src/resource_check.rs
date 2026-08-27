@@ -1,7 +1,10 @@
 use std::time::{Duration, Instant};
 
 use agentx_runtime_contracts::{
-    RuntimeResourceCheckRequestV1, RuntimeResourceCheckResponseV1,
+    ProcessEnvironmentCredentialV1, ProcessSessionControlRequestV1, ProcessSessionFramesResponseV1,
+    ProcessSessionProofV1, ProcessSessionReplayPolicyV1, ProcessSessionStartRequestV1,
+    ProcessSessionStartResponseV1, ProcessSessionWriteRequestV1, RuntimeMcpTransportV2,
+    RuntimeResourceBindingV1, RuntimeResourceCheckRequestV1, RuntimeResourceCheckResponseV1,
     RuntimeResourceOperationRequestV1, RuntimeResourceOperationResponseV1,
     RuntimeResourceOperationV1, RuntimeResourceProbeV1, VaultSecretReferenceV1,
 };
@@ -9,11 +12,13 @@ use axum::{Json, extract::State, http::HeaderMap};
 use reqwest::header::{ACCEPT, CONTENT_TYPE};
 use serde_json::json;
 use time::OffsetDateTime;
+use uuid::Uuid;
 
 use crate::{
     RuntimeState,
     egress::{EgressRequestContext, ProviderHttpClient, validate_provider_url},
     error::{RuntimeError, RuntimeResult},
+    worker_runtime::WorkerProvider,
 };
 
 pub async fn execute_resource_check(
@@ -133,70 +138,53 @@ pub async fn execute_resource_operation(
     state
         .trust
         .publisher(&headers, "runtime.resources.execute")?;
-    validate_endpoint_and_credential(
-        &request.endpoint,
-        request.tenant_id,
-        request.credential.as_ref(),
-    )?;
     if !(1..=60).contains(&request.timeout_seconds) {
         return Err(RuntimeError::InvalidRequest(
             "INVALID_TIMEOUT",
             "resource operation timeout must contain 1 to 60 seconds".into(),
         ));
     }
-    let credential = resolve_credential(&state, request.credential.as_ref()).await?;
-    let client = ProviderHttpClient::from_env(agentx_runtime_contracts::EgressRole::RuntimeGateway)
-        .map_err(RuntimeError::Internal)?;
-    let context = EgressRequestContext::request(request.tenant_id, request.operation_id);
-    let timeout = Duration::from_secs(u64::from(request.timeout_seconds));
     let started = Instant::now();
-    let session = mcp_initialize(
-        &client,
-        context,
-        timeout,
-        &request.endpoint,
-        credential.as_deref(),
-    )
-    .await?;
-    let result = match request.operation {
-        RuntimeResourceOperationV1::McpDiscover => {
-            mcp_rpc(
-                &client,
-                context,
-                timeout,
-                &request.endpoint,
-                credential.as_deref(),
-                "tools/list",
-                json!({}),
-                session.as_deref(),
-                2,
+    let credential = request.credential;
+    let result = match request.transport {
+        RuntimeMcpTransportV2::StreamableHttp { endpoint } => {
+            execute_http_mcp_operation(
+                &state,
+                request.tenant_id,
+                request.operation_id,
+                request.timeout_seconds,
+                &endpoint,
+                credential.as_ref(),
+                false,
+                request.operation,
             )
             .await?
-            .0
         }
-        RuntimeResourceOperationV1::McpCall {
-            tool_name,
-            arguments,
-        } => {
-            if tool_name.trim().is_empty() || tool_name.len() > 256 || !arguments.is_object() {
-                return Err(RuntimeError::InvalidRequest(
-                    "INVALID_MCP_CALL",
-                    "MCP tool name and arguments are invalid".into(),
-                ));
-            }
-            mcp_rpc(
-                &client,
-                context,
-                timeout,
-                &request.endpoint,
-                credential.as_deref(),
-                "tools/call",
-                json!({"name": tool_name, "arguments": arguments}),
-                session.as_deref(),
-                2,
+        RuntimeMcpTransportV2::Sse { endpoint } => {
+            execute_http_mcp_operation(
+                &state,
+                request.tenant_id,
+                request.operation_id,
+                request.timeout_seconds,
+                &endpoint,
+                credential.as_ref(),
+                true,
+                request.operation,
             )
             .await?
-            .0
+        }
+        transport @ RuntimeMcpTransportV2::Stdio { .. } => {
+            execute_stdio_mcp_operation(
+                &state,
+                request.tenant_id,
+                request.operation_id,
+                request.server_version_id,
+                request.timeout_seconds,
+                transport,
+                request.runtime_sandbox_profile,
+                request.operation,
+            )
+            .await?
         }
     };
     Ok(Json(RuntimeResourceOperationResponseV1 {
@@ -268,12 +256,412 @@ async fn resolve_credential(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
+async fn execute_http_mcp_operation(
+    state: &RuntimeState,
+    tenant_id: Uuid,
+    operation_id: Uuid,
+    timeout_seconds: u32,
+    endpoint: &str,
+    credential_reference: Option<&VaultSecretReferenceV1>,
+    legacy_sse: bool,
+    operation: RuntimeResourceOperationV1,
+) -> RuntimeResult<serde_json::Value> {
+    validate_endpoint_and_credential(endpoint, tenant_id, credential_reference)?;
+    let credential = resolve_credential(state, credential_reference).await?;
+    let client = ProviderHttpClient::from_env(agentx_runtime_contracts::EgressRole::RuntimeGateway)
+        .map_err(RuntimeError::Internal)?;
+    let context = EgressRequestContext::request(tenant_id, operation_id);
+    let timeout = Duration::from_secs(u64::from(timeout_seconds));
+    let result = async {
+        let session = mcp_initialize(
+            &client,
+            context,
+            timeout,
+            endpoint,
+            credential.as_deref(),
+            legacy_sse,
+        )
+        .await?;
+        match operation {
+            RuntimeResourceOperationV1::McpInitialize => Ok(json!({"initialized":true})),
+            RuntimeResourceOperationV1::McpDiscover => Ok(mcp_rpc(
+                &client,
+                context,
+                timeout,
+                endpoint,
+                credential.as_deref(),
+                "tools/list",
+                json!({}),
+                session.as_deref(),
+                2,
+                legacy_sse,
+            )
+            .await?
+            .0),
+            RuntimeResourceOperationV1::McpCall {
+                tool_name,
+                arguments,
+            } => {
+                validate_mcp_call(&tool_name, &arguments)?;
+                Ok(mcp_rpc(
+                    &client,
+                    context,
+                    timeout,
+                    endpoint,
+                    credential.as_deref(),
+                    "tools/call",
+                    json!({"name": tool_name, "arguments": arguments}),
+                    session.as_deref(),
+                    2,
+                    legacy_sse,
+                )
+                .await?
+                .0)
+            }
+        }
+    }
+    .await;
+    if legacy_sse {
+        client
+            .close_legacy_sse_session(&legacy_sse_session_key(context, endpoint))
+            .await;
+    }
+    result
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn execute_stdio_mcp_operation(
+    state: &RuntimeState,
+    tenant_id: Uuid,
+    operation_id: Uuid,
+    server_version_id: Uuid,
+    timeout_seconds: u32,
+    transport: RuntimeMcpTransportV2,
+    profile: Option<RuntimeResourceBindingV1>,
+    operation: RuntimeResourceOperationV1,
+) -> RuntimeResult<serde_json::Value> {
+    let RuntimeMcpTransportV2::Stdio {
+        command,
+        args,
+        environment_credential_refs,
+        runtime_sandbox,
+    } = transport
+    else {
+        return Err(RuntimeError::InvalidRequest(
+            "INVALID_MCP_TRANSPORT",
+            "stdio operation requires stdio transport".into(),
+        ));
+    };
+    let profile = profile.ok_or_else(|| {
+        RuntimeError::InvalidRequest(
+            "MCP_STDIO_SANDBOX_REQUIRED",
+            "stdio MCP diagnostics require the exact Runtime Sandbox profile".into(),
+        )
+    })?;
+    if profile.resource_id != runtime_sandbox.resource_id
+        || profile.resource_version != runtime_sandbox.resource_version_id.to_string()
+        || !matches!(
+            &profile.configuration,
+            agentx_runtime_contracts::RuntimeResourceConfigurationV1::SandboxProfile { .. }
+        )
+    {
+        return Err(RuntimeError::InvalidRequest(
+            "MCP_STDIO_SANDBOX_REQUIRED",
+            "stdio MCP diagnostic Sandbox profile does not match the frozen Server Version".into(),
+        ));
+    }
+    for reference in &environment_credential_refs {
+        validate_endpoint_and_credential(
+            "https://diagnostic.invalid",
+            tenant_id,
+            Some(&reference.credential),
+        )?;
+    }
+    let execution_id = operation_id;
+    let node_execution_id =
+        agentx_runtime_contracts::deterministic_uuid(operation_id, b"mcp-control-diagnostic-node");
+    let attempt_id = agentx_runtime_contracts::deterministic_uuid(
+        operation_id,
+        b"mcp-control-diagnostic-attempt",
+    );
+    let worker_id = agentx_runtime_contracts::deterministic_uuid(
+        operation_id,
+        b"mcp-control-diagnostic-worker",
+    );
+    let deadline = OffsetDateTime::now_utc() + time::Duration::seconds(i64::from(timeout_seconds));
+    sqlx::query("INSERT INTO node_attempts(id,tenant_id,execution_id,node_execution_id,attempt_number,status,idempotency_key,worker_instance_id,fencing_token,locked_until,deadline_at,started_at) VALUES(?,?,?,?,1,'running',?,?,1,?,?,UTC_TIMESTAMP(6))")
+        .bind(attempt_id)
+        .bind(tenant_id)
+        .bind(execution_id)
+        .bind(node_execution_id)
+        .bind(format!("mcp-control-diagnostic:{operation_id}"))
+        .bind(worker_id.to_string())
+        .bind(deadline)
+        .bind(deadline)
+        .execute(&state.pool)
+        .await?;
+    let manager =
+        std::env::var("AGENTX_SANDBOX_MANAGER_ENDPOINT").map_err(|_| RuntimeError::Unavailable)?;
+    let client = ProviderHttpClient::from_env(agentx_runtime_contracts::EgressRole::RuntimeGateway)
+        .map_err(RuntimeError::Internal)?;
+    let timeout = Duration::from_secs(u64::from(timeout_seconds));
+    let start_request = ProcessSessionStartRequestV1 {
+        api_version: 1,
+        identity: agentx_runtime_contracts::ProcessSessionIdentityV1 {
+            tenant_id,
+            agent_run_id: operation_id,
+            mcp_server_version_id: server_version_id,
+            sandbox_profile_version_id: runtime_sandbox.resource_version_id,
+        },
+        execution_id,
+        node_execution_id,
+        attempt_id,
+        worker_id,
+        fencing_token: 1,
+        operation_id: format!("diagnostic-start:{operation_id}"),
+        effect_id: format!("diagnostic-start:{operation_id}"),
+        idempotency_key: format!("diagnostic-start:{operation_id}"),
+        command,
+        args,
+        environment_credentials: environment_credential_refs
+            .into_iter()
+            .map(|reference| ProcessEnvironmentCredentialV1 {
+                name: reference.name,
+                credential: reference.credential,
+            })
+            .collect(),
+        profile,
+        deadline,
+    };
+    let start_url = format!(
+        "{}/internal/runtime/v1/sandbox-process-sessions:start",
+        manager.trim_end_matches('/')
+    );
+    let start = manager_post_json::<_, ProcessSessionStartResponseV1>(
+        &client,
+        &start_url,
+        timeout,
+        &start_request,
+    )
+    .await;
+    let start = match start {
+        Ok(start) => start,
+        Err(error) => {
+            finish_diagnostic_attempt(state, attempt_id, "failed").await;
+            return Err(error);
+        }
+    };
+    let base_proof = ProcessSessionProofV1 {
+        api_version: 1,
+        tenant_id,
+        execution_id,
+        node_execution_id,
+        attempt_id,
+        agent_run_id: operation_id,
+        worker_id,
+        fencing_token: 1,
+        process_session_id: start.lease.process_session_id,
+        lease_id: start.lease.lease_id,
+        operation_id: String::new(),
+        effect_id: String::new(),
+        idempotency_key: String::new(),
+        deadline,
+    };
+    let operation_result = async {
+        let initialize = json!({
+            "jsonrpc":"2.0","id":"diagnostic-initialize","method":"initialize",
+            "params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"agentx-control-diagnostic","version":"1.1"}}
+        });
+        let initialized = process_write(
+            &client,
+            &manager,
+            timeout,
+            &base_proof,
+            "initialize",
+            initialize,
+        )
+        .await?;
+        if initialized
+            .get("result")
+            .is_none()
+        {
+            return Err(RuntimeError::Unavailable);
+        }
+        process_write(
+            &client,
+            &manager,
+            timeout,
+            &base_proof,
+            "initialized",
+            json!({"jsonrpc":"2.0","method":"notifications/initialized","params":{}}),
+        )
+        .await?;
+        match operation {
+            RuntimeResourceOperationV1::McpInitialize => Ok(json!({"initialized":true})),
+            RuntimeResourceOperationV1::McpDiscover => {
+                let envelope = process_write(
+                    &client,
+                    &manager,
+                    timeout,
+                    &base_proof,
+                    "tools-list",
+                    json!({"jsonrpc":"2.0","id":"diagnostic-operation","method":"tools/list","params":{}}),
+                )
+                .await?;
+                rpc_result(envelope)
+            }
+            RuntimeResourceOperationV1::McpCall {
+                tool_name,
+                arguments,
+            } => {
+                validate_mcp_call(&tool_name, &arguments)?;
+                let envelope = process_write(
+                    &client,
+                    &manager,
+                    timeout,
+                    &base_proof,
+                    "tools-call",
+                    json!({"jsonrpc":"2.0","id":"diagnostic-operation","method":"tools/call","params":{"name":tool_name,"arguments":arguments}}),
+                )
+                .await?;
+                rpc_result(envelope)
+            }
+        }
+    }
+    .await;
+    let terminate_url = format!(
+        "{}/internal/runtime/v1/sandbox-process-sessions/{}:terminate",
+        manager.trim_end_matches('/'),
+        start.lease.process_session_id
+    );
+    let terminate =
+        manager_post_json::<_, agentx_runtime_contracts::ProcessSessionControlResponseV1>(
+            &client,
+            &terminate_url,
+            timeout,
+            &ProcessSessionControlRequestV1 {
+                proof: proof_for(&base_proof, "terminate"),
+            },
+        )
+        .await;
+    finish_diagnostic_attempt(
+        state,
+        attempt_id,
+        if operation_result.is_ok() && terminate.is_ok() {
+            "succeeded"
+        } else {
+            "failed"
+        },
+    )
+    .await;
+    let result = operation_result?;
+    terminate?;
+    Ok(result)
+}
+
+async fn manager_post_json<T: serde::Serialize + ?Sized, R: serde::de::DeserializeOwned>(
+    client: &ProviderHttpClient,
+    endpoint: &str,
+    timeout: Duration,
+    request: &T,
+) -> RuntimeResult<R> {
+    let response = client
+        .post_sandbox_manager(endpoint, timeout)
+        .map_err(RuntimeError::Internal)?
+        .json(request)
+        .send()
+        .await
+        .map_err(|_| RuntimeError::Unavailable)?;
+    if !response.status().is_success() {
+        return Err(RuntimeError::Unavailable);
+    }
+    response.json().await.map_err(|_| RuntimeError::Unavailable)
+}
+
+async fn process_write(
+    client: &ProviderHttpClient,
+    manager: &str,
+    timeout: Duration,
+    proof: &ProcessSessionProofV1,
+    operation: &str,
+    frame: serde_json::Value,
+) -> RuntimeResult<serde_json::Value> {
+    let expected_id = frame.get("id").cloned();
+    let endpoint = format!(
+        "{}/internal/runtime/v1/sandbox-process-sessions/{}:write",
+        manager.trim_end_matches('/'),
+        proof.process_session_id
+    );
+    let response: ProcessSessionFramesResponseV1 = manager_post_json(
+        client,
+        &endpoint,
+        timeout,
+        &ProcessSessionWriteRequestV1 {
+            proof: proof_for(proof, operation),
+            frame,
+            replay_policy: ProcessSessionReplayPolicyV1::Safe,
+        },
+    )
+    .await?;
+    match expected_id {
+        Some(expected) => response
+            .frames
+            .into_iter()
+            .rev()
+            .find(|frame| frame.stream == "stdout" && frame.payload.get("id") == Some(&expected))
+            .map(|frame| frame.payload)
+            .ok_or(RuntimeError::Unavailable),
+        None => Ok(serde_json::Value::Null),
+    }
+}
+
+fn proof_for(proof: &ProcessSessionProofV1, operation: &str) -> ProcessSessionProofV1 {
+    ProcessSessionProofV1 {
+        operation_id: format!("diagnostic-{operation}:{}", proof.agent_run_id),
+        effect_id: format!("diagnostic-{operation}:{}", proof.agent_run_id),
+        idempotency_key: format!("diagnostic-{operation}:{}", proof.agent_run_id),
+        ..proof.clone()
+    }
+}
+
+fn rpc_result(envelope: serde_json::Value) -> RuntimeResult<serde_json::Value> {
+    if envelope.get("error").is_some() {
+        return Err(RuntimeError::Unavailable);
+    }
+    Ok(envelope
+        .get("result")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null))
+}
+
+async fn finish_diagnostic_attempt(state: &RuntimeState, attempt_id: Uuid, status: &str) {
+    let _ = sqlx::query(
+        "UPDATE node_attempts SET status=?,locked_until=NULL,ended_at=UTC_TIMESTAMP(6) WHERE id=?",
+    )
+    .bind(status)
+    .bind(attempt_id)
+    .execute(&state.pool)
+    .await;
+}
+
+fn validate_mcp_call(tool_name: &str, arguments: &serde_json::Value) -> RuntimeResult<()> {
+    if tool_name.trim().is_empty() || tool_name.len() > 256 || !arguments.is_object() {
+        return Err(RuntimeError::InvalidRequest(
+            "INVALID_MCP_CALL",
+            "MCP tool name and arguments are invalid".into(),
+        ));
+    }
+    Ok(())
+}
+
 async fn mcp_initialize(
     client: &ProviderHttpClient,
     context: EgressRequestContext,
     timeout: Duration,
     endpoint: &str,
     credential: Option<&str>,
+    legacy_sse: bool,
 ) -> RuntimeResult<Option<String>> {
     let (_, session) = mcp_rpc(
         client,
@@ -289,8 +677,25 @@ async fn mcp_initialize(
         }),
         None,
         1,
+        legacy_sse,
     )
     .await?;
+    if legacy_sse {
+        mcp_rpc(
+            client,
+            context,
+            timeout,
+            endpoint,
+            credential,
+            "notifications/initialized",
+            json!({}),
+            session.as_deref(),
+            0,
+            true,
+        )
+        .await?;
+        return Ok(session);
+    }
     let mut notification = client
         .post(endpoint, context, timeout)
         .map_err(|_| RuntimeError::Unavailable)?
@@ -328,7 +733,56 @@ async fn mcp_rpc(
     params: serde_json::Value,
     session: Option<&str>,
     id: u64,
+    legacy_sse: bool,
 ) -> RuntimeResult<(serde_json::Value, Option<String>)> {
+    if legacy_sse {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            CONTENT_TYPE,
+            "application/json".parse().expect("static header"),
+        );
+        headers.insert(ACCEPT, "text/event-stream".parse().expect("static header"));
+        if let Some(credential) = credential {
+            headers.insert(
+                reqwest::header::AUTHORIZATION,
+                format!("Bearer {credential}")
+                    .parse()
+                    .map_err(|_| RuntimeError::SecretUnavailable)?,
+            );
+        }
+        let mut envelope = json!({"jsonrpc":"2.0","method":method,"params":params});
+        if id != 0 {
+            envelope["id"] = json!(id);
+        }
+        let response = client
+            .legacy_sse_rpc(
+                &legacy_sse_session_key(context, endpoint),
+                endpoint,
+                context,
+                timeout,
+                headers,
+                &envelope,
+            )
+            .await
+            .map_err(|_| RuntimeError::Unavailable)?;
+        if !response.status.is_success() {
+            return Err(RuntimeError::Unavailable);
+        }
+        if id == 0 {
+            return Ok((serde_json::Value::Null, session.map(ToOwned::to_owned)));
+        }
+        let envelope = parse_mcp_response(&response.body)?;
+        if envelope.get("error").is_some() {
+            return Err(RuntimeError::Unavailable);
+        }
+        return Ok((
+            envelope
+                .get("result")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null),
+            session.map(ToOwned::to_owned),
+        ));
+    }
     let mut outgoing = client
         .post(endpoint, context, timeout)
         .map_err(|_| RuntimeError::Unavailable)?
@@ -375,6 +829,17 @@ async fn mcp_rpc(
             .unwrap_or(serde_json::Value::Null),
         next_session,
     ))
+}
+
+fn legacy_sse_session_key(context: EgressRequestContext, endpoint: &str) -> String {
+    format!(
+        "resource-operation:{}:{}",
+        context
+            .request_id
+            .or(context.execution_id)
+            .unwrap_or(Uuid::nil()),
+        crate::worker_support::raw_hash(&json!(endpoint))
+    )
 }
 
 fn parse_mcp_response(bytes: &[u8]) -> RuntimeResult<serde_json::Value> {

@@ -4,12 +4,13 @@ use agentx_domain::WorkflowDefinition;
 use agentx_node_protocol::NodeCapability;
 use agentx_runtime::{COMPILER_VERSION, CompileContext, NodeRegistry, WorkflowCompiler};
 use agentx_runtime_contracts::{
-    BUNDLE_SCHEMA_VERSION, DependencyClosureEntryV1, DependencyClosureV1, DependencyKindV1,
-    ExecutionOriginV1, ExecutionSpecBundleV1, ExecutionSpecPayloadV1,
+    AgentBundleContractV2, AgentResourceClosureEntryV2, BUNDLE_SCHEMA_VERSION,
+    CompiledAgentBundleEntryV2, DependencyClosureEntryV1, DependencyClosureV1, DependencyKindV1,
+    ExecutionOriginV1, ExecutionSpecBundleV2, ExecutionSpecPayloadV2,
     RuntimeAuthorizationSnapshotV1, RuntimeCallPurposeV1, RuntimeModelEvaluatorExecutionV1,
     RuntimeObjectReferenceV1, RuntimePolicyV1, RuntimeResourceBindingV1, RuntimeTriggerSpecV1,
     RuntimeWorkPackageOverlayV1, RuntimeWorkPackagePayloadV1, RuntimeWorkPackageV1,
-    WorkPackagePurpose, WorkerCompatibilityV1,
+    WORK_PACKAGE_SCHEMA_VERSION, WorkPackagePurpose, WorkerCompatibilityV1,
 };
 use ed25519_dalek::SigningKey;
 use serde_json::{Value, json};
@@ -115,6 +116,7 @@ pub fn compile_workflow_version_with_dependencies(
             &CompileContext {
                 current_workflow_version_id: Some(workflow_version_id.to_string()),
                 ancestor_workflow_version_ids: BTreeSet::new(),
+                resource_tool_names: BTreeMap::new(),
             },
         )
         .map_err(|error| {
@@ -127,6 +129,151 @@ pub fn compile_workflow_version_with_dependencies(
                     .join(","),
             )
         })
+}
+
+fn resource_tool_names(resources: &[RuntimeResourceBindingV1]) -> BTreeMap<Uuid, String> {
+    resources
+        .iter()
+        .filter_map(|resource| match &resource.configuration {
+            agentx_runtime_contracts::RuntimeResourceConfigurationV1::Mcp { tool_name, .. }
+                if tool_name != "__server__" =>
+            {
+                Some((resource.resource_id, tool_name.clone()))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+fn build_agent_bundle(
+    compiled: &agentx_runtime_contracts::CompiledWorkflowV1,
+    node_manifests: &[Value],
+    authorization: &RuntimeAuthorizationSnapshotV1,
+    resources: &[RuntimeResourceBindingV1],
+) -> Result<AgentBundleContractV2, BuildError> {
+    let mut contract =
+        AgentBundleContractV2::empty(compiled.definition_hash.clone(), COMPILER_VERSION);
+    for manifest in node_manifests {
+        let node_type = manifest
+            .get("nodeType")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown");
+        let version = manifest.get("version").and_then(Value::as_u64).unwrap_or(0);
+        contract.manifest_hashes.insert(
+            format!("{node_type}:{version}"),
+            agentx_runtime_contracts::content_hash(manifest)?,
+        );
+    }
+    contract.policy_epoch = authorization.policy_epoch;
+    contract.grant_ids = authorization.grant_ids.clone();
+    contract.grant_ids.sort_unstable();
+    contract.grant_ids.dedup();
+
+    for node in &compiled.nodes {
+        let Some(configuration) = node.agent.clone() else {
+            continue;
+        };
+        let attachment_registry = agentx_runtime_contracts::derive_attachment_registry(
+            &configuration,
+            resources,
+            authorization.policy_epoch,
+            &authorization.grant_bindings,
+        )
+        .map_err(BuildError::Compilation)?;
+        let mut resource_closure = Vec::<AgentResourceClosureEntryV2>::new();
+        let mut add_reference = |resource_type, resource_id, resource_version_id, operation| {
+            if let Some(existing) = resource_closure.iter_mut().find(|entry| {
+                entry.resource_type == resource_type
+                    && entry.resource_id == resource_id
+                    && entry.resource_version_id == resource_version_id
+            }) {
+                existing.operations.insert(operation);
+            } else {
+                resource_closure.push(AgentResourceClosureEntryV2 {
+                    resource_type,
+                    resource_id,
+                    resource_version_id,
+                    operations: BTreeSet::from([operation]),
+                });
+            }
+        };
+        add_reference(
+            configuration.model.resource_type,
+            configuration.model.resource_id,
+            Some(configuration.model.resource_version_id),
+            configuration.model.operation,
+        );
+        if let Some(sandbox) = &configuration.workspace_sandbox {
+            add_reference(
+                sandbox.resource_type,
+                sandbox.resource_id,
+                Some(sandbox.resource_version_id),
+                sandbox.operation,
+            );
+        }
+        for attachment in &configuration.canvas_attachments {
+            add_reference(
+                attachment.resource_type,
+                attachment.resource_id,
+                Some(attachment.resource_version_id),
+                attachment.operation,
+            );
+        }
+        for evidence in &attachment_registry.authorization_evidence {
+            add_reference(
+                agent_resource_type(&evidence.resource_type)?,
+                evidence.resource_id,
+                evidence.resource_version_id,
+                agent_resource_operation(&evidence.operation)?,
+            );
+        }
+        resource_closure.sort_by_key(|entry| {
+            (
+                entry.resource_type,
+                entry.resource_id,
+                entry.resource_version_id,
+            )
+        });
+        contract.agents.push(CompiledAgentBundleEntryV2 {
+            node_id: node.id.clone(),
+            configuration,
+            resource_closure,
+            attachment_registry,
+        });
+    }
+    contract
+        .agents
+        .sort_by(|left, right| left.node_id.cmp(&right.node_id));
+    Ok(contract)
+}
+
+fn agent_resource_type(value: &str) -> Result<agentx_domain::ResourceType, BuildError> {
+    match value {
+        "credential" => Ok(agentx_domain::ResourceType::Credential),
+        "model" => Ok(agentx_domain::ResourceType::Model),
+        "mcp_server" => Ok(agentx_domain::ResourceType::McpServer),
+        "mcp_tool" => Ok(agentx_domain::ResourceType::McpTool),
+        "skill" => Ok(agentx_domain::ResourceType::Skill),
+        "rag" | "knowledge" => Ok(agentx_domain::ResourceType::Rag),
+        "memory" => Ok(agentx_domain::ResourceType::Memory),
+        "sandbox_profile" => Ok(agentx_domain::ResourceType::SandboxProfile),
+        other => Err(BuildError::Compilation(format!(
+            "AGENT_ATTACHMENT_RESOURCE_TYPE_INVALID: {other}"
+        ))),
+    }
+}
+
+fn agent_resource_operation(value: &str) -> Result<agentx_domain::ResourceOperation, BuildError> {
+    match value {
+        "view" => Ok(agentx_domain::ResourceOperation::View),
+        "use" => Ok(agentx_domain::ResourceOperation::Use),
+        "read" => Ok(agentx_domain::ResourceOperation::Read),
+        "write" => Ok(agentx_domain::ResourceOperation::Write),
+        "manage" => Ok(agentx_domain::ResourceOperation::Manage),
+        other => Err(BuildError::Compilation(format!(
+            "AGENT_ATTACHMENT_OPERATION_INVALID: {other}"
+        ))),
+    }
 }
 
 /// Builds the immutable node registry used by Control validation, Bundle/Work Package
@@ -199,7 +346,7 @@ pub fn build_bundle(
     mut source: BundleBuildSource,
     key_id: &str,
     signing_key: &SigningKey,
-) -> Result<ExecutionSpecBundleV1, BuildError> {
+) -> Result<ExecutionSpecBundleV2, BuildError> {
     if source
         .objects
         .iter()
@@ -232,6 +379,7 @@ pub fn build_bundle(
             &CompileContext {
                 current_workflow_version_id: Some(source.workflow_version_id.to_string()),
                 ancestor_workflow_version_ids: BTreeSet::new(),
+                resource_tool_names: resource_tool_names(&source.resources),
             },
         )
         .map_err(|error| {
@@ -289,8 +437,14 @@ pub fn build_bundle(
     }
     let context_contract = serde_json::to_value(&source.definition.start.contexts)
         .expect("Workflow contexts serialize");
-    ExecutionSpecBundleV1::signed(
-        ExecutionSpecPayloadV1 {
+    let agent_bundle = build_agent_bundle(
+        &compiled,
+        &node_manifests,
+        &source.authorization,
+        &source.resources,
+    )?;
+    ExecutionSpecBundleV2::signed(
+        ExecutionSpecPayloadV2 {
             schema_version: BUNDLE_SCHEMA_VERSION,
             bundle_id: source.bundle_id,
             tenant_id: source.tenant_id,
@@ -306,6 +460,7 @@ pub fn build_bundle(
                 .expect("Workflow Definition serializes"),
             compiled_ir: compiled,
             node_manifests,
+            agent_bundle,
             input_contract: source.input_contract,
             output_contract: source.output_contract,
             context_contract,
@@ -351,6 +506,7 @@ pub fn build_work_package(
             &CompileContext {
                 current_workflow_version_id: Some(source.package_id.to_string()),
                 ancestor_workflow_version_ids: BTreeSet::new(),
+                resource_tool_names: resource_tool_names(&source.resources),
             },
         )
         .map_err(|error| {
@@ -409,9 +565,15 @@ pub fn build_work_package(
         return Err(BuildError::UnsupportedCapability(capability.clone()));
     }
     let model_evaluator_executions = build_model_evaluators(&source.spec, &registry)?;
+    let agent_bundle = build_agent_bundle(
+        &compiled,
+        &node_manifests,
+        &source.authorization,
+        &source.resources,
+    )?;
     RuntimeWorkPackageV1::signed(
         RuntimeWorkPackagePayloadV1 {
-            schema_version: BUNDLE_SCHEMA_VERSION,
+            schema_version: WORK_PACKAGE_SCHEMA_VERSION,
             package_id: source.package_id,
             tenant_id: source.tenant_id,
             workflow: source.workflow,
@@ -425,6 +587,7 @@ pub fn build_work_package(
                 .expect("Workflow Definition serializes"),
             compiled_ir: compiled,
             node_manifests,
+            agent_bundle,
             overlay: source.overlay,
             resource_closure: DependencyClosureV1 { entries: closure },
             resources: source.resources,
@@ -469,7 +632,7 @@ fn build_model_evaluators(
         })
         .map(|(evaluator_id, resource_id, prompt_object_id)| {
             let definition: WorkflowDefinition = serde_json::from_value(serde_json::json!({
-                "schemaVersion":"5.0",
+                "schemaVersion":"6.0",
                 "start":{"inputs":{},"contexts":{}},
                 "nodes":[{
                     "id":"evaluate",
@@ -500,6 +663,7 @@ fn build_model_evaluators(
                     &CompileContext {
                         current_workflow_version_id: Some(evaluator_id.to_string()),
                         ancestor_workflow_version_ids: BTreeSet::new(),
+                        resource_tool_names: BTreeMap::new(),
                     },
                 )
                 .map_err(|error| {
@@ -729,6 +893,7 @@ fn collect_dependencies(
                 &CompileContext {
                     current_workflow_version_id: Some(id.to_string()),
                     ancestor_workflow_version_ids: visiting.iter().map(Uuid::to_string).collect(),
+                    resource_tool_names: BTreeMap::new(),
                 },
             )
             .map_err(|error| {
@@ -796,7 +961,7 @@ mod tests {
 
     fn definition() -> WorkflowDefinition {
         serde_json::from_value(json!({
-            "schemaVersion":"5.0",
+            "schemaVersion":"6.0",
             "start":{"inputs":{"type":"object","properties":{"message":{"type":"string"}},"required":["message"],"additionalProperties":false},"contexts":{}},
             "nodes":[{"id":"pass","key":"pass","type":"no_op","typeVersion":1,"name":"Pass","parameters":{},"outputProjection":{},"contextWrites":[]}],
             "connections":[
@@ -839,6 +1004,7 @@ mod tests {
                 policy_epoch: 1,
                 capabilities: BTreeSet::from(["builtin".into()]),
                 grant_ids: vec![],
+                grant_bindings: vec![],
                 maximum_policy_staleness_seconds: 72 * 60 * 60,
                 captured_at: OffsetDateTime::UNIX_EPOCH,
             },
@@ -859,6 +1025,46 @@ mod tests {
             }],
             created_at: OffsetDateTime::UNIX_EPOCH,
         }
+    }
+
+    fn agent_definition(with_sandbox: bool, session_mode: &str) -> WorkflowDefinition {
+        let mut references = vec![json!({
+            "resourceType":"model",
+            "resourceId":"11111111-1111-4111-8111-111111111111",
+            "resourceVersionId":"22222222-2222-4222-8222-222222222222",
+            "operation":"use"
+        })];
+        if with_sandbox {
+            references.push(json!({
+                "resourceType":"sandbox_profile",
+                "resourceId":"33333333-3333-4333-8333-333333333333",
+                "resourceVersionId":"44444444-4444-4444-8444-444444444444",
+                "operation":"use"
+            }));
+        }
+        serde_json::from_value(json!({
+            "schemaVersion":"6.0",
+            "start":{"inputs":{"type":"object","properties":{}},"contexts":{}},
+            "nodes":[{
+                "id":"agent","key":"agent","type":"agent","typeVersion":2,"name":"Agent",
+                "parameters":{"sessionPolicy":{"mode":session_mode}},
+                "resourceReferences":references,"outputProjection":{},"contextWrites":[]
+            }],
+            "connections":[
+                {"id":"start-agent","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"agent","targetHandle":"main","order":0},
+                {"id":"agent-end","sourceNodeId":"agent","sourceHandle":"main","targetNodeId":"__end__","targetHandle":"main","order":0}
+            ],
+            "end":{"outputs":{}}
+        }))
+        .expect("Agent Definition 6.0 fixture")
+    }
+
+    fn agent_source(with_sandbox: bool, session_mode: &str) -> BundleBuildSource {
+        let mut source = source();
+        source.definition = agent_definition(with_sandbox, session_mode);
+        source.supported_capabilities = BTreeSet::from(["agent".into()]);
+        source.authorization.capabilities = BTreeSet::from(["agent".into()]);
+        source
     }
 
     fn work_package_source() -> WorkPackageBuildSource {
@@ -900,6 +1106,7 @@ mod tests {
                 policy_epoch: 1,
                 capabilities: BTreeSet::from(["builtin".into()]),
                 grant_ids: vec![],
+                grant_bindings: vec![],
                 maximum_policy_staleness_seconds: 72 * 60 * 60,
                 captured_at: OffsetDateTime::UNIX_EPOCH,
             },
@@ -921,6 +1128,68 @@ mod tests {
             second.signature.signature_base64
         );
         first.verify(&key.verifying_key()).unwrap();
+    }
+
+    #[test]
+    fn bundle_v2_freezes_agent_configuration_and_sandbox_derived_tools() {
+        let key = SigningKey::generate(&mut OsRng);
+        let without_sandbox =
+            build_bundle(agent_source(false, "invocation"), "bundle-current", &key).unwrap();
+        assert_eq!(without_sandbox.payload.schema_version, 2);
+        assert_eq!(without_sandbox.payload.agent_bundle.bundle_version, "2.0");
+        assert_eq!(
+            without_sandbox.payload.agent_bundle.definition_hash,
+            without_sandbox.payload.compiled_ir.definition_hash
+        );
+        let agent = &without_sandbox.payload.agent_bundle.agents[0];
+        assert!(agent.configuration.workspace_sandbox.is_none());
+        assert!(agent.configuration.core_tools.is_empty());
+
+        let with_sandbox =
+            build_bundle(agent_source(true, "invocation"), "bundle-current", &key).unwrap();
+        let agent = &with_sandbox.payload.agent_bundle.agents[0];
+        assert_eq!(
+            agent
+                .configuration
+                .core_tools
+                .iter()
+                .map(|tool| tool.name.as_str())
+                .collect::<Vec<_>>(),
+            ["read", "write", "edit", "bash"]
+        );
+        assert_eq!(agent.resource_closure.len(), 2);
+        assert_ne!(without_sandbox.content_hash, with_sandbox.content_hash);
+    }
+
+    #[test]
+    fn bundle_v2_hash_changes_with_agent_contract_inputs() {
+        let key = SigningKey::generate(&mut OsRng);
+        let baseline =
+            build_bundle(agent_source(false, "invocation"), "bundle-current", &key).unwrap();
+
+        let mut changed_model = agent_source(false, "invocation");
+        changed_model.definition.nodes[0].resource_references[0].resource_version_id =
+            Some(Uuid::from_u128(99));
+        let changed_model = build_bundle(changed_model, "bundle-current", &key).unwrap();
+
+        let changed_session = build_bundle(
+            agent_source(false, "application_session"),
+            "bundle-current",
+            &key,
+        )
+        .unwrap();
+
+        let mut changed_grant = agent_source(false, "invocation");
+        changed_grant.authorization.grant_ids = vec![Uuid::from_u128(77)];
+        let changed_grant = build_bundle(changed_grant, "bundle-current", &key).unwrap();
+
+        let mut changed_epoch = agent_source(false, "invocation");
+        changed_epoch.authorization.policy_epoch += 1;
+        let changed_epoch = build_bundle(changed_epoch, "bundle-current", &key).unwrap();
+
+        for changed in [changed_model, changed_session, changed_grant, changed_epoch] {
+            assert_ne!(baseline.content_hash, changed.content_hash);
+        }
     }
 
     #[test]
@@ -1145,7 +1414,7 @@ mod tests {
     fn immutable_composite_registry_pins_version_io_and_context_contracts() {
         let child_id = Uuid::from_u128(42);
         let child: WorkflowDefinition = serde_json::from_value(json!({
-            "schemaVersion":"5.0",
+            "schemaVersion":"6.0",
             "start":{
                 "inputs":{"type":"object","required":["question"],"properties":{"question":{"type":"string"}},"additionalProperties":false},
                 "contexts":{"counter":{"schema":{"type":"number"},"default":0,"mutable":true,"sensitive":false,"clientWritable":false,"scope":"execution_tree","mergePolicy":"increment"}}
@@ -1179,7 +1448,7 @@ mod tests {
         );
 
         let parent: WorkflowDefinition = serde_json::from_value(json!({
-            "schemaVersion":"5.0",
+            "schemaVersion":"6.0",
             "start":{
                 "inputs":{"type":"object","required":["question"],"properties":{"question":{"type":"string"}},"additionalProperties":false},
                 "contexts":{"counter":{"schema":{"type":"number"},"default":0,"mutable":true,"sensitive":false,"clientWritable":false,"scope":"execution_tree","mergePolicy":"increment"}}

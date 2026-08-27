@@ -126,11 +126,22 @@ pub struct RuntimeAuthorizationSnapshotV1 {
     pub workflow_id: Uuid,
     pub policy_epoch: u64,
     pub grant_ids: Vec<Uuid>,
+    pub grant_bindings: Vec<RuntimeGrantBindingV1>,
     pub capabilities: BTreeSet<String>,
     pub maximum_policy_staleness_seconds: u32,
     #[schemars(with = "String")]
     #[serde(with = "time::serde::rfc3339")]
     pub captured_at: OffsetDateTime,
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RuntimeGrantBindingV1 {
+    pub grant_id: Uuid,
+    pub resource_type: String,
+    pub resource_id: Uuid,
+    pub resource_version_id: Option<Uuid>,
+    pub operation: String,
 }
 
 #[derive(
@@ -155,6 +166,42 @@ pub enum RuntimeResourceKindV1 {
     rename_all_fields = "camelCase",
     deny_unknown_fields
 )]
+pub enum RuntimeMcpTransportV2 {
+    StreamableHttp {
+        endpoint: String,
+    },
+    Sse {
+        endpoint: String,
+    },
+    Stdio {
+        command: String,
+        args: Vec<String>,
+        environment_credential_refs: Vec<RuntimeEnvironmentCredentialReferenceV1>,
+        runtime_sandbox: RuntimeMcpSandboxReferenceV1,
+    },
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RuntimeEnvironmentCredentialReferenceV1 {
+    pub name: String,
+    pub credential: crate::VaultSecretReferenceV1,
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RuntimeMcpSandboxReferenceV1 {
+    pub resource_id: Uuid,
+    pub resource_version_id: Uuid,
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
 pub enum RuntimeResourceConfigurationV1 {
     Model {
         provider: String,
@@ -164,10 +211,16 @@ pub enum RuntimeResourceConfigurationV1 {
         credential: Option<crate::VaultSecretReferenceV1>,
     },
     Mcp {
-        endpoint: String,
+        server_id: Uuid,
+        server_version_id: Uuid,
+        transport: RuntimeMcpTransportV2,
         tool_name: String,
         tool_version: String,
         input_schema_hash: ContentHash,
+        input_schema: Value,
+        output_schema: Option<Value>,
+        side_effect: String,
+        timeout_seconds: u32,
         credential: Option<crate::VaultSecretReferenceV1>,
     },
     Rag {
@@ -180,11 +233,14 @@ pub enum RuntimeResourceConfigurationV1 {
         endpoint: String,
         namespace: String,
         memory_version: String,
+        access_mode: String,
         credential: Option<crate::VaultSecretReferenceV1>,
     },
     Skill {
         entrypoint_object_id: Uuid,
+        entrypoint_content_hash: ContentHash,
         dependency_object_ids: Vec<Uuid>,
+        dependencies: Vec<RuntimeSkillDependencyV2>,
     },
     Credential {
         secret: crate::VaultSecretReferenceV1,
@@ -282,6 +338,7 @@ pub struct RuntimeResourceCheckResponseV1 {
     deny_unknown_fields
 )]
 pub enum RuntimeResourceOperationV1 {
+    McpInitialize,
     McpDiscover,
     McpCall { tool_name: String, arguments: Value },
 }
@@ -293,8 +350,12 @@ pub struct RuntimeResourceOperationRequestV1 {
     pub schema_version: u32,
     pub operation_id: Uuid,
     pub tenant_id: Uuid,
-    pub endpoint: String,
+    pub server_version_id: Uuid,
+    pub transport: RuntimeMcpTransportV2,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub credential: Option<crate::VaultSecretReferenceV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_sandbox_profile: Option<RuntimeResourceBindingV1>,
     pub timeout_seconds: u32,
     pub operation: RuntimeResourceOperationV1,
 }
@@ -311,11 +372,32 @@ pub struct RuntimeResourceOperationResponseV1 {
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct RuntimeSkillProgramV1 {
-    #[serde(deserialize_with = "crate::deserialize_v1")]
+pub struct RuntimeSkillAssetV2 {
+    pub path: String,
+    pub object_id: Uuid,
+    pub content_hash: ContentHash,
+    pub media_type: String,
+    pub size_bytes: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RuntimeSkillDependencyV2 {
+    pub resource_type: String,
+    pub resource_id: Uuid,
+    pub resource_version_id: Option<Uuid>,
+    pub operation: String,
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RuntimeSkillProgramV2 {
+    #[serde(deserialize_with = "crate::deserialize_v2")]
     pub schema_version: u32,
+    pub skill_version_id: Uuid,
     pub instructions: String,
-    pub dependency_object_ids: Vec<Uuid>,
+    pub assets: Vec<RuntimeSkillAssetV2>,
+    pub dependencies: Vec<RuntimeSkillDependencyV2>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
@@ -673,7 +755,7 @@ pub struct RuntimeGrantStateV1 {
     pub tenant_id: Uuid,
     pub identity_id: Uuid,
     pub grant_id: Uuid,
-    pub resource_kind: RuntimeResourceKindV1,
+    pub resource_type: String,
     pub resource_id: Uuid,
     pub operations: BTreeSet<String>,
     pub policy_epoch: u64,

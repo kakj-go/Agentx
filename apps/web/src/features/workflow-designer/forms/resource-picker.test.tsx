@@ -37,6 +37,16 @@ describe('ResourcePicker', () => {
     expect(onChange).toHaveBeenCalledWith('model-1', undefined, 'GPT Model')
   })
 
+  it('keeps version details available without changing the selectable label', () => {
+    const onChange = vi.fn()
+    render(<MemoryRouter><ResourcePicker onChange={onChange} options={[{ ...grantable, accessState: 'authorized', detail: 'v2 · 2026-08-25', versionId: 'version-2' }]} /></MemoryRouter>)
+
+    fireEvent.click(screen.getByRole('combobox', { name: /Select a resource|选择资源/ }))
+    fireEvent.click(screen.getByRole('option', { name: /GPT Model/ }))
+
+    expect(onChange).toHaveBeenCalledWith('model-1', 'version-2', 'GPT Model')
+  })
+
   it('retains and marks a selected resource that is no longer returned by the server', () => {
     render(<MemoryRouter><ResourcePicker onChange={vi.fn()} options={[]} value="hidden-model" /></MemoryRouter>)
 

@@ -115,7 +115,18 @@ def test_product_playwright_suite(
                 ),
             ),
         )
+        only_suite = os.environ.get("AGENTX_E2E_ONLY_SUITE")
         for suite, tests in suites:
+            if only_suite and suite != only_suite:
+                continue
             _run_playwright(pnpm, suite, tests, environment, root)
             if suite == "product-closure":
                 _assert_execution_context_snapshot(installed_agentx, execution_context_evidence)
+        if not only_suite or only_suite == "session-diagnostics":
+            _run_playwright(
+                pnpm,
+                "session-diagnostics",
+                ("tests/agent-sessions-diagnostics.spec.ts",),
+                environment,
+                root,
+            )

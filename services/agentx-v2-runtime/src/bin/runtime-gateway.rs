@@ -165,6 +165,26 @@ async fn main() -> Result<()> {
             get(agentx_v2_runtime::query::get_session),
         )
         .route(
+            "/internal/runtime/v1/query/agent-sessions:search",
+            post(agentx_v2_runtime::query::search_agent_sessions),
+        )
+        .route(
+            "/internal/runtime/v1/query/agent-sessions/{session_key}/{node_key}",
+            get(agentx_v2_runtime::query::get_agent_session),
+        )
+        .route(
+            "/internal/runtime/v1/agent-sessions:clear",
+            post(agentx_v2_runtime::query::clear_agent_session),
+        )
+        .route(
+            "/internal/runtime/v1/agent-subject-memory:clear",
+            post(agentx_v2_runtime::query::clear_agent_subject_memory),
+        )
+        .route(
+            "/internal/runtime/v1/query/agent-subject-memory:search",
+            post(agentx_v2_runtime::query::search_agent_subject_memory),
+        )
+        .route(
             "/internal/runtime/v1/session-commands:apply",
             post(agentx_v2_runtime::query::apply_session_command),
         )

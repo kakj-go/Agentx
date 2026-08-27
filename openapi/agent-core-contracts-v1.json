@@ -1,0 +1,2358 @@
+{
+  "components": {
+    "schemas": {
+      "AgentBundleV2": {
+        "$defs": {
+          "ReplayPolicyV1": {
+            "enum": [
+              "safe",
+              "never",
+              "idempotency_required",
+              "ledger_dependent"
+            ],
+            "type": "string"
+          },
+          "ResourceReferenceV1": {
+            "additionalProperties": false,
+            "properties": {
+              "operation": {
+                "type": "string"
+              },
+              "resourceId": {
+                "type": "string"
+              },
+              "resourceType": {
+                "type": "string"
+              },
+              "resourceVersionId": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "resourceType",
+              "resourceId",
+              "resourceVersionId",
+              "operation"
+            ],
+            "type": "object"
+          },
+          "ToolDefinitionV1": {
+            "additionalProperties": false,
+            "properties": {
+              "description": {
+                "type": "string"
+              },
+              "inputSchema": true,
+              "name": {
+                "type": "string"
+              },
+              "origin": {
+                "$ref": "#/$defs/ToolOriginV1"
+              },
+              "replayPolicy": {
+                "$ref": "#/$defs/ReplayPolicyV1"
+              }
+            },
+            "required": [
+              "name",
+              "description",
+              "inputSchema",
+              "origin",
+              "replayPolicy"
+            ],
+            "type": "object"
+          },
+          "ToolOriginV1": {
+            "enum": [
+              "core",
+              "mcp",
+              "skill",
+              "knowledge",
+              "memory"
+            ],
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "attachments": {
+            "items": {
+              "$ref": "#/$defs/ResourceReferenceV1"
+            },
+            "type": "array"
+          },
+          "bundleVersion": {
+            "type": "string"
+          },
+          "coreContractVersion": {
+            "type": "string"
+          },
+          "coreTools": {
+            "items": {
+              "$ref": "#/$defs/ToolDefinitionV1"
+            },
+            "type": "array"
+          },
+          "model": {
+            "$ref": "#/$defs/ResourceReferenceV1"
+          },
+          "referenceCommit": {
+            "type": "string"
+          },
+          "workspaceSandbox": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ResourceReferenceV1"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "bundleVersion",
+          "coreContractVersion",
+          "referenceCommit",
+          "model",
+          "coreTools",
+          "attachments"
+        ],
+        "title": "AgentBundleV2",
+        "type": "object"
+      },
+      "AgentDefinitionV6": {
+        "$defs": {
+          "ResourceReferenceV1": {
+            "additionalProperties": false,
+            "properties": {
+              "operation": {
+                "type": "string"
+              },
+              "resourceId": {
+                "type": "string"
+              },
+              "resourceType": {
+                "type": "string"
+              },
+              "resourceVersionId": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "resourceType",
+              "resourceId",
+              "resourceVersionId",
+              "operation"
+            ],
+            "type": "object"
+          },
+          "SessionPolicyModeV1": {
+            "enum": [
+              "application_session",
+              "invocation"
+            ],
+            "type": "string"
+          },
+          "SessionPolicyV1": {
+            "additionalProperties": false,
+            "properties": {
+              "mode": {
+                "$ref": "#/$defs/SessionPolicyModeV1"
+              }
+            },
+            "required": [
+              "mode"
+            ],
+            "type": "object"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "apiVersion": {
+            "type": "string"
+          },
+          "knowledge": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/ResourceReferenceV1"
+            },
+            "type": "array"
+          },
+          "longTermMemory": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ResourceReferenceV1"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "mcpTools": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/ResourceReferenceV1"
+            },
+            "type": "array"
+          },
+          "model": {
+            "$ref": "#/$defs/ResourceReferenceV1"
+          },
+          "sessionPolicy": {
+            "$ref": "#/$defs/SessionPolicyV1"
+          },
+          "skills": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/ResourceReferenceV1"
+            },
+            "type": "array"
+          },
+          "workspaceSandbox": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ResourceReferenceV1"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "apiVersion",
+          "model",
+          "sessionPolicy"
+        ],
+        "title": "AgentDefinitionV6",
+        "type": "object"
+      },
+      "AgentManifestV2": {
+        "$defs": {
+          "ResourceSlotV2": {
+            "additionalProperties": false,
+            "properties": {
+              "maximum": {
+                "format": "uint32",
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "minimum": {
+                "format": "uint32",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "name": {
+                "type": "string"
+              },
+              "placement": {
+                "$ref": "#/$defs/SlotPlacementV2"
+              },
+              "resourceType": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "resourceType",
+              "placement",
+              "minimum"
+            ],
+            "type": "object"
+          },
+          "SlotPlacementV2": {
+            "enum": [
+              "inspector",
+              "canvas"
+            ],
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "manifestVersion": {
+            "type": "string"
+          },
+          "nodeType": {
+            "type": "string"
+          },
+          "resourceSlots": {
+            "items": {
+              "$ref": "#/$defs/ResourceSlotV2"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "manifestVersion",
+          "nodeType",
+          "resourceSlots"
+        ],
+        "title": "AgentManifestV2",
+        "type": "object"
+      },
+      "AgentRunInputV1": {
+        "$defs": {
+          "AgentMessageV1": {
+            "additionalProperties": false,
+            "properties": {
+              "content": {
+                "type": "string"
+              },
+              "isError": {
+                "default": false,
+                "type": "boolean"
+              },
+              "messageId": {
+                "type": "string"
+              },
+              "role": {
+                "$ref": "#/$defs/MessageRole"
+              },
+              "toolCallId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "toolCalls": {
+                "items": {
+                  "$ref": "#/$defs/ToolCallV1"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "messageId",
+              "role",
+              "content"
+            ],
+            "type": "object"
+          },
+          "AgentSessionProjectionV1": {
+            "additionalProperties": false,
+            "description": "Projection of the durable Register supplied to one Core invocation.  The\nWorker remains authoritative for loading and CAS; Core treats this as an\nimmutable recovery hint and never derives identity from user input.",
+            "properties": {
+              "leafEntryId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "mode": {
+                "$ref": "#/$defs/SessionPolicyModeV1"
+              },
+              "openOperationId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "retention": {
+                "$ref": "#/$defs/RetentionPolicyV1",
+                "default": {
+                  "protectReferencedArtifacts": false
+                }
+              },
+              "sessionKey": {
+                "type": "string"
+              },
+              "stateVersion": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "trustedSubject": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/TrustedSubjectEvidenceV1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "mode",
+              "sessionKey",
+              "stateVersion"
+            ],
+            "type": "object"
+          },
+          "ExternalContextOriginV1": {
+            "enum": [
+              "skill"
+            ],
+            "type": "string"
+          },
+          "ExternalContextV1": {
+            "additionalProperties": false,
+            "description": "An immutable, provenance-carrying context fragment resolved by the Worker\nfrom the signed Bundle. Core orders it before the invocation's user\nmessage, but never derives tool authorization from its contents.",
+            "properties": {
+              "content": {
+                "type": "string"
+              },
+              "contentHash": {
+                "type": "string"
+              },
+              "contextId": {
+                "type": "string"
+              },
+              "origin": {
+                "$ref": "#/$defs/ExternalContextOriginV1"
+              },
+              "sourceResourceId": {
+                "type": "string"
+              },
+              "sourceResourceVersionId": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "contextId",
+              "origin",
+              "sourceResourceId",
+              "sourceResourceVersionId",
+              "contentHash",
+              "content"
+            ],
+            "type": "object"
+          },
+          "MessageRole": {
+            "enum": [
+              "user",
+              "assistant",
+              "tool_result",
+              "external_context"
+            ],
+            "type": "string"
+          },
+          "ReplayPolicyV1": {
+            "enum": [
+              "safe",
+              "never",
+              "idempotency_required",
+              "ledger_dependent"
+            ],
+            "type": "string"
+          },
+          "RetentionPolicyV1": {
+            "additionalProperties": false,
+            "properties": {
+              "compactionArtifactExpiresAtMillis": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "protectReferencedArtifacts": {
+                "default": false,
+                "type": "boolean"
+              },
+              "sessionExpiresAtMillis": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              }
+            },
+            "type": "object"
+          },
+          "SessionPolicyModeV1": {
+            "enum": [
+              "application_session",
+              "invocation"
+            ],
+            "type": "string"
+          },
+          "ToolCallV1": {
+            "additionalProperties": false,
+            "properties": {
+              "arguments": true,
+              "callId": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "callId",
+              "name",
+              "arguments"
+            ],
+            "type": "object"
+          },
+          "ToolDefinitionV1": {
+            "additionalProperties": false,
+            "properties": {
+              "description": {
+                "type": "string"
+              },
+              "inputSchema": true,
+              "name": {
+                "type": "string"
+              },
+              "origin": {
+                "$ref": "#/$defs/ToolOriginV1"
+              },
+              "replayPolicy": {
+                "$ref": "#/$defs/ReplayPolicyV1"
+              }
+            },
+            "required": [
+              "name",
+              "description",
+              "inputSchema",
+              "origin",
+              "replayPolicy"
+            ],
+            "type": "object"
+          },
+          "ToolOriginV1": {
+            "enum": [
+              "core",
+              "mcp",
+              "skill",
+              "knowledge",
+              "memory"
+            ],
+            "type": "string"
+          },
+          "TrustedSubjectEvidenceV1": {
+            "additionalProperties": false,
+            "properties": {
+              "authenticatedSubjectId": {
+                "type": "string"
+              },
+              "evidenceHash": {
+                "type": "string"
+              },
+              "source": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "authenticatedSubjectId",
+              "source",
+              "evidenceHash"
+            ],
+            "type": "object"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "apiVersion": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "attachmentTools": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/ToolDefinitionV1"
+            },
+            "type": "array"
+          },
+          "deadlineAtMillis": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "externalContexts": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/ExternalContextV1"
+            },
+            "type": "array"
+          },
+          "fencingToken": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "followUpInputs": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/AgentMessageV1"
+            },
+            "type": "array"
+          },
+          "modelContextWindow": {
+            "description": "模型的 context window 大小（tokens），用于自动计算压缩策略",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "modelReference": {
+            "type": "string"
+          },
+          "prompt": {
+            "type": "string"
+          },
+          "promptMessageId": {
+            "type": "string"
+          },
+          "runId": {
+            "type": "string"
+          },
+          "session": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/AgentSessionProjectionV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Durable Entry/Register projection used for recovery.  It is optional\nfor the offline Core spike; production Worker always supplies it."
+          },
+          "sessionId": {
+            "type": "string"
+          },
+          "steeringInputs": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/AgentMessageV1"
+            },
+            "type": "array"
+          },
+          "systemPrompt": {
+            "description": "The Agent Inspector system prompt is projected for every Model Effect\nbut is intentionally not appended to durable Session history.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "workspaceSandboxBinding": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "apiVersion",
+          "runId",
+          "sessionId",
+          "fencingToken",
+          "deadlineAtMillis",
+          "modelReference",
+          "promptMessageId",
+          "prompt",
+          "modelContextWindow"
+        ],
+        "title": "AgentRunInputV1",
+        "type": "object"
+      },
+      "AgentSessionEntryV1": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "oneOf": [
+          {
+            "not": {
+              "required": [
+                "payloadArtifactId"
+              ]
+            },
+            "required": [
+              "payloadJson"
+            ]
+          },
+          {
+            "not": {
+              "required": [
+                "payloadJson"
+              ]
+            },
+            "required": [
+              "payloadArtifactId"
+            ]
+          }
+        ],
+        "properties": {
+          "createdAtMillis": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "entryId": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "entryKind": {
+            "enum": [
+              "message_user",
+              "message_assistant",
+              "message_tool_call",
+              "message_tool_result",
+              "custom_external_context",
+              "compaction",
+              "pending_steering",
+              "pending_follow_up"
+            ]
+          },
+          "lane": {
+            "const": "main"
+          },
+          "operationId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "parentEntryId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "payloadArtifactId": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "payloadJson": {},
+          "sessionId": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "entryId",
+          "sessionId",
+          "lane",
+          "entryKind",
+          "createdAtMillis"
+        ],
+        "title": "AgentSessionEntryV1",
+        "type": "object"
+      },
+      "AgentSessionIdentityV1": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "applicationId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "attemptId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "executionId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sessionId": {
+            "type": "string"
+          },
+          "stableAgentNodeKey": {
+            "type": "string"
+          },
+          "tenantId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "tenantId",
+          "sessionId",
+          "stableAgentNodeKey"
+        ],
+        "title": "AgentSessionIdentityV1",
+        "type": "object"
+      },
+      "AgentSessionProjectionV1": {
+        "$defs": {
+          "RetentionPolicyV1": {
+            "additionalProperties": false,
+            "properties": {
+              "compactionArtifactExpiresAtMillis": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "protectReferencedArtifacts": {
+                "default": false,
+                "type": "boolean"
+              },
+              "sessionExpiresAtMillis": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              }
+            },
+            "type": "object"
+          },
+          "SessionPolicyModeV1": {
+            "enum": [
+              "application_session",
+              "invocation"
+            ],
+            "type": "string"
+          },
+          "TrustedSubjectEvidenceV1": {
+            "additionalProperties": false,
+            "properties": {
+              "authenticatedSubjectId": {
+                "type": "string"
+              },
+              "evidenceHash": {
+                "type": "string"
+              },
+              "source": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "authenticatedSubjectId",
+              "source",
+              "evidenceHash"
+            ],
+            "type": "object"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "Projection of the durable Register supplied to one Core invocation.  The\nWorker remains authoritative for loading and CAS; Core treats this as an\nimmutable recovery hint and never derives identity from user input.",
+        "properties": {
+          "leafEntryId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "mode": {
+            "$ref": "#/$defs/SessionPolicyModeV1"
+          },
+          "openOperationId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "retention": {
+            "$ref": "#/$defs/RetentionPolicyV1",
+            "default": {
+              "protectReferencedArtifacts": false
+            }
+          },
+          "sessionKey": {
+            "type": "string"
+          },
+          "stateVersion": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "trustedSubject": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/TrustedSubjectEvidenceV1"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "mode",
+          "sessionKey",
+          "stateVersion"
+        ],
+        "title": "AgentSessionProjectionV1",
+        "type": "object"
+      },
+      "AgentSessionRegisterV1": {
+        "$defs": {
+          "AgentSessionEntryV1": {
+            "additionalProperties": false,
+            "oneOf": [
+              {
+                "not": {
+                  "required": [
+                    "payloadArtifactId"
+                  ]
+                },
+                "required": [
+                  "payloadJson"
+                ]
+              },
+              {
+                "not": {
+                  "required": [
+                    "payloadJson"
+                  ]
+                },
+                "required": [
+                  "payloadArtifactId"
+                ]
+              }
+            ],
+            "properties": {
+              "createdAtMillis": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "entryId": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "entryKind": {
+                "enum": [
+                  "message_user",
+                  "message_assistant",
+                  "message_tool_call",
+                  "message_tool_result",
+                  "custom_external_context",
+                  "compaction",
+                  "pending_steering",
+                  "pending_follow_up"
+                ]
+              },
+              "lane": {
+                "const": "main"
+              },
+              "operationId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "parentEntryId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "payloadArtifactId": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "payloadJson": {},
+              "sessionId": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "entryId",
+              "sessionId",
+              "lane",
+              "entryKind",
+              "createdAtMillis"
+            ],
+            "type": "object"
+          },
+          "AgentSessionLaneV1": {
+            "description": "The only lane implemented by P3-05.  Keeping this as a closed enum avoids\nsilently mixing a future branch/tree implementation with the main lane.",
+            "enum": [
+              "main"
+            ],
+            "type": "string"
+          },
+          "CompactionKindV1": {
+            "enum": [
+              "threshold",
+              "overflow"
+            ],
+            "type": "string"
+          },
+          "CompactionRegisterV1": {
+            "additionalProperties": false,
+            "properties": {
+              "cutEntryId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "kind": {
+                "$ref": "#/$defs/CompactionKindV1"
+              },
+              "retainedEntryIds": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "snapshotId": {
+                "type": "string"
+              },
+              "summaryHash": {
+                "type": "string"
+              },
+              "tokensAfter": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "tokensBefore": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "snapshotId",
+              "kind",
+              "summaryHash",
+              "retainedEntryIds",
+              "tokensBefore",
+              "tokensAfter"
+            ],
+            "type": "object"
+          },
+          "DurableOperationPhaseV1": {
+            "enum": [
+              "accepted",
+              "checkpoint",
+              "model_ready",
+              "model_effect_pending",
+              "model_settled",
+              "tool_batch_planned",
+              "tool_effect_pending",
+              "tool_settled",
+              "compaction_planned",
+              "compaction_effect_pending",
+              "compaction_settled",
+              "terminal",
+              "pending",
+              "cancelled",
+              "unknown_outcome"
+            ],
+            "type": "string"
+          },
+          "DurableOperationStateV1": {
+            "additionalProperties": false,
+            "properties": {
+              "attemptId": {
+                "type": "string"
+              },
+              "bundleHash": {
+                "type": "string"
+              },
+              "continuation": true,
+              "deadlineAtMillis": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "effectIdentity": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "expectedStateVersion": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "fencingToken": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "inputHash": {
+                "type": "string"
+              },
+              "modelVersion": {
+                "type": "string"
+              },
+              "operationId": {
+                "type": "string"
+              },
+              "phase": {
+                "$ref": "#/$defs/DurableOperationPhaseV1"
+              },
+              "recoveryAction": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "registryHash": {
+                "type": "string"
+              },
+              "replayPolicy": {
+                "$ref": "#/$defs/ReplayPolicyV1"
+              },
+              "updatedAtMillis": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "operationId",
+              "attemptId",
+              "fencingToken",
+              "expectedStateVersion",
+              "phase",
+              "inputHash",
+              "bundleHash",
+              "modelVersion",
+              "registryHash",
+              "replayPolicy",
+              "deadlineAtMillis",
+              "updatedAtMillis"
+            ],
+            "type": "object"
+          },
+          "ReplayPolicyV1": {
+            "enum": [
+              "safe",
+              "never",
+              "idempotency_required",
+              "ledger_dependent"
+            ],
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "bundleHash": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "compaction": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/CompactionRegisterV1"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "coreContractVersion": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "definitionHash": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "fencingToken": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "lane": {
+            "$ref": "#/$defs/AgentSessionLaneV1"
+          },
+          "leafEntryId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "modelVersion": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "openOperationId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "operationState": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/DurableOperationStateV1"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "pendingEntries": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/AgentSessionEntryV1"
+            },
+            "type": "array"
+          },
+          "sessionId": {
+            "type": "string"
+          },
+          "stateVersion": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "terminalState": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "updatedAtMillis": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "sessionId",
+          "lane",
+          "stateVersion",
+          "fencingToken",
+          "updatedAtMillis"
+        ],
+        "title": "AgentSessionRegisterV1",
+        "type": "object"
+      },
+      "AgentSessionStateV1": {
+        "$defs": {
+          "AgentMessageV1": {
+            "additionalProperties": false,
+            "properties": {
+              "content": {
+                "type": "string"
+              },
+              "isError": {
+                "default": false,
+                "type": "boolean"
+              },
+              "messageId": {
+                "type": "string"
+              },
+              "role": {
+                "$ref": "#/$defs/MessageRole"
+              },
+              "toolCallId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "toolCalls": {
+                "items": {
+                  "$ref": "#/$defs/ToolCallV1"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "messageId",
+              "role",
+              "content"
+            ],
+            "type": "object"
+          },
+          "CompactionKindV1": {
+            "enum": [
+              "threshold",
+              "overflow"
+            ],
+            "type": "string"
+          },
+          "CompactionSnapshotV1": {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "$ref": "#/$defs/CompactionKindV1"
+              },
+              "retainedTail": {
+                "items": {
+                  "$ref": "#/$defs/AgentMessageV1"
+                },
+                "type": "array"
+              },
+              "snapshotId": {
+                "type": "string"
+              },
+              "summary": {
+                "type": "string"
+              },
+              "throughMessageIndex": {
+                "format": "uint",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "tokensBefore": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "snapshotId",
+              "kind",
+              "summary",
+              "throughMessageIndex",
+              "retainedTail",
+              "tokensBefore"
+            ],
+            "type": "object"
+          },
+          "MessageRole": {
+            "enum": [
+              "user",
+              "assistant",
+              "tool_result",
+              "external_context"
+            ],
+            "type": "string"
+          },
+          "OperationKindV1": {
+            "enum": [
+              "model",
+              "tool",
+              "compaction",
+              "state_transition"
+            ],
+            "type": "string"
+          },
+          "OperationPhaseV1": {
+            "oneOf": [
+              {
+                "properties": {
+                  "phase": {
+                    "const": "intent_persisted",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "phase"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "phase": {
+                    "const": "effect_started",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "phase"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "phase": {
+                    "const": "effect_completed",
+                    "type": "string"
+                  },
+                  "result": true
+                },
+                "required": [
+                  "phase",
+                  "result"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "phase": {
+                    "const": "settled_success",
+                    "type": "string"
+                  },
+                  "result": true
+                },
+                "required": [
+                  "phase",
+                  "result"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "error": {
+                    "type": "string"
+                  },
+                  "phase": {
+                    "const": "settled_failure",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "phase",
+                  "error"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "phase": {
+                    "const": "unknown_outcome",
+                    "type": "string"
+                  },
+                  "reason": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "phase",
+                  "reason"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "OperationRecordV1": {
+            "additionalProperties": false,
+            "properties": {
+              "attempt": {
+                "format": "uint32",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "createdAtMillis": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "effectId": {
+                "type": "string"
+              },
+              "effectIdentity": {
+                "type": "string"
+              },
+              "fencingToken": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "intent": true,
+              "operationId": {
+                "type": "string"
+              },
+              "operationKind": {
+                "$ref": "#/$defs/OperationKindV1"
+              },
+              "phase": {
+                "$ref": "#/$defs/OperationPhaseV1"
+              },
+              "replayPolicy": {
+                "$ref": "#/$defs/ReplayPolicyV1"
+              },
+              "updatedAtMillis": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "operationId",
+              "effectId",
+              "operationKind",
+              "attempt",
+              "intent",
+              "effectIdentity",
+              "replayPolicy",
+              "phase",
+              "fencingToken",
+              "createdAtMillis",
+              "updatedAtMillis"
+            ],
+            "type": "object"
+          },
+          "ReplayPolicyV1": {
+            "enum": [
+              "safe",
+              "never",
+              "idempotency_required",
+              "ledger_dependent"
+            ],
+            "type": "string"
+          },
+          "TerminalReasonV1": {
+            "enum": [
+              "completed",
+              "cancelled",
+              "budget_exhausted",
+              "model_error",
+              "tool_error",
+              "outcome_unknown",
+              "context_overflow"
+            ],
+            "type": "string"
+          },
+          "ToolCallV1": {
+            "additionalProperties": false,
+            "properties": {
+              "arguments": true,
+              "callId": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "callId",
+              "name",
+              "arguments"
+            ],
+            "type": "object"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "compaction": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/CompactionSnapshotV1"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "followUpQueue": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/AgentMessageV1"
+            },
+            "type": "array"
+          },
+          "messages": {
+            "items": {
+              "$ref": "#/$defs/AgentMessageV1"
+            },
+            "type": "array"
+          },
+          "operation": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/OperationRecordV1"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "overflowRetryOperationId": {
+            "description": "Durable marker for the one overflow-triggered retry allowed for a\nModel Effect.  It is tied to the retry operation identity rather than\nthe latest compaction kind, so a later Session turn can compact again.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sessionId": {
+            "type": "string"
+          },
+          "steeringQueue": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/AgentMessageV1"
+            },
+            "type": "array"
+          },
+          "terminal": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/TerminalReasonV1"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "version": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "sessionId",
+          "version",
+          "messages"
+        ],
+        "title": "AgentSessionStateV1",
+        "type": "object"
+      },
+      "AgentSessionUsageV1": {
+        "$defs": {
+          "UsageKindV1": {
+            "enum": [
+              "model",
+              "compaction",
+              "tool",
+              "memory"
+            ],
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "cacheReadTokens": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "cacheWriteTokens": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "costCurrency": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "costMicros": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "createdAtMillis": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "effectId": {
+            "type": "string"
+          },
+          "inputTokens": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "operationId": {
+            "type": "string"
+          },
+          "outputTokens": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "resourceReference": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sessionId": {
+            "type": "string"
+          },
+          "usageId": {
+            "type": "string"
+          },
+          "usageKind": {
+            "$ref": "#/$defs/UsageKindV1"
+          }
+        },
+        "required": [
+          "usageId",
+          "sessionId",
+          "operationId",
+          "effectId",
+          "usageKind",
+          "inputTokens",
+          "outputTokens",
+          "cacheReadTokens",
+          "cacheWriteTokens",
+          "costMicros",
+          "createdAtMillis"
+        ],
+        "title": "AgentSessionUsageV1",
+        "type": "object"
+      },
+      "CompactionRegisterV1": {
+        "$defs": {
+          "CompactionKindV1": {
+            "enum": [
+              "threshold",
+              "overflow"
+            ],
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "cutEntryId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "kind": {
+            "$ref": "#/$defs/CompactionKindV1"
+          },
+          "retainedEntryIds": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "snapshotId": {
+            "type": "string"
+          },
+          "summaryHash": {
+            "type": "string"
+          },
+          "tokensAfter": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "tokensBefore": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "snapshotId",
+          "kind",
+          "summaryHash",
+          "retainedEntryIds",
+          "tokensBefore",
+          "tokensAfter"
+        ],
+        "title": "CompactionRegisterV1",
+        "type": "object"
+      },
+      "DurableOperationStateV1": {
+        "$defs": {
+          "DurableOperationPhaseV1": {
+            "enum": [
+              "accepted",
+              "checkpoint",
+              "model_ready",
+              "model_effect_pending",
+              "model_settled",
+              "tool_batch_planned",
+              "tool_effect_pending",
+              "tool_settled",
+              "compaction_planned",
+              "compaction_effect_pending",
+              "compaction_settled",
+              "terminal",
+              "pending",
+              "cancelled",
+              "unknown_outcome"
+            ],
+            "type": "string"
+          },
+          "ReplayPolicyV1": {
+            "enum": [
+              "safe",
+              "never",
+              "idempotency_required",
+              "ledger_dependent"
+            ],
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "type": "string"
+          },
+          "bundleHash": {
+            "type": "string"
+          },
+          "continuation": true,
+          "deadlineAtMillis": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "effectIdentity": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "expectedStateVersion": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "fencingToken": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "inputHash": {
+            "type": "string"
+          },
+          "modelVersion": {
+            "type": "string"
+          },
+          "operationId": {
+            "type": "string"
+          },
+          "phase": {
+            "$ref": "#/$defs/DurableOperationPhaseV1"
+          },
+          "recoveryAction": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "registryHash": {
+            "type": "string"
+          },
+          "replayPolicy": {
+            "$ref": "#/$defs/ReplayPolicyV1"
+          },
+          "updatedAtMillis": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "operationId",
+          "attemptId",
+          "fencingToken",
+          "expectedStateVersion",
+          "phase",
+          "inputHash",
+          "bundleHash",
+          "modelVersion",
+          "registryHash",
+          "replayPolicy",
+          "deadlineAtMillis",
+          "updatedAtMillis"
+        ],
+        "title": "DurableOperationStateV1",
+        "type": "object"
+      },
+      "McpServerVersionV1": {
+        "$defs": {
+          "McpTransportV1": {
+            "oneOf": [
+              {
+                "properties": {
+                  "credential": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/$defs/ResourceReferenceV1"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "endpoint": {
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "streamable_http",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "endpoint"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "credential": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/$defs/ResourceReferenceV1"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "endpoint": {
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "sse",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "endpoint"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "args": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "command": {
+                    "type": "string"
+                  },
+                  "environment_credential_refs": {
+                    "default": [],
+                    "items": {
+                      "$ref": "#/$defs/ResourceReferenceV1"
+                    },
+                    "type": "array"
+                  },
+                  "kind": {
+                    "const": "stdio",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "command",
+                  "args"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "ResourceReferenceV1": {
+            "additionalProperties": false,
+            "properties": {
+              "operation": {
+                "type": "string"
+              },
+              "resourceId": {
+                "type": "string"
+              },
+              "resourceType": {
+                "type": "string"
+              },
+              "resourceVersionId": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "resourceType",
+              "resourceId",
+              "resourceVersionId",
+              "operation"
+            ],
+            "type": "object"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "runtimeSandbox": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ResourceReferenceV1"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "serverVersionId": {
+            "type": "string"
+          },
+          "transport": {
+            "$ref": "#/$defs/McpTransportV1"
+          }
+        },
+        "required": [
+          "serverVersionId",
+          "transport"
+        ],
+        "title": "McpServerVersionV1",
+        "type": "object"
+      },
+      "OperationRecordV1": {
+        "$defs": {
+          "OperationKindV1": {
+            "enum": [
+              "model",
+              "tool",
+              "compaction",
+              "state_transition"
+            ],
+            "type": "string"
+          },
+          "OperationPhaseV1": {
+            "oneOf": [
+              {
+                "properties": {
+                  "phase": {
+                    "const": "intent_persisted",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "phase"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "phase": {
+                    "const": "effect_started",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "phase"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "phase": {
+                    "const": "effect_completed",
+                    "type": "string"
+                  },
+                  "result": true
+                },
+                "required": [
+                  "phase",
+                  "result"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "phase": {
+                    "const": "settled_success",
+                    "type": "string"
+                  },
+                  "result": true
+                },
+                "required": [
+                  "phase",
+                  "result"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "error": {
+                    "type": "string"
+                  },
+                  "phase": {
+                    "const": "settled_failure",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "phase",
+                  "error"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "phase": {
+                    "const": "unknown_outcome",
+                    "type": "string"
+                  },
+                  "reason": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "phase",
+                  "reason"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "ReplayPolicyV1": {
+            "enum": [
+              "safe",
+              "never",
+              "idempotency_required",
+              "ledger_dependent"
+            ],
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "attempt": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "createdAtMillis": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "effectId": {
+            "type": "string"
+          },
+          "effectIdentity": {
+            "type": "string"
+          },
+          "fencingToken": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "intent": true,
+          "operationId": {
+            "type": "string"
+          },
+          "operationKind": {
+            "$ref": "#/$defs/OperationKindV1"
+          },
+          "phase": {
+            "$ref": "#/$defs/OperationPhaseV1"
+          },
+          "replayPolicy": {
+            "$ref": "#/$defs/ReplayPolicyV1"
+          },
+          "updatedAtMillis": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "operationId",
+          "effectId",
+          "operationKind",
+          "attempt",
+          "intent",
+          "effectIdentity",
+          "replayPolicy",
+          "phase",
+          "fencingToken",
+          "createdAtMillis",
+          "updatedAtMillis"
+        ],
+        "title": "OperationRecordV1",
+        "type": "object"
+      },
+      "RetentionPolicyV1": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "compactionArtifactExpiresAtMillis": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "protectReferencedArtifacts": {
+            "default": false,
+            "type": "boolean"
+          },
+          "sessionExpiresAtMillis": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "title": "RetentionPolicyV1",
+        "type": "object"
+      },
+      "SandboxProcessSessionContractV1": {
+        "$defs": {
+          "ProcessLeaseV1": {
+            "additionalProperties": false,
+            "properties": {
+              "expiresAtMillis": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "fencingToken": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "leaseId": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "leaseId",
+              "fencingToken",
+              "expiresAtMillis"
+            ],
+            "type": "object"
+          },
+          "ResourceReferenceV1": {
+            "additionalProperties": false,
+            "properties": {
+              "operation": {
+                "type": "string"
+              },
+              "resourceId": {
+                "type": "string"
+              },
+              "resourceType": {
+                "type": "string"
+              },
+              "resourceVersionId": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "resourceType",
+              "resourceId",
+              "resourceVersionId",
+              "operation"
+            ],
+            "type": "object"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "args": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "command": {
+            "type": "string"
+          },
+          "heartbeatIntervalMillis": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "idleTimeoutMillis": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "lease": {
+            "$ref": "#/$defs/ProcessLeaseV1"
+          },
+          "maxFrameBytes": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "processSessionId": {
+            "type": "string"
+          },
+          "runtimeSandbox": {
+            "$ref": "#/$defs/ResourceReferenceV1"
+          },
+          "serverVersionId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "processSessionId",
+          "serverVersionId",
+          "runtimeSandbox",
+          "command",
+          "args",
+          "maxFrameBytes",
+          "idleTimeoutMillis",
+          "heartbeatIntervalMillis",
+          "lease"
+        ],
+        "title": "SandboxProcessSessionContractV1",
+        "type": "object"
+      },
+      "SubjectMemoryScopeV1": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "applicationId": {
+            "type": "string"
+          },
+          "authenticatedSubjectId": {
+            "type": "string"
+          },
+          "memoryResourceVersionId": {
+            "type": "string"
+          },
+          "tenantId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "tenantId",
+          "authenticatedSubjectId",
+          "applicationId",
+          "memoryResourceVersionId"
+        ],
+        "title": "SubjectMemoryScopeV1",
+        "type": "object"
+      },
+      "TrustedSubjectEvidenceV1": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "authenticatedSubjectId": {
+            "type": "string"
+          },
+          "evidenceHash": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "authenticatedSubjectId",
+          "source",
+          "evidenceHash"
+        ],
+        "title": "TrustedSubjectEvidenceV1",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "title": "Agentx Agent Core frozen contract draft",
+    "version": "1.1.0-p3-04"
+  },
+  "openapi": "3.1.0",
+  "paths": {}
+}

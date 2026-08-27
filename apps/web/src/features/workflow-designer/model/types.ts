@@ -20,6 +20,7 @@ export type NodePort = {
 export type BindingSlot = {
   name: string;
   resourceType: ResourceType;
+  placement: "inspector" | "canvas";
   required: boolean;
   multiple: boolean;
 };
@@ -282,7 +283,7 @@ export type WorkflowStart = {
 };
 export type WorkflowEnd = { outputs: Record<string, WorkflowOutput>; error: WorkflowErrorEnd };
 export type WorkflowDefinition = {
-  schemaVersion: "5.0";
+  schemaVersion: "6.0";
   start: WorkflowStart;
   nodes: DefinitionNode[];
   connections: DefinitionConnection[];

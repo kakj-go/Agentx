@@ -1,9 +1,12 @@
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 
 use agentx_domain::{
     ResourceOperation, ResourceReference, ResourceType, ResourceVersionSnapshot, WorkflowDefinition,
 };
-use agentx_runtime_contracts::RuntimeSkillProgramV1;
+use agentx_runtime_contracts::{
+    ContentHash, RuntimeSkillAssetV2, RuntimeSkillDependencyV2, RuntimeSkillProgramV2,
+    deterministic_uuid,
+};
 use bytes::Bytes;
 use object_store::path::Path as ObjectPath;
 use serde_json::{Value, json};
@@ -76,26 +79,49 @@ pub(crate) async fn build_version_snapshots(
     let mut queue = VecDeque::new();
     for node in &definition.nodes {
         for reference in &node.resource_references {
-            queue.push_back((node.id.clone(), reference.clone()));
+            queue.push_back((node.id.clone(), reference.clone(), Vec::<Uuid>::new()));
         }
     }
-    let mut seen = HashSet::new();
+    let mut seen = HashMap::new();
     let mut snapshots = Vec::new();
-    while let Some((node_id, mut reference)) = queue.pop_front() {
-        if !seen.insert((
+    while let Some((node_id, mut reference, ancestry)) = queue.pop_front() {
+        let snapshot = resource_snapshot(state, tenant_id, &mut reference).await?;
+        if reference.resource_type == ResourceType::Skill
+            && reference
+                .resource_version_id
+                .is_some_and(|version| ancestry.contains(&version))
+        {
+            return Err(ApiError::unprocessable(
+                "AGENT_SKILL_DEPENDENCY_CYCLE",
+                "Skill dependency graph contains a cycle",
+            ));
+        }
+        let identity = (
             node_id.clone(),
             reference.resource_type,
             reference.resource_id,
             reference.operation,
-        )) {
+        );
+        if let Some(existing_version) = seen.get(&identity) {
+            if existing_version != &reference.resource_version_id {
+                return Err(ApiError::unprocessable(
+                    "AGENT_SKILL_DEPENDENCY_VERSION_CONFLICT",
+                    format!(
+                        "Resource {} is required at conflicting exact versions",
+                        reference.resource_id
+                    ),
+                ));
+            }
             continue;
         }
-        let snapshot = resource_snapshot(state, tenant_id, &mut reference).await?;
+        seen.insert(identity, reference.resource_version_id);
         require_grant(state, tenant_id, identity_id, &reference).await?;
         if reference.resource_type == ResourceType::Skill {
             let version_id = reference.resource_version_id.ok_or_else(|| {
                 ApiError::unprocessable("RESOURCE_VERSION_MISSING", "Skill version is required")
             })?;
+            let mut dependency_ancestry = ancestry.clone();
+            dependency_ancestry.push(version_id);
             let rows = sqlx::query("SELECT resource_type,resource_id,resource_version_id,operation_key FROM skill_dependencies WHERE tenant_id=? AND skill_version_id=?")
                 .bind(tenant_id).bind(version_id).fetch_all(&state.pool).await?;
             for row in rows {
@@ -109,25 +135,85 @@ pub(crate) async fn build_version_snapshots(
                         resource_version_id: row.try_get("resource_version_id")?,
                         operation: parse_operation(row.try_get("operation_key")?)?,
                     },
+                    dependency_ancestry.clone(),
                 ));
             }
         }
         if reference.resource_type == ResourceType::McpTool {
-            let server_id: Uuid =
-                sqlx::query_scalar("SELECT server_id FROM mcp_tools WHERE tenant_id=? AND id=?")
+            let row = sqlx::query("SELECT t.server_id,tv.server_version_id FROM mcp_tools t JOIN mcp_tool_versions tv ON tv.tenant_id=t.tenant_id AND tv.tool_id=t.id WHERE t.tenant_id=? AND t.id=? AND tv.id=?")
                     .bind(tenant_id)
                     .bind(reference.resource_id)
+                    .bind(reference.resource_version_id)
                     .fetch_one(&state.pool)
                     .await?;
+            let server_id: Uuid = row.try_get("server_id")?;
             queue.push_back((
                 node_id.clone(),
-                generated_reference(ResourceType::McpServer, server_id),
+                ResourceReference {
+                    resource_version_id: Some(row.try_get("server_version_id")?),
+                    ..generated_reference(ResourceType::McpServer, server_id)
+                },
+                ancestry.clone(),
             ));
+        }
+        if reference.resource_type == ResourceType::McpServer
+            && snapshot.pointer("/transport/kind").and_then(Value::as_str) == Some("stdio")
+        {
+            let profile_id = snapshot
+                .get("runtimeSandboxProfileId")
+                .and_then(Value::as_str)
+                .and_then(|value| Uuid::parse_str(value).ok())
+                .ok_or_else(|| {
+                    ApiError::unprocessable(
+                        "MCP_STDIO_SANDBOX_REQUIRED",
+                        "stdio MCP Server Version has no Runtime Sandbox",
+                    )
+                })?;
+            let profile_version_id = snapshot
+                .get("runtimeSandboxProfileVersionId")
+                .and_then(Value::as_str)
+                .and_then(|value| Uuid::parse_str(value).ok())
+                .ok_or_else(|| {
+                    ApiError::unprocessable(
+                        "MCP_STDIO_SANDBOX_REQUIRED",
+                        "stdio MCP Server Version has no exact Runtime Sandbox version",
+                    )
+                })?;
+            queue.push_back((
+                node_id.clone(),
+                ResourceReference {
+                    binding_id: None,
+                    binding_role: None,
+                    resource_type: ResourceType::SandboxProfile,
+                    resource_id: profile_id,
+                    resource_version_id: Some(profile_version_id),
+                    operation: ResourceOperation::Use,
+                },
+                ancestry.clone(),
+            ));
+            if let Some(credentials) = snapshot
+                .pointer("/transport/environmentCredentialRefs")
+                .and_then(Value::as_array)
+            {
+                for credential_id in credentials
+                    .iter()
+                    .filter_map(|value| value.get("credentialId"))
+                    .filter_map(Value::as_str)
+                    .filter_map(|value| Uuid::parse_str(value).ok())
+                {
+                    queue.push_back((
+                        node_id.clone(),
+                        generated_reference(ResourceType::Credential, credential_id),
+                        ancestry.clone(),
+                    ));
+                }
+            }
         }
         for credential_id in credential_dependencies(state, tenant_id, &reference).await? {
             queue.push_back((
                 node_id.clone(),
                 generated_reference(ResourceType::Credential, credential_id),
+                ancestry.clone(),
             ));
         }
         snapshots.push(ResourceVersionSnapshot {
@@ -242,7 +328,7 @@ async fn require_grant(
     }
 }
 
-async fn resource_snapshot(
+pub(crate) async fn resource_snapshot(
     state: &ControlApiState,
     tenant_id: Uuid,
     reference: &mut ResourceReference,
@@ -326,17 +412,34 @@ async fn mcp_server_snapshot(
     tenant_id: Uuid,
     reference: &mut ResourceReference,
 ) -> ApiResult<Value> {
-    let row = sqlx::query("SELECT s.id,s.name,s.version,sv.id server_version_id,sv.version_number,sv.transport,sv.endpoint,sv.credential_id,sv.configuration_hash FROM mcp_servers s JOIN mcp_server_versions sv ON sv.server_id=s.id AND sv.version_number=s.current_version_number WHERE s.tenant_id=? AND s.id=? AND s.status='active'")
-        .bind(tenant_id).bind(reference.resource_id).fetch_optional(&state.pool).await?
+    let row = if let Some(version_id) = reference.resource_version_id {
+        sqlx::query("SELECT s.id,s.name,s.version,sv.id server_version_id,sv.version_number,sv.transport,sv.endpoint,sv.credential_id,sv.runtime_sandbox_profile_id,sv.runtime_sandbox_profile_version_id,sv.configuration_json,sv.configuration_hash FROM mcp_servers s JOIN mcp_server_versions sv ON sv.server_id=s.id AND sv.id=? WHERE s.tenant_id=? AND s.id=? AND s.status='active'")
+            .bind(version_id).bind(tenant_id).bind(reference.resource_id).fetch_optional(&state.pool).await?
+    } else {
+        sqlx::query("SELECT s.id,s.name,s.version,sv.id server_version_id,sv.version_number,sv.transport,sv.endpoint,sv.credential_id,sv.runtime_sandbox_profile_id,sv.runtime_sandbox_profile_version_id,sv.configuration_json,sv.configuration_hash FROM mcp_servers s JOIN mcp_server_versions sv ON sv.server_id=s.id AND sv.version_number=s.current_version_number WHERE s.tenant_id=? AND s.id=? AND s.status='active'")
+            .bind(tenant_id).bind(reference.resource_id).fetch_optional(&state.pool).await?
+    }
         .ok_or_else(|| ApiError::unprocessable("RESOURCE_UNAVAILABLE", "MCP server is missing or disabled"))?;
     let version_id: Uuid = row.try_get("server_version_id")?;
     reference.resource_version_id = Some(version_id);
     let credential_id: Option<Uuid> = row.try_get("credential_id")?;
+    let transport = mcp_transport_snapshot(
+        state,
+        tenant_id,
+        row.try_get::<Value, _>("configuration_json")?
+            .get("transport")
+            .cloned()
+            .unwrap_or(Value::Null),
+    )
+    .await?;
     Ok(
         json!({"serverId":row.try_get::<Uuid,_>("id")?,"name":row.try_get::<String,_>("name")?,
         "serverVersionId":version_id,"versionNumber":row.try_get::<u64,_>("version_number")?,
-        "transport":row.try_get::<String,_>("transport")?,"endpoint":row.try_get::<String,_>("endpoint")?,
+        "transport":transport,
+        "endpoint":row.try_get::<Option<String>,_>("endpoint")?,
         "credentialId":credential_id,"configurationHash":prefixed_hash(row.try_get("configuration_hash")?),
+        "runtimeSandboxProfileId":row.try_get::<Option<Uuid>,_>("runtime_sandbox_profile_id")?,
+        "runtimeSandboxProfileVersionId":row.try_get::<Option<Uuid>,_>("runtime_sandbox_profile_version_id")?,
         "vaultSecretRef":optional_credential_snapshot(state,tenant_id,credential_id).await?}),
     )
 }
@@ -349,16 +452,28 @@ async fn mcp_tool_snapshot(
     let version_id =
         resolve_version(state, tenant_id, reference, "mcp_tool_versions", "tool_id").await?;
     reference.resource_version_id = Some(version_id);
-    let row = sqlx::query("SELECT tv.id,tv.version_number,tv.input_schema,tv.output_schema,tv.annotations_json,tv.schema_hash,t.name,t.title,s.id server_id,sv.id server_version_id,sv.transport,sv.endpoint,sv.credential_id,sv.configuration_hash,p.timeout_seconds,p.side_effect FROM mcp_tool_versions tv JOIN mcp_tools t ON t.id=tv.tool_id JOIN mcp_servers s ON s.id=t.server_id JOIN mcp_server_versions sv ON sv.server_id=s.id AND sv.version_number=s.current_version_number JOIN mcp_tool_policies p ON p.tool_id=t.id AND p.tenant_id=t.tenant_id WHERE tv.tenant_id=? AND tv.id=? AND tv.tool_id=? AND t.availability='available' AND s.status='active' AND p.enabled=TRUE")
+    let row = sqlx::query("SELECT tv.id,tv.version_number,tv.input_schema,tv.output_schema,tv.annotations_json,tv.schema_hash,t.name,t.title,s.id server_id,sv.id server_version_id,sv.transport,sv.endpoint,sv.credential_id,sv.runtime_sandbox_profile_id,sv.runtime_sandbox_profile_version_id,sv.configuration_json,sv.configuration_hash,p.timeout_seconds,p.side_effect FROM mcp_tool_versions tv JOIN mcp_tools t ON t.id=tv.tool_id JOIN mcp_servers s ON s.id=t.server_id JOIN mcp_server_versions sv ON sv.id=tv.server_version_id AND sv.server_id=s.id JOIN mcp_tool_policies p ON p.tool_id=t.id AND p.tenant_id=t.tenant_id WHERE tv.tenant_id=? AND tv.id=? AND tv.tool_id=? AND t.availability='available' AND s.status='active' AND p.enabled=TRUE")
         .bind(tenant_id).bind(version_id).bind(reference.resource_id).fetch_optional(&state.pool).await?
         .ok_or_else(|| ApiError::unprocessable("RESOURCE_UNAVAILABLE", "MCP tool is missing, disabled, or unavailable"))?;
     let credential_id: Option<Uuid> = row.try_get("credential_id")?;
+    let transport = mcp_transport_snapshot(
+        state,
+        tenant_id,
+        row.try_get::<Value, _>("configuration_json")?
+            .get("transport")
+            .cloned()
+            .unwrap_or(Value::Null),
+    )
+    .await?;
     Ok(
         json!({"toolVersionId":version_id,"toolVersionNumber":row.try_get::<u64,_>("version_number")?,
         "toolName":row.try_get::<String,_>("name")?,"title":row.try_get::<Option<String>,_>("title")?,
         "serverId":row.try_get::<Uuid,_>("server_id")?,"serverVersionId":row.try_get::<Uuid,_>("server_version_id")?,
-        "transport":row.try_get::<String,_>("transport")?,"endpoint":row.try_get::<String,_>("endpoint")?,
+        "transport":transport,
+        "endpoint":row.try_get::<Option<String>,_>("endpoint")?,
         "credentialId":credential_id,"configurationHash":prefixed_hash(row.try_get("configuration_hash")?),
+        "runtimeSandboxProfileId":row.try_get::<Option<Uuid>,_>("runtime_sandbox_profile_id")?,
+        "runtimeSandboxProfileVersionId":row.try_get::<Option<Uuid>,_>("runtime_sandbox_profile_version_id")?,
         "inputSchema":row.try_get::<Value,_>("input_schema")?,"outputSchema":row.try_get::<Option<Value>,_>("output_schema")?,
         "annotations":row.try_get::<Value,_>("annotations_json")?,"schemaHash":prefixed_hash(row.try_get("schema_hash")?),
         "timeoutSeconds":row.try_get::<u32,_>("timeout_seconds")?,"sideEffect":row.try_get::<String,_>("side_effect")?,
@@ -374,24 +489,83 @@ async fn skill_snapshot(
     let version_id =
         resolve_version(state, tenant_id, reference, "skill_versions", "skill_id").await?;
     reference.resource_version_id = Some(version_id);
-    let row = sqlx::query("SELECT sv.version_number,sv.source_revision,sv.content_hash,a.storage_key FROM skill_versions sv JOIN skills s ON s.id=sv.skill_id JOIN skill_version_files f ON f.tenant_id=sv.tenant_id AND f.skill_version_id=sv.id AND f.path='SKILL.md' JOIN artifacts a ON a.tenant_id=f.tenant_id AND a.id=f.artifact_id AND a.deleted_at IS NULL WHERE sv.tenant_id=? AND sv.id=? AND sv.skill_id=? AND s.status='active'")
+    let row = sqlx::query("SELECT sv.version_number,sv.source_revision,sv.content_hash FROM skill_versions sv JOIN skills s ON s.id=sv.skill_id WHERE sv.tenant_id=? AND sv.id=? AND sv.skill_id=? AND s.status='active'")
         .bind(tenant_id).bind(version_id).bind(reference.resource_id).fetch_optional(&state.pool).await?
-        .ok_or_else(|| ApiError::unprocessable("RESOURCE_UNAVAILABLE", "Skill version or SKILL.md is unavailable"))?;
-    let source_key: String = row.try_get("storage_key")?;
-    let instructions = state
-        .control_objects
-        .get(&ObjectPath::from(source_key))
-        .await
-        .map_err(ApiError::internal)?
-        .bytes()
-        .await
-        .map_err(ApiError::internal)?;
-    let instructions = String::from_utf8(instructions.to_vec())
-        .map_err(|_| ApiError::unprocessable("SKILL_INVALID", "SKILL.md must be UTF-8"))?;
-    let program = RuntimeSkillProgramV1 {
-        schema_version: 1,
+        .ok_or_else(|| ApiError::unprocessable("RESOURCE_UNAVAILABLE", "Skill version is unavailable"))?;
+    let files = sqlx::query("SELECT f.path,f.mime_type,f.content_hash,f.size_bytes,a.storage_key FROM skill_version_files f JOIN artifacts a ON a.tenant_id=f.tenant_id AND a.id=f.artifact_id AND a.deleted_at IS NULL WHERE f.tenant_id=? AND f.skill_version_id=? ORDER BY f.path")
+        .bind(tenant_id)
+        .bind(version_id)
+        .fetch_all(&state.pool)
+        .await?;
+    if files.is_empty() {
+        return Err(ApiError::unprocessable(
+            "SKILL_INVALID",
+            "Skill version has no immutable files",
+        ));
+    }
+    let mut instructions = None;
+    let mut assets = Vec::with_capacity(files.len());
+    let mut runtime_objects = Vec::with_capacity(files.len() + 1);
+    for file in files {
+        let path: String = file.try_get("path")?;
+        let source_key: String = file.try_get("storage_key")?;
+        let content_hash = ContentHash::parse(prefixed_hash(file.try_get("content_hash")?))
+            .map_err(ApiError::internal)?;
+        let size_bytes: u64 = file.try_get("size_bytes")?;
+        let media_type: String = file.try_get("mime_type")?;
+        let object_id = deterministic_uuid(version_id, format!("skill-asset:{path}").as_bytes());
+        if path == "SKILL.md" {
+            let bytes = state
+                .control_objects
+                .get(&ObjectPath::from(source_key.clone()))
+                .await
+                .map_err(ApiError::internal)?
+                .bytes()
+                .await
+                .map_err(ApiError::internal)?;
+            instructions =
+                Some(String::from_utf8(bytes.to_vec()).map_err(|_| {
+                    ApiError::unprocessable("SKILL_INVALID", "SKILL.md must be UTF-8")
+                })?);
+        }
+        assets.push(RuntimeSkillAssetV2 {
+            path,
+            object_id,
+            content_hash: content_hash.clone(),
+            media_type: media_type.clone(),
+            size_bytes,
+        });
+        runtime_objects.push(json!({
+            "objectId": object_id,
+            "sourceKey": source_key,
+            "contentHash": content_hash.as_str(),
+            "sizeBytes": size_bytes,
+            "mediaType": media_type,
+        }));
+    }
+    let instructions = instructions
+        .ok_or_else(|| ApiError::unprocessable("SKILL_INVALID", "Skill version has no SKILL.md"))?;
+    let dependencies = sqlx::query("SELECT resource_type,resource_id,resource_version_id,operation_key FROM skill_dependencies WHERE tenant_id=? AND skill_version_id=? ORDER BY resource_type,resource_id,resource_version_id,operation_key")
+        .bind(tenant_id)
+        .bind(version_id)
+        .fetch_all(&state.pool)
+        .await?
+        .into_iter()
+        .map(|dependency| {
+            Ok(RuntimeSkillDependencyV2 {
+                resource_type: dependency.try_get("resource_type")?,
+                resource_id: dependency.try_get("resource_id")?,
+                resource_version_id: dependency.try_get("resource_version_id")?,
+                operation: dependency.try_get("operation_key")?,
+            })
+        })
+        .collect::<Result<Vec<_>, sqlx::Error>>()?;
+    let program = RuntimeSkillProgramV2 {
+        schema_version: 2,
+        skill_version_id: version_id,
         instructions,
-        dependency_object_ids: vec![],
+        assets,
+        dependencies,
     };
     let bytes = agentx_runtime_contracts::canonical_bytes(&program).map_err(ApiError::internal)?;
     let hash = agentx_runtime_contracts::content_hash(&program).map_err(ApiError::internal)?;
@@ -407,12 +581,28 @@ async fn skill_snapshot(
         )
         .await
         .map_err(ApiError::internal)?;
+    let entrypoint_object_id = deterministic_uuid(version_id, b"runtime-skill-program-v2");
+    let dependency_object_ids = program
+        .assets
+        .iter()
+        .map(|asset| asset.object_id)
+        .collect::<Vec<_>>();
+    runtime_objects.push(json!({
+        "objectId": entrypoint_object_id,
+        "sourceKey": runtime_source_key,
+        "contentHash": hash.as_str(),
+        "sizeBytes": bytes.len(),
+        "mediaType": "application/vnd.agentx.runtime-skill.v2+json",
+    }));
     Ok(
         json!({"versionId":version_id,"versionNumber":row.try_get::<u64,_>("version_number")?,
         "sourceRevision":row.try_get::<u64,_>("source_revision")?,"contentHash":row.try_get::<String,_>("content_hash")?,
-        "resourceVersion":row.try_get::<u64,_>("version_number")?,"dependencyObjectIds":[],
-        "runtimeObjects":[{"objectId":version_id,"sourceKey":runtime_source_key,"contentHash":hash.as_str(),
-            "sizeBytes":bytes.len(),"mediaType":"application/vnd.agentx.runtime-skill.v1+json"}]}),
+        "resourceVersion":row.try_get::<u64,_>("version_number")?,
+        "entrypointObjectId":entrypoint_object_id,
+        "entrypointContentHash":hash.as_str(),
+        "dependencyObjectIds":dependency_object_ids,
+        "dependencies":program.dependencies,
+        "runtimeObjects":runtime_objects}),
     )
 }
 
@@ -524,6 +714,39 @@ async fn optional_credential_snapshot(
         )),
         None => Ok(None),
     }
+}
+
+async fn mcp_transport_snapshot(
+    state: &ControlApiState,
+    tenant_id: Uuid,
+    mut transport: Value,
+) -> ApiResult<Value> {
+    if transport.get("kind").and_then(Value::as_str) != Some("stdio") {
+        return Ok(transport);
+    }
+    let Some(references) = transport
+        .get_mut("environmentCredentialRefs")
+        .and_then(Value::as_array_mut)
+    else {
+        return Ok(transport);
+    };
+    for reference in references {
+        let credential_id = reference
+            .get("credentialId")
+            .and_then(Value::as_str)
+            .and_then(|value| Uuid::parse_str(value).ok())
+            .ok_or_else(|| {
+                ApiError::unprocessable(
+                    "MCP_STDIO_CREDENTIAL_INVALID",
+                    "stdio MCP environment Credential is invalid",
+                )
+            })?;
+        reference["vaultSecretRef"] =
+            optional_credential_snapshot(state, tenant_id, Some(credential_id))
+                .await?
+                .unwrap_or(Value::Null);
+    }
+    Ok(transport)
 }
 
 fn parse_resource_type(value: String) -> ApiResult<ResourceType> {

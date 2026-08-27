@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "artifactRefs": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "contentHash": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "effectId": {
+      "type": "string"
+    },
+    "errorCode": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "errorMessage": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "exitCode": {
+      "format": "int64",
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "leaseId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "operationId": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string"
+    },
+    "stderr": {
+      "default": "",
+      "type": "string"
+    },
+    "stdout": {
+      "default": "",
+      "type": "string"
+    },
+    "structuredResult": {
+      "default": null
+    },
+    "truncated": {
+      "default": false,
+      "type": "boolean"
+    },
+    "workspaceId": {
+      "format": "uuid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "apiVersion",
+    "workspaceId",
+    "leaseId",
+    "operationId",
+    "effectId",
+    "status"
+  ],
+  "title": "ToolEffectResponseV1",
+  "type": "object"
+}

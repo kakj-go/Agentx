@@ -247,7 +247,7 @@ def _wait_http(process: ManagedProcess, url: str) -> None:
 @pytest.fixture(scope="session")
 def service_urls(installed_agentx: dict[str, str]) -> Iterator[dict[str, str]]:
     artifact_dir = Path(installed_agentx["artifact_dir"])
-    web_port, runtime_port = _free_port(), _free_port()
+    web_port, runtime_port, sandbox_manager_port = _free_port(), _free_port(), _free_port()
     forwards = [
         start_process(
             (
@@ -273,11 +273,28 @@ def service_urls(installed_agentx: dict[str, str]) -> Iterator[dict[str, str]]:
             stdout_path=artifact_dir / "port-forward-runtime.log",
             stderr_path=artifact_dir / "port-forward-runtime-error.log",
         ),
+        start_process(
+            (
+                "kubectl",
+                "-n",
+                installed_agentx["runtime_namespace"],
+                "port-forward",
+                "service/sandbox-manager",
+                f"{sandbox_manager_port}:8080",
+            ),
+            stdout_path=artifact_dir / "port-forward-sandbox-manager.log",
+            stderr_path=artifact_dir / "port-forward-sandbox-manager-error.log",
+        ),
     ]
-    urls = {"web": f"http://127.0.0.1:{web_port}", "runtime": f"http://127.0.0.1:{runtime_port}"}
+    urls = {
+        "web": f"http://127.0.0.1:{web_port}",
+        "runtime": f"http://127.0.0.1:{runtime_port}",
+        "sandbox_manager": f"http://127.0.0.1:{sandbox_manager_port}",
+    }
     try:
         _wait_http(forwards[0], f"{urls['web']}/health/live")
         _wait_http(forwards[1], f"{urls['runtime']}/health/live")
+        _wait_http(forwards[2], f"{urls['sandbox_manager']}/health/live")
         yield urls
     finally:
         for process in reversed(forwards):

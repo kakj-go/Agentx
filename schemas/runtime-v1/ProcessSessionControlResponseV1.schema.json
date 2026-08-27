@@ -1,0 +1,48 @@
+{
+  "$defs": {
+    "ProcessSessionStatusV1": {
+      "enum": [
+        "acquiring",
+        "starting",
+        "running",
+        "interrupting",
+        "terminating",
+        "exited",
+        "failed",
+        "unknown_outcome",
+        "expired"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "exitCode": {
+      "format": "int64",
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "processSessionId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "status": {
+      "$ref": "#/$defs/ProcessSessionStatusV1"
+    }
+  },
+  "required": [
+    "apiVersion",
+    "processSessionId",
+    "status"
+  ],
+  "title": "ProcessSessionControlResponseV1",
+  "type": "object"
+}

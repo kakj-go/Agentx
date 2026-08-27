@@ -2,10 +2,10 @@ use std::collections::BTreeSet;
 
 use agentx_api_types::PageResponse;
 use agentx_runtime_contracts::{
-    ControlRole, RuntimeResourceCheckRequestV1, RuntimeResourceCheckResponseV1,
-    RuntimeResourceOperationRequestV1, RuntimeResourceOperationResponseV1,
-    RuntimeResourceOperationV1, RuntimeResourceProbeV1, ServiceClaimsV1, VaultSecretReferenceV1,
-    issue_service_token, now_unix,
+    ControlRole, RuntimeMcpTransportV2, RuntimeResourceBindingV1, RuntimeResourceCheckRequestV1,
+    RuntimeResourceCheckResponseV1, RuntimeResourceOperationRequestV1,
+    RuntimeResourceOperationResponseV1, RuntimeResourceOperationV1, RuntimeResourceProbeV1,
+    ServiceClaimsV1, VaultSecretReferenceV1, issue_service_token, now_unix,
 };
 use axum::{
     Json, Router,
@@ -540,6 +540,17 @@ pub(crate) async fn execute_runtime_resource_check(
     probe: RuntimeResourceProbeV1,
 ) -> ApiResult<RuntimeResourceCheckResponseV1> {
     let credential = credential_reference(state, tenant_id, credential_id).await?;
+    execute_runtime_resource_check_with_reference(state, tenant_id, endpoint, credential, probe)
+        .await
+}
+
+pub(crate) async fn execute_runtime_resource_check_with_reference(
+    state: &ControlApiState,
+    tenant_id: Uuid,
+    endpoint: String,
+    credential: Option<VaultSecretReferenceV1>,
+    probe: RuntimeResourceProbeV1,
+) -> ApiResult<RuntimeResourceCheckResponseV1> {
     let now = now_unix();
     let token = issue_service_token(
         &state.runtime_command_kid,
@@ -597,12 +608,13 @@ const RUNTIME_RESOURCE_CHECK_TIMEOUT: std::time::Duration = std::time::Duration:
 pub(crate) async fn execute_runtime_resource_operation(
     state: &ControlApiState,
     tenant_id: Uuid,
-    endpoint: String,
-    credential_id: Option<Uuid>,
+    server_version_id: Uuid,
+    transport: RuntimeMcpTransportV2,
+    credential: Option<VaultSecretReferenceV1>,
+    runtime_sandbox_profile: Option<RuntimeResourceBindingV1>,
     timeout_seconds: u32,
     operation: RuntimeResourceOperationV1,
 ) -> ApiResult<RuntimeResourceOperationResponseV1> {
-    let credential = credential_reference(state, tenant_id, credential_id).await?;
     let now = now_unix();
     let token = issue_service_token(
         &state.runtime_command_kid,
@@ -633,8 +645,10 @@ pub(crate) async fn execute_runtime_resource_operation(
             schema_version: 1,
             operation_id: Uuid::now_v7(),
             tenant_id,
-            endpoint,
+            server_version_id,
+            transport,
             credential,
+            runtime_sandbox_profile,
             timeout_seconds,
             operation,
         })
