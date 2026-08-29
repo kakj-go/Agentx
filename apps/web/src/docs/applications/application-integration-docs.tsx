@@ -7,7 +7,7 @@ import { Badge } from '../../shared/ui/badge'
 import { Button } from '../../shared/ui/button'
 import { Dialog, DialogClose, DialogContent } from '../../shared/ui/dialog'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../shared/ui/tabs'
-import { apiKeyExample, applicationInvocationUrl, integrationLanguages, type ApiKeyEndpointId, type IntegrationLanguage, webhookExample, webhookUrl } from './examples'
+import { apiKeyExample, applicationInvocationUrl, integrationLanguages, type ApiKeyEndpointId, type IntegrationLanguage, webhookUrl } from './examples'
 import { CodeSnippet } from './code-snippet'
 import { useApplicationIntegrationDocsText } from './use-application-integration-docs'
 
@@ -41,7 +41,7 @@ export function ApplicationIntegrationDocs({ activeDeployment, applicationSlug, 
   const Icon = apiKey ? KeyRound : Webhook
   const endpoint = apiKey
     ? applicationInvocationUrl(runtimeBaseUrl, applicationSlug)
-    : document.path ? webhookUrl(runtimeBaseUrl, document.path) : `${runtimeBaseUrl.replace(/\/$/, '')}/gateway/v1/webhooks/{public_id}`
+    : document.path ? webhookUrl(runtimeBaseUrl, document.path) : undefined
 
   return <Dialog onOpenChange={onOpenChange} open={open}>
     <DialogContent className="w-[min(1180px,calc(100vw-48px))]" description={doc.description} title={doc.title}>
@@ -62,16 +62,16 @@ export function ApplicationIntegrationDocs({ activeDeployment, applicationSlug, 
           <p className="text-xs leading-6 text-muted-foreground">{doc.intro}</p>
           {!activeDeployment && <Notice>{text.noActiveDeployment}</Notice>}
           {!apiKey && !document.path && <Notice>{text.webhook.noSpecificEndpoint}</Notice>}
-          <Endpoint method="POST" value={endpoint} />
+          {endpoint ? <Endpoint method="POST" value={endpoint} /> : !apiKey && <Notice>{text.webhook.endpointInactive}</Notice>}
           <Steps title={doc.stepsTitle} values={doc.steps} />
           {apiKey
             ? <LanguageExamples endpointId="createInvocation" inputSchema={activeDeployment?.inputSchema} runtimeBaseUrl={runtimeBaseUrl} slug={applicationSlug} />
-            : <WebhookExamples inputSchema={activeDeployment?.inputSchema} path={document.path} runtimeBaseUrl={runtimeBaseUrl} />}
+            : <WebhookExamples />}
         </TabsContent>
         <TabsContent className="p-6" value="reference">
           {apiKey
             ? <ApiKeyReference inputSchema={activeDeployment?.inputSchema} runtimeBaseUrl={runtimeBaseUrl} slug={applicationSlug} />
-            : <WebhookReference inputSchema={activeDeployment?.inputSchema} path={document.path} runtimeBaseUrl={runtimeBaseUrl} />}
+            : <WebhookReference path={document.path} runtimeBaseUrl={runtimeBaseUrl} />}
         </TabsContent>
         <TabsContent className="space-y-6 p-6" value="schemas">
           {!activeDeployment && <Notice>{text.noActiveDeployment}</Notice>}
@@ -112,14 +112,14 @@ function ApiKeyReference({ inputSchema, runtimeBaseUrl, slug }: { inputSchema: u
   </div>
 }
 
-function WebhookReference({ inputSchema, path, runtimeBaseUrl }: { inputSchema: unknown; path?: string; runtimeBaseUrl: string }) {
+function WebhookReference({ path, runtimeBaseUrl }: { path?: string; runtimeBaseUrl: string }) {
   const text = useApplicationIntegrationDocsText()
   return <div className="space-y-6">
     {!path && <Notice>{text.webhook.noSpecificEndpoint}</Notice>}
-    <Endpoint method="POST" value={path ? webhookUrl(runtimeBaseUrl, path) : `${runtimeBaseUrl.replace(/\/$/, '')}/gateway/v1/webhooks/{public_id}`} />
+    {path ? <Endpoint method="POST" value={webhookUrl(runtimeBaseUrl, path)} /> : <Notice>{text.webhook.endpointInactive}</Notice>}
     <RequestFieldTable rows={text.webhook.fields} title={text.fields} />
     <ResponseFieldTable rows={text.apiKey.responses.invocation} title={text.responseFields} />
-    <DocumentSection title={text.webhook.signingTitle}><WebhookExamples inputSchema={inputSchema} path={path} runtimeBaseUrl={runtimeBaseUrl} /></DocumentSection>
+      <DocumentSection title={text.webhook.signingTitle}><WebhookExamples /></DocumentSection>
   </div>
 }
 
@@ -127,8 +127,9 @@ function LanguageExamples({ endpointId, runtimeBaseUrl, slug, inputSchema }: { e
   return <CodeLanguageTabs getCode={(language) => apiKeyExample(endpointId, language, runtimeBaseUrl, slug, inputSchema)} />
 }
 
-function WebhookExamples({ runtimeBaseUrl, path, inputSchema }: { runtimeBaseUrl: string; path?: string; inputSchema: unknown }) {
-  return <CodeLanguageTabs getCode={(language) => webhookExample(language, runtimeBaseUrl, path, inputSchema)} />
+function WebhookExamples() {
+  const text = useApplicationIntegrationDocsText()
+  return <Notice>{text.webhook.intro}</Notice>
 }
 
 function CodeLanguageTabs({ getCode }: { getCode: (language: IntegrationLanguage) => string }) {

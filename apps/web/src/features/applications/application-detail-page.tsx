@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { BookOpen, Copy, Edit3, ExternalLink, KeyRound, Plus, RotateCw, ShieldOff } from 'lucide-react'
+import { BookOpen, Copy, Edit3, ExternalLink, KeyRound, Plus, RotateCw, ShieldOff, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Link, useParams } from 'react-router-dom'
@@ -19,8 +19,11 @@ import { StatusBadge } from '../../shared/components/status-badge'
 import { localizedValue } from '../../shared/lib/localized-value'
 import { Button } from '../../shared/ui/button'
 import { Card } from '../../shared/ui/card'
+import { Input } from '../../shared/ui/input'
+import { Select } from '../../shared/ui/select'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../shared/ui/tabs'
 import { useToast } from '../../shared/ui/toast'
+import { ProviderLogo, buildChannelConfig, channelConfigFields, effectiveChannelMode, useWebhookProviderTemplates } from './webhook-channel-fields'
 
 type DialogKind = 'edit' | 'deployment' | 'key' | 'webhook' | 'webhookEdit' | 'schedule' | 'scheduleEdit' | 'sessionUpgrade' | null
 type KeyAction = { keyId: string; action: 'rotate' | 'revoke' } | null
@@ -37,12 +40,11 @@ export function ApplicationDetailPage() {
   const [dialog, setDialog] = useState<DialogKind>(null)
   const [selectedSchedule, setSelectedSchedule] = useState<ApplicationSchedule | null>(null)
   const [selectedWebhook, setSelectedWebhook] = useState<ApplicationWebhook | null>(null)
+  const [selectedChannelId, setSelectedChannelId] = useState<string | null>(null)
   const [selectedSession, setSelectedSession] = useState<ApplicationSession | null>(null)
   const [keyConfirmation, setKeyConfirmation] = useState<KeyAction>(null)
   const [deploymentConfirmation, setDeploymentConfirmation] = useState<DeploymentAction>(null)
   const [shownSecret, setShownSecret] = useState<string | null>(null)
-  const [shownWebhookSecret, setShownWebhookSecret] = useState<string | null>(null)
-  const [createdWebhook, setCreatedWebhook] = useState<ApplicationWebhook | null>(null)
   const [integrationDoc, setIntegrationDoc] = useState<ApplicationIntegrationDoc | null>(null)
 
   const application = useQuery({ queryKey: ['application', id], queryFn: () => apiRequest<Application>(`/applications/${id}`) })
@@ -52,8 +54,13 @@ export function ApplicationDetailPage() {
     refetchInterval: (query) => (query.state.data as ApplicationDeployment[] | undefined)?.some((item) => pendingDeploymentStates.has(item.status)) ? 2000 : false,
   })
   const keys = useQuery({ queryKey: ['application-keys', id], enabled: auth.hasPermission('application:manage_key'), queryFn: () => apiRequest<ApplicationApiKey[]>(`/applications/${id}/api-keys`) })
-  const webhooks = useQuery({ queryKey: ['application-webhooks', id], queryFn: () => apiRequest<ApplicationWebhook[]>(`/applications/${id}/webhooks`) })
+  const webhooks = useQuery({
+    queryKey: ['application-webhooks', id],
+    queryFn: () => apiRequest<ApplicationWebhook[]>(`/applications/${id}/webhooks`),
+    refetchInterval: (query) => (query.state.data as ApplicationWebhook[] | undefined)?.some((item) => item.channelMode === 'stream' && item.connectionStatus !== 'connected' && item.connectionStatus !== 'disconnected') ? 5000 : false,
+  })
   const schedules = useQuery({ queryKey: ['application-schedules', id], queryFn: () => apiRequest<ApplicationSchedule[]>(`/applications/${id}/schedules`) })
+  const templates = useWebhookProviderTemplates()
   const sessions = useQuery({ queryKey: ['application-sessions', id], queryFn: () => apiRequest<ApplicationSession[]>(`/applications/${id}/sessions`) })
   const versions = useQuery({ queryKey: ['workflow-versions', application.data?.workflowId], enabled: Boolean(application.data), queryFn: () => apiRequest<WorkflowVersion[]>(`/workflows/${application.data?.workflowId}/versions`) })
   const environments = useQuery({ queryKey: ['environments'], queryFn: () => apiRequest<WorkflowEnvironment[]>('/environments') })
@@ -64,17 +71,14 @@ export function ApplicationDetailPage() {
       if (kind === 'edit') return apiRequest<Application>(`/applications/${id}`, { method: 'PATCH', body: jsonBody({ name: values.name, description: values.description || null, visibility: values.visibility, status: values.status, version: application.data?.version }) })
       if (kind === 'deployment') return apiRequest<ApplicationDeployment>(`/applications/${id}/deployments`, { method: 'POST', body: jsonBody({ workflowVersionId: values.workflowVersionId, environmentId: values.environmentId, sessionVersionPolicy: values.sessionVersionPolicy }) })
       if (kind === 'key') return apiRequest<ApplicationApiKey>(`/applications/${id}/api-keys`, { method: 'POST', body: jsonBody({ name: values.name }) })
-      if (kind === 'webhook') return apiRequest<ApplicationWebhook>(`/applications/${id}/webhooks`, { method: 'POST', body: jsonBody({ name: values.name }) })
-      if (kind === 'webhookEdit' && selectedWebhook) return apiRequest<ApplicationWebhook>(`/applications/${id}/webhooks/${selectedWebhook.id}`, { method: 'PATCH', body: jsonBody({ name: values.name, status: values.status, version: selectedWebhook.version }) })
+      if (kind === 'webhook') return apiRequest<ApplicationWebhook>(`/applications/${id}/webhooks`, { method: 'POST', body: jsonBody({ name: values.name, providerType: values.providerType, channelMode: effectiveChannelMode(values), channelConfig: buildChannelConfig(templates.data ?? [], values), inputMappings: JSON.parse(values.inputMappings || '[]'), fixedInputs: parseFixedInputs(values.fixedInputs) }) })
+      if (kind === 'webhookEdit' && selectedWebhook) return apiRequest<ApplicationWebhook>(`/applications/${id}/webhooks/${selectedWebhook.id}`, { method: 'PATCH', body: jsonBody({ name: values.name, status: values.status, providerType: values.providerType, channelMode: effectiveChannelMode(values), channelConfig: buildChannelConfig(templates.data ?? [], values), inputMappings: JSON.parse(values.inputMappings || '[]'), fixedInputs: parseFixedInputs(values.fixedInputs), version: selectedWebhook.version }) })
       if (kind === 'sessionUpgrade' && selectedSession) return apiRequest<ApplicationSession>(`/sessions/${selectedSession.id}/upgrade`, { method: 'POST', body: jsonBody({ workflowVersionId: values.workflowVersionId, version: selectedSession.version }) })
       const path = kind === 'scheduleEdit' && selectedSchedule ? `/applications/${id}/schedules/${selectedSchedule.id}` : `/applications/${id}/schedules`
       return apiRequest<ApplicationSchedule>(path, { method: kind === 'scheduleEdit' ? 'PATCH' : 'POST', body: jsonBody({ name: values.name, cronExpression: values.cron, timezone: values.timezone, input: JSON.parse(values.input), misfirePolicy: values.misfirePolicy, ...(kind === 'scheduleEdit' ? { status: values.status, version: selectedSchedule?.version } : {}) }) })
     },
     onSuccess: async (result, variables) => {
-      if (result && typeof result === 'object' && 'secret' in result && typeof result.secret === 'string') {
-        if (variables.kind === 'webhook') { setShownWebhookSecret(result.secret); setCreatedWebhook(result as ApplicationWebhook) }
-        else setShownSecret(result.secret)
-      }
+      if (result && typeof result === 'object' && 'secret' in result && typeof result.secret === 'string' && variables.kind !== 'webhook') setShownSecret(result.secret)
       await refresh()
       showToast(t('applications.saved'))
     },
@@ -82,6 +86,11 @@ export function ApplicationDetailPage() {
   const keyAction = useMutation({
     mutationFn: ({ keyId, action }: Exclude<KeyAction, null>) => apiRequest<ApplicationApiKey | undefined>(`/applications/${id}/api-keys/${keyId}/${action}`, { method: 'POST' }),
     onSuccess: async (value) => { if (value?.secret) setShownSecret(value.secret); setKeyConfirmation(null); await refresh(); showToast(t('applications.saved')) },
+  })
+  const channelToggle = useMutation({
+    mutationFn: ({ webhook, status }: { webhook: ApplicationWebhook; status: string }) => apiRequest<ApplicationWebhook>(`/applications/${id}/webhooks/${webhook.id}`, { method: 'PATCH', body: jsonBody({ name: webhook.name, status, providerType: webhook.providerType, channelMode: webhook.channelMode, channelConfig: {}, inputMappings: webhook.inputMappings ?? [], fixedInputs: webhook.fixedInputs ?? {}, version: webhook.version }) }),
+    onSuccess: async () => { await refresh(); showToast(t('applications.saved')) },
+    onError: (error: Error) => showToast(error.message),
   })
   const deploymentAction = useMutation({
     mutationFn: ({ deploymentId, attemptId, action }: Exclude<DeploymentAction, null>) => {
@@ -99,6 +108,9 @@ export function ApplicationDetailPage() {
   const value = application.data
   const activeDeployment = deployments.data?.find((item) => item.id === value.activeDeploymentId && item.status === 'active')
     ?? deployments.data?.find((item) => item.status === 'active')
+  const selectedChannel = webhooks.data?.find((item) => item.id === selectedChannelId) ?? webhooks.data?.[0]
+  const channelEndpointActive = (item: ApplicationWebhook) => Boolean(value.status === 'active' && activeDeployment && value.runtimeConfigRevision <= value.publishedRuntimeConfigRevision && item.status === 'active')
+  const endpointActive = Boolean(selectedChannel && channelEndpointActive(selectedChannel))
   const schedule = selectedSchedule
   const fields: Record<Exclude<DialogKind, null>, EntityFormField[]> = {
     edit: [
@@ -113,8 +125,19 @@ export function ApplicationDetailPage() {
       { name: 'sessionVersionPolicy', label: t('applications.sessionPolicy'), type: 'select', defaultValue: 'pinned', required: true, options: ['pinned', 'follow_deployment', 'manual_upgrade'].map((item) => ({ value: item, label: t(`applications.${item}`) })) },
     ],
     key: [{ name: 'name', label: t('common.name'), required: true }],
-    webhook: [{ name: 'name', label: t('common.name'), required: true }],
-    webhookEdit: [{ name: 'name', label: t('common.name'), required: true, defaultValue: selectedWebhook?.name ?? '' }, { name: 'status', label: t('common.status'), type: 'select', defaultValue: selectedWebhook?.status ?? 'active', required: true, options: ['active', 'disabled'].map((item) => ({ value: item, label: t(`applications.${item}`) })) }],
+    webhook: [
+      { name: 'name', label: t('common.name'), required: true },
+      ...channelConfigFields(t, templates.data ?? []),
+      { name: 'inputMappings', label: t('applications.inputMappings'), required: true, defaultValue: JSON.stringify(defaultChannelMappings(activeDeployment?.inputSchema), null, 2), render: ({ value: mappings, update }) => <MappingEditor schema={activeDeployment?.inputSchema} value={mappings} onChange={update} /> },
+      { name: 'fixedInputs', label: t('applications.fixedInputs'), defaultValue: '{}', render: ({ value: fixed, update }) => <FixedInputsEditor value={fixed} onChange={update} /> },
+    ],
+    webhookEdit: [
+      { name: 'name', label: t('common.name'), required: true, defaultValue: selectedWebhook?.name ?? '' },
+      ...channelConfigFields(t, templates.data ?? [], selectedWebhook),
+      { name: 'inputMappings', label: t('applications.inputMappings'), required: true, defaultValue: JSON.stringify(selectedWebhook?.inputMappings ?? defaultChannelMappings(activeDeployment?.inputSchema), null, 2), render: ({ value: mappings, update }) => <MappingEditor schema={activeDeployment?.inputSchema} value={mappings} onChange={update} /> },
+      { name: 'fixedInputs', label: t('applications.fixedInputs'), defaultValue: JSON.stringify(selectedWebhook?.fixedInputs ?? {}, null, 2), render: ({ value: fixed, update }) => <FixedInputsEditor value={fixed} onChange={update} /> },
+      { name: 'status', label: t('common.status'), type: 'select', defaultValue: selectedWebhook?.status ?? 'active', required: true, options: ['active', 'disabled'].map((item) => ({ value: item, label: t(`applications.${item}`) })) },
+    ],
     schedule: scheduleFields(t),
     scheduleEdit: scheduleFields(t, schedule),
     sessionUpgrade: [{ name: 'workflowVersionId', label: t('evaluations.workflowVersion'), type: 'select', defaultValue: selectedSession?.workflowVersionId ?? '', required: true, options: (versions.data ?? []).map((item) => ({ value: item.id, label: `v${item.versionNumber}` })) }],
@@ -123,15 +146,23 @@ export function ApplicationDetailPage() {
     <PageHeader action={auth.hasPermission('application:manage') ? <Button onClick={() => setDialog('edit')} variant="secondary"><Edit3 className="size-4" />{t('common.edit')}</Button> : undefined} description={`${value.workflowName} · ${value.slug}`} title={value.name} />
     <div className="mt-5"><StatusBadge status={value.status === 'active' ? 'active' : value.status === 'disabled' ? 'inactive' : 'draft'} /></div>
     <Tabs className="mt-6" defaultValue="deployments">
-      <TabsList className="border-b border-border"><TabsTrigger value="deployments">{t('applications.deployments')}</TabsTrigger><TabsTrigger value="keys">{t('applications.apiKeys')}</TabsTrigger><TabsTrigger value="triggers">{t('applications.triggers')}</TabsTrigger><TabsTrigger value="sessions">{t('applications.playground.sessions')}</TabsTrigger></TabsList>
+      <TabsList className="border-b border-border"><TabsTrigger value="deployments">{t('applications.deployments')}</TabsTrigger><TabsTrigger value="keys">{t('applications.apiKeys')}</TabsTrigger><TabsTrigger value="channels">{t('applications.channels')}</TabsTrigger><TabsTrigger value="triggers">{t('applications.triggers')}</TabsTrigger><TabsTrigger value="sessions">{t('applications.playground.sessions')}</TabsTrigger></TabsList>
       <TabsContent className="pt-5" value="deployments"><Section action={auth.hasPermission('application:manage') && <PrerequisiteAction description={t('applications.prerequisites.deploymentDescription')} loading={versions.isLoading || environments.isLoading} onReady={() => setDialog('deployment')} requirements={[{ key: 'workflow-version', label: t('applications.prerequisites.workflowVersion'), met: Boolean(versions.data?.length), href: `/workflows/${value.workflowId}`, actionLabel: t('applications.prerequisites.goWorkflows') }, { key: 'environment', label: t('applications.prerequisites.activeEnvironment'), met: Boolean(environments.data?.some((item) => item.status === 'active')) }]} size="sm"><Plus className="size-4" />{t('applications.deploy')}</PrerequisiteAction>} title={t('applications.deployments')}>{deployments.data?.map((item) => <Row action={auth.hasPermission('application:manage') ? <div className="flex gap-1">{item.status === 'rejected' && item.publishAttemptId && <Button onClick={() => setDeploymentConfirmation({ deploymentId: item.id, attemptId: item.publishAttemptId ?? undefined, action: 'retry' })} size="sm" variant="ghost">{t('applications.retryPublish')}</Button>}{item.status === 'superseded' && <Button onClick={() => setDeploymentConfirmation({ deploymentId: item.id, action: 'rollback' })} size="sm" variant="ghost">{t('applications.rollback')}</Button>}</div> : undefined} detail={<>{localizedValue(t, 'applications', item.sessionVersionPolicy)} · #{item.sequenceNumber}{item.publishErrorMessage && <span className="mt-1 block text-danger">{item.publishErrorCode ? `${item.publishErrorCode}: ` : ''}{item.publishErrorMessage}</span>}</>} key={item.id} status={<StatusBadge label={deploymentStatusLabel(t, item.status)} status={deploymentStatus(item.status)} />} title={`${item.environmentName} · v${item.workflowVersionNumber}`} />)}</Section></TabsContent>
       <TabsContent className="pt-5" value="keys"><Section action={<div className="flex gap-2"><Button onClick={() => setIntegrationDoc({ kind: 'apiKey' })} size="sm" variant="secondary"><BookOpen className="size-4" />{integrationDocsText.openApiKey}</Button>{auth.hasPermission('application:manage_key') && <Button onClick={() => setDialog('key')} size="sm"><Plus className="size-4" />{t('applications.createKey')}</Button>}</div>} title={t('applications.apiKeys')}>
         {shownSecret && <div className="my-4 rounded-lg border border-warning/30 bg-warning/10 p-4"><p className="text-xs font-semibold">{t('applications.secretOnce')}</p><div className="mt-2 flex items-center gap-2"><code className="min-w-0 flex-1 break-all text-xs">{shownSecret}</code><Button aria-label={t('common.copy')} onClick={() => void navigator.clipboard.writeText(shownSecret)} size="icon" variant="ghost"><Copy className="size-4" /></Button><Button onClick={() => setIntegrationDoc({ kind: 'apiKey' })} size="sm" variant="secondary"><BookOpen className="size-3.5" />{integrationDocsText.openApiKey}</Button></div></div>}
         {keys.data?.map((item) => <div className="flex items-center border-t border-border py-3 first:border-0" key={item.id}><KeyRound className="mr-3 size-4 text-muted-foreground" /><div><p className="text-xs font-medium">{item.name}</p><p className="mt-1 text-[11px] text-muted-foreground">{item.prefix} · {localizedValue(t, 'applications', item.status)}</p></div><div className="flex-1" />{item.status === 'active' && <><Button aria-label={t('applications.rotateKey')} onClick={() => setKeyConfirmation({ keyId: item.id, action: 'rotate' })} size="icon" variant="ghost"><RotateCw className="size-4" /></Button><Button aria-label={t('applications.revoke')} onClick={() => setKeyConfirmation({ keyId: item.id, action: 'revoke' })} size="icon" variant="ghost"><ShieldOff className="size-4" /></Button></>}</div>)}
       </Section></TabsContent>
-      <TabsContent className="grid grid-cols-2 gap-5 pt-5" value="triggers">
-        {value.runtimeConfigRevision > value.publishedRuntimeConfigRevision && <div className="col-span-2"><StatusBadge label={t('applications.pendingPublish')} status="pending" /></div>}
-        <Section action={<div className="flex gap-2"><Button onClick={() => setIntegrationDoc({ kind: 'webhook' })} size="sm" variant="secondary"><BookOpen className="size-4" />{integrationDocsText.openWebhook}</Button>{auth.hasPermission('application:manage') && <Button onClick={() => setDialog('webhook')} size="sm"><Plus className="size-4" />{t('common.create')}</Button>}</div>} title={t('applications.webhooks')}>{shownWebhookSecret && <div className="my-4 rounded-lg border border-warning/30 bg-warning/10 p-4"><p className="text-xs font-semibold">{t('applications.secretOnce')}</p><div className="mt-2 flex items-center gap-2"><code className="min-w-0 flex-1 break-all text-xs">{shownWebhookSecret}</code><Button aria-label={t('common.copy')} onClick={() => void navigator.clipboard.writeText(shownWebhookSecret)} size="icon" variant="ghost"><Copy className="size-4" /></Button>{createdWebhook && <Button onClick={() => setIntegrationDoc({ kind: 'webhook', name: createdWebhook.name, path: createdWebhook.path })} size="sm" variant="secondary"><BookOpen className="size-3.5" />{integrationDocsText.openWebhookSpecific}</Button>}</div></div>}{webhooks.data?.map((item) => <Row action={<div className="flex gap-1"><Button onClick={() => setIntegrationDoc({ kind: 'webhook', name: item.name, path: item.path })} size="sm" variant="ghost"><BookOpen className="size-3.5" />{integrationDocsText.openWebhookSpecific}</Button>{auth.hasPermission('application:manage') && <Button aria-label={t('common.edit')} onClick={() => { setSelectedWebhook(item); setDialog('webhookEdit') }} size="icon" variant="ghost"><Edit3 className="size-4" /></Button>}<EntityDeleteButton canDelete={auth.hasPermission('application:delete')} deletePath={`/applications/${id}/webhooks/${item.id}`} entityId={item.id} entityName={item.name} entityType="application_webhook" onDeleted={async () => { await queryClient.invalidateQueries({ queryKey: ['application-webhooks', id] }); showToast(t('applications.deleted')) }} /></div>} detail={item.path} key={item.id} status={localizedValue(t, 'applications', item.status)} title={item.name} />)}</Section>
+      <TabsContent className="grid grid-cols-2 gap-5 pt-5" value="channels">
+        <Section action={<div className="flex gap-2">{selectedChannel && <Button onClick={() => setIntegrationDoc({ kind: 'webhook', name: selectedChannel.name, path: endpointActive ? selectedChannel.path : undefined })} size="sm" variant="secondary"><BookOpen className="size-4" />{integrationDocsText.openWebhook}</Button>}{auth.hasPermission('application:manage') && <Button onClick={() => setDialog('webhook')} size="sm"><Plus className="size-4" />{t('applications.addChannel')}</Button>}</div>} title={t('applications.channels')}>
+          {webhooks.data?.map((item) => <div className={`flex cursor-pointer items-center gap-4 border-t border-border py-4 first:border-0 ${item.id === selectedChannel?.id ? '-mx-5 bg-primary/5 px-6' : 'pl-1'}`} key={item.id} onClick={() => setSelectedChannelId(item.id)} role="button" tabIndex={0} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') setSelectedChannelId(item.id) }}><ProviderLogo className="size-6 shrink-0" provider={item.providerType} /><div className="min-w-0"><p className="text-xs font-medium">{item.name}</p><p className="mt-1 text-[11px] text-muted-foreground">{providerLabel(item.providerType)} · {modeLabel(t, item.channelMode)} · {item.mappingCount ?? item.inputMappings?.length ?? 0} {t('applications.mappingCount')} · Revision {item.configurationRevision ?? item.version}</p><p className="mt-1 text-[10px] text-muted-foreground">{item.status === 'active' ? `${t('applications.channelEnabled')} · ${channelEndpointActive(item) ? t('applications.published') : t('applications.pendingPublish')}` : `${t('applications.channelDisabled')} · ${localizedValue(t, 'applications', item.status)}`}</p></div><div className="flex-1" />{auth.hasPermission('application:manage') && <Button onClick={(event) => { event.stopPropagation(); channelToggle.mutate({ webhook: item, status: item.status === 'active' ? 'disabled' : 'active' }) }} size="sm" type="button" variant="ghost">{item.status === 'active' ? t('applications.disableChannel') : t('applications.enableChannel')}</Button>}{auth.hasPermission('application:manage') && <Button onClick={(event) => { event.stopPropagation(); setSelectedWebhook(item); setDialog('webhookEdit') }} size="sm" type="button" variant="ghost">{t('common.edit')}</Button>}{auth.hasPermission('application:delete') && <EntityDeleteButton canDelete onDeleted={async () => { await queryClient.invalidateQueries({ queryKey: ['application-webhooks', id] }); if (selectedChannelId === item.id) setSelectedChannelId(null); showToast(t('applications.deleted')) }} deletePath={`/applications/${id}/webhooks/${item.id}`} entityId={item.id} entityName={item.name} entityType="application_webhook" />}</div>)}
+          {!webhooks.isLoading && webhooks.data?.length === 0 && <p className="py-8 text-center text-xs text-muted-foreground">{t('applications.noChannels')}</p>}
+        </Section>
+        <Section title={t('applications.channelDetails')}>
+          {selectedChannel && <div className="space-y-4 py-4">{selectedChannel.channelMode === 'stream' ? <><p className="text-xs text-muted-foreground">{t('applications.connectionStatus')}</p><div className="flex items-center gap-3"><StatusBadge label={connectionStatusLabel(t, selectedChannel.connectionStatus)} status={connectionStatus(selectedChannel.connectionStatus)} />{selectedChannel.lastConnectedAt && <span className="text-[11px] text-muted-foreground">{selectedChannel.lastConnectedAt}</span>}</div>{selectedChannel.connectionError && <p className="rounded-md border border-danger/30 bg-danger/5 p-3 text-[11px] text-danger">{selectedChannel.connectionError}</p>}<div className="rounded-md border border-dashed border-border p-3 text-xs text-muted-foreground">{t('applications.streamNoEndpoint')}</div></> : <><p className="text-xs text-muted-foreground">{t('applications.productionEndpoint')}</p>{endpointActive ? <div className="flex items-start gap-2"><code className="min-w-0 flex-1 break-all rounded-md border border-border bg-canvas p-3 text-[11px]">{runtimePublicBaseUrl().replace(/\/$/, '')}{selectedChannel.path}</code><Button aria-label={t('common.copy')} onClick={() => void navigator.clipboard.writeText(`${runtimePublicBaseUrl().replace(/\/$/, '')}${selectedChannel.path}`)} size="icon" variant="ghost"><Copy className="size-4" /></Button></div> : <p className="rounded-md border border-dashed border-border p-3 text-xs text-muted-foreground">{t('applications.endpointInactive')}</p>}</>}<p className="text-xs text-muted-foreground">{t('applications.sourceMapping')}</p><div className="space-y-2 text-[11px]">{(selectedChannel.inputMappings ?? []).map((mapping) => <div key={`${mapping.source}:${mapping.target}`}><code>{mapping.source}</code> → <strong>{mapping.target}</strong></div>)}</div><div className="rounded-md border-l-2 border-primary bg-primary/5 p-3 text-[11px] text-muted-foreground">{t('applications.multiConversationHint')}</div></div>}
+        </Section>
+      </TabsContent>
+      <TabsContent className="pt-5" value="triggers">
+        {value.runtimeConfigRevision > value.publishedRuntimeConfigRevision && <div className="mb-4"><StatusBadge label={t('applications.pendingPublish')} status="pending" /></div>}
         <Section action={auth.hasPermission('application:manage') && <Button onClick={() => { setSelectedSchedule(null); setDialog('schedule') }} size="sm"><Plus className="size-4" />{t('common.create')}</Button>} title={t('applications.schedules')}>{schedules.data?.map((item) => <Row action={<div className="flex gap-1">{auth.hasPermission('application:manage') && <Button aria-label={t('common.edit')} onClick={() => { setSelectedSchedule(item); setDialog('scheduleEdit') }} size="icon" variant="ghost"><Edit3 className="size-4" /></Button>}<EntityDeleteButton canDelete={auth.hasPermission('application:delete')} deletePath={`/applications/${id}/schedules/${item.id}`} entityId={item.id} entityName={item.name} entityType="application_schedule" onDeleted={async () => { await queryClient.invalidateQueries({ queryKey: ['application-schedules', id] }); showToast(t('applications.deleted')) }} /></div>} detail={`${item.cronExpression} · ${item.timezone}`} key={item.id} status={localizedValue(t, 'applications', item.status)} title={item.name} />)}</Section>
       </TabsContent>
       <TabsContent className="pt-5" value="sessions"><Section action={auth.hasPermission('application:invoke') ? <Button asChild size="sm" variant="secondary"><Link to={`/playground?applicationId=${value.id}&mode=conversation`}><ExternalLink className="size-4" />{t('applications.openPlayground')}</Link></Button> : undefined} title={t('applications.playground.sessions')}><p className="py-3 text-xs text-muted-foreground">{t('applications.sessionDescription')}</p>{sessions.data?.map((item) => <Row action={<div className="flex gap-1">{auth.hasPermission('application:invoke') && <Button asChild size="sm" variant="ghost"><Link to={`/playground?applicationId=${value.id}&mode=conversation&sessionId=${item.id}`}>{t('applications.openSession')}</Link></Button>}{item.versionPolicy === 'manual_upgrade' && auth.hasPermission('application:manage') && <Button onClick={() => { setSelectedSession(item); setDialog('sessionUpgrade') }} size="sm" variant="ghost">{t('applications.upgrade')}</Button>}</div>} detail={`${localizedValue(t, 'applications', item.versionPolicy)} · ${item.workflowVersionId ?? '—'}`} key={item.id} status={<StatusBadge label={localizedValue(t, 'applications', item.status)} status={item.status === 'active' ? 'active' : 'inactive'} />} title={item.title ?? item.id} />)}{!sessions.isLoading && sessions.data?.length === 0 && <p className="border-t border-border py-8 text-center text-xs text-muted-foreground">{t('applications.noApplicationSessions')}</p>}</Section></TabsContent>
@@ -141,6 +172,81 @@ export function ApplicationDetailPage() {
     <ConfirmDialog cancelLabel={t('common.cancel')} confirmLabel={keyConfirmation?.action === 'rotate' ? t('applications.rotateKey') : t('applications.revoke')} description={keyConfirmation?.action === 'rotate' ? t('applications.confirmRotate') : t('applications.confirmRevoke')} onClose={() => setKeyConfirmation(null)} onConfirm={async () => { if (keyConfirmation) await keyAction.mutateAsync(keyConfirmation) }} open={Boolean(keyConfirmation)} pending={keyAction.isPending} title={keyConfirmation?.action === 'rotate' ? t('applications.rotateKey') : t('applications.revokeKey')} />
     <ConfirmDialog cancelLabel={t('common.cancel')} confirmLabel={deploymentConfirmation?.action === 'retry' ? t('applications.retryPublish') : t('applications.rollback')} description={deploymentConfirmation?.action === 'retry' ? t('applications.confirmRetryPublish') : t('applications.confirmRollback')} onClose={() => setDeploymentConfirmation(null)} onConfirm={async () => { if (deploymentConfirmation) await deploymentAction.mutateAsync(deploymentConfirmation) }} open={Boolean(deploymentConfirmation)} pending={deploymentAction.isPending} title={deploymentConfirmation?.action === 'retry' ? t('applications.retryPublish') : t('applications.rollback')} variant="primary" />
   </PageContainer>
+}
+
+function providerLabel(provider?: string) {
+  return provider === 'dingtalk' ? '钉钉' : provider === 'wecom' ? '企业微信' : provider === 'feishu' ? '飞书' : provider === 'agentx' ? 'Agentx' : provider ?? '—'
+}
+
+function modeLabel(t: (key: string) => string, mode?: string) {
+  return mode === 'stream' ? t('applications.channelModeStream') : t('applications.channelModeCallback')
+}
+
+function connectionStatus(status?: string | null): 'active' | 'pending' | 'running' | 'failed' | 'inactive' {
+  if (status === 'connected') return 'active'
+  if (status === 'reconnecting') return 'running'
+  if (status === 'error') return 'failed'
+  if (status === 'disconnected') return 'inactive'
+  return 'pending'
+}
+
+function connectionStatusLabel(t: (key: string) => string, status?: string | null) {
+  const labels: Record<string, string> = {
+    pending: t('applications.connectionPending'),
+    connected: t('applications.connectionConnected'),
+    reconnecting: t('applications.connectionReconnecting'),
+    disconnected: t('applications.connectionDisconnected'),
+    error: t('applications.connectionError'),
+  }
+  return status ? labels[status] ?? status : t('applications.connectionPending')
+}
+
+function parseFixedInputs(value: string) {
+  try { const parsed = JSON.parse(value || '{}') as Record<string, unknown>; return Object.fromEntries(Object.entries(parsed).filter(([key]) => key.trim())) } catch { return {} }
+}
+
+function schemaProperties(schema: unknown): string[] {
+  if (!schema || typeof schema !== 'object' || Array.isArray(schema)) return []
+  const properties = (schema as { properties?: unknown }).properties
+  if (!properties || typeof properties !== 'object' || Array.isArray(properties)) return []
+  return Object.keys(properties)
+}
+
+function defaultChannelMappings(schema: unknown) {
+  const properties = schemaProperties(schema)
+  const target = (preferred: string, fallback: string) => properties.includes(preferred) ? preferred : properties[0] ?? fallback
+  const questionTarget = target('question', 'question')
+  const conversationTarget = properties.includes('conversation_id') ? 'conversation_id' : properties.find((property) => property !== questionTarget)
+  return [
+    { source: 'message.text', target: questionTarget, missingPolicy: 'error' },
+    ...(conversationTarget ? [{ source: 'conversation.id', target: conversationTarget, missingPolicy: 'error' }] : []),
+  ]
+}
+
+type MappingValue = { source: string; target: string; missingPolicy?: string }
+
+function parseMappings(value: string): MappingValue[] {
+  try {
+    const parsed = JSON.parse(value || '[]') as unknown
+    return Array.isArray(parsed) ? parsed.filter((item): item is MappingValue => Boolean(item) && typeof item === 'object' && typeof (item as MappingValue).source === 'string' && typeof (item as MappingValue).target === 'string') : []
+  } catch { return [] }
+}
+
+function MappingEditor({ schema, value, onChange }: { schema: unknown; value: string; onChange: (value: string) => void }) {
+  const { t } = useTranslation()
+  const rows = parseMappings(value)
+  const targets = schemaProperties(schema)
+  const sources = ['message.text', 'conversation.id', 'sender.id', 'provider_event_id']
+  const update = (index: number, patch: Partial<MappingValue>) => onChange(JSON.stringify(rows.map((row, current) => current === index ? { ...row, ...patch } : row)))
+  return <div className="space-y-2"><input name="inputMappings" type="hidden" value={value} />{rows.map((row, index) => <div className="grid grid-cols-[1fr_1fr_auto] gap-2" key={`${index}:${row.source}`}><Select aria-label={t('applications.sourceField')} className="min-w-0" onValueChange={(source) => update(index, { source })} options={sources.map((source) => ({ value: source, label: source }))} value={row.source} /><Select aria-label={t('applications.workflowInput')} className="min-w-0" onValueChange={(target) => update(index, { target })} options={targets.map((target) => ({ value: target, label: target }))} value={row.target} /><Button aria-label={t('applications.removeMapping')} onClick={() => onChange(JSON.stringify(rows.filter((_, current) => current !== index)))} size="icon" type="button" variant="ghost"><Trash2 className="size-3.5" /></Button></div>)}<Button onClick={() => onChange(JSON.stringify([...rows, { source: 'message.text', target: targets[0] ?? '', missingPolicy: 'error' }]))} size="sm" type="button" variant="secondary"><Plus className="size-3.5" />{t('applications.addMapping')}</Button></div>
+}
+
+function FixedInputsEditor({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+  const { t } = useTranslation()
+  let entries: Array<[string, string]> = []
+  try { const parsed = JSON.parse(value || '{}') as Record<string, unknown>; entries = Object.entries(parsed).map(([key, item]) => [key, typeof item === 'string' ? item : JSON.stringify(item)]) } catch { entries = [] }
+  const update = (next: Array<[string, string]>) => { const object: Record<string, string> = {}; for (const [key, item] of next) object[key] = item; onChange(JSON.stringify(object)) }
+  return <div className="space-y-2"><input name="fixedInputs" type="hidden" value={value} />{entries.map(([key, item], index) => <div className="grid grid-cols-[1fr_1fr_auto] gap-2" key={`${index}:${key}`}><Input aria-label={t('applications.fixedInputName')} onChange={(event) => { const next = entries.slice(); next[index] = [event.target.value, item]; update(next) }} placeholder="department" value={key} /><Input aria-label={t('applications.fixedInputValue')} onChange={(event) => { const next = entries.slice(); next[index] = [key, event.target.value]; update(next) }} placeholder="customer_service" value={item} /><Button aria-label={t('applications.removeFixedInput')} onClick={() => update(entries.filter((_, current) => current !== index))} size="icon" type="button" variant="ghost"><Trash2 className="size-3.5" /></Button></div>)}<Button onClick={() => update([...entries, ['', '']])} size="sm" type="button" variant="secondary"><Plus className="size-3.5" />{t('applications.addFixedInput')}</Button></div>
 }
 
 function scheduleFields(t: (key: string) => string, value?: ApplicationSchedule | null): EntityFormField[] {

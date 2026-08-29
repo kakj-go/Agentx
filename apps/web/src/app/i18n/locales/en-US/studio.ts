@@ -324,7 +324,6 @@ const translations = {
     ,"resourceAuthorized": "Resource access granted. Reopen the picker to select it"
     ,"resourceRequested": "Resource access request submitted"
   },
-  "confirmIrreversible": "Run {{count}} node(s) with irreversible side effects?",
   "editorFallback": "Editor is loading; you can type here",
   "addItem": "Add item",
   "addField": "Add field",

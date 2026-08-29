@@ -1,18 +1,18 @@
-use std::{collections::BTreeMap, convert::Infallible, time::Duration};
+use std::{collections::{BTreeMap, HashMap}, convert::Infallible, time::Duration};
 
 use agentx_runtime_contracts::{
     ArtifactUploadResponseV1, CommandAcceptedV1, CreateSessionRequestV1, GatewayErrorV1,
     InvocationRequestV1, InvocationResponseV1, MessagePartInputV1, MessageRequestV1,
     MessageResponseV1, SessionResponseV1, SessionVersionPolicyV1, VaultSecretReferenceV1,
-    WaitResumeRequestV1,
+    WaitResumeRequestV1, WebhookProviderV1,
 };
 use axum::{
     Json, Router,
     body::Bytes,
-    extract::{DefaultBodyLimit, Extension, Multipart, Path, State},
+    extract::{DefaultBodyLimit, Extension, Multipart, Path, Query, State},
     http::{HeaderMap, StatusCode, header::AUTHORIZATION},
     middleware,
-    response::{Sse, sse::Event},
+    response::{IntoResponse, Response, Sse, sse::Event},
     routing::{get, post},
 };
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
@@ -65,7 +65,7 @@ pub fn router() -> Router<RuntimeState> {
         .route("/invocations/{id}", get(get_invocation))
         .route("/invocations/{id}/cancel", post(cancel_invocation))
         .route("/invocations/{id}/events", get(invocation_events))
-        .route("/webhooks/{public_id}", post(webhook))
+        .route("/webhooks/{public_id}", post(webhook).get(webhook))
         .route("/waits/{resume_token}/resume", post(resume_wait))
         .layer(middleware::from_fn_with_state(
             rate_limiter,
@@ -751,24 +751,50 @@ fn artifact_from_row(row: sqlx::mysql::MySqlRow) -> RuntimeResult<ArtifactUpload
 async fn webhook(
     State(state): State<RuntimeState>,
     Path(public_id): Path<String>,
+    Query(query): Query<HashMap<String, String>>,
     headers: HeaderMap,
     body: Bytes,
-) -> RuntimeResult<(StatusCode, Json<InvocationResponseV1>)> {
-    let key = idempotency_key(&headers)?;
+) -> RuntimeResult<Response> {
+    let key = idempotency_key(&headers).ok();
     let timestamp = headers
         .get("x-agentx-timestamp")
         .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.parse::<i64>().ok())
-        .ok_or(RuntimeError::Unauthorized)?;
-    if (OffsetDateTime::now_utc().unix_timestamp() - timestamp).abs() > 300 {
-        return Err(RuntimeError::Unauthorized);
-    }
+        .and_then(|v| v.parse::<i64>().ok());
     let signature = headers
         .get("x-agentx-signature")
         .and_then(|v| v.to_str().ok())
-        .ok_or(RuntimeError::Unauthorized)?;
-    let row = sqlx::query("SELECT w.id,w.tenant_id,w.application_id,w.secret_ref_json,CAST(JSON_UNQUOTE(JSON_EXTRACT(t.configuration_json,'$.triggerName')) AS CHAR(255)) trigger_name FROM webhook_bindings w JOIN trigger_bindings t ON t.tenant_id=w.tenant_id AND t.id=w.id WHERE w.public_id=? AND w.status='active'")
+        .map(str::to_owned);
+    let row = sqlx::query("SELECT w.id,w.tenant_id,w.application_id,w.secret_ref_json,w.provider_type,w.input_mapping_json,w.fixed_inputs_json,w.configuration_revision,CAST(JSON_UNQUOTE(JSON_EXTRACT(t.configuration_json,'$.triggerName')) AS CHAR(255)) trigger_name FROM webhook_bindings w JOIN trigger_bindings t ON t.tenant_id=w.tenant_id AND t.id=w.id WHERE w.public_id=? AND w.status='active'")
         .bind(&public_id).fetch_optional(&state.pool).await?.ok_or(RuntimeError::NotFound)?;
+    let provider = match row.try_get::<Option<String>, _>("provider_type")?.as_deref().unwrap_or("agentx") {
+        "dingtalk" => WebhookProviderV1::Dingtalk,
+        "wecom" => WebhookProviderV1::Wecom,
+        "feishu" => WebhookProviderV1::Feishu,
+        _ => WebhookProviderV1::Agentx,
+    };
+    if provider != WebhookProviderV1::Agentx {
+        let secret_ref: VaultSecretReferenceV1 = serde_json::from_value(row.try_get("secret_ref_json")?).map_err(|e| RuntimeError::Internal(e.into()))?;
+        let secret = state.vault.as_ref().ok_or(RuntimeError::SecretUnavailable)?.read(&secret_ref).await?;
+        let mappings: Vec<agentx_runtime_contracts::WebhookInputMappingV1> = row.try_get::<Option<Value>, _>("input_mapping_json")?.map(serde_json::from_value).transpose().map_err(|e| RuntimeError::Internal(e.into()))?.unwrap_or_default();
+        let fixed = row.try_get::<Option<Value>, _>("fixed_inputs_json")?.unwrap_or_else(|| json!({}));
+        let connection_id = row.try_get::<Uuid, _>("id")?.to_string();
+        match crate::webhook::decode(provider, row.try_get("id")?, connection_id, &secret, &headers, &query, &body, &mappings, &fixed) {
+            Ok(crate::webhook::WebhookDecode::Challenge(value)) => {
+                if let Some(text) = value.as_str() { return Ok((StatusCode::OK, text.to_owned()).into_response()); }
+                return Ok((StatusCode::OK, Json(value)).into_response());
+            }
+            Ok(crate::webhook::WebhookDecode::Ignore) => return Ok(StatusCode::OK.into_response()),
+            Ok(crate::webhook::WebhookDecode::Event { context, input }) => {
+                crate::webhook::dispatch_event(&state.pool, row.try_get("tenant_id")?, row.try_get("application_id")?, row.try_get("id")?, row.try_get("trigger_name")?, row.try_get("configuration_revision")?, context, input).await?;
+                return Ok(StatusCode::OK.into_response());
+            }
+            Err(code) => return Err(match code { "UNAUTHORIZED" => RuntimeError::Unauthorized, "INVALID_JSON" => RuntimeError::InvalidRequest("INVALID_JSON", "invalid JSON body".into()), "PROVIDER_EVENT_ID_REQUIRED" => RuntimeError::InvalidRequest("PROVIDER_EVENT_ID_REQUIRED", "provider event ID is required".into()), "PROVIDER_CONVERSATION_ID_REQUIRED" => RuntimeError::InvalidRequest("PROVIDER_CONVERSATION_ID_REQUIRED", "conversation ID is required".into()), other => RuntimeError::InvalidRequest(other, "provider webhook request is invalid".into()) }),
+        }
+    }
+    let key = key.ok_or(RuntimeError::Unauthorized)?;
+    let timestamp = timestamp.ok_or(RuntimeError::Unauthorized)?;
+    if (OffsetDateTime::now_utc().unix_timestamp() - timestamp).abs() > 300 { return Err(RuntimeError::Unauthorized); }
+    let signature = signature.ok_or(RuntimeError::Unauthorized)?;
     let secret_ref: VaultSecretReferenceV1 =
         serde_json::from_value(row.try_get("secret_ref_json")?)
             .map_err(|e| RuntimeError::Internal(e.into()))?;
@@ -819,7 +845,7 @@ async fn webhook(
     Ok((
         StatusCode::ACCEPTED,
         Json(load_invocation(&state, &caller, accepted.invocation_id).await?),
-    ))
+    ).into_response())
 }
 
 async fn resume_wait(
@@ -1031,7 +1057,7 @@ async fn load_invocation(
     caller: &Caller,
     id: Uuid,
 ) -> RuntimeResult<InvocationResponseV1> {
-    let row = sqlx::query("SELECT id,application_id,session_id,execution_id,bundle_id,admission_epoch,status,result_json,error_json,created_at FROM application_invocations WHERE tenant_id=? AND application_id=? AND id=?")
+    let row = sqlx::query("SELECT id,application_id,session_id,execution_id,bundle_id,admission_epoch,status,result_json,error_json,created_at,provider_event_id,conversation_id,trigger_context_json FROM application_invocations WHERE tenant_id=? AND application_id=? AND id=?")
         .bind(caller.tenant_id).bind(caller.application_id).bind(id).fetch_optional(&state.pool).await?.ok_or(RuntimeError::NotFound)?;
     Ok(InvocationResponseV1 {
         id: row.try_get("id")?,
@@ -1043,6 +1069,10 @@ async fn load_invocation(
         status: row.try_get("status")?,
         outputs: row.try_get("result_json")?,
         error: row.try_get("error_json")?,
+        provider: row.try_get::<Option<Value>, _>("trigger_context_json")?.and_then(|value| value.get("provider").cloned()).and_then(|value| serde_json::from_value(value).ok()),
+        provider_event_id: row.try_get("provider_event_id")?,
+        conversation_id: row.try_get("conversation_id")?,
+        trigger_context: row.try_get("trigger_context_json")?,
         created_at: row.try_get("created_at")?,
     })
 }
@@ -1217,9 +1247,13 @@ pub fn public_openapi() -> Value {
             }},
             "/gateway/v1/webhooks/{public_id}":{"post":{
                 "operationId":"invokeWebhook",
-                "parameters":[idempotency_parameter(),{"name":"X-Agentx-Timestamp","in":"header","required":true,"schema":{"type":"integer"}},{"name":"X-Agentx-Signature","in":"header","required":true,"schema":{"type":"string"}}],
-                "requestBody":{"required":true,"content":{"application/json":{"schema":{}}}},
-                "responses":public_responses("InvocationResponse","202")
+                "parameters":[{"name":"timestamp","in":"query","required":false,"schema":{"type":"string"}},{"name":"nonce","in":"query","required":false,"schema":{"type":"string"}},{"name":"signature","in":"query","required":false,"schema":{"type":"string"}},{"name":"msg_signature","in":"query","required":false,"schema":{"type":"string"}},{"name":"X-Lark-Request-Timestamp","in":"header","required":false,"schema":{"type":"string"}},{"name":"X-Lark-Request-Nonce","in":"header","required":false,"schema":{"type":"string"}},{"name":"X-Lark-Signature","in":"header","required":false,"schema":{"type":"string"}}],
+                "requestBody":{"required":true,"content":{"application/json":{"schema":{}},"application/xml":{"schema":{"type":"string"}}}},
+                "responses":{"200":{"description":"Provider-compatible acknowledgement"},"400":error_response(),"401":error_response(),"404":error_response(),"409":error_response(),"422":error_response(),"503":error_response()}
+            },"get":{
+                "operationId":"verifyWebhook",
+                "parameters":[{"name":"timestamp","in":"query","required":true,"schema":{"type":"string"}},{"name":"nonce","in":"query","required":true,"schema":{"type":"string"}},{"name":"echostr","in":"query","required":true,"schema":{"type":"string"}},{"name":"msg_signature","in":"query","required":false,"schema":{"type":"string"}}],
+                "responses":{"200":{"description":"Provider challenge acknowledgement"},"400":error_response(),"401":error_response(),"404":error_response(),"503":error_response()}
             }},
             "/gateway/v1/waits/{resume_token}/resume":{"post":public_post("resumeWait","WaitResumeRequest","CommandAccepted","202")}
         },

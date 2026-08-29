@@ -30,6 +30,7 @@ Agentx 是一个采用 n8n 式画布交互、但使用 Agentx 原生 Workflow/No
 | [plan/README.md](plan/README.md) | 全量实施顺序、阶段任务、依赖、验收门禁和功能追踪 |
 | [planv2/README.md](planv2/README.md) | 控制面、执行面与可观测面分离的破坏性重构计划；V2-08A 本地功能闭环与 V1 删除已完成，生产容量、安全、恢复和发布认证仍在 08B |
 | [plan3/README.md](plan3/README.md) | 参考 earendil-works/pi 行为实现的 Agentx 原生内核、内置模型、OpenSandbox 四工具、会话压缩与外挂能力重构计划 |
+| [plan4/README.md](plan4/README.md) | Application 渠道对接：第一阶段 HTTP 回调入站；第二阶段渠道凭证内置化、按平台动态表单、钉钉 Stream 与飞书长连接双模式，出站回复仅方案讨论 |
 | [planv2/evidence/egress-gateway.md](planv2/evidence/egress-gateway.md) | SaaS 受控公网出口、真实模型、密钥轮换、稳定性、滚动升级和生产 CNI 未关闭门禁证据 |
 | [plan/m2-task-list.md](plan/m2-task-list.md) | M2 Workflow 控制面与资源中心的详细实施批次和任务清单 |
 | [plan/m2.1-resource-redesign.md](plan/m2.1-resource-redesign.md) | M2.1 MCP、Skill Workspace、Kubernetes Addon 与全局 E2E 重构任务 |

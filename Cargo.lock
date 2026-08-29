@@ -340,6 +340,7 @@ dependencies = [
 name = "agentx-v2-runtime"
 version = "0.0.2-beta"
 dependencies = [
+ "aes",
  "agentx-agent-core",
  "agentx-bundle-builder",
  "agentx-domain",
@@ -365,6 +366,8 @@ dependencies = [
  "http-body-util",
  "jsonschema",
  "object_store",
+ "prost",
+ "quick-xml",
  "rand 0.8.7",
  "redis",
  "regex",
@@ -374,18 +377,22 @@ dependencies = [
  "secrecy",
  "serde",
  "serde_json",
+ "sha1",
  "sha2",
  "sqlx",
  "testcontainers",
  "thiserror 2.0.19",
  "time",
  "tokio",
+ "tokio-rustls",
  "tokio-tungstenite",
  "tower",
  "tower-http",
  "tracing",
  "tracing-subscriber",
+ "url",
  "uuid",
+ "webpki-roots 0.26.11",
 ]
 
 [[package]]

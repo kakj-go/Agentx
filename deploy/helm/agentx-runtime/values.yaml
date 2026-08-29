@@ -127,6 +127,7 @@ runtime:
       roles:
       - coordinator
       - trigger
+      - stream
       - command
       - outbox
       - recovery

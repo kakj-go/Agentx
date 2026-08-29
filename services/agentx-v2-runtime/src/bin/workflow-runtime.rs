@@ -184,6 +184,21 @@ async fn main() -> Result<()> {
             },
         ));
     }
+    if roles.contains("stream") {
+        let pool = pool.clone();
+        let role_lifecycle = lifecycle.clone();
+        tasks.spawn(supervise_role(
+            "stream",
+            lifecycle.clone(),
+            health.clone(),
+            metrics.clone(),
+            move |progress| {
+                let pool = pool.clone();
+                let lifecycle = role_lifecycle.clone();
+                async move { agentx_v2_runtime::stream::stream_loop(pool, owner, lifecycle, progress).await }
+            },
+        ));
+    }
     if roles.contains("trace-relay") {
         let trace_pool = pool.clone();
         let settings = redis_settings.clone();
@@ -365,6 +380,7 @@ fn runtime_roles() -> Result<std::collections::BTreeSet<String>> {
                 | "outbox"
                 | "recovery"
                 | "trigger"
+                | "stream"
                 | "artifact"
                 | "quota"
                 | "trace-relay"

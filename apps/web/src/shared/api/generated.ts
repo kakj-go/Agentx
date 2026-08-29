@@ -343,6 +343,20 @@ export interface components {
             draftRevision: number;
         };
         CreateWebhookRequest: {
+            /** @enum {string} */
+            providerType: "dingtalk" | "wecom" | "feishu" | "agentx";
+            channelMode?: string;
+            channelConfig?: {
+                [key: string]: unknown;
+            } | null;
+            inputMappings?: {
+                source: string;
+                target: string;
+                missingPolicy?: string;
+            }[];
+            fixedInputs?: {
+                [key: string]: unknown;
+            };
             name: string;
         };
         CreateWorkflowRequest: {
@@ -1570,6 +1584,20 @@ export interface components {
             version: number;
         };
         UpdateWebhookRequest: {
+            /** @enum {string} */
+            providerType: "dingtalk" | "wecom" | "feishu" | "agentx";
+            channelMode?: string;
+            channelConfig?: {
+                [key: string]: unknown;
+            } | null;
+            inputMappings?: {
+                source: string;
+                target: string;
+                missingPolicy?: string;
+            }[];
+            fixedInputs?: {
+                [key: string]: unknown;
+            };
             name: string;
             status: string;
             version: number;
@@ -1633,9 +1661,36 @@ export interface components {
             waitKind: string;
             wakeAt?: string | null;
         };
+        WebhookProviderTemplate: {
+            provider: string;
+            mode: string;
+            fields: {
+                key: string;
+                sensitive: boolean;
+                required: boolean;
+            }[];
+        };
         WebhookResponse: {
             id: string;
             name: string;
+            providerType: string;
+            channelMode?: string;
+            configFields?: {
+                [key: string]: unknown;
+            };
+            connectionStatus?: string | null;
+            connectionError?: string | null;
+            lastConnectedAt?: string | null;
+            inputMappings: {
+                source: string;
+                target: string;
+                missingPolicy?: string;
+            }[];
+            fixedInputs: {
+                [key: string]: unknown;
+            };
+            configurationRevision: number;
+            mappingCount: number;
             path: string;
             publicId: string;
             secret?: string | null;

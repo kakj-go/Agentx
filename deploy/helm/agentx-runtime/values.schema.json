@@ -722,6 +722,7 @@
             "enum": [
               "coordinator",
               "trigger",
+              "stream",
               "command",
               "outbox",
               "recovery",

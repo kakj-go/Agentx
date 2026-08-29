@@ -109,8 +109,16 @@ async fn main() -> Result<()> {
             post(agentx_v2_runtime::publish::rollback_deployment),
         )
         .route(
+            "/internal/runtime/v1/triggers:sync",
+            post(agentx_v2_runtime::publish::sync_triggers),
+        )
+        .route(
             "/internal/runtime/v1/deployments:disable",
             post(agentx_v2_runtime::publish::disable_deployment),
+        )
+        .route(
+            "/internal/runtime/v1/channel-status",
+            get(agentx_v2_runtime::stream::channel_status),
         )
         .route(
             "/internal/runtime/v1/query/invocations:search",

@@ -44,6 +44,83 @@ pub enum LifecycleOperationV1 {
     Deactivate,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WebhookProviderV1 {
+    Agentx,
+    Dingtalk,
+    Wecom,
+    Feishu,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WebhookChannelModeV1 {
+    Callback,
+    Stream,
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WebhookInputMappingV1 {
+    pub source: String,
+    pub target: String,
+    #[serde(default = "default_missing_policy")]
+    pub missing_policy: String,
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WebhookTriggerContextV1 {
+    pub provider: WebhookProviderV1,
+    pub provider_connection_id: String,
+    pub webhook_trigger_id: Uuid,
+    pub provider_event_id: String,
+    pub conversation: WebhookConversationV1,
+    pub sender: WebhookSenderV1,
+    pub message: WebhookMessageV1,
+    #[serde(default)]
+    pub session_webhook: Option<String>,
+    #[serde(default)]
+    pub session_webhook_expires_at: Option<i64>,
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WebhookConversationV1 {
+    pub id: String,
+    pub name: Option<String>,
+    pub conversation_type: String,
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WebhookSenderV1 {
+    pub id: String,
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WebhookMessageV1 {
+    pub text: String,
+}
+
+fn default_missing_policy() -> String {
+    "error".into()
+}
+
+fn default_agentx_provider() -> WebhookProviderV1 {
+    WebhookProviderV1::Agentx
+}
+
+fn default_channel_mode() -> WebhookChannelModeV1 {
+    WebhookChannelModeV1::Callback
+}
+
+fn default_fixed_inputs() -> Value {
+    Value::Object(Default::default())
+}
+
 #[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
 #[serde(
     tag = "kind",
@@ -55,6 +132,14 @@ pub enum RuntimeTriggerConfigurationV1 {
     Webhook {
         public_id: String,
         secret: VaultSecretReferenceV1,
+        #[serde(default = "default_agentx_provider")]
+        provider: WebhookProviderV1,
+        #[serde(default = "default_channel_mode")]
+        mode: WebhookChannelModeV1,
+        #[serde(default)]
+        input_mappings: Vec<WebhookInputMappingV1>,
+        #[serde(default = "default_fixed_inputs")]
+        fixed_inputs: Value,
     },
     Schedule {
         cron_expression: String,
@@ -244,6 +329,10 @@ pub struct InvocationResponseV1 {
     pub status: String,
     pub outputs: Option<Value>,
     pub error: Option<Value>,
+    pub provider: Option<WebhookProviderV1>,
+    pub provider_event_id: Option<String>,
+    pub conversation_id: Option<String>,
+    pub trigger_context: Option<Value>,
     #[schemars(with = "String")]
     #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
@@ -340,4 +429,34 @@ pub struct CommandAcceptedV1 {
 pub struct GatewayErrorV1 {
     pub code: String,
     pub message: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn webhook_trigger_configuration_defaults_mode_to_callback() {
+        let legacy = serde_json::json!({"kind":"webhook","publicId":"pub","secret":{"mount":"secret","path":"tenants/t/webhooks/w","key":"value","version":1}});
+        let RuntimeTriggerConfigurationV1::Webhook { mode, .. } = serde_json::from_value(legacy).unwrap() else { panic!("expected webhook variant") };
+        assert_eq!(mode, WebhookChannelModeV1::Callback);
+        let stream = serde_json::json!({"kind":"webhook","publicId":"pub","secret":{"mount":"secret","path":"tenants/t/webhooks/w","key":"value","version":1},"mode":"stream"});
+        let RuntimeTriggerConfigurationV1::Webhook { mode, .. } = serde_json::from_value(stream).unwrap() else { panic!("expected webhook variant") };
+        assert_eq!(mode, WebhookChannelModeV1::Stream);
+    }
+
+    #[test]
+    fn webhook_trigger_context_tolerates_missing_session_webhook() {
+        let context: WebhookTriggerContextV1 = serde_json::from_value(serde_json::json!({
+            "provider":"dingtalk",
+            "providerConnectionId":"binding",
+            "webhookTriggerId":"00000000-0000-0000-0000-000000000000",
+            "providerEventId":"event-1",
+            "conversation":{"id":"chat","name":null,"conversationType":"group"},
+            "sender":{"id":"user"},
+            "message":{"text":"hello"}
+        })).unwrap();
+        assert!(context.session_webhook.is_none());
+        assert!(context.session_webhook_expires_at.is_none());
+    }
 }

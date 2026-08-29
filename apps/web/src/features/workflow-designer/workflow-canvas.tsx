@@ -491,13 +491,6 @@ export function WorkflowCanvas() {
           manifestMap.get(`${node.data.nodeType}@${node.data.typeVersion}`)
             ?.sideEffectLevel === "irreversible",
       );
-      if (
-        irreversible.length &&
-        !window.confirm(
-          t("studio.confirmIrreversible", { count: irreversible.length }),
-        )
-      )
-        return;
       const accepted = await startDebugExecution(workflowId, {
         expectedRevision: revision,
         mode: debugMode,

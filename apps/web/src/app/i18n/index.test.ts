@@ -42,7 +42,7 @@ const commonAllowedRoots = new Set([
 ])
 
 const dynamicRoots: Record<string, Set<string>> = {
-  applications: new Set(['edit', 'key', 'webhook', 'schedule', 'private', 'department', 'company', 'draft', 'active', 'disabled', 'pinned', 'follow_deployment', 'manual_upgrade', 'fire_once', 'skip', 'webhookEdit', 'scheduleEdit', 'sessionUpgrade', 'upgrade']),
+  applications: new Set(['edit', 'key', 'webhook', 'schedule', 'private', 'department', 'company', 'draft', 'active', 'disabled', 'pinned', 'follow_deployment', 'manual_upgrade', 'fire_once', 'skip', 'webhookEdit', 'scheduleEdit', 'sessionUpgrade', 'upgrade', 'channels', 'addChannel', 'provider', 'providerHint', 'channelMode', 'channelModeCallback', 'channelModeStream', 'channelModeHint', 'channelSecretKeep', 'channelFields', 'connectionStatus', 'connectionPending', 'connectionConnected', 'connectionReconnecting', 'connectionDisconnected', 'connectionError', 'streamNoEndpoint', 'channelEnabled', 'channelDisabled', 'enableChannel', 'disableChannel', 'inputMappings', 'fixedInputs', 'channelDetails', 'productionEndpoint', 'endpointInactive', 'sourceMapping', 'multiConversationHint', 'mappingCount', 'noChannels', 'published', 'sourceField', 'workflowInput', 'removeMapping', 'addMapping', 'fixedInputName', 'fixedInputValue', 'removeFixedInput', 'addFixedInput']),
   datasets: new Set(['private', 'department', 'company', 'active', 'disabled']),
   knowledge: new Set(['healthy', 'unhealthy', 'untested', 'active', 'inactive', 'synced', 'syncing', 'failed', 'pending']),
   memory: new Set(['healthy', 'unhealthy', 'untested', 'active', 'inactive']),

@@ -43,6 +43,7 @@ export interface components {
             applicationId: string;
             /** Format: uuid */
             bundleId: string;
+            conversationId?: string | null;
             createdAt: string;
             error?: unknown;
             /** Format: uuid */
@@ -50,9 +51,16 @@ export interface components {
             /** Format: uuid */
             id: string;
             outputs?: unknown;
+            provider?: components["schemas"]["InvocationResponse"]["$defs"]["WebhookProviderV1"] | null;
+            providerEventId?: string | null;
             /** Format: uuid */
             sessionId?: string | null;
             status: string;
+            triggerContext?: unknown;
+            $defs: {
+                /** @enum {string} */
+                WebhookProviderV1: "agentx" | "dingtalk" | "wecom" | "feishu";
+            };
         };
         /** MessagePartInputV1 */
         MessagePartInput: {

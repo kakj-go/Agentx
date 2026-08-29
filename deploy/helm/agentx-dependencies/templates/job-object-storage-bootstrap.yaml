@@ -1,7 +1,7 @@
 {{- if eq .Values.global.components.objectStorage.mode "bundled-minio" }}
 apiVersion: batch/v1
 kind: Job
-metadata: { name: object-storage-bootstrap, namespace: {{ .Values.global.namespaces.dependencies }} }
+metadata: { name: object-storage-bootstrap-{{ .Release.Revision }}, namespace: {{ .Values.global.namespaces.dependencies }} }
 spec:
   template:
     metadata: { labels: { app.kubernetes.io/name: object-storage-bootstrap, agentx.io/plane: dependencies } }

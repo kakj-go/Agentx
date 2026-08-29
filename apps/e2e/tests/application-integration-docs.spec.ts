@@ -33,7 +33,7 @@ async function login(page: Page) {
   return ((await (await response).json()) as { accessToken: string }).accessToken
 }
 
-test('deployed Application exposes API key and Webhook guides before credentials or triggers exist', async ({ page }) => {
+test('deployed Application exposes API key guide and keeps channel endpoint hidden before setup', async ({ page }) => {
   const contextPath = process.env.AGENTX_V2_08_CONTEXT_OUTPUT
   if (!contextPath) throw new Error('AGENTX_V2_08_CONTEXT_OUTPUT is required')
   const context = JSON.parse(await readFile(contextPath, 'utf8')) as RuntimeContext
@@ -73,14 +73,7 @@ test('deployed Application exposes API key and Webhook guides before credentials
   await expect(apiGuide.getByText('message', { exact: true })).toHaveCount(2)
   await apiGuide.getByRole('button', { name: '关闭' }).click()
 
-  await page.getByRole('tab', { name: '触发器' }).click()
-  await page.getByRole('button', { name: 'Webhook 接入文档' }).click()
-  const webhookGuide = page.getByRole('dialog', { name: 'Webhook 接入文档' })
-  await expect(webhookGuide.getByText(/\/gateway\/v1\/webhooks\/\{public_id\}$/)).toBeVisible()
-  await webhookGuide.getByRole('tab', { name: '接口说明' }).click()
-  await expect(webhookGuide.getByText('X-Agentx-Signature', { exact: true })).toBeVisible()
-  for (const language of ['Curl', 'Java', 'Go', 'Node.js', 'Python']) await expect(webhookGuide.getByRole('tab', { name: language })).toBeVisible()
-  await webhookGuide.getByRole('tab', { name: '数据结构' }).click()
-  await expect(webhookGuide.getByText('message', { exact: true }).first()).toBeVisible()
-  await expect(webhookGuide.getByText('message', { exact: true })).toHaveCount(2)
+  await page.getByRole('tab', { name: '渠道对接' }).click()
+  await expect(page.getByRole('button', { name: 'Webhook 接入文档' })).toHaveCount(0)
+  await expect(page.getByText('尚未配置渠道')).toBeVisible()
 })

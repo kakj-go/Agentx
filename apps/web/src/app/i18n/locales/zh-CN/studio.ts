@@ -324,7 +324,6 @@ const translations = {
     ,"resourceAuthorized": "资源授权已完成，请重新打开下拉选择"
     ,"resourceRequested": "资源授权申请已提交"
   },
-  "confirmIrreversible": "确定运行 {{count}} 个包含不可逆副作用的节点吗？",
   "editorFallback": "编辑器加载中，可直接输入内容",
   "addItem": "添加条目",
   "addField": "添加字段",

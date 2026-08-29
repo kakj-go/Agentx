@@ -35,3 +35,5 @@ platform-api-test.err
 apps/web/src/assets/hero.png
 apps/e2e/playwright-report/
 apps/e2e/test-results/
+/.commandcode/
+/.zcode/

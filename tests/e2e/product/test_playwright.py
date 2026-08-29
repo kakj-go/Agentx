@@ -96,6 +96,7 @@ def test_product_playwright_suite(
         suites = (
             ("api-first", ("tests/v2-08-api-first.spec.ts",)),
             ("application-docs", ("tests/application-integration-docs.spec.ts",)),
+            ("application-channels", ("tests/application-channel-forms.spec.ts",)),
             ("execution-filters", ("tests/execution-filters.spec.ts",)),
             ("workflow4", ("tests/workflow4-closure.spec.ts", "--retries=1")),
             (

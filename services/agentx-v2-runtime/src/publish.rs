@@ -786,6 +786,85 @@ pub async fn rollback_deployment(
     .map(Json)
 }
 
+/// Channel/trigger-only sync onto the currently active bundle. Control calls
+/// this after webhook changes when the application already has an active
+/// Deployment, so channel edits take effect without a re-publish.
+pub async fn sync_triggers(
+    State(state): State<RuntimeState>,
+    headers: HeaderMap,
+    Json(request): Json<agentx_runtime_contracts::RuntimeTriggerSyncRequestV1>,
+) -> RuntimeResult<Json<PublishReceiptV1>> {
+    let claims = state
+        .trust
+        .delegation(&headers, request.tenant_id, "runtime.triggers.sync")?;
+    if !claims.tenant_wide && !claims.application_ids.contains(&request.application_id) {
+        return Err(RuntimeError::Unauthorized);
+    }
+    if let Some(receipt) = replay::<_, PublishReceiptV1>(
+        &state,
+        request.tenant_id,
+        "trigger_sync",
+        &request.idempotency_key,
+        &request,
+    )
+    .await?
+    {
+        return Ok(Json(receipt));
+    }
+    let mut tx = state.pool.begin().await?;
+    let active_bundle: Option<Uuid> =
+        sqlx::query_scalar("SELECT active_bundle_id FROM application_routes WHERE tenant_id=? AND application_id=? FOR UPDATE")
+            .bind(request.tenant_id)
+            .bind(request.application_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+    if active_bundle != Some(request.bundle_id) {
+        return Err(RuntimeError::Conflict(
+            RuntimePublishErrorCodeV1::BundleReferenceConflict,
+            "Trigger sync targets a bundle that is not the active head".into(),
+        ));
+    }
+    // Sync only replaces schedule/webhook bindings; lifecycle bindings belong
+    // to Deployment activation and must survive a channel edit.
+    sqlx::query("UPDATE trigger_bindings SET status='disabled',next_poll_at=NULL,locked_by=NULL,locked_until=NULL,heartbeat_at=NULL WHERE tenant_id=? AND application_id=? AND status<>'disabled' AND trigger_kind IN ('schedule','poll')")
+        .bind(request.tenant_id)
+        .bind(request.application_id)
+        .execute(&mut *tx)
+        .await?;
+    apply_trigger_bindings(
+        &mut tx,
+        request.tenant_id,
+        request.application_id,
+        request.deployment_id,
+        request.bundle_id,
+        &request.triggers,
+    )
+    .await?;
+    sqlx::query("UPDATE application_routes SET runtime_config_revision=? WHERE tenant_id=? AND application_id=?")
+        .bind(request.runtime_config_revision)
+        .bind(request.tenant_id)
+        .bind(request.application_id)
+        .execute(&mut *tx)
+        .await?;
+    let receipt = accepted_receipt(request.bundle_id, None, None, false);
+    persist_receipt_tx(
+        &mut tx,
+        request.tenant_id,
+        "trigger_sync",
+        &request.idempotency_key,
+        &request,
+        Some(request.bundle_id),
+        Some(request.application_id),
+        Some(request.deployment_id),
+        "accepted",
+        None,
+        &receipt,
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(Json(receipt))
+}
+
 async fn activate_with_receipt<T: Serialize>(
     state: &RuntimeState,
     operation: &str,
@@ -1015,10 +1094,24 @@ async fn replace_trigger_bindings(
         )
         .await?;
     }
-    sqlx::query("UPDATE webhook_bindings SET status='disabled' WHERE tenant_id=? AND application_id=? AND status='active'")
-        .bind(manifest.tenant_id).bind(manifest.application_id).execute(&mut **tx).await?;
+    apply_trigger_bindings(tx, manifest.tenant_id, manifest.application_id, manifest.deployment_id, manifest.bundle_id, &triggers).await
+}
+
+/// Disables the application's schedule/webhook bindings and re-creates them
+/// from the given trigger specs against the given bundle. Shared by Deployment
+/// activation and the trigger-only sync path.
+async fn apply_trigger_bindings(
+    tx: &mut Transaction<'_, MySql>,
+    tenant_id: Uuid,
+    application_id: Uuid,
+    deployment_id: Uuid,
+    bundle_id: Uuid,
+    triggers: &[agentx_runtime_contracts::RuntimeTriggerSpecV1],
+) -> RuntimeResult<()> {
+    sqlx::query("UPDATE webhook_bindings SET status='disabled',locked_by=NULL,locked_until=NULL,heartbeat_at=NULL,connection_status='disconnected' WHERE tenant_id=? AND application_id=? AND status='active'")
+        .bind(tenant_id).bind(application_id).execute(&mut **tx).await?;
     for trigger in triggers {
-        if trigger.application_id != manifest.application_id {
+        if trigger.application_id != application_id {
             return Err(RuntimeError::BadRequest(
                 RuntimePublishErrorCodeV1::TenantMismatch,
                 "Trigger Application does not match activation".into(),
@@ -1035,14 +1128,25 @@ async fn replace_trigger_bindings(
         let active = trigger.enabled;
         let next_poll_at = initial_trigger_due(tx, &trigger).await?;
         sqlx::query("INSERT INTO trigger_bindings(id,tenant_id,application_id,application_deployment_id,bundle_id,workflow_version_id,node_id,configuration_revision,configuration_hash,trigger_kind,configuration_json,status,next_poll_at,activated_at) SELECT ?,?,?,?,?,workflow_version_id,?,?,?,?,?,?,?,UTC_TIMESTAMP(6) FROM deployment_bundles WHERE tenant_id=? AND id=? ON DUPLICATE KEY UPDATE application_deployment_id=VALUES(application_deployment_id),bundle_id=VALUES(bundle_id),configuration_revision=VALUES(configuration_revision),cursor_value=IF(configuration_hash=VALUES(configuration_hash),cursor_value,NULL),next_poll_at=IF(VALUES(status)='active' AND configuration_hash=VALUES(configuration_hash),next_poll_at,VALUES(next_poll_at)),configuration_hash=VALUES(configuration_hash),configuration_json=VALUES(configuration_json),status=VALUES(status),locked_by=NULL,locked_until=NULL,heartbeat_at=NULL,activated_at=UTC_TIMESTAMP(6)")
-            .bind(trigger.trigger_id).bind(manifest.tenant_id).bind(manifest.application_id).bind(manifest.deployment_id).bind(manifest.bundle_id).bind(&trigger.node_id).bind(trigger.revision).bind(trigger.configuration_hash.as_str()).bind(kind).bind(serde_json::to_value(&trigger).map_err(|e|RuntimeError::Internal(e.into()))?).bind(if active {"active"} else {"disabled"}).bind(next_poll_at).bind(manifest.tenant_id).bind(manifest.bundle_id).execute(&mut **tx).await?;
+            .bind(trigger.trigger_id).bind(tenant_id).bind(application_id).bind(deployment_id).bind(bundle_id).bind(&trigger.node_id).bind(trigger.revision).bind(trigger.configuration_hash.as_str()).bind(kind).bind(serde_json::to_value(&trigger).map_err(|e|RuntimeError::Internal(e.into()))?).bind(if active {"active"} else {"disabled"}).bind(next_poll_at).bind(tenant_id).bind(bundle_id).execute(&mut **tx).await?;
         if let agentx_runtime_contracts::RuntimeTriggerConfigurationV1::Webhook {
             public_id,
             secret,
-        } = trigger.configuration
+            provider,
+            mode,
+            input_mappings,
+            fixed_inputs,
+        } = &trigger.configuration
         {
-            sqlx::query("INSERT INTO webhook_bindings(id,tenant_id,application_id,bundle_id,configuration_revision,configuration_hash,public_id,secret_ref_json,status,activated_at) VALUES(?,?,?,?,?,?,?,?,? ,UTC_TIMESTAMP(6)) ON DUPLICATE KEY UPDATE bundle_id=VALUES(bundle_id),configuration_revision=VALUES(configuration_revision),configuration_hash=VALUES(configuration_hash),secret_ref_json=VALUES(secret_ref_json),status=VALUES(status),activated_at=UTC_TIMESTAMP(6)")
-                .bind(trigger.trigger_id).bind(manifest.tenant_id).bind(manifest.application_id).bind(manifest.bundle_id).bind(trigger.revision).bind(trigger.configuration_hash.as_str()).bind(public_id).bind(serde_json::to_value(secret).map_err(|e|RuntimeError::Internal(e.into()))?).bind(if trigger.enabled{"active"}else{"disabled"}).execute(&mut **tx).await?;
+            let provider_type = serde_json::to_value(provider).map_err(|e| RuntimeError::Internal(e.into()))?;
+            let channel_mode = serde_json::to_value(mode).map_err(|e| RuntimeError::Internal(e.into()))?;
+            sqlx::query("INSERT INTO webhook_bindings(id,tenant_id,application_id,bundle_id,configuration_revision,configuration_hash,public_id,provider_type,channel_mode,input_mapping_json,fixed_inputs_json,secret_ref_json,status,activated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,UTC_TIMESTAMP(6)) ON DUPLICATE KEY UPDATE bundle_id=VALUES(bundle_id),configuration_revision=VALUES(configuration_revision),configuration_hash=VALUES(configuration_hash),provider_type=VALUES(provider_type),channel_mode=VALUES(channel_mode),input_mapping_json=VALUES(input_mapping_json),fixed_inputs_json=VALUES(fixed_inputs_json),secret_ref_json=VALUES(secret_ref_json),status=VALUES(status),activated_at=UTC_TIMESTAMP(6),locked_by=NULL,locked_until=NULL,heartbeat_at=NULL,connection_status=NULL")
+                .bind(trigger.trigger_id).bind(tenant_id).bind(application_id).bind(bundle_id).bind(trigger.revision).bind(trigger.configuration_hash.as_str()).bind(public_id.clone())
+                .bind(provider_type.as_str().unwrap_or("agentx"))
+                .bind(channel_mode.as_str().unwrap_or("callback"))
+                .bind(serde_json::to_value(input_mappings).map_err(|e|RuntimeError::Internal(e.into()))?)
+                .bind(fixed_inputs.clone())
+                .bind(serde_json::to_value(secret).map_err(|e|RuntimeError::Internal(e.into()))?).bind(if trigger.enabled{"active"}else{"disabled"}).execute(&mut **tx).await?;
         }
     }
     Ok(())

@@ -1509,12 +1509,41 @@
       },
       "CreateWebhookRequest": {
         "properties": {
+          "providerType": {
+            "enum": ["dingtalk", "wecom", "feishu", "agentx"],
+            "type": "string"
+          },
+          "channelMode": {
+            "type": "string"
+          },
+          "channelConfig": {
+            "additionalProperties": {},
+            "type": ["object", "null"]
+          },
+          "inputMappings": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "source": {"type": "string"},
+                "target": {"type": "string"},
+                "missingPolicy": {"type": "string"}
+              },
+              "required": ["source", "target"],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "fixedInputs": {
+            "additionalProperties": {},
+            "type": "object"
+          },
           "name": {
             "type": "string"
           }
         },
         "required": [
-          "name"
+          "name",
+          "providerType"
         ],
         "type": "object"
       },
@@ -7322,6 +7351,34 @@
       },
       "UpdateWebhookRequest": {
         "properties": {
+          "providerType": {
+            "enum": ["dingtalk", "wecom", "feishu", "agentx"],
+            "type": "string"
+          },
+          "channelMode": {
+            "type": "string"
+          },
+          "channelConfig": {
+            "additionalProperties": {},
+            "type": ["object", "null"]
+          },
+          "inputMappings": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "source": {"type": "string"},
+                "target": {"type": "string"},
+                "missingPolicy": {"type": "string"}
+              },
+              "required": ["source", "target"],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "fixedInputs": {
+            "additionalProperties": {},
+            "type": "object"
+          },
           "name": {
             "type": "string"
           },
@@ -7337,7 +7394,8 @@
         "required": [
           "name",
           "status",
-          "version"
+          "version",
+          "providerType"
         ],
         "type": "object"
       },
@@ -7606,6 +7664,30 @@
         ],
         "type": "object"
       },
+      "WebhookProviderTemplate": {
+        "properties": {
+          "provider": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string"
+          },
+          "fields": {
+            "items": {
+              "properties": {
+                "key": {"type": "string"},
+                "sensitive": {"type": "boolean"},
+                "required": {"type": "boolean"}
+              },
+              "required": ["key", "sensitive", "required"],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": ["provider", "mode", "fields"],
+        "type": "object"
+      },
       "WebhookResponse": {
         "properties": {
           "id": {
@@ -7614,6 +7696,51 @@
           },
           "name": {
             "type": "string"
+          },
+          "providerType": {
+            "type": "string"
+          },
+          "channelMode": {
+            "type": "string"
+          },
+          "configFields": {
+            "additionalProperties": {},
+            "type": "object"
+          },
+          "connectionStatus": {
+            "type": ["string", "null"]
+          },
+          "connectionError": {
+            "type": ["string", "null"]
+          },
+          "lastConnectedAt": {
+            "type": ["string", "null"]
+          },
+          "inputMappings": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "source": {"type": "string"},
+                "target": {"type": "string"},
+                "missingPolicy": {"type": "string"}
+              },
+              "required": ["source", "target"],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "fixedInputs": {
+            "additionalProperties": {},
+            "type": "object"
+          },
+          "configurationRevision": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "mappingCount": {
+            "type": "integer",
+            "minimum": 0
           },
           "path": {
             "type": "string"
@@ -7639,6 +7766,11 @@
         "required": [
           "id",
           "name",
+          "providerType",
+          "inputMappings",
+          "fixedInputs",
+          "configurationRevision",
+          "mappingCount",
           "publicId",
           "path",
           "status",
@@ -8853,6 +8985,24 @@
       }
     },
     "/api/v1/applications/{id}/webhooks/{webhook_id}": {
+      "get": {
+        "operationId": "get_webhook",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "tags": [
+          "applications"
+        ]
+      },
       "patch": {
         "operationId": "update_webhook",
         "requestBody": {
@@ -8866,6 +9016,29 @@
           "required": true
         },
         "responses": {},
+        "tags": [
+          "applications"
+        ]
+      }
+    },
+    "/api/v1/webhook-provider-templates": {
+      "get": {
+        "operationId": "list_webhook_provider_templates",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/WebhookProviderTemplate"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
         "tags": [
           "applications"
         ]

@@ -41,6 +41,7 @@ export type ApplicationDeployment = components['schemas']['ApplicationDeployment
 export type PublishAttempt = components['schemas']['PublishAttemptResponse']
 export type ApplicationApiKey = components['schemas']['ApiKeyResponse']
 export type ApplicationWebhook = components['schemas']['WebhookResponse']
+export type WebhookProviderTemplate = components['schemas']['WebhookProviderTemplate']
 export type ApplicationSchedule = components['schemas']['ScheduleResponse']
 export type ApplicationSession = components['schemas']['SessionResponse']
 export type Dataset = components['schemas']['DatasetResponse']

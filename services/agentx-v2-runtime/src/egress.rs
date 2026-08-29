@@ -381,6 +381,76 @@ impl ProviderHttpClient {
             .build()?;
         Ok(client)
     }
+
+    /// Opens a CONNECT tunnel through the managed egress proxy for a public
+    /// WSS endpoint and returns the raw tunnelled TCP stream. Callers complete
+    /// the TLS and WebSocket handshake over it, so long-lived provider stream
+    /// connections follow the same controlled public egress path as HTTP.
+    pub async fn open_public_websocket_tunnel(
+        &self,
+        url: &Url,
+        context: EgressRequestContext,
+    ) -> Result<tokio::net::TcpStream> {
+        let host = url
+            .host_str()
+            .context("websocket endpoint host is required")?
+            .trim_matches(['[', ']'])
+            .trim_end_matches('.')
+            .to_ascii_lowercase();
+        let port = url
+            .port_or_known_default()
+            .context("websocket endpoint port is required")?;
+        let now = now_unix();
+        let claims = EgressConnectClaimsV1 {
+            iss: EGRESS_TOKEN_ISSUER.into(),
+            aud: EGRESS_TOKEN_AUDIENCE.into(),
+            role: self.role,
+            tenant_id: context.tenant_id,
+            execution_id: context.execution_id,
+            request_id: context.request_id,
+            egress_mode: EgressMode::PublicHttps,
+            target_host: host.clone(),
+            target_port: port,
+            iat: now,
+            exp: now + EGRESS_RUNTIME_TOKEN_TTL_SECONDS,
+            jti: Uuid::now_v7(),
+        };
+        let token = issue_egress_connect_token(&self.key_id, &self.private_key_pem, &claims)
+            .context("failed signing egress CONNECT token")?;
+        let proxy_host = self
+            .proxy_url
+            .host_str()
+            .context("egress proxy host is required")?
+            .to_owned();
+        let proxy_port = self.proxy_url.port_or_known_default().unwrap_or(3128);
+        let mut stream = tokio::net::TcpStream::connect((proxy_host.as_str(), proxy_port))
+            .await
+            .context("egress proxy connection failed")?;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let request = format!(
+            "CONNECT {host}:{port} HTTP/1.1\r\nHost: {host}:{port}\r\nProxy-Authorization: Bearer {token}\r\n\r\n"
+        );
+        stream.write_all(request.as_bytes()).await?;
+        let mut buffer = Vec::new();
+        let mut chunk = [0u8; 256];
+        loop {
+            let read = stream.read(&mut chunk).await?;
+            if read == 0 {
+                bail!("egress proxy closed the tunnel during CONNECT")
+            }
+            buffer.extend_from_slice(&chunk[..read]);
+            let header_end = buffer
+                .windows(4)
+                .position(|window| window == b"\r\n\r\n")
+                .context("egress proxy CONNECT response is malformed")?;
+            let head = String::from_utf8_lossy(&buffer[..header_end]).to_string();
+            let status = head.lines().next().unwrap_or_default();
+            if !status.contains(" 200 ") {
+                bail!("egress proxy refused CONNECT: {status}")
+            }
+            return Ok(stream);
+        }
+    }
 }
 
 fn origin(url: &Url) -> (&str, Option<&str>, Option<u16>) {

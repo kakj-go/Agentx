@@ -112,6 +112,17 @@
         "type": "object"
       },
       "InvocationResponse": {
+        "$defs": {
+          "WebhookProviderV1": {
+            "enum": [
+              "agentx",
+              "dingtalk",
+              "wecom",
+              "feishu"
+            ],
+            "type": "string"
+          }
+        },
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
@@ -127,6 +138,12 @@
           "bundleId": {
             "format": "uuid",
             "type": "string"
+          },
+          "conversationId": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "createdAt": {
             "type": "string"
@@ -144,6 +161,22 @@
             "type": "string"
           },
           "outputs": true,
+          "provider": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/InvocationResponse/$defs/WebhookProviderV1"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "providerEventId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "sessionId": {
             "format": "uuid",
             "type": [
@@ -153,7 +186,8 @@
           },
           "status": {
             "type": "string"
-          }
+          },
+          "triggerContext": true
         },
         "required": [
           "id",
@@ -1328,31 +1362,143 @@
       }
     },
     "/gateway/v1/webhooks/{public_id}": {
+      "get": {
+        "operationId": "verifyWebhook",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "timestamp",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "nonce",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "echostr",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "msg_signature",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Provider challenge acknowledgement"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayError"
+                }
+              }
+            },
+            "description": "Runtime error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayError"
+                }
+              }
+            },
+            "description": "Runtime error"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayError"
+                }
+              }
+            },
+            "description": "Runtime error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayError"
+                }
+              }
+            },
+            "description": "Runtime error"
+          }
+        }
+      },
       "post": {
         "operationId": "invokeWebhook",
         "parameters": [
           {
-            "in": "header",
-            "name": "Idempotency-Key",
-            "required": true,
+            "in": "query",
+            "name": "timestamp",
+            "required": false,
             "schema": {
-              "maxLength": 192,
-              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "nonce",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "signature",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "msg_signature",
+            "required": false,
+            "schema": {
               "type": "string"
             }
           },
           {
             "in": "header",
-            "name": "X-Agentx-Timestamp",
-            "required": true,
+            "name": "X-Lark-Request-Timestamp",
+            "required": false,
             "schema": {
-              "type": "integer"
+              "type": "string"
             }
           },
           {
             "in": "header",
-            "name": "X-Agentx-Signature",
-            "required": true,
+            "name": "X-Lark-Request-Nonce",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Lark-Signature",
+            "required": false,
             "schema": {
               "type": "string"
             }
@@ -1362,20 +1508,18 @@
           "content": {
             "application/json": {
               "schema": {}
+            },
+            "application/xml": {
+              "schema": {
+                "type": "string"
+              }
             }
           },
           "required": true
         },
         "responses": {
-          "202": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/InvocationResponse"
-                }
-              }
-            },
-            "description": "Successful Runtime response"
+          "200": {
+            "description": "Provider-compatible acknowledgement"
           },
           "400": {
             "content": {

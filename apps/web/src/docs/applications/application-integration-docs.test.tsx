@@ -34,20 +34,20 @@ describe('ApplicationIntegrationDocs', () => {
     expect(screen.getByRole('tab', { name: 'Python' })).toBeVisible()
   })
 
-  it('renders the selected Webhook URL and signing contract', () => {
+  it('renders the selected channel URL and provider contract', () => {
     render(<ApplicationIntegrationDocs activeDeployment={deployment} applicationSlug="support-agent" document={{ kind: 'webhook', name: 'CRM Hook', path: '/gateway/v1/webhooks/public-id' }} onOpenChange={vi.fn()} open runtimeBaseUrl="https://runtime.agentx.test" />)
 
     expect(screen.getByText('https://runtime.agentx.test/gateway/v1/webhooks/public-id')).toBeVisible()
-    selectTab('Node.js')
-    expect(screen.getByText(/createHmac\('sha256', process\.env\.AGENTX_WEBHOOK_SECRET\)/)).toBeVisible()
-    expect(screen.getByText(/X-Agentx-Signature/)).toBeVisible()
+    selectTab(/安全|Security/)
+    expect(screen.getByText(/Verification and decryption|验证与解密/)).toBeVisible()
+    expect(screen.getByText(/DingTalk: timestamp|钉钉：timestamp/)).toBeVisible()
   })
 
-  it('shows deployed schemas and generic Webhook instructions before a Webhook is created', () => {
+  it('shows deployed schemas without a copyable endpoint before a channel is active', () => {
     render(<ApplicationIntegrationDocs activeDeployment={deployment} applicationSlug="support-agent" document={{ kind: 'webhook' }} onOpenChange={vi.fn()} open runtimeBaseUrl="https://runtime.agentx.test" />)
 
-    expect(screen.getByText('https://runtime.agentx.test/gateway/v1/webhooks/{public_id}')).toBeVisible()
-    expect(screen.getAllByText(/WEBHOOK_PUBLIC_ID/).length).toBeGreaterThan(0)
+    expect(screen.getAllByText(/The production endpoint activates after the channel is saved and published|生产接入地址将在渠道保存并发布后激活/).length).toBeGreaterThan(0)
+    expect(screen.getAllByText(/A channel only accepts inbound events|渠道只负责接收入站事件/).length).toBeGreaterThan(0)
     selectTab(/数据结构|Schemas/)
     expect(screen.getByText('message')).toBeVisible()
     expect(screen.getByText(/数据结构来自当前应用的已激活部署|Schemas come from the current active application deployment/)).toBeVisible()
