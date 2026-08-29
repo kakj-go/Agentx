@@ -1768,14 +1768,14 @@ fn bearer_headers(token: String) -> HeaderMap {
 
 fn definition() -> WorkflowDefinition {
     serde_json::from_value(json!({
-        "schemaVersion":"6.0",
+        "schemaVersion":"7.0",
         "start":{"inputs":{"type":"object","properties":{"message":{"type":"string"}},"required":["message"],"additionalProperties":false},"contexts":{}},
-        "nodes":[{"id":"pass","key":"pass","type":"no_op","typeVersion":1,"name":"Pass","parameters":{},"settings":{"retryOnFail":true,"maxTries":2,"waitBetweenTriesMs":5},"outputProjection":{},"contextWrites":[],"resourceReferences":[]}],
+        "nodes":[{"id":"pass","key":"pass","type":"no_op","typeVersion":1,"name":"Pass","parameters":{},"settings":{"retryOnFail":true,"maxTries":2,"waitBetweenTriesMs":5},"outputProjection":{},"contextWrites":[],"resourceReferences":[]},{"id":"exit","key":"exit","type":"exit","typeVersion":1,"name":"End","disabled":false,"protected":true,"parameters":{"outputs":{"message":{"kind":"reference","selector":{"namespace":"outputs","sourceNodeId":"pass","port":"main","run":{"kind":"current"},"item":{"kind":"current"},"path":["message"]},"missingPolicy":{"kind":"error"}}},"errorOutputs":{}},"outputProjection":{},"contextWrites":[],"resourceReferences":[],"settings":{}}],
         "connections":[
             {"id":"start-pass","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"pass","targetHandle":"main","order":0},
-            {"id":"pass-end","sourceNodeId":"pass","sourceHandle":"main","targetNodeId":"__end__","targetHandle":"main","order":0}
+            {"id":"pass-end","sourceNodeId":"pass","sourceHandle":"main","targetNodeId":"exit","targetHandle":"main","order":0}
         ],
-        "end":{"outputs":{"message":{"value":{"kind":"reference","selector":{"namespace":"outputs","sourceNodeId":"pass","port":"main","run":{"kind":"current"},"item":{"kind":"current"},"path":["message"]},"missingPolicy":{"kind":"error"}},"schema":{"type":"string"},"required":true}}},
+        "end":{"outputs":{"message":{"schema":{"type":"string"},"required":true}}},
         "settings":{"activationBudget":20,"executionOrder":"deterministic"}
     }))
     .unwrap()
@@ -1783,7 +1783,7 @@ fn definition() -> WorkflowDefinition {
 
 fn composite_definition(child_version_id: Uuid) -> WorkflowDefinition {
     serde_json::from_value(json!({
-        "schemaVersion":"6.0",
+        "schemaVersion":"7.0",
         "start":{"inputs":{"type":"object","properties":{"message":{"type":"string"}},"required":["message"],"additionalProperties":false},"contexts":{}},
         "nodes":[{
             "id":"child",
@@ -1795,12 +1795,16 @@ fn composite_definition(child_version_id: Uuid) -> WorkflowDefinition {
             "outputProjection":{},
             "contextWrites":[],
             "resourceReferences":[]
+        },{
+            "id":"exit","key":"exit","type":"exit","typeVersion":1,"name":"End","disabled":false,"protected":true,
+            "parameters":{"outputs":{"message":{"kind":"reference","selector":{"namespace":"outputs","sourceNodeId":"child","port":"main","run":{"kind":"current"},"item":{"kind":"current"},"path":["message"]},"missingPolicy":{"kind":"error"}}},"errorOutputs":{}},
+            "outputProjection":{},"contextWrites":[],"resourceReferences":[],"settings":{}
         }],
         "connections":[
             {"id":"start-child","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"child","targetHandle":"main","order":0},
-            {"id":"child-end","sourceNodeId":"child","sourceHandle":"main","targetNodeId":"__end__","targetHandle":"main","order":0}
+            {"id":"child-end","sourceNodeId":"child","sourceHandle":"main","targetNodeId":"exit","targetHandle":"main","order":0}
         ],
-        "end":{"outputs":{"message":{"value":{"kind":"reference","selector":{"namespace":"outputs","sourceNodeId":"child","port":"main","run":{"kind":"current"},"item":{"kind":"current"},"path":["message"]},"missingPolicy":{"kind":"error"}},"schema":{"type":"string"},"required":true}}},
+        "end":{"outputs":{"message":{"schema":{"type":"string"},"required":true}}},
         "settings":{"activationBudget":20,"executionOrder":"deterministic"}
     }))
     .unwrap()

@@ -17,43 +17,80 @@ pub(crate) struct WebhookProviderTemplateV1 {
     pub(crate) provider: String,
     pub(crate) mode: String,
     pub(crate) fields: Vec<WebhookProviderTemplateFieldV1>,
+    /// Raw payload paths (`raw.<dotted.path>`) this provider's messages carry
+    /// beyond the standardized Trigger Context fields, offered as mapping
+    /// source suggestions. Identical for callback and stream modes.
+    pub(crate) mapping_sources: Vec<String>,
 }
 
 fn field(key: &str, sensitive: bool, required: bool) -> WebhookProviderTemplateFieldV1 {
     WebhookProviderTemplateFieldV1 { key: key.into(), sensitive, required }
 }
 
+fn mapping_source(path: &str) -> String {
+    format!("raw.{path}")
+}
+
 /// Field keys must stay aligned with the Runtime provider adapters
 /// (`credential_string` lookups in agentx-v2-runtime webhook/stream decoding).
 pub(crate) fn templates() -> Vec<WebhookProviderTemplateV1> {
     vec![
-        WebhookProviderTemplateV1 { provider: "agentx".into(), mode: "callback".into(), fields: vec![] },
+        WebhookProviderTemplateV1 { provider: "agentx".into(), mode: "callback".into(), fields: vec![], mapping_sources: vec![] },
         WebhookProviderTemplateV1 {
             provider: "dingtalk".into(),
             mode: "callback".into(),
             fields: vec![field("secret", true, true), field("aesKey", true, false)],
+            mapping_sources: dingtalk_mapping_sources(),
         },
         WebhookProviderTemplateV1 {
             provider: "dingtalk".into(),
             mode: "stream".into(),
             fields: vec![field("clientId", false, true), field("clientSecret", true, true)],
+            mapping_sources: dingtalk_mapping_sources(),
         },
         WebhookProviderTemplateV1 {
             provider: "wecom".into(),
             mode: "callback".into(),
             fields: vec![field("token", true, true), field("encodingAESKey", true, true)],
+            mapping_sources: ["msgtype", "createTime", "agentId", "toUserName"].iter().map(|path| mapping_source(path)).collect(),
         },
         WebhookProviderTemplateV1 {
             provider: "feishu".into(),
             mode: "callback".into(),
             fields: vec![field("verificationToken", true, true), field("encryptKey", true, false)],
+            mapping_sources: feishu_mapping_sources(),
         },
         WebhookProviderTemplateV1 {
             provider: "feishu".into(),
             mode: "stream".into(),
             fields: vec![field("appId", false, true), field("appSecret", true, true)],
+            mapping_sources: feishu_mapping_sources(),
         },
     ]
+}
+
+/// DingTalk robot message fields not covered by the standardized context
+/// (conversationTitle/senderNick are available as conversation.name/sender.name).
+fn dingtalk_mapping_sources() -> Vec<String> {
+    ["senderCorpId", "senderId", "createAt", "msgtype", "atUsers"].iter().map(|path| mapping_source(path)).collect()
+}
+
+/// Feishu im.message.receive_v1 fields not covered by the standardized context.
+fn feishu_mapping_sources() -> Vec<String> {
+    [
+        "event.message.message_id",
+        "event.message.message_type",
+        "event.message.create_time",
+        "event.message.root_id",
+        "event.message.parent_id",
+        "event.message.thread_id",
+        "event.sender.sender_type",
+        "event.sender.sender_id.union_id",
+        "event.sender.sender_id.user_id",
+        "header.event_type",
+        "header.tenant_key",
+        "header.app_id",
+    ].iter().map(|path| mapping_source(path)).collect()
 }
 
 pub(crate) fn find(provider: &str, mode: &str) -> Option<WebhookProviderTemplateV1> {
@@ -113,6 +150,17 @@ mod tests {
         assert!(find("feishu", "stream").is_some());
         assert!(find("agentx", "stream").is_none(), "agentx has no platform connection to dial");
         assert!(find("wecom", "stream").is_none(), "WeCom has no reverse connection mode");
+    }
+
+    #[test]
+    fn mapping_sources_are_raw_paths_consistent_across_modes() {
+        for template in templates() {
+            for source in &template.mapping_sources {
+                assert!(source.starts_with("raw.") && source.len() > 4, "catalog entries must be raw.* paths: {source}");
+            }
+        }
+        assert_eq!(find("dingtalk", "callback").unwrap().mapping_sources, find("dingtalk", "stream").unwrap().mapping_sources);
+        assert_eq!(find("feishu", "callback").unwrap().mapping_sources, find("feishu", "stream").unwrap().mapping_sources);
     }
 
     #[test]

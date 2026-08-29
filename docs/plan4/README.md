@@ -102,11 +102,14 @@ provider_connection_id    平台机器人或应用连接
 webhook_trigger_id        Agentx Webhook Trigger
 provider_event_id         平台事件 ID，用于幂等
 conversation.id           群聊、单聊或房间的稳定 ID
-conversation.name         可选的会话显示名
-conversation.type         group / direct / room
+conversation.name         可选的会话显示名（钉钉 conversationTitle）
+conversation.type         group / direct，取平台显式字段（钉钉 conversationType 1/2、飞书 chat_type p2p/group、企微 chattype single/group），不再用 ID 前缀猜测
 sender.id                 平台内稳定发送者 ID
+sender.name               可选的发送者昵称（钉钉 senderNick）
 message.text              标准化文本内容
 ```
+
+标准字段之外的映射来源统一走 `raw.<dotted.path>` 透传：Runtime 在验签解密后的平台报文上按 JSON pointer 取值原样传给 Workflow Start Input，Control 只校验路径形式不做静态类型检查。Provider 模板按 `provider × mode` 下发 `mappingSources` 目录（钉钉 senderCorpId/senderId/createAt/msgtype/atUsers，飞书 event.message.*/event.sender.*/header.*，企微 msgtype/createTime/agentId/toUserName），前端映射来源下拉 = 标准字段 + 该目录，另可手填任意 raw 路径覆盖目录未列出的字段。目录刻意不含 sessionWebhook，它只进 Trigger Context 快照留作出站投递（见第 20 节），不作为正式映射契约宣传。
 
 其中 `conversation.id` 是区分多个群的首选依据，`sender.id` 只能区分发送者，不能代替群标识。若某个平台事件不提供稳定会话 ID，平台模板必须明确标记不支持可靠的多群来源识别；此时只能为不同范围创建独立平台连接或独立 Webhook Trigger，不能用群名称等可变字段猜测来源。
 
@@ -205,6 +208,8 @@ POST   /api/v1/applications/{applicationId}/webhooks/{webhookId}/rotate-secret
 Application 详情页的“渠道对接”Tab 展示渠道名称、平台、状态、HTTP Callback、已映射参数数量、最近触发时间和配置操作。选中一个渠道后，详情区展示该 Trigger 唯一的完整生产 Endpoint、来源识别字段和当前 Workflow 映射；列表和弹窗不再重复展示另一个 URL。
 
 添加渠道 Dialog 默认只显示：平台、Webhook 名称、Credential/认证方式、Workflow 开始参数映射、固定输入值和保存草稿。接入地址区域只提示“保存并发布后生成”，不展示路由模板或复制按钮。
+
+映射与固定输入均以 Workflow 参数为第一列：用户先选要填的 Start Input，再选来源（标准字段、平台原始字段目录或手填 raw 路径）或直接填固定值；固定输入的值按 Start Input Schema 类型在保存时做 number/boolean 收敛，键名不允许脱离 Schema 自由填写（有活跃 Deployment 时）。
 
 高级设置只包含 Custom HTTP 请求 Schema、自定义 JSONPath、事件 ID 路径、自定义 Header 验证和 Replay Window。不显示回复目标、群组路由、出站 Webhook、消息模板或 Delivery。
 

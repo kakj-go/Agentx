@@ -72,7 +72,7 @@ pub(super) async fn persist_machine(
     }
     for delivery in machine.end_deliveries() {
         sqlx::query(
-            "INSERT IGNORE INTO execution_end_deliveries(tenant_id,execution_id,sequence_number,source_node_execution_id,source_node_id,source_port,target_port,payload_json) VALUES(?,?,?,?,?,?,?,?)",
+            "INSERT IGNORE INTO execution_end_deliveries(tenant_id,execution_id,sequence_number,source_node_execution_id,source_node_id,source_port,target_port,target_exit_id,payload_json) VALUES(?,?,?,?,?,?,?,?,?)",
         )
         .bind(tenant_id)
         .bind(execution_id)
@@ -81,6 +81,7 @@ pub(super) async fn persist_machine(
         .bind(&machine.workflow().nodes[delivery.source_node].id)
         .bind(&delivery.source_port)
         .bind(&delivery.target_port)
+        .bind(&delivery.target_exit)
         .bind(serde_json::to_value(&delivery.items).map_err(|error| RuntimeError::Internal(error.into()))?)
         .execute(&mut **tx)
         .await?;

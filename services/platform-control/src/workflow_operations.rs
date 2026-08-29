@@ -94,7 +94,7 @@ async fn export_workflow(
     let hash = canonical_content_hash(&package_body).map_err(ApiError::internal)?;
     let signature = state.work_packages.sign_content_hash(&hash);
     Ok(Json(
-        json!({"manifest":{"packageSchemaVersion":"1.0","workflowSchemaVersion":"6.0","name":row.try_get::<String,_>("name")?,"contentHash":hash,"signatureAlgorithm":"ed25519","signingKeyId":state.work_packages.signing_key_id(),"signature":signature},"workflowDefinition":definition,"editorDocument":editor,"nodeLock":[],"subWorkflowReferences":[],"resourceBindingPlaceholders":[],"apiBinding":{}}),
+        json!({"manifest":{"packageSchemaVersion":"1.0","workflowSchemaVersion":"7.0","name":row.try_get::<String,_>("name")?,"contentHash":hash,"signatureAlgorithm":"ed25519","signingKeyId":state.work_packages.signing_key_id(),"signature":signature},"workflowDefinition":definition,"editorDocument":editor,"nodeLock":[],"subWorkflowReferences":[],"resourceBindingPlaceholders":[],"apiBinding":{}}),
     ))
 }
 
@@ -113,11 +113,11 @@ async fn import_workflow(
         || manifest
             .get("workflowSchemaVersion")
             .and_then(Value::as_str)
-            != Some("6.0")
+            != Some("7.0")
     {
         return Err(ApiError::unprocessable(
             "WORKFLOW_PACKAGE_VERSION_UNSUPPORTED",
-            "Only Workflow Package 1.0 / Definition 4.0 is supported",
+            "Only Workflow Package 1.0 / Definition 7.0 is supported",
         ));
     }
     let mut definition = input

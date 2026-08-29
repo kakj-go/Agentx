@@ -590,12 +590,17 @@ fn full_definition() -> Result<WorkflowDefinition> {
             reference("agent-skill",Some("skills"),"skill",SKILL,&skill_version,"use")
         ]
     })];
+    let nodes = [nodes, vec![json!({
+        "id":"exit","key":"exit","type":"exit","typeVersion":1,"name":"End","disabled":false,"protected":true,
+        "parameters":{"outputs":{},"errorOutputs":{}},"outputProjection":{},"contextWrites":[],
+        "resourceReferences":[],"settings":{}
+    })]].concat();
     let connections = vec![
         json!({"id":"start-agent","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"agent","targetHandle":"main","order":0}),
-        json!({"id":"agent-end","sourceNodeId":"agent","sourceHandle":"main","targetNodeId":"__end__","targetHandle":"main","order":0}),
+        json!({"id":"agent-end","sourceNodeId":"agent","sourceHandle":"main","targetNodeId":"exit","targetHandle":"main","order":0}),
     ];
     serde_json::from_value(json!({
-        "schemaVersion":"6.0",
+        "schemaVersion":"7.0",
         "start":{"inputs":{"type":"object","properties":{"message":{"type":"string"}},"required":["message"],"additionalProperties":false},"contexts":{}},
         "nodes":nodes,
         "connections":connections,
@@ -607,12 +612,12 @@ fn full_definition() -> Result<WorkflowDefinition> {
 
 fn child_definition() -> Result<WorkflowDefinition> {
     serde_json::from_value(json!({
-        "schemaVersion":"6.0",
+        "schemaVersion":"7.0",
         "start":{"inputs":{"type":"object","additionalProperties":true},"contexts":{}},
-        "nodes":[{"id":"grandchild","key":"grandchild","type":"sub_workflow","typeVersion":1,"name":"Fixed Grandchild","parameters":{"workflowVersionId":GRANDCHILD_VERSION},"outputProjection":{},"contextWrites":[],"resourceReferences":[]}],
+        "nodes":[{"id":"grandchild","key":"grandchild","type":"sub_workflow","typeVersion":1,"name":"Fixed Grandchild","parameters":{"workflowVersionId":GRANDCHILD_VERSION},"outputProjection":{},"contextWrites":[],"resourceReferences":[]},{"id":"exit","key":"exit","type":"exit","typeVersion":1,"name":"End","disabled":false,"protected":true,"parameters":{"outputs":{},"errorOutputs":{}},"outputProjection":{},"contextWrites":[],"resourceReferences":[],"settings":{}}],
         "connections":[
             {"id":"child-start","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"grandchild","targetHandle":"main","order":0},
-            {"id":"child-end","sourceNodeId":"grandchild","sourceHandle":"main","targetNodeId":"__end__","targetHandle":"main","order":0}
+            {"id":"child-end","sourceNodeId":"grandchild","sourceHandle":"main","targetNodeId":"exit","targetHandle":"main","order":0}
         ],
         "end":{"outputs":{}},
         "settings":{"activationBudget":8,"executionOrder":"deterministic"}
@@ -622,12 +627,12 @@ fn child_definition() -> Result<WorkflowDefinition> {
 
 fn grandchild_definition() -> Result<WorkflowDefinition> {
     serde_json::from_value(json!({
-        "schemaVersion":"6.0",
+        "schemaVersion":"7.0",
         "start":{"inputs":{"type":"object","additionalProperties":true},"contexts":{}},
-        "nodes":[{"id":"grandchild-pass","key":"grandchild_pass","type":"no_op","typeVersion":1,"name":"Grandchild Pass","parameters":{},"outputProjection":{},"contextWrites":[],"resourceReferences":[]}],
+        "nodes":[{"id":"grandchild-pass","key":"grandchild_pass","type":"no_op","typeVersion":1,"name":"Grandchild Pass","parameters":{},"outputProjection":{},"contextWrites":[],"resourceReferences":[]},{"id":"exit","key":"exit","type":"exit","typeVersion":1,"name":"End","disabled":false,"protected":true,"parameters":{"outputs":{},"errorOutputs":{}},"outputProjection":{},"contextWrites":[],"resourceReferences":[],"settings":{}}],
         "connections":[
             {"id":"grandchild-start","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"grandchild-pass","targetHandle":"main","order":0},
-            {"id":"grandchild-end","sourceNodeId":"grandchild-pass","sourceHandle":"main","targetNodeId":"__end__","targetHandle":"main","order":0}
+            {"id":"grandchild-end","sourceNodeId":"grandchild-pass","sourceHandle":"main","targetNodeId":"exit","targetHandle":"main","order":0}
         ],
         "end":{"outputs":{}},
         "settings":{"activationBudget":8,"executionOrder":"deterministic"}
@@ -644,19 +649,19 @@ fn suspension_definition(node_type: &str) -> Result<WorkflowDefinition> {
     let connections = if node_type == "approval" {
         vec![
             json!({"id":"start-suspend","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"suspend","targetHandle":"main","order":0}),
-            json!({"id":"approved-end","sourceNodeId":"suspend","sourceHandle":"approved","targetNodeId":"__end__","targetHandle":"main","order":0}),
-            json!({"id":"rejected-end","sourceNodeId":"suspend","sourceHandle":"rejected","targetNodeId":"__end__","targetHandle":"main","order":1}),
+            json!({"id":"approved-end","sourceNodeId":"suspend","sourceHandle":"approved","targetNodeId":"exit","targetHandle":"main","order":0}),
+            json!({"id":"rejected-end","sourceNodeId":"suspend","sourceHandle":"rejected","targetNodeId":"exit","targetHandle":"main","order":1}),
         ]
     } else {
         vec![
             json!({"id":"start-suspend","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"suspend","targetHandle":"main","order":0}),
-            json!({"id":"resumed-end","sourceNodeId":"suspend","sourceHandle":"resumed","targetNodeId":"__end__","targetHandle":"main","order":0}),
+            json!({"id":"resumed-end","sourceNodeId":"suspend","sourceHandle":"resumed","targetNodeId":"exit","targetHandle":"main","order":0}),
         ]
     };
     serde_json::from_value(json!({
-        "schemaVersion":"6.0",
+        "schemaVersion":"7.0",
         "start":{"inputs":{"type":"object","additionalProperties":true},"contexts":{}},
-        "nodes":[{"id":"suspend","key":"suspend","type":node_type,"typeVersion":1,"name":"Suspend","parameters":parameters,"outputProjection":{},"contextWrites":[],"resourceReferences":[]}],
+        "nodes":[{"id":"suspend","key":"suspend","type":node_type,"typeVersion":1,"name":"Suspend","parameters":parameters,"outputProjection":{},"contextWrites":[],"resourceReferences":[]},{"id":"exit","key":"exit","type":"exit","typeVersion":1,"name":"End","disabled":false,"protected":true,"parameters":{"outputs":{},"errorOutputs":{}},"outputProjection":{},"contextWrites":[],"resourceReferences":[],"settings":{}}],
         "connections":connections,
         "end":{"outputs":{}},
         "settings":{"activationBudget":20,"executionOrder":"deterministic"}

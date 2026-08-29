@@ -1265,13 +1265,13 @@ fn suspension_definition(node_type: &str, parameters: Value) -> WorkflowDefiniti
         json!({"id":"start-suspend","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"suspend","targetHandle":"main","order":0}),
     ];
     if node_type == "approval" {
-        connections.push(json!({"id":"approved-end","sourceNodeId":"suspend","sourceHandle":"approved","targetNodeId":"__end__","targetHandle":"main","order":0}));
-        connections.push(json!({"id":"rejected-end","sourceNodeId":"suspend","sourceHandle":"rejected","targetNodeId":"__end__","targetHandle":"main","order":1}));
+        connections.push(json!({"id":"approved-end","sourceNodeId":"suspend","sourceHandle":"approved","targetNodeId":"exit","targetHandle":"main","order":0}));
+        connections.push(json!({"id":"rejected-end","sourceNodeId":"suspend","sourceHandle":"rejected","targetNodeId":"exit","targetHandle":"main","order":1}));
     } else {
-        connections.push(json!({"id":"resumed-end","sourceNodeId":"suspend","sourceHandle":"resumed","targetNodeId":"__end__","targetHandle":"main","order":0}));
+        connections.push(json!({"id":"resumed-end","sourceNodeId":"suspend","sourceHandle":"resumed","targetNodeId":"exit","targetHandle":"main","order":0}));
     }
     serde_json::from_value(json!({
-        "schemaVersion":"6.0",
+        "schemaVersion":"7.0",
         "start":{"inputs":{"type":"object","properties":{"missingCandidate":{"type":"string"}},"additionalProperties":true},"contexts":{}},
         "nodes":[{
             "id":"suspend",
@@ -1283,6 +1283,10 @@ fn suspension_definition(node_type: &str, parameters: Value) -> WorkflowDefiniti
             "outputProjection":{},
             "contextWrites":[],
             "resourceReferences":[]
+        },{
+            "id":"exit","key":"exit","type":"exit","typeVersion":1,"name":"End","disabled":false,"protected":true,
+            "parameters":{"outputs":{},"errorOutputs":{}},"outputProjection":{},"contextWrites":[],
+            "resourceReferences":[],"settings":{}
         }],
         "connections":connections,
         "end":{"outputs":{}},

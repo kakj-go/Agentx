@@ -97,6 +97,10 @@ pub struct WebhookConversationV1 {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WebhookSenderV1 {
     pub id: String,
+    /// Sender display name (e.g. DingTalk senderNick); None when the
+    /// platform message carries no nickname.
+    #[serde(default)]
+    pub name: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]

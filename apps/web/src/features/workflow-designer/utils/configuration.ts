@@ -11,6 +11,7 @@ export function configurationIssues(document: StudioDocument, manifests: Map<str
       if (!node.data.resourceId) issues.push({ code: 'ATTACHMENT_RESOURCE_REQUIRED', nodeId: node.id, fieldPath: 'resourceId', message: 'Select a resource for this AI attachment.' })
       continue
     }
+    if (node.data.editorKind === 'exit') continue
     const manifest = manifests.get(`${node.data.nodeType}@${node.data.typeVersion}`)
     if (!manifest) {
       issues.push({ code: 'UNKNOWN_NODE_VERSION', nodeId: node.id, fieldPath: 'typeVersion', message: `${node.data.nodeType}@${node.data.typeVersion} is unavailable in the Node Catalog.`, values: { nodeTypeVersion: `${node.data.nodeType}@${node.data.typeVersion}` } })

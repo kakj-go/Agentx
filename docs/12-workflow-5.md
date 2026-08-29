@@ -2,7 +2,18 @@
 
 ## 1. 版本边界
 
-Workflow Definition 只接受 `schemaVersion: "5.0"`。本版本是开发期破坏性升级，不读取、迁移或保存旧 Definition；旧字符串表达式直接返回 `LEGACY_EXPRESSION_NOT_SUPPORTED`。
+Workflow Definition 只接受 `schemaVersion: "7.0"`。本版本是开发期破坏性升级，不读取、迁移或保存旧 Definition；旧字符串表达式直接返回 `LEGACY_EXPRESSION_NOT_SUPPORTED`。
+
+## 1a. 多结束节点（exit）
+
+7.0 移除了画布上的中央 `__end__` 边界：终止点表达为多个 `exit` 类型的真实节点，每个 exit 暴露 `main` 与 `error` 两个输入端口，可从节点面板添加、可删除；工作流初始模板自带一个 `protected: true` 的 exit（不可删除），保证任何 Definition 至少有一个终止出口。`__end__` 仍保留为编译期虚拟锚点（`terminal_connections` 的折叠目标），但 Connections 中不允许再出现 `target == __end__`。
+
+输出模型分为两层：
+
+- **全局契约**（单一真源）：字段名、JSON Schema、required 与 sensitive 存于 `end.outputs` 与 `end.error.outputs`，对所有 exit 生效；Studio 在任一 exit 上编辑字段即修改全局契约，重命名字段会同步重命名所有 exit 的映射 key。
+- **per-exit 映射**：每个 exit 节点的 `parameters.outputs` / `parameters.errorOutputs` 为每个契约字段提供一个 `DynamicValue`；引用校验以该 exit 自身的可达前驱为准（扩展图上 exit 作为虚拟汇点计算），错误映射引用还必须是该 exit 全部错误来源的公共前驱。每个 exit 必须覆盖所有 `required` 契约字段（编译期 `EXIT_REQUIRED_MAPPING_MISSING`）。
+
+执行语义：连到 exit 的边被编译为携带 `targetExit` 的 terminal connection；main 交付到哪个 exit，就用哪个 exit 的映射物化成功输出（多个 exit 并发到达时以 delivery sequence 最小者为准）；错误终态按 primary error 实际到达的 exit 选择错误映射物化。同一 `(source, sourcePort)` 扇出到多个 exit 被编译期拒绝（`DUPLICATE_TERMINAL_FANOUT`），保证结果确定。错误策略（fail_fast/collect 与收集窗口）仍是全局设置。对外 API 的输出 schema 依旧从全局契约合成，无论从哪个 exit 结束，返回结构恒定。
 
 ## 2. DynamicValue
 

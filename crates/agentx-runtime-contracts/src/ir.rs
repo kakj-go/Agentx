@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use agentx_domain::{
-    ContextDefinition, ContextWrite, ExecutionOrder, NodeSettings, ResourceOperation, ResourceType,
-    WorkflowEnd, WorkflowStart,
+    ContextDefinition, ContextWrite, DynamicValue, ExecutionOrder, NodeSettings, ResourceOperation,
+    ResourceType, WorkflowEnd, WorkflowStart,
 };
 use agentx_node_protocol::{
     ExecutionStyle, NodeCapability, OutputCardinality, PortKind, ReadinessPolicy, SideEffectLevel,
@@ -25,13 +25,31 @@ pub struct CompiledWorkflowV1 {
     pub start: WorkflowStart,
     pub contexts: BTreeMap<String, ContextDefinition>,
     pub end: WorkflowEnd,
+    /// Exit nodes keyed by node id. Terminal materialization picks the exit
+    /// that actually received the delivery.
+    #[serde(default)]
+    pub exits: BTreeMap<String, CompiledExitV1>,
     pub nodes: Vec<CompiledNodeV1>,
     pub connections: Vec<CompiledConnectionV1>,
     pub terminal_connections: Vec<CompiledTerminalConnectionV1>,
-    pub start_to_end: bool,
+    /// Exit node id when Start connects straight to an exit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_to_exit: Option<String>,
     pub start_nodes: Vec<usize>,
     pub strongly_connected_components: Vec<Vec<usize>>,
     pub subworkflow_version_ids: Vec<String>,
+}
+
+/// Per-exit mapping of global contract fields to dynamic values.
+#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CompiledExitV1 {
+    #[serde(default)]
+    pub outputs: BTreeMap<String, DynamicValue>,
+    #[serde(default)]
+    pub error_outputs: BTreeMap<String, DynamicValue>,
+    #[serde(default)]
+    pub protected: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
@@ -150,6 +168,8 @@ pub struct CompiledTerminalConnectionV1 {
     pub source_node: usize,
     pub source_port: String,
     pub target_port: String,
+    /// Exit node id this terminal connection delivers through.
+    pub target_exit: String,
     pub branch_order: u32,
 }
 
@@ -168,3 +188,4 @@ pub type CompiledWorkflow = CompiledWorkflowV1;
 pub type CompiledNode = CompiledNodeV1;
 pub type CompiledConnection = CompiledConnectionV1;
 pub type CompiledTerminalConnection = CompiledTerminalConnectionV1;
+pub type CompiledExit = CompiledExitV1;

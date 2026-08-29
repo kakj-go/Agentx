@@ -1,15 +1,21 @@
 import type { WorkflowDraft } from '../../../shared/api/types'
-import type { ActionNodeData, BindingNodeData, EditorDocument, StudioDocument, StudioEdge, StudioNode, WorkflowDefinition } from './types'
+import type { ActionNodeData, BindingNodeData, EditorDocument, ExitNodeData, StudioDocument, StudioEdge, StudioNode, WorkflowDefinition } from './types'
 import { emptyEditorDocument } from './types'
+
+export const EXIT_NODE_TYPE = 'exit'
 
 export function deserializeDraft(value: WorkflowDraft): StudioDocument {
   const definition = value.definition as WorkflowDefinition
-  if (definition.schemaVersion !== '6.0') throw new Error(`Unsupported Workflow Definition ${String(definition.schemaVersion)}`)
+  if (definition.schemaVersion !== '7.0') throw new Error(`Unsupported Workflow Definition ${String(definition.schemaVersion)}`)
   const editor = normalizeEditor(value.editorDocument)
   const layouts = new Map(editor.nodeLayouts.map((layout) => [layout.nodeId, layout]))
   const bindingLayouts = new Map(editor.bindingLayouts.map((layout) => [layout.bindingId, layout]))
   const nodes: StudioNode[] = definition.nodes.map((item, index) => {
     const layout = layouts.get(item.id)
+    if (item.type === EXIT_NODE_TYPE) {
+      const data: ExitNodeData = { editorKind: 'exit', key: item.key ?? item.id, label: item.name, protected: item.protected ?? false, parameters: { outputs: (item.parameters as { outputs?: ExitNodeData['parameters']['outputs'] })?.outputs ?? {}, errorOutputs: (item.parameters as { errorOutputs?: ExitNodeData['parameters']['errorOutputs'] })?.errorOutputs ?? {} } }
+      return { id: item.id, type: 'exit', position: { x: layout?.x ?? 560, y: layout?.y ?? 220 }, width: layout?.width, height: layout?.height, data }
+    }
     return {
       id: item.id,
       type: 'manifest',
@@ -36,6 +42,7 @@ export function deserializeDraft(value: WorkflowDraft): StudioDocument {
 
 export function serializeStudio(document: StudioDocument): { definition: WorkflowDefinition; editorDocument: EditorDocument } {
   const actionNodes = document.nodes.filter((node): node is StudioNode & { data: ActionNodeData } => node.data.editorKind === 'action')
+  const exitNodes = document.nodes.filter((node): node is StudioNode & { data: ExitNodeData } => node.data.editorKind === 'exit')
   const bindingNodes = new Map(document.nodes.filter((node): node is StudioNode & { data: BindingNodeData } => node.data.editorKind === 'binding').map((node) => [node.id, node]))
   const bindingByTarget = new Map<string, Array<ActionNodeData['resourceReferences'][number]>>()
   const persistedBindingIds = new Set<string>()
@@ -54,15 +61,18 @@ export function serializeStudio(document: StudioDocument): { definition: Workflo
   for (const values of grouped.values()) values.sort((a, b) => a.order - b.order || a.id.localeCompare(b.id)).forEach((value, index) => { value.order = index })
   return {
     definition: {
-      schemaVersion: '6.0',
+      schemaVersion: '7.0',
     start: document.start,
     settings: document.settings,
-      nodes: actionNodes.map((node) => ({ id: node.id, key: node.data.key, type: node.data.nodeType, typeVersion: node.data.typeVersion, name: node.data.label, disabled: node.data.disabled, parameters: node.data.parameters, outputProjection: node.data.outputProjection, contextWrites: node.data.contextWrites, resourceReferences: [...node.data.resourceReferences.filter((reference) => !reference.bindingId), ...(bindingByTarget.get(node.id) ?? [])], settings: node.data.settings })),
+      nodes: [
+        ...actionNodes.map((node) => ({ id: node.id, key: node.data.key, type: node.data.nodeType, typeVersion: node.data.typeVersion, name: node.data.label, disabled: node.data.disabled, protected: false, parameters: node.data.parameters, outputProjection: node.data.outputProjection, contextWrites: node.data.contextWrites, resourceReferences: [...node.data.resourceReferences.filter((reference) => !reference.bindingId), ...(bindingByTarget.get(node.id) ?? [])], settings: node.data.settings })),
+        ...exitNodes.map((node) => ({ id: node.id, key: node.data.key, type: EXIT_NODE_TYPE, typeVersion: 1, name: node.data.label, disabled: false, protected: node.data.protected, parameters: node.data.parameters as unknown as Record<string, unknown>, outputProjection: {}, contextWrites: [], resourceReferences: [], settings: {} })),
+      ],
       connections,
       end: document.end,
     },
     editorDocument: {
-      nodeLayouts: actionNodes.map((node) => ({ nodeId: node.id, x: node.position.x, y: node.position.y, width: node.measured?.width, height: node.measured?.height })),
+      nodeLayouts: [...actionNodes, ...exitNodes].map((node) => ({ nodeId: node.id, x: node.position.x, y: node.position.y, width: node.measured?.width, height: node.measured?.height })),
       boundaryLayouts: document.boundaryLayouts,
       bindingLayouts: [...bindingNodes.values()].filter((node) => persistedBindingIds.has(node.data.bindingId)).map((node) => ({ bindingId: node.data.bindingId, x: node.position.x, y: node.position.y })),
       edges: connections.map((edge) => ({ edgeId: edge.id })),

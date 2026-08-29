@@ -851,7 +851,7 @@ fn compatibility() -> WorkerCompatibilityV1 {
 fn compiled_workflow() -> CompiledWorkflowV1 {
     CompiledWorkflowV1 {
         contract_version: IR_SCHEMA_VERSION,
-        schema_version: "6.0".into(),
+        schema_version: "7.0".into(),
         compiler_version: "3".into(),
         canonical_hash: "canonical".into(),
         definition_hash: "definition".into(),
@@ -860,10 +860,11 @@ fn compiled_workflow() -> CompiledWorkflowV1 {
         start: WorkflowStart::default(),
         contexts: std::collections::BTreeMap::<String, ContextDefinition>::new(),
         end: WorkflowEnd::default(),
+        exits: std::collections::BTreeMap::new(),
         nodes: Vec::<CompiledNodeV1>::new(),
         connections: vec![],
         terminal_connections: vec![],
-        start_to_end: true,
+        start_to_exit: None,
         start_nodes: vec![],
         strongly_connected_components: vec![],
         subworkflow_version_ids: vec![],

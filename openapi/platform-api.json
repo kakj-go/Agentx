@@ -7683,6 +7683,11 @@
               "type": "object"
             },
             "type": "array"
+          },
+          "mappingSources": {
+            "description": "Raw payload paths (raw.<dotted.path>) this provider's messages carry beyond the standardized Trigger Context fields, offered as mapping source suggestions.",
+            "items": {"type": "string"},
+            "type": "array"
           }
         },
         "required": ["provider", "mode", "fields"],

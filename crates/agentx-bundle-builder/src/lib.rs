@@ -632,7 +632,7 @@ fn build_model_evaluators(
         })
         .map(|(evaluator_id, resource_id, prompt_object_id)| {
             let definition: WorkflowDefinition = serde_json::from_value(serde_json::json!({
-                "schemaVersion":"6.0",
+                "schemaVersion":"7.0",
                 "start":{"inputs":{},"contexts":{}},
                 "nodes":[{
                     "id":"evaluate",
@@ -648,12 +648,15 @@ fn build_model_evaluators(
                         "resourceId":resource_id,
                         "operation":"use"
                     }]
-                }],
+                },{
+                    "id":"__exit__","key":"__exit__","type":"exit","typeVersion":1,"name":"End",
+                    "parameters":{"outputs":{"evaluation":{"kind":"reference","selector":{"namespace":"outputs","sourceNodeId":"evaluate","port":"main","run":{"kind":"current"},"item":{"kind":"current"},"path":["evaluation"]},"missingPolicy":{"kind":"error"}}},"errorOutputs":{}}}
+                ],
                 "connections":[
                     {"id":"start-evaluate","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"evaluate","targetHandle":"main","order":0},
-                    {"id":"evaluate-end","sourceNodeId":"evaluate","sourceHandle":"main","targetNodeId":"__end__","targetHandle":"main","order":0}
+                    {"id":"evaluate-end","sourceNodeId":"evaluate","sourceHandle":"main","targetNodeId":"__exit__","targetHandle":"main","order":0}
                 ],
-                "end":{"outputs":{"evaluation":{"value":{"kind":"reference","selector":{"namespace":"outputs","sourceNodeId":"evaluate","port":"main","run":{"kind":"current"},"item":{"kind":"current"},"path":["evaluation"]},"missingPolicy":{"kind":"error"}},"schema":{"type":"object"},"required":true}}},
+                "end":{"outputs":{"evaluation":{"schema":{"type":"object"},"required":true}}},
                 "settings":{"activationBudget":4,"executionOrder":"deterministic"}
             }))
             .map_err(|error| BuildError::Compilation(error.to_string()))?;
@@ -961,14 +964,14 @@ mod tests {
 
     fn definition() -> WorkflowDefinition {
         serde_json::from_value(json!({
-            "schemaVersion":"6.0",
+            "schemaVersion":"7.0",
             "start":{"inputs":{"type":"object","properties":{"message":{"type":"string"}},"required":["message"],"additionalProperties":false},"contexts":{}},
-            "nodes":[{"id":"pass","key":"pass","type":"no_op","typeVersion":1,"name":"Pass","parameters":{},"outputProjection":{},"contextWrites":[]}],
+            "nodes":[{"id":"pass","key":"pass","type":"no_op","typeVersion":1,"name":"Pass","parameters":{},"outputProjection":{},"contextWrites":[]},{"id":"__exit__","key":"__exit__","type":"exit","typeVersion":1,"name":"End","parameters":{"outputs":{"message":{"kind":"reference","selector":{"namespace":"outputs","sourceNodeId":"pass","port":"main","run":{"kind":"current"},"item":{"kind":"current"},"path":["message"]},"missingPolicy":{"kind":"error"}}},"errorOutputs":{}}}],
             "connections":[
                 {"id":"start-pass","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"pass","targetHandle":"main","order":0},
-                {"id":"pass-end","sourceNodeId":"pass","sourceHandle":"main","targetNodeId":"__end__","targetHandle":"main","order":0}
+                {"id":"pass-end","sourceNodeId":"pass","sourceHandle":"main","targetNodeId":"__exit__","targetHandle":"main","order":0}
             ],
-            "end":{"outputs":{"message":{"value":{"kind":"reference","selector":{"namespace":"outputs","sourceNodeId":"pass","port":"main","run":{"kind":"current"},"item":{"kind":"current"},"path":["message"]},"missingPolicy":{"kind":"error"}},"schema":{"type":"string"},"required":true}}},
+            "end":{"outputs":{"message":{"schema":{"type":"string"},"required":true}}},
             "settings":{}
         })).unwrap()
     }
@@ -1043,20 +1046,22 @@ mod tests {
             }));
         }
         serde_json::from_value(json!({
-            "schemaVersion":"6.0",
+            "schemaVersion":"7.0",
             "start":{"inputs":{"type":"object","properties":{}},"contexts":{}},
             "nodes":[{
                 "id":"agent","key":"agent","type":"agent","typeVersion":2,"name":"Agent",
                 "parameters":{"sessionPolicy":{"mode":session_mode}},
                 "resourceReferences":references,"outputProjection":{},"contextWrites":[]
+            },{
+                "id":"__exit__","key":"__exit__","type":"exit","typeVersion":1,"name":"End","parameters":{"outputs":{},"errorOutputs":{}}
             }],
             "connections":[
                 {"id":"start-agent","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"agent","targetHandle":"main","order":0},
-                {"id":"agent-end","sourceNodeId":"agent","sourceHandle":"main","targetNodeId":"__end__","targetHandle":"main","order":0}
+                {"id":"agent-end","sourceNodeId":"agent","sourceHandle":"main","targetNodeId":"__exit__","targetHandle":"main","order":0}
             ],
             "end":{"outputs":{}}
         }))
-        .expect("Agent Definition 6.0 fixture")
+        .expect("Agent Definition 7.0 fixture")
     }
 
     fn agent_source(with_sandbox: bool, session_mode: &str) -> BundleBuildSource {
@@ -1290,6 +1295,7 @@ mod tests {
         let mut source = source();
         source.definition.nodes[0].node_type = "declarative_http".into();
         source.definition.nodes[0].parameters = json!({"url":"https://example.invalid"});
+        source.definition.nodes[1].parameters = json!({"outputs":{},"errorOutputs":{}});
         source.definition.end = Default::default();
         let result = build_bundle(source, "bundle-current", &SigningKey::generate(&mut OsRng));
         assert!(
@@ -1312,6 +1318,7 @@ mod tests {
             "eventId":"evt-7",
             "pollInput":{"source":"poll"}
         });
+        source.definition.nodes[1].parameters = json!({"outputs":{},"errorOutputs":{}});
         source.definition.end = Default::default();
         let key = SigningKey::generate(&mut OsRng);
         let first = build_bundle(source.clone(), "bundle-current", &key).unwrap();
@@ -1414,14 +1421,14 @@ mod tests {
     fn immutable_composite_registry_pins_version_io_and_context_contracts() {
         let child_id = Uuid::from_u128(42);
         let child: WorkflowDefinition = serde_json::from_value(json!({
-            "schemaVersion":"6.0",
+            "schemaVersion":"7.0",
             "start":{
                 "inputs":{"type":"object","required":["question"],"properties":{"question":{"type":"string"}},"additionalProperties":false},
                 "contexts":{"counter":{"schema":{"type":"number"},"default":0,"mutable":true,"sensitive":false,"clientWritable":false,"scope":"execution_tree","mergePolicy":"increment"}}
             },
-            "nodes":[],
-            "connections":[{"id":"direct","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"__end__","targetHandle":"main","order":0}],
-            "end":{"outputs":{"answer":{"value":{"kind":"reference","selector":{"namespace":"inputs","run":{"kind":"current"},"item":{"kind":"current"},"path":["question"]},"missingPolicy":{"kind":"error"}},"schema":{"type":"string"},"required":true,"sensitive":false}}},
+            "nodes":[{"id":"__exit__","key":"__exit__","type":"exit","typeVersion":1,"name":"End","parameters":{"outputs":{"answer":{"kind":"reference","selector":{"namespace":"inputs","run":{"kind":"current"},"item":{"kind":"current"},"path":["question"]},"missingPolicy":{"kind":"error"}}},"errorOutputs":{}}}],
+            "connections":[{"id":"direct","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"__exit__","targetHandle":"main","order":0}],
+            "end":{"outputs":{"answer":{"schema":{"type":"string"},"required":true,"sensitive":false}}},
             "settings":{}
         }))
         .unwrap();
@@ -1448,21 +1455,22 @@ mod tests {
         );
 
         let parent: WorkflowDefinition = serde_json::from_value(json!({
-            "schemaVersion":"6.0",
+            "schemaVersion":"7.0",
             "start":{
                 "inputs":{"type":"object","required":["question"],"properties":{"question":{"type":"string"}},"additionalProperties":false},
                 "contexts":{"counter":{"schema":{"type":"number"},"default":0,"mutable":true,"sensitive":false,"clientWritable":false,"scope":"execution_tree","mergePolicy":"increment"}}
             },
             "nodes":[
                 {"id":"child","key":"child","type":node_type,"typeVersion":1,"name":"Child","parameters":{"workflowVersionId":child_id,"inputs":{"question":{"kind":"reference","selector":{"namespace":"inputs","run":{"kind":"current"},"item":{"kind":"current"},"path":["question"]},"missingPolicy":{"kind":"error"}}}},"outputProjection":{},"contextWrites":[],"resourceReferences":[]},
-                {"id":"summary","key":"summary","type":"set","typeVersion":1,"name":"Summary","parameters":{"values":{"answer":{"kind":"reference","selector":{"namespace":"outputs","sourceNodeId":"child","port":"main","run":{"kind":"current"},"item":{"kind":"current"},"path":["answer"]},"missingPolicy":{"kind":"error"}},"counter":{"kind":"reference","selector":{"namespace":"contexts","run":{"kind":"current"},"item":{"kind":"current"},"path":["counter"]},"missingPolicy":{"kind":"error"}}},"keepOnlySet":true},"outputProjection":{"main":{"answer_text":{"value":{"kind":"reference","selector":{"namespace":"item","run":{"kind":"current"},"item":{"kind":"current"},"path":["answer"]},"missingPolicy":{"kind":"error"}},"schema":{"type":"string"},"sensitive":false},"counter_value":{"value":{"kind":"reference","selector":{"namespace":"item","run":{"kind":"current"},"item":{"kind":"current"},"path":["counter"]},"missingPolicy":{"kind":"error"}},"schema":{"type":"number"},"sensitive":false}}},"contextWrites":[],"resourceReferences":[]}
+                {"id":"summary","key":"summary","type":"set","typeVersion":1,"name":"Summary","parameters":{"values":{"answer":{"kind":"reference","selector":{"namespace":"outputs","sourceNodeId":"child","port":"main","run":{"kind":"current"},"item":{"kind":"current"},"path":["answer"]},"missingPolicy":{"kind":"error"}},"counter":{"kind":"reference","selector":{"namespace":"contexts","run":{"kind":"current"},"item":{"kind":"current"},"path":["counter"]},"missingPolicy":{"kind":"error"}}},"keepOnlySet":true},"outputProjection":{"main":{"answer_text":{"value":{"kind":"reference","selector":{"namespace":"item","run":{"kind":"current"},"item":{"kind":"current"},"path":["answer"]},"missingPolicy":{"kind":"error"}},"schema":{"type":"string"},"sensitive":false},"counter_value":{"value":{"kind":"reference","selector":{"namespace":"item","run":{"kind":"current"},"item":{"kind":"current"},"path":["counter"]},"missingPolicy":{"kind":"error"}},"schema":{"type":"number"},"sensitive":false}}},"contextWrites":[],"resourceReferences":[]},
+                {"id":"__exit__","key":"__exit__","type":"exit","typeVersion":1,"name":"End","parameters":{"outputs":{"answer":{"kind":"reference","selector":{"namespace":"outputs","sourceNodeId":"summary","port":"main","run":{"kind":"current"},"item":{"kind":"current"},"path":["answer_text"]},"missingPolicy":{"kind":"error"}},"counter":{"kind":"reference","selector":{"namespace":"outputs","sourceNodeId":"summary","port":"main","run":{"kind":"current"},"item":{"kind":"current"},"path":["counter_value"]},"missingPolicy":{"kind":"error"}}},"errorOutputs":{}}}
             ],
             "connections":[
                 {"id":"start-child","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"child","targetHandle":"main","order":0},
                 {"id":"child-summary","sourceNodeId":"child","sourceHandle":"main","targetNodeId":"summary","targetHandle":"main","order":0},
-                {"id":"summary-end","sourceNodeId":"summary","sourceHandle":"main","targetNodeId":"__end__","targetHandle":"main","order":0}
+                {"id":"summary-end","sourceNodeId":"summary","sourceHandle":"main","targetNodeId":"__exit__","targetHandle":"main","order":0}
             ],
-            "end":{"outputs":{"answer":{"value":{"kind":"reference","selector":{"namespace":"outputs","sourceNodeId":"summary","port":"main","run":{"kind":"current"},"item":{"kind":"current"},"path":["answer_text"]},"missingPolicy":{"kind":"error"}},"schema":{"type":"string"},"required":true,"sensitive":false},"counter":{"value":{"kind":"reference","selector":{"namespace":"outputs","sourceNodeId":"summary","port":"main","run":{"kind":"current"},"item":{"kind":"current"},"path":["counter_value"]},"missingPolicy":{"kind":"error"}},"schema":{"type":"number"},"required":true,"sensitive":false}}},
+            "end":{"outputs":{"answer":{"schema":{"type":"string"},"required":true,"sensitive":false},"counter":{"schema":{"type":"number"},"required":true,"sensitive":false}}},
             "settings":{}
         }))
         .unwrap();
@@ -1501,7 +1509,7 @@ mod tests {
 
     fn composite_definition(children: &[Uuid]) -> WorkflowDefinition {
         let mut value = serde_json::to_value(definition()).unwrap();
-        let nodes = children
+        let mut nodes = children
             .iter()
             .enumerate()
             .map(|(index, child)| {
@@ -1530,11 +1538,15 @@ mod tests {
             }));
         }
         if !children.is_empty() {
+            nodes.push(json!({
+                "id":"__exit__","key":"__exit__","type":"exit","typeVersion":1,"name":"End",
+                "parameters":{"outputs":{},"errorOutputs":{}}
+            }));
             connections.push(json!({
                 "id": "edge-end",
                 "sourceNodeId": format!("child_{}", children.len() - 1),
                 "sourceHandle": "main",
-                "targetNodeId": "__end__",
+                "targetNodeId": "__exit__",
                 "targetHandle": "main",
                 "order": 0
             }));

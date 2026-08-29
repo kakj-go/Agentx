@@ -115,7 +115,11 @@ pub(crate) async fn validate(
     let properties = deployment.as_ref().and_then(|schema| schema.get("properties")).and_then(Value::as_object);
     let mut targets = std::collections::HashSet::new();
     for mapping in mappings {
-        if !matches!(mapping.source.as_str(), "message.text" | "sender.id" | "conversation.id" | "conversation.name" | "conversation.type" | "provider" | "provider_event_id") {
+        // Standardized Trigger Context fields, or raw.<dotted.path> passthrough
+        // of any decrypted platform payload field (resolved by the Runtime).
+        let standard_source = matches!(mapping.source.as_str(), "message.text" | "sender.id" | "sender.name" | "conversation.id" | "conversation.name" | "conversation.type" | "provider" | "provider_event_id");
+        let raw_source = mapping.source.starts_with("raw.") && mapping.source.len() > 4;
+        if !standard_source && !raw_source {
             return Err(ApiError::bad_request("INVALID_WEBHOOK_SOURCE", "Webhook source field is invalid"));
         }
         if mapping.target.trim().is_empty() || !targets.insert(mapping.target.clone()) {
@@ -128,7 +132,9 @@ pub(crate) async fn validate(
             let Some(property) = properties.get(&mapping.target) else {
                 return Err(ApiError::unprocessable("WEBHOOK_MAPPING_TARGET_UNKNOWN", "Webhook mapping target is not in the active Deployment schema"));
             };
-            if !schema_accepts_string(property) {
+            // Raw payload values have no statically known type, so only the
+            // standardized string sources can be type-checked here.
+            if standard_source && !schema_accepts_string(property) {
                 return Err(ApiError::unprocessable("WEBHOOK_MAPPING_TYPE_MISMATCH", "Webhook source values are strings and require a string Workflow input"));
             }
         }

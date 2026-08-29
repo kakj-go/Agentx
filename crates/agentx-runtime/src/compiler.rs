@@ -1,14 +1,14 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use agentx_domain::{
-    ContextDefinition, ContextWriteOperation, DynamicValue, ExpressionNode, MissingValuePolicy,
-    TemplateSegment, ValueNamespace, ValuePathSegment, ValueSelection, ValueSelector,
-    WORKFLOW_END_NODE_ID, WORKFLOW_START_NODE_ID, WorkflowDefinition, WorkflowNode, WorkflowOutput,
-    canonical_content_hash, validate_definition,
+    ContextDefinition, ContextWriteOperation, DynamicValue, ExitParameters, ExpressionNode,
+    MissingValuePolicy, TemplateSegment, ValueCoercion, ValueNamespace, ValuePathSegment,
+    ValueSelection, ValueSelector, WORKFLOW_START_NODE_ID, WORKFLOW_EXIT_NODE_TYPE,
+    WorkflowDefinition, WorkflowNode, WorkflowOutput, canonical_content_hash, validate_definition,
 };
 use agentx_node_protocol::{NodeManifestVersion, OutputCardinality, PortKind};
 use agentx_runtime_contracts::{
-    CompiledConnection, CompiledNode, CompiledTerminalConnection, CompiledWorkflow,
+    CompiledConnection, CompiledExit, CompiledNode, CompiledTerminalConnection, CompiledWorkflow,
     IR_SCHEMA_VERSION,
 };
 use serde::{Deserialize, Serialize};
@@ -27,10 +27,10 @@ mod parameter_expressions;
 use compiler_agent::{compile_agent_node, validate_binding_slots};
 use normalization::{
     normalized_context_writes, normalized_node_parameters, normalized_output_projection,
-    normalized_workflow_end, validate_parameter_reference_types,
+    validate_parameter_reference_types,
 };
 
-pub const COMPILER_VERSION: &str = "agentx-workflow-5.0.1";
+pub const COMPILER_VERSION: &str = "agentx-workflow-7.0.0";
 
 #[derive(Clone, Debug, Default)]
 pub struct CompileContext {
@@ -94,12 +94,23 @@ impl<'a> WorkflowCompiler<'a> {
             .nodes
             .iter()
             .enumerate()
-            .filter(|(_, node)| !node.disabled)
+            .filter(|(_, node)| {
+                !node.disabled && node.node_type != WORKFLOW_EXIT_NODE_TYPE
+            })
             .collect::<Vec<_>>();
         let indexes = enabled
             .iter()
             .enumerate()
             .map(|(compiled, (_, node))| (node.id.as_str(), compiled))
+            .collect::<BTreeMap<_, _>>();
+        let exits = definition
+            .nodes
+            .iter()
+            .enumerate()
+            .filter(|(_, node)| {
+                node.node_type == WORKFLOW_EXIT_NODE_TYPE && !node.disabled
+            })
+            .map(|(definition_index, node)| (node.id.as_str(), (definition_index, node)))
             .collect::<BTreeMap<_, _>>();
 
         let mut manifests: Vec<Option<NodeManifestVersion>> = Vec::with_capacity(enabled.len());
@@ -206,35 +217,33 @@ impl<'a> WorkflowCompiler<'a> {
         let mut raw_connections = Vec::new();
         let mut raw_start_connections = Vec::new();
         let mut raw_terminal_connections = Vec::new();
-        let mut start_to_end = false;
+        let mut start_to_exit: Option<String> = None;
+        let mut terminal_fanouts: BTreeSet<(&str, &str)> = BTreeSet::new();
         for (definition_index, connection) in definition.connections.iter().enumerate() {
-            if connection.source_node_id == WORKFLOW_START_NODE_ID {
-                if connection.target_node_id == WORKFLOW_END_NODE_ID {
-                    start_to_end = connection.target_handle == "main";
+            if exits.contains_key(connection.target_node_id.as_str()) {
+                let exit_id = connection.target_node_id.as_str();
+                if connection.source_node_id == WORKFLOW_START_NODE_ID {
+                    if connection.target_handle == "main" {
+                        start_to_exit = Some(exit_id.to_owned());
+                    }
                     continue;
                 }
-                let Some(&target) = indexes.get(connection.target_node_id.as_str()) else {
-                    continue;
-                };
-                if let Some(manifest) = &manifests[target]
-                    && !port_matches(&manifest.input_ports, &connection.target_handle)
-                {
-                    issues.push(CompileIssue {
-                        code: "UNKNOWN_TARGET_PORT".into(),
-                        path: format!("connections[{definition_index}].targetHandle"),
-                        message: format!(
-                            "Port '{}' is not declared by {}",
-                            connection.target_handle, manifest.node_type
-                        ),
-                    });
-                }
-                raw_start_connections.push((connection, target));
-                continue;
-            }
-            if connection.target_node_id == WORKFLOW_END_NODE_ID {
                 let Some(&source) = indexes.get(connection.source_node_id.as_str()) else {
                     continue;
                 };
+                if !terminal_fanouts.insert((
+                    connection.source_node_id.as_str(),
+                    connection.source_handle.as_str(),
+                )) {
+                    issues.push(CompileIssue {
+                        code: "DUPLICATE_TERMINAL_FANOUT".into(),
+                        path: format!("connections[{definition_index}]"),
+                        message: format!(
+                            "Node '{}' main/error port may only fan out to a single exit node",
+                            connection.source_node_id
+                        ),
+                    });
+                }
                 if let Some(manifest) = &manifests[source]
                     && !port_matches(&manifest.output_ports, &connection.source_handle)
                 {
@@ -255,11 +264,30 @@ impl<'a> WorkflowCompiler<'a> {
                     issues.push(CompileIssue {
                         code: "BOUNDARY_PORT_KIND_MISMATCH".into(),
                         path: format!("connections[{definition_index}]"),
-                        message: "End.main accepts Main output and End.error accepts Error output"
+                        message: "Exit.main accepts Main output and Exit.error accepts Error output"
                             .into(),
                     });
                 }
-                raw_terminal_connections.push((connection, source));
+                raw_terminal_connections.push((connection, source, exit_id.to_owned()));
+                continue;
+            }
+            if connection.source_node_id == WORKFLOW_START_NODE_ID {
+                let Some(&target) = indexes.get(connection.target_node_id.as_str()) else {
+                    continue;
+                };
+                if let Some(manifest) = &manifests[target]
+                    && !port_matches(&manifest.input_ports, &connection.target_handle)
+                {
+                    issues.push(CompileIssue {
+                        code: "UNKNOWN_TARGET_PORT".into(),
+                        path: format!("connections[{definition_index}].targetHandle"),
+                        message: format!(
+                            "Port '{}' is not declared by {}",
+                            connection.target_handle, manifest.node_type
+                        ),
+                    });
+                }
+                raw_start_connections.push((connection, target));
                 continue;
             }
             let (Some(&source), Some(&target)) = (
@@ -313,6 +341,7 @@ impl<'a> WorkflowCompiler<'a> {
         }
 
         let graph = adjacency(enabled.len(), &raw_connections);
+        let empty_error_sources: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
         for (target, (definition_index, node)) in enabled.iter().enumerate() {
             if let Some(manifest) = manifests[target].as_ref() {
                 validate_parameter_expression_contracts(
@@ -341,6 +370,7 @@ impl<'a> WorkflowCompiler<'a> {
                 &enabled,
                 &manifests,
                 &graph,
+                &empty_error_sources,
                 &mut issues,
             );
             let projection_value = serde_json::to_value(&node.output_projection)
@@ -354,6 +384,7 @@ impl<'a> WorkflowCompiler<'a> {
                 &enabled,
                 &manifests,
                 &graph,
+                &empty_error_sources,
                 &mut issues,
             );
             for (write_index, write) in node.context_writes.iter().enumerate() {
@@ -368,71 +399,119 @@ impl<'a> WorkflowCompiler<'a> {
                     &enabled,
                     &manifests,
                     &graph,
+                    &empty_error_sources,
                     &mut issues,
                 );
             }
         }
-        for (name, output) in &definition.end.outputs {
-            let value = serde_json::to_value(&output.value).expect("dynamic end value serializes");
-            validate_expressions(
-                &self.expressions,
-                &value,
-                &format!("end.outputs.{name}.value"),
-                &mut issues,
-            );
-            validate_reference_paths(
-                &value,
-                &format!("end.outputs.{name}.value"),
-                None,
-                ReferenceUsage::EndOutput {
-                    required: output.required,
-                },
-                definition,
-                &enabled,
-                &manifests,
-                &graph,
-                &mut issues,
-            );
-            validate_end_output_contract(
-                &format!("end.outputs.{name}.value"),
-                output,
-                definition,
-                &enabled,
-                &manifests,
-                &mut issues,
-            );
+        // Extended graph: enabled nodes plus one virtual node per exit so
+        // exit mapping references can be validated against their own
+        // predecessor set.
+        let exit_indexes: BTreeMap<&str, usize> = exits
+            .keys()
+            .enumerate()
+            .map(|(offset, id)| (*id, enabled.len() + offset))
+            .collect();
+        let mut reference_graph = graph.clone();
+        reference_graph.resize(enabled.len() + exits.len(), Vec::new());
+        for (_, source, exit_id) in &raw_terminal_connections {
+            if let Some(&exit_index) = exit_indexes.get(exit_id.as_str()) {
+                reference_graph[*source].push(exit_index);
+            }
         }
-
-        for (name, output) in &definition.end.error.outputs {
-            let value =
-                serde_json::to_value(&output.value).expect("dynamic end error value serializes");
-            validate_expressions(
-                &self.expressions,
-                &value,
-                &format!("end.error.outputs.{name}.value"),
-                &mut issues,
-            );
-            validate_reference_paths(
-                &value,
-                &format!("end.error.outputs.{name}.value"),
-                None,
-                ReferenceUsage::EndErrorOutput {
-                    required: output.required,
-                },
-                definition,
-                &enabled,
-                &manifests,
-                &graph,
-                &mut issues,
-            );
-            validate_end_output_contract(
-                &format!("end.error.outputs.{name}.value"),
-                output,
-                definition,
-                &enabled,
-                &manifests,
-                &mut issues,
-            );
+        let exit_error_sources: BTreeMap<usize, Vec<usize>> = exit_indexes
+            .iter()
+            .map(|(exit_id, exit_index)| {
+                let sources = definition
+                    .connections
+                    .iter()
+                    .filter(|connection| {
+                        connection.target_handle == "error"
+                            && connection.target_node_id.as_str() == *exit_id
+                    })
+                    .filter_map(|connection| {
+                        enabled
+                            .iter()
+                            .position(|(_, node)| node.id == connection.source_node_id)
+                    })
+                    .collect::<Vec<_>>();
+                (*exit_index, sources)
+            })
+            .collect();
+        for (exit_id, (definition_index, node)) in &exits {
+            let Some(&exit_index) = exit_indexes.get(*exit_id) else {
+                continue;
+            };
+            let parameters = ExitParameters::parse(&node.parameters).unwrap_or_default();
+            for (name, dynamic) in &parameters.outputs {
+                let value =
+                    serde_json::to_value(dynamic).expect("dynamic exit value serializes");
+                let path = format!("nodes[{definition_index}].parameters.outputs.{name}");
+                validate_expressions(&self.expressions, &value, &path, &mut issues);
+                let required = definition
+                    .end
+                    .outputs
+                    .get(name)
+                    .is_some_and(|output| output.required);
+                validate_reference_paths(
+                    &value,
+                    &path,
+                    Some(exit_index),
+                    ReferenceUsage::EndOutput { required },
+                    definition,
+                    &enabled,
+                    &manifests,
+                    &reference_graph,
+                    &exit_error_sources,
+                    &mut issues,
+                );
+                if let Some(contract) = definition.end.outputs.get(name) {
+                    validate_exit_mapping_contract(
+                        &path,
+                        dynamic,
+                        contract,
+                        definition,
+                        &enabled,
+                        &manifests,
+                        &mut issues,
+                    );
+                }
+            }
+            for (name, dynamic) in &parameters.error_outputs {
+                let value =
+                    serde_json::to_value(dynamic).expect("dynamic exit value serializes");
+                let path = format!("nodes[{definition_index}].parameters.errorOutputs.{name}");
+                validate_expressions(&self.expressions, &value, &path, &mut issues);
+                let required = definition
+                    .end
+                    .error
+                    .outputs
+                    .get(name)
+                    .is_some_and(|output| output.required);
+                validate_reference_paths(
+                    &value,
+                    &path,
+                    Some(exit_index),
+                    ReferenceUsage::EndErrorOutput { required },
+                    definition,
+                    &enabled,
+                    &manifests,
+                    &reference_graph,
+                    &exit_error_sources,
+                    &mut issues,
+                );
+                if let Some(contract) = definition.end.error.outputs.get(name) {
+                    validate_exit_mapping_contract(
+                        &path,
+                        dynamic,
+                        contract,
+                        definition,
+                        &enabled,
+                        &manifests,
+                        &mut issues,
+                    );
+                }
+            }
         }
 
         let start_nodes = raw_start_connections
@@ -441,8 +520,8 @@ impl<'a> WorkflowCompiler<'a> {
             .collect::<BTreeSet<_>>();
         let end_main_nodes = raw_terminal_connections
             .iter()
-            .filter(|(connection, _)| connection.target_handle == "main")
-            .map(|(_, source)| *source)
+            .filter(|(connection, _, _)| connection.target_handle == "main")
+            .map(|(_, source, _)| *source)
             .collect::<BTreeSet<_>>();
         validate_reachability(
             &enabled,
@@ -450,7 +529,7 @@ impl<'a> WorkflowCompiler<'a> {
             &manifests,
             &start_nodes,
             &end_main_nodes,
-            start_to_end,
+            start_to_exit.as_deref(),
             &mut issues,
         );
         if !issues.is_empty() {
@@ -567,14 +646,52 @@ impl<'a> WorkflowCompiler<'a> {
         let start_nodes = start_nodes.into_iter().collect::<Vec<_>>();
         let terminal_connections = raw_terminal_connections
             .into_iter()
-            .map(|(connection, source_node)| CompiledTerminalConnection {
+            .map(|(connection, source_node, target_exit)| CompiledTerminalConnection {
                 id: connection.id.clone(),
                 source_node,
                 source_port: connection.source_handle.clone(),
                 target_port: connection.target_handle.clone(),
+                target_exit,
                 branch_order: connection.order,
             })
             .collect::<Vec<_>>();
+        let exits = exits
+            .iter()
+            .map(|(exit_id, (_, node))| {
+                let mut parameters = ExitParameters::parse(&node.parameters).unwrap_or_default();
+                for (name, dynamic) in parameters.outputs.iter_mut() {
+                    if definition
+                        .end
+                        .outputs
+                        .get(name)
+                        .is_some_and(|output| output.schema.get("type").and_then(Value::as_str) == Some("string"))
+                        && let DynamicValue::Reference { coerce, .. } = dynamic
+                    {
+                        *coerce = Some(ValueCoercion::String);
+                    }
+                }
+                for (name, dynamic) in parameters.error_outputs.iter_mut() {
+                    if definition
+                        .end
+                        .error
+                        .outputs
+                        .get(name)
+                        .is_some_and(|output| output.schema.get("type").and_then(Value::as_str) == Some("string"))
+                        && let DynamicValue::Reference { coerce, .. } = dynamic
+                    {
+                        *coerce = Some(ValueCoercion::String);
+                    }
+                }
+                (
+                    (*exit_id).to_owned(),
+                    CompiledExit {
+                        outputs: parameters.outputs,
+                        error_outputs: parameters.error_outputs,
+                        protected: node.protected,
+                    },
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
         let definition_hash = canonical_content_hash(
             &serde_json::to_value(definition).expect("definition serializes"),
         )
@@ -585,8 +702,9 @@ impl<'a> WorkflowCompiler<'a> {
             "nodes": &nodes,
             "connections": &connections,
             "terminalConnections": &terminal_connections,
+            "exits": &exits,
             "startNodes": &start_nodes,
-            "startToEnd": start_to_end,
+            "startToExit": &start_to_exit,
             "components": &components,
         });
         let bytes = serde_json::to_vec(&hash_source).expect("compiled workflow serializes");
@@ -601,11 +719,12 @@ impl<'a> WorkflowCompiler<'a> {
             activation_budget: definition.settings.activation_budget,
             start: definition.start.clone(),
             contexts: definition.start.contexts.clone(),
-            end: normalized_workflow_end(definition),
+            end: definition.end.clone(),
+            exits,
             nodes,
             connections,
             terminal_connections,
-            start_to_end,
+            start_to_exit,
             start_nodes,
             strongly_connected_components: components,
             subworkflow_version_ids: subworkflows.into_iter().collect(),
@@ -988,6 +1107,7 @@ fn validate_reference_paths(
     nodes: &[(usize, &WorkflowNode)],
     manifests: &[Option<NodeManifestVersion>],
     graph: &[Vec<usize>],
+    exit_error_sources: &BTreeMap<usize, Vec<usize>>,
     issues: &mut Vec<CompileIssue>,
 ) {
     if value.is_object()
@@ -998,7 +1118,16 @@ fn validate_reference_paths(
         for selector in selectors {
             if let Some(reference) = structured_selector_reference(selector, nodes) {
                 validate_reference_path(
-                    &reference, path, target, usage, definition, nodes, manifests, graph, issues,
+                    &reference,
+                    path,
+                    target,
+                    usage,
+                    definition,
+                    nodes,
+                    manifests,
+                    graph,
+                    exit_error_sources,
+                    issues,
                 );
             } else {
                 issues.push(CompileIssue {
@@ -1023,6 +1152,7 @@ fn validate_reference_paths(
                     nodes,
                     manifests,
                     graph,
+                    exit_error_sources,
                     issues,
                 );
             }
@@ -1038,6 +1168,7 @@ fn validate_reference_paths(
                     nodes,
                     manifests,
                     graph,
+                    exit_error_sources,
                     issues,
                 );
             }
@@ -1182,6 +1313,7 @@ fn validate_reference_path(
     nodes: &[(usize, &WorkflowNode)],
     manifests: &[Option<NodeManifestVersion>],
     graph: &[Vec<usize>],
+    exit_error_sources: &BTreeMap<usize, Vec<usize>>,
     issues: &mut Vec<CompileIssue>,
 ) {
     let Some(root) = reference.first().map(String::as_str) else {
@@ -1213,9 +1345,11 @@ fn validate_reference_path(
                 return;
             };
             if let Some(target) = target
-                && manifests[target]
-                    .as_ref()
-                    .is_some_and(|manifest| !manifest.context_read_capability)
+                && manifests.get(target).is_some_and(|manifest| {
+                    manifest
+                        .as_ref()
+                        .is_some_and(|manifest| !manifest.context_read_capability)
+                })
             {
                 reference_issue(issues, "CONTEXT_READ_NOT_SUPPORTED", path, reference);
             }
@@ -1253,7 +1387,12 @@ fn validate_reference_path(
                 return;
             }
             if matches!(usage, ReferenceUsage::EndErrorOutput { .. })
-                && !is_common_error_predecessor(source, definition, nodes, graph)
+                && let Some(exit_index) = target
+                && let Some(error_sources) = exit_error_sources.get(&exit_index)
+                && !error_sources.is_empty()
+                && !error_sources.iter().all(|&error_source| {
+                    source == error_source || is_reachable(source, error_source, graph)
+                })
             {
                 reference_issue(
                     issues,
@@ -1464,30 +1603,6 @@ fn usage_exposes_value(usage: ReferenceUsage) -> bool {
     )
 }
 
-fn is_common_error_predecessor(
-    source: usize,
-    definition: &WorkflowDefinition,
-    nodes: &[(usize, &WorkflowNode)],
-    graph: &[Vec<usize>],
-) -> bool {
-    let error_sources = definition
-        .connections
-        .iter()
-        .filter(|connection| {
-            connection.target_node_id == WORKFLOW_END_NODE_ID && connection.target_handle == "error"
-        })
-        .filter_map(|connection| {
-            nodes
-                .iter()
-                .position(|(_, node)| node.id == connection.source_node_id)
-        })
-        .collect::<Vec<_>>();
-    error_sources.is_empty()
-        || error_sources
-            .into_iter()
-            .all(|error_source| source == error_source || is_reachable(source, error_source, graph))
-}
-
 fn json_schema_has_path(schema: &Value, path: &[String]) -> bool {
     json_schema_at_path(schema, path).is_some()
 }
@@ -1652,21 +1767,22 @@ fn reference_json_type(
     }
 }
 
-fn validate_end_output_contract(
+fn validate_exit_mapping_contract(
     path: &str,
-    output: &WorkflowOutput,
+    dynamic: &DynamicValue,
+    contract: &WorkflowOutput,
     definition: &WorkflowDefinition,
     nodes: &[(usize, &WorkflowNode)],
     manifests: &[Option<NodeManifestVersion>],
     issues: &mut Vec<CompileIssue>,
 ) {
-    let DynamicValue::Reference { selector, .. } = &output.value else {
+    let DynamicValue::Reference { selector, .. } = dynamic else {
         return;
     };
     let Some(reference) = structured_selector_reference(selector, nodes) else {
         return;
     };
-    let Some(expected) = output.schema.get("type").and_then(Value::as_str) else {
+    let Some(expected) = contract.schema.get("type").and_then(Value::as_str) else {
         return;
     };
     let actual = reference_json_type(&reference, definition, nodes, manifests);
@@ -1675,7 +1791,7 @@ fn validate_end_output_contract(
             code: "END_OUTPUT_TYPE_UNKNOWN".into(),
             path: path.into(),
             message: format!(
-                "End output at {path} declares {expected}, but the referenced value has no concrete type"
+                "Exit mapping at {path} declares {expected}, but the referenced value has no concrete type"
             ),
         });
     } else if expected != "string"
@@ -1687,7 +1803,7 @@ fn validate_end_output_contract(
             code: "END_OUTPUT_TYPE_MISMATCH".into(),
             path: path.into(),
             message: format!(
-                "End output at {path} declares {expected}, but the referenced value is {}",
+                "Exit mapping at {path} declares {expected}, but the referenced value is {}",
                 actual.as_deref().unwrap_or("unknown")
             ),
         });
@@ -1792,22 +1908,22 @@ fn validate_reachability(
     manifests: &[Option<NodeManifestVersion>],
     start_nodes: &BTreeSet<usize>,
     end_main_nodes: &BTreeSet<usize>,
-    start_to_end: bool,
+    start_to_exit: Option<&str>,
     issues: &mut Vec<CompileIssue>,
 ) {
     let adjacency = adjacency(nodes.len(), connections);
-    if start_nodes.is_empty() && !start_to_end {
+    if start_nodes.is_empty() && start_to_exit.is_none() {
         issues.push(CompileIssue {
             code: "START_REQUIRED".into(),
             path: "connections".into(),
             message: "Start.main must have an explicit connection".into(),
         });
     }
-    if end_main_nodes.is_empty() && !start_to_end {
+    if end_main_nodes.is_empty() && start_to_exit.is_none() {
         issues.push(CompileIssue {
             code: "END_MAIN_REQUIRED".into(),
             path: "connections".into(),
-            message: "End.main must have at least one explicit connection".into(),
+            message: "At least one exit node must receive a main connection".into(),
         });
     }
     let mut reachable = BTreeSet::new();
@@ -1857,7 +1973,7 @@ fn validate_reachability(
             issues.push(CompileIssue {
                 code: "MAIN_PATH_DOES_NOT_REACH_END".into(),
                 path: format!("nodes[{definition_index}]"),
-                message: format!("Enabled node '{}' cannot reach End.main", node.id),
+                message: format!("Enabled node '{}' cannot reach an exit node", node.id),
             });
         }
     }

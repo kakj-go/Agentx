@@ -1,6 +1,7 @@
 use super::*;
 use agentx_domain::ValueCoercion;
 use agentx_node_protocol::OutputCardinality;
+use serde_json::json;
 
 fn reference(
     namespace: ValueNamespace,
@@ -36,16 +37,31 @@ fn reference_json(
     serde_json::to_value(reference(namespace, source_node_id, port, item, path)).unwrap()
 }
 
+fn exit_node(parameters: serde_json::Value) -> serde_json::Value {
+    serde_json::json!({
+        "id":"exit","key":"exit","type":"exit","typeVersion":1,"name":"End",
+        "protected":true,"parameters":parameters
+    })
+}
+
+fn exit_parameters(
+    outputs: serde_json::Value,
+    error_outputs: serde_json::Value,
+) -> serde_json::Value {
+    serde_json::json!({"outputs":outputs,"errorOutputs":error_outputs})
+}
+
 fn fixture() -> WorkflowDefinition {
     serde_json::from_value(serde_json::json!({
-            "schemaVersion":"6.0",
+            "schemaVersion":"7.0",
             "start":{"inputs":{"type":"object","properties":{},"additionalProperties":false},"contexts":{}},
             "settings":{"activationBudget":20,"executionOrder":"deterministic"},
             "nodes":[
                 {"id":"root","key":"root","type":"no_op","typeVersion":1,"name":"Root","outputProjection":{},"contextWrites":[]},
                 {"id":"if","key":"condition","type":"if","typeVersion":1,"name":"IF","parameters":{"condition":reference_json(ValueNamespace::Item,None,None,ValueSelection::Current,&["ok"])},"outputProjection":{},"contextWrites":[]},
                 {"id":"merge","key":"merge","type":"merge","typeVersion":1,"name":"Merge","outputProjection":{},"contextWrites":[]},
-                {"id":"loop","key":"loop","type":"loop_over_items","typeVersion":1,"name":"Loop","outputProjection":{},"contextWrites":[]}
+                {"id":"loop","key":"loop","type":"loop_over_items","typeVersion":1,"name":"Loop","outputProjection":{},"contextWrites":[]},
+                exit_node(exit_parameters(json!({}), json!({})))
             ],
             "connections":[
                 {"id":"__start__-root","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"root","targetHandle":"main","order":0},
@@ -54,7 +70,7 @@ fn fixture() -> WorkflowDefinition {
                 {"id":"c","sourceNodeId":"if","sourceHandle":"false","targetNodeId":"merge","targetHandle":"main:1","order":1},
                 {"id":"d","sourceNodeId":"merge","sourceHandle":"main","targetNodeId":"loop","targetHandle":"main","order":0},
                 {"id":"e","sourceNodeId":"loop","sourceHandle":"loop","targetNodeId":"merge","targetHandle":"main:2","order":0},
-                {"id":"loop-end","sourceNodeId":"loop","sourceHandle":"done","targetNodeId":"__end__","targetHandle":"main","order":0}
+                {"id":"loop-end","sourceNodeId":"loop","sourceHandle":"done","targetNodeId":"exit","targetHandle":"main","order":0}
             ],
             "end":{"outputs":{}}
         })).unwrap()
@@ -86,20 +102,20 @@ fn agent_fixture(with_sandbox: bool, with_mcp_attachment: bool) -> WorkflowDefin
         }));
     }
     serde_json::from_value(serde_json::json!({
-        "schemaVersion":"6.0",
+        "schemaVersion":"7.0",
         "start":{"inputs":{"type":"object","properties":{}},"contexts":{}},
         "nodes":[{
             "id":"agent","key":"agent","type":"agent","typeVersion":2,"name":"Agent",
             "parameters":{"sessionPolicy":{"mode":"invocation"}},
             "resourceReferences":references,"outputProjection":{},"contextWrites":[]
-        }],
+        },exit_node(exit_parameters(json!({}), json!({})))],
         "connections":[
             {"id":"start-agent","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"agent","targetHandle":"main","order":0},
-            {"id":"agent-end","sourceNodeId":"agent","sourceHandle":"main","targetNodeId":"__end__","targetHandle":"main","order":0}
+            {"id":"agent-end","sourceNodeId":"agent","sourceHandle":"main","targetNodeId":"exit","targetHandle":"main","order":0}
         ],
         "end":{"outputs":{}}
     }))
-    .expect("Agent Definition 6.0 fixture")
+    .expect("Agent Definition 7.0 fixture")
 }
 
 #[test]
@@ -190,7 +206,7 @@ fn rejects_unknown_ports_and_recursive_subworkflows() {
         .find(|connection| connection.id == "a")
         .expect("fixture edge")
         .source_handle = "missing".into();
-    definition.nodes.push(serde_json::from_value(serde_json::json!({
+    definition.nodes.insert(4, serde_json::from_value(serde_json::json!({
             "id":"sub","key":"sub","type":"sub_workflow","typeVersion":1,"name":"Sub","parameters":{"workflowVersionId":"version-a"},"outputProjection":{},"contextWrites":[]
         })).unwrap());
     definition.connections.push(serde_json::from_value(serde_json::json!({
@@ -242,16 +258,16 @@ fn rejects_undeclared_parameters_and_accepts_empty_loop_configuration() {
 fn validates_nested_parameter_expressions_against_the_leaf_schema() {
     let mut registry = NodeRegistry::m5_defaults();
     let mut definition: WorkflowDefinition = serde_json::from_value(serde_json::json!({
-        "schemaVersion":"6.0",
+        "schemaVersion":"7.0",
         "start":{"inputs":{"type":"object","required":["question"],"properties":{"question":{"type":"string"}},"additionalProperties":false},"contexts":{}},
         "nodes":[{
             "id":"model","key":"model","type":"model","typeVersion":1,"name":"Model",
             "parameters":{"prompt":"Answer the question","userQuestion":reference_json(ValueNamespace::Inputs,None,None,ValueSelection::Current,&["question"])},
             "outputProjection":{},"contextWrites":[]
-        }],
+        },exit_node(exit_parameters(json!({}), json!({})))],
         "connections":[
             {"id":"start-model","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"model","targetHandle":"main","order":0},
-            {"id":"model-end","sourceNodeId":"model","sourceHandle":"main","targetNodeId":"__end__","targetHandle":"main","order":0}
+            {"id":"model-end","sourceNodeId":"model","sourceHandle":"main","targetNodeId":"exit","targetHandle":"main","order":0}
         ],
         "end":{"outputs":{}}
     }))
@@ -281,7 +297,7 @@ fn validates_nested_parameter_expressions_against_the_leaf_schema() {
 #[test]
 fn standalone_model_reference_does_not_use_agent_binding_slots() {
     let definition: WorkflowDefinition = serde_json::from_value(serde_json::json!({
-        "schemaVersion":"6.0",
+        "schemaVersion":"7.0",
         "start":{"inputs":{"type":"object","properties":{}},"contexts":{}},
         "nodes":[{
             "id":"model","key":"model","type":"model","typeVersion":1,"name":"Model",
@@ -293,14 +309,14 @@ fn standalone_model_reference_does_not_use_agent_binding_slots() {
                 "operation":"use"
             }],
             "outputProjection":{},"contextWrites":[]
-        }],
+        },exit_node(exit_parameters(json!({}), json!({})))],
         "connections":[
             {"id":"start-model","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"model","targetHandle":"main","order":0},
-            {"id":"model-end","sourceNodeId":"model","sourceHandle":"main","targetNodeId":"__end__","targetHandle":"main","order":0}
+            {"id":"model-end","sourceNodeId":"model","sourceHandle":"main","targetNodeId":"exit","targetHandle":"main","order":0}
         ],
         "end":{"outputs":{}}
     }))
-    .expect("standalone Model Definition 6.0 fixture");
+    .expect("standalone Model Definition 7.0 fixture");
 
     let compiled = WorkflowCompiler::new(&NodeRegistry::m5_defaults())
         .compile(&definition, &CompileContext::default())
@@ -341,16 +357,17 @@ fn roots_are_declared_by_start_connections() {
     let registry = NodeRegistry::m5_defaults();
     let compiler = WorkflowCompiler::new(&registry);
     let definition: WorkflowDefinition = serde_json::from_value(serde_json::json!({
-            "schemaVersion":"6.0",
+            "schemaVersion":"7.0",
             "start":{"inputs":{"type":"object","properties":{},"additionalProperties":false},"contexts":{}},
             "nodes":[
                 {"id":"root","key":"root","type":"no_op","typeVersion":1,"name":"Root","outputProjection":{},"contextWrites":[]},
-                {"id":"set","key":"set","type":"set","typeVersion":1,"name":"Set","parameters":{"values":{"ok":true}},"outputProjection":{},"contextWrites":[]}
+                {"id":"set","key":"set","type":"set","typeVersion":1,"name":"Set","parameters":{"values":{"ok":true}},"outputProjection":{},"contextWrites":[]},
+                exit_node(exit_parameters(json!({}), json!({})))
             ],
             "connections":[
                 {"id":"start","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"root","targetHandle":"main","order":0},
                 {"id":"root-set","sourceNodeId":"root","sourceHandle":"main","targetNodeId":"set","targetHandle":"main","order":0},
-                {"id":"end","sourceNodeId":"set","sourceHandle":"main","targetNodeId":"__end__","targetHandle":"main","order":0}
+                {"id":"end","sourceNodeId":"set","sourceHandle":"main","targetNodeId":"exit","targetHandle":"main","order":0}
             ],
             "end":{"outputs":{}}
         }))
@@ -367,7 +384,7 @@ fn rejects_a_node_without_an_explicit_start_or_end() {
     let registry = NodeRegistry::m5_defaults();
     let compiler = WorkflowCompiler::new(&registry);
     let definition: WorkflowDefinition = serde_json::from_value(serde_json::json!({
-            "schemaVersion":"6.0",
+            "schemaVersion":"7.0",
             "start":{"inputs":{"type":"object","properties":{},"additionalProperties":false},"contexts":{}},
             "nodes":[{"id":"set","key":"set","type":"set","typeVersion":1,"name":"Set","parameters":{"values":{}},"outputProjection":{},"contextWrites":[]}],
             "connections":[],
@@ -391,19 +408,23 @@ fn error_connections_do_not_change_the_explicit_end_contract() {
     let registry = NodeRegistry::m5_defaults();
     let compiler = WorkflowCompiler::new(&registry);
     let definition: WorkflowDefinition = serde_json::from_value(serde_json::json!({
-            "schemaVersion":"6.0",
+            "schemaVersion":"7.0",
             "start":{"inputs":{"type":"object","properties":{},"additionalProperties":false},"contexts":{}},
             "nodes":[
                 {"id":"if","key":"condition","type":"if","typeVersion":1,"name":"Condition","parameters":{"condition":true},"outputProjection":{},"contextWrites":[],"settings":{"onError":"continue_error_output"}},
-                {"id":"handler","key":"handler","type":"error_handler","typeVersion":1,"name":"Error Handler","parameters":{"mode":"recover"},"outputProjection":{},"contextWrites":[]}
+                {"id":"handler","key":"handler","type":"error_handler","typeVersion":1,"name":"Error Handler","parameters":{"mode":"recover"},"outputProjection":{},"contextWrites":[]},
+                exit_node(exit_parameters(
+                    json!({"answer":reference_json(ValueNamespace::Outputs,Some("if"),Some("true"),ValueSelection::First,&[])}),
+                    json!({})
+                ))
             ],
             "connections":[
                 {"id":"start","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"if","targetHandle":"main","order":0},
-                {"id":"normal","sourceNodeId":"if","sourceHandle":"true","targetNodeId":"__end__","targetHandle":"main","order":0},
+                {"id":"normal","sourceNodeId":"if","sourceHandle":"true","targetNodeId":"exit","targetHandle":"main","order":0},
                 {"id":"error","sourceNodeId":"if","sourceHandle":"error","targetNodeId":"handler","targetHandle":"error","order":0},
-                {"id":"end","sourceNodeId":"handler","sourceHandle":"recovered","targetNodeId":"__end__","targetHandle":"main","order":0}
+                {"id":"end","sourceNodeId":"handler","sourceHandle":"recovered","targetNodeId":"exit","targetHandle":"main","order":0}
             ],
-            "end":{"outputs":{"answer":{"schema":{"type":"object"},"value":reference_json(ValueNamespace::Outputs,Some("if"),Some("true"),ValueSelection::First,&[]),"required":false}}}
+            "end":{"outputs":{"answer":{"schema":{"type":"object"},"required":false}}}
         }))
         .unwrap();
 
@@ -427,17 +448,18 @@ fn error_only_nodes_do_not_require_a_main_path_to_end() {
     let registry = NodeRegistry::m5_defaults();
     let compiler = WorkflowCompiler::new(&registry);
     let definition: WorkflowDefinition = serde_json::from_value(serde_json::json!({
-        "schemaVersion":"6.0",
+        "schemaVersion":"7.0",
         "start":{"inputs":{"type":"object","properties":{}},"contexts":{}},
         "nodes":[
             {"id":"stop","key":"stop","type":"stop_and_error","typeVersion":1,"name":"Stop","parameters":{},"outputProjection":{},"contextWrites":[]},
-            {"id":"success","key":"success","type":"no_op","typeVersion":1,"name":"Success","parameters":{},"outputProjection":{},"contextWrites":[]}
+            {"id":"success","key":"success","type":"no_op","typeVersion":1,"name":"Success","parameters":{},"outputProjection":{},"contextWrites":[]},
+            exit_node(exit_parameters(json!({}), json!({})))
         ],
         "connections":[
             {"id":"start-stop","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"stop","targetHandle":"main","order":0},
             {"id":"start-success","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"success","targetHandle":"main","order":1},
-            {"id":"success-end","sourceNodeId":"success","sourceHandle":"main","targetNodeId":"__end__","targetHandle":"main","order":0},
-            {"id":"stop-error","sourceNodeId":"stop","sourceHandle":"error","targetNodeId":"__end__","targetHandle":"error","order":0}
+            {"id":"success-end","sourceNodeId":"success","sourceHandle":"main","targetNodeId":"exit","targetHandle":"main","order":0},
+            {"id":"stop-error","sourceNodeId":"stop","sourceHandle":"error","targetNodeId":"exit","targetHandle":"error","order":0}
         ],
         "end":{"outputs":{},"error":{"strategy":"fail_fast","outputs":{}}}
     })).unwrap();
@@ -459,31 +481,33 @@ fn end_error_outputs_accept_fixed_error_item_fields() {
     let registry = NodeRegistry::m5_defaults();
     let compiler = WorkflowCompiler::new(&registry);
     let mut definition: WorkflowDefinition = serde_json::from_value(serde_json::json!({
-            "schemaVersion":"6.0",
+            "schemaVersion":"7.0",
             "start":{"inputs":{"type":"object","properties":{}},"contexts":{}},
-            "nodes":[{"id":"branch","key":"branch","type":"if","typeVersion":1,"name":"Branch","parameters":{"condition":true},"outputProjection":{},"contextWrites":[]}],
+            "nodes":[
+                {"id":"branch","key":"branch","type":"if","typeVersion":1,"name":"Branch","parameters":{"condition":true},"outputProjection":{},"contextWrites":[]},
+                exit_node(exit_parameters(
+                    json!({}),
+                    json!({"message":reference_json(ValueNamespace::Item,None,None,ValueSelection::Current,&["message"])})
+                ))
+            ],
             "connections":[
                 {"id":"start","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"branch","targetHandle":"main","order":0},
-                {"id":"main","sourceNodeId":"branch","sourceHandle":"true","targetNodeId":"__end__","targetHandle":"main","order":0},
-                {"id":"error","sourceNodeId":"branch","sourceHandle":"error","targetNodeId":"__end__","targetHandle":"error","order":0}
+                {"id":"main","sourceNodeId":"branch","sourceHandle":"true","targetNodeId":"exit","targetHandle":"main","order":0},
+                {"id":"error","sourceNodeId":"branch","sourceHandle":"error","targetNodeId":"exit","targetHandle":"error","order":0}
             ],
-            "end":{"outputs":{},"error":{"strategy":"fail_fast","outputs":{"message":{"schema":{"type":"string"},"value":reference_json(ValueNamespace::Item,None,None,ValueSelection::Current,&["message"]),"required":true}}}}
+            "end":{"outputs":{},"error":{"strategy":"fail_fast","outputs":{"message":{"schema":{"type":"string"},"required":true}}}}
         })).unwrap();
     compiler
         .compile(&definition, &CompileContext::default())
         .unwrap();
-    definition
-        .end
-        .error
-        .outputs
-        .get_mut("message")
-        .unwrap()
-        .schema = serde_json::json!({"type":"number"});
+    definition.end.error.outputs.get_mut("message").unwrap().schema =
+        serde_json::json!({"type":"number"});
     let error = compiler
         .compile(&definition, &CompileContext::default())
         .unwrap_err();
     assert!(error.issues.iter().any(|issue| {
-        issue.code == "END_OUTPUT_TYPE_MISMATCH" && issue.path == "end.error.outputs.message.value"
+        issue.code == "END_OUTPUT_TYPE_MISMATCH"
+            && issue.path == "nodes[1].parameters.errorOutputs.message"
     }));
 }
 
@@ -492,15 +516,21 @@ fn end_error_outputs_reject_unknown_error_item_fields() {
     let registry = NodeRegistry::m5_defaults();
     let compiler = WorkflowCompiler::new(&registry);
     let mut definition: WorkflowDefinition = serde_json::from_value(serde_json::json!({
-            "schemaVersion":"6.0",
+            "schemaVersion":"7.0",
             "start":{"inputs":{"type":"object","properties":{}},"contexts":{}},
-            "nodes":[{"id":"branch","key":"branch","type":"if","typeVersion":1,"name":"Branch","parameters":{"condition":true},"outputProjection":{},"contextWrites":[]}],
+            "nodes":[
+                {"id":"branch","key":"branch","type":"if","typeVersion":1,"name":"Branch","parameters":{"condition":true},"outputProjection":{},"contextWrites":[]},
+                exit_node(exit_parameters(
+                    json!({}),
+                    json!({"bad":reference_json(ValueNamespace::Item,None,None,ValueSelection::Current,&["notAField"])})
+                ))
+            ],
             "connections":[
                 {"id":"start","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"branch","targetHandle":"main","order":0},
-                {"id":"main","sourceNodeId":"branch","sourceHandle":"true","targetNodeId":"__end__","targetHandle":"main","order":0},
-                {"id":"error","sourceNodeId":"branch","sourceHandle":"error","targetNodeId":"__end__","targetHandle":"error","order":0}
+                {"id":"main","sourceNodeId":"branch","sourceHandle":"true","targetNodeId":"exit","targetHandle":"main","order":0},
+                {"id":"error","sourceNodeId":"branch","sourceHandle":"error","targetNodeId":"exit","targetHandle":"error","order":0}
             ],
-            "end":{"outputs":{},"error":{"outputs":{"bad":{"schema":{"type":"string"},"value":reference_json(ValueNamespace::Item,None,None,ValueSelection::Current,&["notAField"])}}}}
+            "end":{"outputs":{},"error":{"outputs":{"bad":{"schema":{"type":"string"}}}}}
         })).unwrap();
     let error = compiler
         .compile(&definition, &CompileContext::default())
@@ -512,7 +542,7 @@ fn end_error_outputs_reject_unknown_error_item_fields() {
             .any(|issue| issue.code == "UNKNOWN_ERROR_ITEM_REFERENCE")
     );
 
-    definition.end.error.outputs.get_mut("bad").unwrap().value = reference(
+    definition.nodes[1].parameters["errorOutputs"]["bad"] = reference_json(
         ValueNamespace::Item,
         None,
         None,
@@ -524,7 +554,7 @@ fn end_error_outputs_reject_unknown_error_item_fields() {
         .unwrap();
 
     for removed in ["sourceNodeKey", "runIndex", "iterationIndex"] {
-        definition.end.error.outputs.get_mut("bad").unwrap().value = reference(
+        definition.nodes[1].parameters["errorOutputs"]["bad"] = reference_json(
             ValueNamespace::Item,
             None,
             None,
@@ -549,13 +579,17 @@ fn end_error_output_can_use_only_common_error_predecessor_outputs() {
     let registry = NodeRegistry::m5_defaults();
     let compiler = WorkflowCompiler::new(&registry);
     let base = serde_json::json!({
-        "schemaVersion":"6.0",
+        "schemaVersion":"7.0",
         "start":{"inputs":{"type":"object","properties":{}},"contexts":{}},
         "nodes":[
             {"id":"root","key":"root","type":"no_op","typeVersion":1,"name":"Root","outputProjection":{},"contextWrites":[]},
             {"id":"a","key":"a","type":"no_op","typeVersion":1,"name":"A","outputProjection":{},"contextWrites":[]},
             {"id":"b","key":"b","type":"no_op","typeVersion":1,"name":"B","outputProjection":{},"contextWrites":[]},
-            {"id":"merge","key":"merge","type":"merge","typeVersion":1,"name":"Merge","outputProjection":{},"contextWrites":[]}
+            {"id":"merge","key":"merge","type":"merge","typeVersion":1,"name":"Merge","outputProjection":{},"contextWrites":[]},
+            exit_node(exit_parameters(
+                json!({}),
+                json!({"value":reference_json(ValueNamespace::Outputs,Some("root"),Some("main"),ValueSelection::First,&[])})
+            ))
         ],
         "connections":[
             {"id":"start-root","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"root","targetHandle":"main","order":0},
@@ -563,18 +597,18 @@ fn end_error_output_can_use_only_common_error_predecessor_outputs() {
             {"id":"root-b","sourceNodeId":"root","sourceHandle":"main","targetNodeId":"b","targetHandle":"main","order":1},
             {"id":"a-merge","sourceNodeId":"a","sourceHandle":"main","targetNodeId":"merge","targetHandle":"main:0","order":0},
             {"id":"b-merge","sourceNodeId":"b","sourceHandle":"main","targetNodeId":"merge","targetHandle":"main:1","order":1},
-            {"id":"merge-main","sourceNodeId":"merge","sourceHandle":"main","targetNodeId":"__end__","targetHandle":"main","order":0},
-            {"id":"a-error","sourceNodeId":"a","sourceHandle":"error","targetNodeId":"__end__","targetHandle":"error","order":0},
-            {"id":"b-error","sourceNodeId":"b","sourceHandle":"error","targetNodeId":"__end__","targetHandle":"error","order":1}
+            {"id":"merge-main","sourceNodeId":"merge","sourceHandle":"main","targetNodeId":"exit","targetHandle":"main","order":0},
+            {"id":"a-error","sourceNodeId":"a","sourceHandle":"error","targetNodeId":"exit","targetHandle":"error","order":0},
+            {"id":"b-error","sourceNodeId":"b","sourceHandle":"error","targetNodeId":"exit","targetHandle":"error","order":1}
         ],
-        "end":{"outputs":{},"error":{"outputs":{"value":{"schema":{"type":"object"},"value":reference_json(ValueNamespace::Outputs,Some("root"),Some("main"),ValueSelection::First,&[])}}}}
+        "end":{"outputs":{},"error":{"outputs":{"value":{"schema":{"type":"object"}}}}}
     });
-    let mut definition: WorkflowDefinition = serde_json::from_value(base.clone()).unwrap();
+    let mut definition: WorkflowDefinition = serde_json::from_value(base).unwrap();
     compiler
         .compile(&definition, &CompileContext::default())
         .unwrap();
 
-    definition.end.error.outputs.get_mut("value").unwrap().value = reference(
+    definition.nodes[4].parameters["errorOutputs"]["value"] = reference_json(
         ValueNamespace::Outputs,
         Some("a"),
         Some("main"),
@@ -597,14 +631,20 @@ fn projection_fields_are_available_to_downstream_and_sensitive_fields_stay_priva
     let registry = NodeRegistry::m5_defaults();
     let compiler = WorkflowCompiler::new(&registry);
     let mut definition: WorkflowDefinition = serde_json::from_value(serde_json::json!({
-            "schemaVersion":"6.0",
+            "schemaVersion":"7.0",
             "start":{"inputs":{"type":"object","properties":{}},"contexts":{}},
-            "nodes":[{"id":"http","key":"http","type":"declarative_http","typeVersion":1,"name":"HTTP","parameters":{"url":"https://example.invalid"},"outputProjection":{"main":{"customer_name":{"value":reference_json(ValueNamespace::Item,None,None,ValueSelection::Current,&["body"]),"schema":{"type":"string"},"sensitive":false}}},"contextWrites":[]}],
+            "nodes":[
+                {"id":"http","key":"http","type":"declarative_http","typeVersion":1,"name":"HTTP","parameters":{"url":"https://example.invalid"},"outputProjection":{"main":{"customer_name":{"value":reference_json(ValueNamespace::Item,None,None,ValueSelection::Current,&["body"]),"schema":{"type":"string"},"sensitive":false}}},"contextWrites":[]},
+                exit_node(exit_parameters(
+                    json!({"name":reference_json(ValueNamespace::Outputs,Some("http"),Some("main"),ValueSelection::First,&["customer_name"])}),
+                    json!({})
+                ))
+            ],
             "connections":[
                 {"id":"start","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"http","targetHandle":"main","order":0},
-                {"id":"end","sourceNodeId":"http","sourceHandle":"main","targetNodeId":"__end__","targetHandle":"main","order":0}
+                {"id":"end","sourceNodeId":"http","sourceHandle":"main","targetNodeId":"exit","targetHandle":"main","order":0}
             ],
-            "end":{"outputs":{"name":{"schema":{"type":"string"},"value":reference_json(ValueNamespace::Outputs,Some("http"),Some("main"),ValueSelection::First,&["customer_name"]),"required":true}}}
+            "end":{"outputs":{"name":{"schema":{"type":"string"},"required":true}}}
         })).unwrap();
     compiler
         .compile(&definition, &CompileContext::default())
@@ -633,12 +673,15 @@ fn context_writes_can_read_current_projection_and_validate_operation_type() {
     let registry = NodeRegistry::m5_defaults();
     let compiler = WorkflowCompiler::new(&registry);
     let mut definition: WorkflowDefinition = serde_json::from_value(serde_json::json!({
-            "schemaVersion":"6.0",
+            "schemaVersion":"7.0",
             "start":{"inputs":{"type":"object","properties":{}},"contexts":{"answer":{"schema":{"type":"string"},"default":"","mutable":true,"scope":"execution_tree"}}},
-            "nodes":[{"id":"http","key":"http","type":"declarative_http","typeVersion":1,"name":"HTTP","parameters":{"url":"https://example.invalid"},"outputProjection":{"main":{"answer_text":{"value":reference_json(ValueNamespace::Item,None,None,ValueSelection::Current,&["body"]),"schema":{"type":"string"}}}},"contextWrites":[{"operation":"set","path":"answer","value":reference_json(ValueNamespace::Outputs,Some("http"),Some("main"),ValueSelection::Current,&["answer_text"])}]}],
+            "nodes":[
+                {"id":"http","key":"http","type":"declarative_http","typeVersion":1,"name":"HTTP","parameters":{"url":"https://example.invalid"},"outputProjection":{"main":{"answer_text":{"value":reference_json(ValueNamespace::Item,None,None,ValueSelection::Current,&["body"]),"schema":{"type":"string"}}}},"contextWrites":[{"operation":"set","path":"answer","value":reference_json(ValueNamespace::Outputs,Some("http"),Some("main"),ValueSelection::Current,&["answer_text"])}]},
+                exit_node(exit_parameters(json!({}), json!({})))
+            ],
             "connections":[
                 {"id":"start","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"http","targetHandle":"main","order":0},
-                {"id":"end","sourceNodeId":"http","sourceHandle":"main","targetNodeId":"__end__","targetHandle":"main","order":0}
+                {"id":"end","sourceNodeId":"http","sourceHandle":"main","targetNodeId":"exit","targetHandle":"main","order":0}
             ],
             "end":{"outputs":{}}
         })).unwrap();
@@ -663,9 +706,14 @@ fn rejects_end_outputs_that_reference_unknown_nodes() {
     let registry = NodeRegistry::m5_defaults();
     let compiler = WorkflowCompiler::new(&registry);
     let mut definition = fixture();
+    definition.nodes[4].parameters = exit_parameters(
+        json!({"answer":reference_json(ValueNamespace::Outputs,Some("missing"),Some("main"),ValueSelection::First,&["answer"])}),
+        json!({}),
+    );
     definition.end = serde_json::from_value(serde_json::json!({
-            "outputs":{"answer":{"schema":{"type":"string"},"value":reference_json(ValueNamespace::Outputs,Some("missing"),Some("main"),ValueSelection::First,&["answer"]),"required":true}}
-        })).unwrap();
+            "outputs":{"answer":{"schema":{"type":"string"},"required":true}}
+        }))
+        .unwrap();
     let error = compiler
         .compile(&definition, &CompileContext::default())
         .unwrap_err();
@@ -682,14 +730,20 @@ fn validates_run_item_and_output_schema_paths() {
     let registry = NodeRegistry::m5_defaults();
     let compiler = WorkflowCompiler::new(&registry);
     let definition: WorkflowDefinition = serde_json::from_value(serde_json::json!({
-            "schemaVersion":"6.0",
+            "schemaVersion":"7.0",
             "start":{"inputs":{"type":"object","properties":{}},"contexts":{}},
-            "nodes":[{"id":"http","key":"http","type":"declarative_http","typeVersion":1,"name":"HTTP","parameters":{"url":"https://example.invalid"},"outputProjection":{},"contextWrites":[]}],
+            "nodes":[
+                {"id":"http","key":"http","type":"declarative_http","typeVersion":1,"name":"HTTP","parameters":{"url":"https://example.invalid"},"outputProjection":{},"contextWrites":[]},
+                exit_node(exit_parameters(
+                    json!({"answer":{"kind":"reference","selector":{"namespace":"outputs","sourceNodeId":"http","port":"main","run":{"kind":"index","index":0},"item":{"kind":"index","index":0},"path":["missing"]},"missingPolicy":{"kind":"error"}}}),
+                    json!({})
+                ))
+            ],
             "connections":[
                 {"id":"start","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"http","targetHandle":"main","order":0},
-                {"id":"end","sourceNodeId":"http","sourceHandle":"main","targetNodeId":"__end__","targetHandle":"main","order":0}
+                {"id":"end","sourceNodeId":"http","sourceHandle":"main","targetNodeId":"exit","targetHandle":"main","order":0}
             ],
-            "end":{"outputs":{"answer":{"schema":{"type":"string"},"value":{"kind":"reference","selector":{"namespace":"outputs","sourceNodeId":"http","port":"main","run":{"kind":"index","index":0},"item":{"kind":"index","index":0},"path":["missing"]},"missingPolicy":{"kind":"error"}},"required":false}}}
+            "end":{"outputs":{"answer":{"schema":{"type":"string"},"required":false}}}
         }))
         .unwrap();
     let error = compiler
@@ -706,14 +760,20 @@ fn validates_run_item_and_output_schema_paths() {
 #[test]
 fn removed_ai_output_fields_require_reselecting_text() {
     let definition: WorkflowDefinition = serde_json::from_value(serde_json::json!({
-        "schemaVersion":"6.0",
+        "schemaVersion":"7.0",
         "start":{"inputs":{"type":"object","properties":{},"additionalProperties":false},"contexts":{}},
-        "nodes":[{"id":"model","key":"model","type":"model","typeVersion":1,"name":"Model","parameters":{"prompt":"system","userQuestion":"question"},"outputProjection":{},"contextWrites":[]}],
+        "nodes":[
+            {"id":"model","key":"model","type":"model","typeVersion":1,"name":"Model","parameters":{"prompt":"system","userQuestion":"question"},"outputProjection":{},"contextWrites":[]},
+            exit_node(exit_parameters(
+                json!({"answer":reference_json(ValueNamespace::Outputs,Some("model"),Some("main"),ValueSelection::First,&["message"])}),
+                json!({})
+            ))
+        ],
         "connections":[
             {"id":"start","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"model","targetHandle":"main","order":0},
-            {"id":"end","sourceNodeId":"model","sourceHandle":"main","targetNodeId":"__end__","targetHandle":"main","order":0}
+            {"id":"end","sourceNodeId":"model","sourceHandle":"main","targetNodeId":"exit","targetHandle":"main","order":0}
         ],
-        "end":{"outputs":{"answer":{"schema":{"type":"string"},"value":reference_json(ValueNamespace::Outputs,Some("model"),Some("main"),ValueSelection::First,&["message"]),"required":true}}}
+        "end":{"outputs":{"answer":{"schema":{"type":"string"},"required":true}}}
     }))
     .unwrap();
     let error = WorkflowCompiler::new(&NodeRegistry::m5_defaults())
@@ -733,17 +793,23 @@ fn end_string_output_freezes_reference_coercion_in_ir() {
     let registry = NodeRegistry::m5_defaults();
     let compiler = WorkflowCompiler::new(&registry);
     let definition: WorkflowDefinition = serde_json::from_value(serde_json::json!({
-        "schemaVersion":"6.0",
+        "schemaVersion":"7.0",
         "start":{"inputs":{"type":"object","properties":{}},"contexts":{}},
-        "nodes":[{"id":"http","key":"http","type":"declarative_http","typeVersion":1,"name":"HTTP","parameters":{"url":"https://example.invalid"},"outputProjection":{},"contextWrites":[]}],
-        "connections":[{"id":"start","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"http","targetHandle":"main","order":0},{"id":"end","sourceNodeId":"http","sourceHandle":"main","targetNodeId":"__end__","targetHandle":"main","order":0}],
-        "end":{"outputs":{"answer":{"schema":{"type":"string"},"value":{"kind":"reference","selector":{"namespace":"outputs","sourceNodeId":"http","port":"main","run":{"kind":"current"},"item":{"kind":"first"},"path":["body"]},"missingPolicy":{"kind":"error"}},"required":true}}}
+        "nodes":[
+            {"id":"http","key":"http","type":"declarative_http","typeVersion":1,"name":"HTTP","parameters":{"url":"https://example.invalid"},"outputProjection":{},"contextWrites":[]},
+            exit_node(exit_parameters(
+                json!({"answer":{"kind":"reference","selector":{"namespace":"outputs","sourceNodeId":"http","port":"main","run":{"kind":"current"},"item":{"kind":"first"},"path":["body"]},"missingPolicy":{"kind":"error"}}}),
+                json!({})
+            ))
+        ],
+        "connections":[{"id":"start","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"http","targetHandle":"main","order":0},{"id":"end","sourceNodeId":"http","sourceHandle":"main","targetNodeId":"exit","targetHandle":"main","order":0}],
+        "end":{"outputs":{"answer":{"schema":{"type":"string"},"required":true}}}
     })).unwrap();
     let compiled = compiler
         .compile(&definition, &CompileContext::default())
         .unwrap();
     assert!(matches!(
-        compiled.end.outputs["answer"].value,
+        compiled.exits["exit"].outputs["answer"],
         DynamicValue::Reference {
             coerce: Some(ValueCoercion::String),
             ..
@@ -756,11 +822,17 @@ fn unknown_reference_type_is_rejected_for_non_string_end_output() {
     let registry = NodeRegistry::m5_defaults();
     let compiler = WorkflowCompiler::new(&registry);
     let definition: WorkflowDefinition = serde_json::from_value(serde_json::json!({
-        "schemaVersion":"6.0",
+        "schemaVersion":"7.0",
         "start":{"inputs":{"type":"object","properties":{}},"contexts":{}},
-        "nodes":[{"id":"http","key":"http","type":"declarative_http","typeVersion":1,"name":"HTTP","parameters":{"url":"https://example.invalid"},"outputProjection":{},"contextWrites":[]}],
-        "connections":[{"id":"start","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"http","targetHandle":"main","order":0},{"id":"end","sourceNodeId":"http","sourceHandle":"main","targetNodeId":"__end__","targetHandle":"main","order":0}],
-        "end":{"outputs":{"answer":{"schema":{"type":"object"},"value":{"kind":"reference","selector":{"namespace":"outputs","sourceNodeId":"http","port":"main","run":{"kind":"current"},"item":{"kind":"first"},"path":["body"]},"missingPolicy":{"kind":"error"}},"required":true}}}
+        "nodes":[
+            {"id":"http","key":"http","type":"declarative_http","typeVersion":1,"name":"HTTP","parameters":{"url":"https://example.invalid"},"outputProjection":{},"contextWrites":[]},
+            exit_node(exit_parameters(
+                json!({"answer":{"kind":"reference","selector":{"namespace":"outputs","sourceNodeId":"http","port":"main","run":{"kind":"current"},"item":{"kind":"first"},"path":["body"]},"missingPolicy":{"kind":"error"}}}),
+                json!({})
+            ))
+        ],
+        "connections":[{"id":"start","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"http","targetHandle":"main","order":0},{"id":"end","sourceNodeId":"http","sourceHandle":"main","targetNodeId":"exit","targetHandle":"main","order":0}],
+        "end":{"outputs":{"answer":{"schema":{"type":"object"},"required":true}}}
     })).unwrap();
     let error = compiler
         .compile(&definition, &CompileContext::default())
@@ -778,20 +850,22 @@ fn freezes_approval_decision_port_schema_and_accepts_decision_reference() {
     let registry = NodeRegistry::m5_defaults();
     let compiler = WorkflowCompiler::new(&registry);
     let definition: WorkflowDefinition = serde_json::from_value(serde_json::json!({
-        "schemaVersion":"6.0",
+        "schemaVersion":"7.0",
         "start":{"inputs":{"type":"object","properties":{}},"contexts":{}},
         "nodes":[{
             "id":"approval","key":"approval","type":"approval","typeVersion":1,
             "name":"Approval","parameters":{"title":"Review"},
             "outputProjection":{},"contextWrites":[]
-        }],
+        },exit_node(exit_parameters(
+            json!({"decision":reference_json(ValueNamespace::Outputs,Some("approval"),Some("approved"),ValueSelection::Current,&["decision"])}),
+            json!({})
+        ))],
         "connections":[
             {"id":"start","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"approval","targetHandle":"main","order":0},
-            {"id":"end","sourceNodeId":"approval","sourceHandle":"approved","targetNodeId":"__end__","targetHandle":"main","order":0}
+            {"id":"end","sourceNodeId":"approval","sourceHandle":"approved","targetNodeId":"exit","targetHandle":"main","order":0}
         ],
         "end":{"outputs":{"decision":{
             "schema":{"type":"string","enum":["approved"]},
-            "value":reference_json(ValueNamespace::Outputs,Some("approval"),Some("approved"),ValueSelection::Current,&["decision"]),
             "required":false
         }}}
     }))
@@ -820,14 +894,20 @@ fn rejects_nullable_branch_selection_for_required_end_output() {
     let registry = NodeRegistry::m5_defaults();
     let compiler = WorkflowCompiler::new(&registry);
     let mut definition: WorkflowDefinition = serde_json::from_value(serde_json::json!({
-            "schemaVersion":"6.0",
+            "schemaVersion":"7.0",
             "start":{"inputs":{"type":"object","properties":{}},"contexts":{}},
-            "nodes":[{"id":"branch","key":"branch","type":"if","typeVersion":1,"name":"Branch","parameters":{"condition":true},"outputProjection":{},"contextWrites":[]}],
+            "nodes":[
+                {"id":"branch","key":"branch","type":"if","typeVersion":1,"name":"Branch","parameters":{"condition":true},"outputProjection":{},"contextWrites":[]},
+                exit_node(exit_parameters(
+                    json!({"answer":reference_json(ValueNamespace::Outputs,Some("branch"),Some("true"),ValueSelection::First,&[])}),
+                    json!({})
+                ))
+            ],
             "connections":[
                 {"id":"start","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"branch","targetHandle":"main","order":0},
-                {"id":"end","sourceNodeId":"branch","sourceHandle":"true","targetNodeId":"__end__","targetHandle":"main","order":0}
+                {"id":"end","sourceNodeId":"branch","sourceHandle":"true","targetNodeId":"exit","targetHandle":"main","order":0}
             ],
-            "end":{"outputs":{"answer":{"schema":{"type":"object"},"value":reference_json(ValueNamespace::Outputs,Some("branch"),Some("true"),ValueSelection::First,&[]),"required":true}}}
+            "end":{"outputs":{"answer":{"schema":{"type":"object"},"required":true}}}
         }))
         .unwrap();
     let error = compiler
@@ -853,12 +933,15 @@ fn sensitive_context_is_readable_but_cannot_be_projected_or_returned() {
     let registry = NodeRegistry::m5_defaults();
     let compiler = WorkflowCompiler::new(&registry);
     let mut definition: WorkflowDefinition = serde_json::from_value(serde_json::json!({
-            "schemaVersion":"6.0",
+            "schemaVersion":"7.0",
             "start":{"inputs":{"type":"object","properties":{}},"contexts":{"secret":{"schema":{"type":"string"},"default":"","mutable":false,"sensitive":true,"scope":"execution_tree","mergePolicy":"replace","clientWritable":false}}},
-            "nodes":[{"id":"http","key":"http","type":"declarative_http","typeVersion":1,"name":"HTTP","parameters":{"url":reference_json(ValueNamespace::Contexts,None,None,ValueSelection::Current,&["secret"])},"outputProjection":{},"contextWrites":[]}],
+            "nodes":[
+                {"id":"http","key":"http","type":"declarative_http","typeVersion":1,"name":"HTTP","parameters":{"url":reference_json(ValueNamespace::Contexts,None,None,ValueSelection::Current,&["secret"])},"outputProjection":{},"contextWrites":[]},
+                exit_node(exit_parameters(json!({}), json!({})))
+            ],
             "connections":[
                 {"id":"start","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"http","targetHandle":"main","order":0},
-                {"id":"end","sourceNodeId":"http","sourceHandle":"main","targetNodeId":"__end__","targetHandle":"main","order":0}
+                {"id":"end","sourceNodeId":"http","sourceHandle":"main","targetNodeId":"exit","targetHandle":"main","order":0}
             ],
             "end":{"outputs":{}}
         }))
@@ -868,8 +951,12 @@ fn sensitive_context_is_readable_but_cannot_be_projected_or_returned() {
             .compile(&definition, &CompileContext::default())
             .is_ok()
     );
+    definition.nodes[1].parameters = exit_parameters(
+        json!({"secret":reference_json(ValueNamespace::Contexts,None,None,ValueSelection::Current,&["secret"])}),
+        json!({}),
+    );
     definition.end = serde_json::from_value(serde_json::json!({
-            "outputs":{"secret":{"schema":{"type":"string"},"value":reference_json(ValueNamespace::Contexts,None,None,ValueSelection::Current,&["secret"]),"required":true,"sensitive":true}}
+            "outputs":{"secret":{"schema":{"type":"string"},"required":true,"sensitive":true}}
         }))
         .unwrap();
     let error = compiler
@@ -930,12 +1017,15 @@ fn composite_manifest_pins_version_and_mutable_context_contract() {
     registry.register(manifest).unwrap();
     let compiler = WorkflowCompiler::new(&registry);
     let mut definition: WorkflowDefinition = serde_json::from_value(serde_json::json!({
-            "schemaVersion":"6.0",
+            "schemaVersion":"7.0",
             "start":{"inputs":{"type":"object","required":["question"],"properties":{"question":{"type":"string"}}},"contexts":child_context},
-            "nodes":[{"id":"child","key":"child","type":node_type,"typeVersion":1,"name":"Child","parameters":{"workflowVersionId":version.to_string(),"inputs":{"question":reference_json(ValueNamespace::Inputs,None,None,ValueSelection::Current,&["question"])}},"outputProjection":{},"contextWrites":[]}],
+            "nodes":[
+                {"id":"child","key":"child","type":node_type,"typeVersion":1,"name":"Child","parameters":{"workflowVersionId":version.to_string(),"inputs":{"question":reference_json(ValueNamespace::Inputs,None,None,ValueSelection::Current,&["question"])}},"outputProjection":{},"contextWrites":[]},
+                exit_node(exit_parameters(json!({}), json!({})))
+            ],
             "connections":[
                 {"id":"start","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"child","targetHandle":"main","order":0},
-                {"id":"end","sourceNodeId":"child","sourceHandle":"main","targetNodeId":"__end__","targetHandle":"main","order":0}
+                {"id":"end","sourceNodeId":"child","sourceHandle":"main","targetNodeId":"exit","targetHandle":"main","order":0}
             ],"end":{"outputs":{}}
         }))
         .unwrap();
@@ -976,4 +1066,109 @@ fn composite_manifest_pins_version_and_mutable_context_contract() {
             .iter()
             .any(|issue| issue.code == "COMPOSITE_VERSION_MISMATCH")
     );
+}
+
+#[test]
+fn terminal_connections_carry_the_exit_and_reject_fanout() {
+    let registry = NodeRegistry::m5_defaults();
+    let compiler = WorkflowCompiler::new(&registry);
+    let mut definition: WorkflowDefinition = serde_json::from_value(serde_json::json!({
+        "schemaVersion":"7.0",
+        "start":{"inputs":{"type":"object","properties":{}},"contexts":{}},
+        "nodes":[
+            {"id":"http","key":"http","type":"declarative_http","typeVersion":1,"name":"HTTP","parameters":{"url":"https://example.invalid"},"outputProjection":{},"contextWrites":[]},
+            {"id":"exit1","key":"exit1","type":"exit","typeVersion":1,"name":"End One","parameters":{"outputs":{},"errorOutputs":{}}},
+            {"id":"exit2","key":"exit2","type":"exit","typeVersion":1,"name":"End Two","parameters":{"outputs":{},"errorOutputs":{}}}
+        ],
+        "connections":[
+            {"id":"start-http","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"http","targetHandle":"main","order":0},
+            {"id":"http-exit1","sourceNodeId":"http","sourceHandle":"main","targetNodeId":"exit1","targetHandle":"main","order":0},
+            {"id":"http-exit2","sourceNodeId":"http","sourceHandle":"main","targetNodeId":"exit2","targetHandle":"main","order":1}
+        ],
+        "end":{"outputs":{}}
+    }))
+    .unwrap();
+
+    let error = compiler
+        .compile(&definition, &CompileContext::default())
+        .unwrap_err();
+    assert!(
+        error
+            .issues
+            .iter()
+            .any(|issue| issue.code == "DUPLICATE_TERMINAL_FANOUT")
+    );
+
+    definition.connections.pop();
+    let compiled = compiler
+        .compile(&definition, &CompileContext::default())
+        .unwrap();
+    assert_eq!(compiled.terminal_connections.len(), 1);
+    assert_eq!(compiled.terminal_connections[0].target_exit, "exit1");
+    assert!(compiled.exits.contains_key("exit1"));
+    assert!(compiled.exits.contains_key("exit2"));
+}
+
+#[test]
+fn exit_mappings_must_reference_their_own_predecessors() {
+    let registry = NodeRegistry::m5_defaults();
+    let compiler = WorkflowCompiler::new(&registry);
+    let mut definition: WorkflowDefinition = serde_json::from_value(serde_json::json!({
+        "schemaVersion":"7.0",
+        "start":{"inputs":{"type":"object","properties":{}},"contexts":{}},
+        "nodes":[
+            {"id":"root","key":"root","type":"no_op","typeVersion":1,"name":"Root","outputProjection":{},"contextWrites":[]},
+            {"id":"left","key":"left","type":"no_op","typeVersion":1,"name":"Left","outputProjection":{},"contextWrites":[]},
+            {"id":"right","key":"right","type":"no_op","typeVersion":1,"name":"Right","outputProjection":{},"contextWrites":[]},
+            {"id":"exit1","key":"exit1","type":"exit","typeVersion":1,"name":"End One","parameters":{
+                "outputs":{"answer":{"kind":"reference","selector":{"namespace":"outputs","sourceNodeId":"right","port":"main","run":{"kind":"current"},"item":{"kind":"first"},"path":[]},"missingPolicy":{"kind":"error"}}},
+                "errorOutputs":{}
+            }},
+            {"id":"exit2","key":"exit2","type":"exit","typeVersion":1,"name":"End Two","parameters":{"outputs":{},"errorOutputs":{}}}
+        ],
+        "connections":[
+            {"id":"start-root","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"root","targetHandle":"main","order":0},
+            {"id":"root-left","sourceNodeId":"root","sourceHandle":"main","targetNodeId":"left","targetHandle":"main","order":0},
+            {"id":"root-right","sourceNodeId":"root","sourceHandle":"main","targetNodeId":"right","targetHandle":"main","order":1},
+            {"id":"left-exit1","sourceNodeId":"left","sourceHandle":"main","targetNodeId":"exit1","targetHandle":"main","order":0},
+            {"id":"right-exit2","sourceNodeId":"right","sourceHandle":"main","targetNodeId":"exit2","targetHandle":"main","order":0}
+        ],
+        "end":{"outputs":{"answer":{"schema":{"type":"object"},"required":false}}}
+    }))
+    .unwrap();
+
+    let error = compiler
+        .compile(&definition, &CompileContext::default())
+        .unwrap_err();
+    assert!(
+        error
+            .issues
+            .iter()
+            .any(|issue| issue.code == "OUTPUT_NOT_PREDECESSOR"
+                && issue.path == "nodes[3].parameters.outputs.answer")
+    );
+
+    definition.nodes[3].parameters["outputs"]["answer"] = reference_json(
+        ValueNamespace::Outputs,
+        Some("left"),
+        Some("main"),
+        ValueSelection::First,
+        &[],
+    );
+    compiler
+        .compile(&definition, &CompileContext::default())
+        .expect("exit mapping referencing its own predecessor compiles");
+}
+
+#[test]
+fn empty_definition_compiles_start_to_exit() {
+    let compiled = WorkflowCompiler::new(&NodeRegistry::m5_defaults())
+        .compile(
+            &WorkflowDefinition::empty(),
+            &CompileContext::default(),
+        )
+        .expect("empty definition compiles");
+    assert!(compiled.nodes.is_empty());
+    assert_eq!(compiled.start_to_exit.as_deref(), Some("exit"));
+    assert!(compiled.exits["exit"].protected);
 }

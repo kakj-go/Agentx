@@ -9,6 +9,7 @@ use crate::{ResourceOperation, ResourceReference, ResourceType, WorkflowId, Work
 
 pub const WORKFLOW_START_NODE_ID: &str = "__start__";
 pub const WORKFLOW_END_NODE_ID: &str = "__end__";
+pub const WORKFLOW_EXIT_NODE_TYPE: &str = "exit";
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -57,7 +58,6 @@ pub struct BoundaryLayout {
 #[serde(rename_all = "snake_case")]
 pub enum WorkflowBoundary {
     Start,
-    End,
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Serialize)]
@@ -185,8 +185,8 @@ pub struct DebugPlan {
 #[derive(JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum WorkflowSchemaVersion {
-    #[serde(rename = "6.0")]
-    V6,
+    #[serde(rename = "7.0")]
+    V7,
 }
 
 fn deserialize_workflow_schema_version<'de, D>(deserializer: D) -> Result<String, D::Error>
@@ -194,11 +194,11 @@ where
     D: Deserializer<'de>,
 {
     let version = String::deserialize(deserializer)?;
-    if version == "6.0" {
+    if version == "7.0" {
         Ok(version)
     } else {
         Err(de::Error::custom(format!(
-            "unsupported Workflow Definition schema version '{version}'; expected 6.0"
+            "unsupported Workflow Definition schema version '{version}'; expected 7.0"
         )))
     }
 }
@@ -387,13 +387,36 @@ pub enum ExpressionFunction {
 }
 
 impl WorkflowDefinition {
+    /// Fresh workflows start with one protected exit node wired from Start so
+    /// the canvas always has a terminal to connect to.
     #[must_use]
     pub fn empty() -> Self {
+        let exit = WorkflowNode {
+            id: "exit".to_owned(),
+            key: "exit".to_owned(),
+            node_type: WORKFLOW_EXIT_NODE_TYPE.to_owned(),
+            type_version: 1,
+            name: "End".to_owned(),
+            disabled: false,
+            protected: true,
+            parameters: ExitParameters::default().to_value(),
+            output_projection: BTreeMap::new(),
+            context_writes: Vec::new(),
+            resource_references: Vec::new(),
+            settings: NodeSettings::default(),
+        };
         Self {
-            schema_version: "6.0".to_owned(),
+            schema_version: "7.0".to_owned(),
             start: WorkflowStart::default(),
-            nodes: Vec::new(),
-            connections: Vec::new(),
+            nodes: vec![exit],
+            connections: vec![WorkflowConnection {
+                id: "start-exit".to_owned(),
+                source_node_id: WORKFLOW_START_NODE_ID.to_owned(),
+                source_handle: "main".to_owned(),
+                target_node_id: "exit".to_owned(),
+                target_handle: "main".to_owned(),
+                order: 0,
+            }],
             end: WorkflowEnd::default(),
             settings: WorkflowSettings::default(),
         }
@@ -505,16 +528,43 @@ pub enum EndErrorStrategy {
     Collect,
 }
 
-#[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Serialize)]
+/// The global output contract shared by every exit node. Field values are
+/// mapped per exit in [`ExitParameters`], never here.
+#[derive(Clone, Debug, Default, Deserialize, JsonSchema, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WorkflowOutput {
-    pub value: DynamicValue,
     #[serde(default)]
     pub schema: Value,
     #[serde(default)]
     pub required: bool,
     #[serde(default)]
     pub sensitive: bool,
+}
+
+/// Per-exit mapping of contract field names to dynamic values. Stored inside
+/// the exit node's `parameters` payload.
+#[derive(Clone, Debug, Default, Deserialize, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ExitParameters {
+    #[serde(default)]
+    pub outputs: BTreeMap<String, DynamicValue>,
+    #[serde(default)]
+    pub error_outputs: BTreeMap<String, DynamicValue>,
+}
+
+impl ExitParameters {
+    #[must_use]
+    pub fn parse(parameters: &Value) -> Option<Self> {
+        if parameters.is_null() {
+            return Some(Self::default());
+        }
+        serde_json::from_value(parameters.clone()).ok()
+    }
+
+    #[must_use]
+    pub fn to_value(&self) -> Value {
+        serde_json::to_value(self).unwrap_or_else(|_| Value::Null)
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Serialize)]
@@ -631,6 +681,10 @@ pub struct WorkflowNode {
     pub name: String,
     #[serde(default)]
     pub disabled: bool,
+    /// Protected exit nodes cannot be removed from the canvas; the initial
+    /// exit created with the workflow is protected.
+    #[serde(default)]
+    pub protected: bool,
     #[serde(default)]
     pub parameters: Value,
     #[serde(default)]
@@ -676,12 +730,12 @@ pub struct DefinitionIssue {
 #[must_use]
 pub fn validate_definition(definition: &WorkflowDefinition) -> Vec<DefinitionIssue> {
     let mut issues = Vec::new();
-    if definition.schema_version != "6.0" {
+    if definition.schema_version != "7.0" {
         issue(
             &mut issues,
             "UNSUPPORTED_SCHEMA",
             "schemaVersion",
-            "Only schema version 6.0 is supported",
+            "Only schema version 7.0 is supported",
         );
     }
     if definition.settings.activation_budget == 0 {
@@ -742,7 +796,11 @@ pub fn validate_definition(definition: &WorkflowDefinition) -> Vec<DefinitionIss
     }
     let mut ids = HashSet::new();
     let mut keys = HashSet::new();
+    let mut exit_ids = HashSet::new();
     for (index, node) in definition.nodes.iter().enumerate() {
+        if node.node_type == WORKFLOW_EXIT_NODE_TYPE {
+            exit_ids.insert(node.id.clone());
+        }
         if matches!(
             node.id.as_str(),
             WORKFLOW_START_NODE_ID | WORKFLOW_END_NODE_ID
@@ -788,7 +846,7 @@ pub fn validate_definition(definition: &WorkflowDefinition) -> Vec<DefinitionIss
                 &mut issues,
                 "TRIGGER_NODE_REMOVED",
                 &format!("nodes[{index}].type"),
-                "Trigger nodes are not part of Workflow Definition 6.0; configure a Trigger Binding instead",
+                "Trigger nodes are not part of Workflow Definition 7.0; configure a Trigger Binding instead",
             );
         }
         if node.node_type.is_empty()
@@ -874,6 +932,15 @@ pub fn validate_definition(definition: &WorkflowDefinition) -> Vec<DefinitionIss
         if node.node_type == "agent" {
             validate_agent_node(index, node, &mut issues);
         }
+        if node.node_type == WORKFLOW_EXIT_NODE_TYPE {
+            validate_exit_node(
+                index,
+                node,
+                &definition.end.outputs,
+                &definition.end.error.outputs,
+                &mut issues,
+            );
+        }
     }
     let mut connection_ids = HashSet::new();
     let mut connection_orders = HashSet::new();
@@ -910,12 +977,23 @@ pub fn validate_definition(definition: &WorkflowDefinition) -> Vec<DefinitionIss
         let source_is_end = connection.source_node_id == WORKFLOW_END_NODE_ID;
         let target_is_start = connection.target_node_id == WORKFLOW_START_NODE_ID;
         let target_is_end = connection.target_node_id == WORKFLOW_END_NODE_ID;
-        if source_is_end || target_is_start {
+        let source_is_exit = exit_ids.contains(&connection.source_node_id);
+        let target_is_exit = exit_ids.contains(&connection.target_node_id);
+        if source_is_end || target_is_end {
+            issue(
+                &mut issues,
+                "END_BOUNDARY_REMOVED",
+                &format!("connections[{index}]"),
+                "Workflow Definition 7.0 removed the __end__ boundary; connect to an exit node instead",
+            );
+            continue;
+        }
+        if target_is_start || source_is_exit {
             issue(
                 &mut issues,
                 "INVALID_BOUNDARY_DIRECTION",
                 &format!("connections[{index}]"),
-                "Start can only be a connection source and End can only be a connection target",
+                "Start can only be a connection source and exit nodes can only be connection targets",
             );
             continue;
         }
@@ -927,24 +1005,24 @@ pub fn validate_definition(definition: &WorkflowDefinition) -> Vec<DefinitionIss
                 "Start only exposes the main output port",
             );
         }
-        if target_is_end && !matches!(connection.target_handle.as_str(), "main" | "error") {
+        if target_is_exit && !matches!(connection.target_handle.as_str(), "main" | "error") {
             issue(
                 &mut issues,
                 "INVALID_END_PORT",
                 &format!("connections[{index}].targetHandle"),
-                "End only accepts main or error input ports",
+                "Exit nodes only accept main or error input ports",
             );
         }
-        if source_is_start && target_is_end && connection.target_handle != "main" {
+        if source_is_start && target_is_exit && connection.target_handle != "main" {
             issue(
                 &mut issues,
                 "INVALID_DIRECT_ERROR_CONNECTION",
                 &format!("connections[{index}]"),
-                "Start can only connect directly to End.main",
+                "Start can only connect to an exit node through the main port",
             );
         }
         if (!source_is_start && !ids.contains(&connection.source_node_id))
-            || (!target_is_end && !ids.contains(&connection.target_node_id))
+            || !ids.contains(&connection.target_node_id)
         {
             issue(
                 &mut issues,
@@ -965,7 +1043,7 @@ fn validate_agent_node(index: usize, node: &WorkflowNode, issues: &mut Vec<Defin
             issues,
             "UNSUPPORTED_NODE_VERSION",
             &format!("{node_path}.typeVersion"),
-            "Workflow Definition 6.0 requires Agent node version 2",
+            "Workflow Definition 7.0 requires Agent node version 2",
         );
     }
 
@@ -1083,6 +1161,68 @@ fn validate_agent_node(index: usize, node: &WorkflowNode, issues: &mut Vec<Defin
             &format!("{node_path}.resourceReferences"),
             "Agent accepts at most one Workspace Sandbox and one long-term memory attachment",
         );
+    }
+}
+
+fn validate_exit_node(
+    index: usize,
+    node: &WorkflowNode,
+    success_contract: &BTreeMap<String, WorkflowOutput>,
+    error_contract: &BTreeMap<String, WorkflowOutput>,
+    issues: &mut Vec<DefinitionIssue>,
+) {
+    let node_path = format!("nodes[{index}]");
+    let Some(parameters) = ExitParameters::parse(&node.parameters) else {
+        issue(
+            issues,
+            "EXIT_PARAMETERS_INVALID",
+            &format!("{node_path}.parameters"),
+            "Exit node parameters must be an ExitParameters object",
+        );
+        return;
+    };
+    validate_exit_mappings(
+        issues,
+        &node_path,
+        "outputs",
+        &parameters.outputs,
+        success_contract,
+    );
+    validate_exit_mappings(
+        issues,
+        &node_path,
+        "errorOutputs",
+        &parameters.error_outputs,
+        error_contract,
+    );
+}
+
+fn validate_exit_mappings(
+    issues: &mut Vec<DefinitionIssue>,
+    node_path: &str,
+    group: &str,
+    mappings: &BTreeMap<String, DynamicValue>,
+    contract: &BTreeMap<String, WorkflowOutput>,
+) {
+    for name in mappings.keys() {
+        if !contract.contains_key(name) {
+            issue(
+                issues,
+                "EXIT_MAPPING_KEY_UNKNOWN",
+                &format!("{node_path}.parameters.{group}.{name}"),
+                "Exit mappings must reference fields declared in the global output contract",
+            );
+        }
+    }
+    for (name, output) in contract {
+        if output.required && !mappings.contains_key(name) {
+            issue(
+                issues,
+                "EXIT_REQUIRED_MAPPING_MISSING",
+                &format!("{node_path}.parameters.{group}.{name}"),
+                "Every exit node must map each required contract field",
+            );
+        }
     }
 }
 
@@ -1394,7 +1534,10 @@ fn canonicalize_number(number: &serde_json::Number) -> Value {
 mod tests {
     use serde_json::json;
 
-    use super::{EditorDocument, WorkflowDefinition, canonical_content_hash, validate_definition};
+    use super::{
+        EditorDocument, WorkflowDefinition, WORKFLOW_EXIT_NODE_TYPE, canonical_content_hash,
+        validate_definition,
+    };
 
     #[test]
     fn canonical_hash_ignores_object_order_but_keeps_array_order() {
@@ -1422,12 +1565,18 @@ mod tests {
 
     #[test]
     fn empty_definition_is_valid() {
-        assert!(validate_definition(&WorkflowDefinition::empty()).is_empty());
+        let definition = WorkflowDefinition::empty();
+        assert!(validate_definition(&definition).is_empty());
+        assert_eq!(definition.nodes.len(), 1);
+        assert_eq!(definition.nodes[0].node_type, WORKFLOW_EXIT_NODE_TYPE);
+        assert!(definition.nodes[0].protected);
+        assert_eq!(definition.connections.len(), 1);
+        assert_eq!(definition.connections[0].target_node_id, "exit");
     }
 
     fn agent_definition(resource_references: serde_json::Value) -> WorkflowDefinition {
         serde_json::from_value(json!({
-            "schemaVersion":"6.0",
+            "schemaVersion":"7.0",
             "start":{"inputs":{"type":"object","properties":{},"additionalProperties":false},"contexts":{}},
             "nodes":[{
                 "id":"agent","key":"agent","type":"agent","typeVersion":2,"name":"Agent",
@@ -1437,7 +1586,7 @@ mod tests {
             "connections":[],
             "end":{"outputs":{}}
         }))
-        .expect("Agent Definition 6.0 fixture")
+        .expect("Agent Definition 7.0 fixture")
     }
 
     #[test]
@@ -1506,9 +1655,9 @@ mod tests {
     }
 
     #[test]
-    fn workflow_definition_5_is_rejected_without_fallback() {
+    fn workflow_definition_6_is_rejected_without_fallback() {
         let mut definition = WorkflowDefinition::empty();
-        definition.schema_version = "5.0".into();
+        definition.schema_version = "6.0".into();
         assert!(
             validate_definition(&definition)
                 .iter()
@@ -1516,8 +1665,98 @@ mod tests {
         );
 
         let mut serialized = serde_json::to_value(WorkflowDefinition::empty()).unwrap();
-        serialized["schemaVersion"] = json!("5.0");
+        serialized["schemaVersion"] = json!("6.0");
         assert!(serde_json::from_value::<WorkflowDefinition>(serialized).is_err());
+    }
+
+    fn exit_definition(exit_parameters: serde_json::Value, end: serde_json::Value) -> WorkflowDefinition {
+        serde_json::from_value(json!({
+            "schemaVersion":"7.0",
+            "start":{"inputs":{"type":"object","properties":{},"additionalProperties":false},"contexts":{}},
+            "nodes":[
+                {"id":"source","key":"source","type":"no_op","typeVersion":1,"name":"Source"},
+                {"id":"exit","key":"exit","type":"exit","typeVersion":1,"name":"End","parameters":exit_parameters}
+            ],
+            "connections":[
+                {"id":"source-exit","sourceNodeId":"source","sourceHandle":"main","targetNodeId":"exit","targetHandle":"main","order":0}
+            ],
+            "end":end
+        }))
+        .expect("Exit Definition 7.0 fixture")
+    }
+
+    #[test]
+    fn exit_mappings_follow_the_global_contract() {
+        let valid = exit_definition(
+            json!({"outputs":{"answer":{"kind":"literal","value":"ok"}}}),
+            json!({"outputs":{"answer":{"schema":{"type":"string"},"required":true}}}),
+        );
+        assert!(validate_definition(&valid).is_empty());
+
+        let unknown_key = exit_definition(
+            json!({"outputs":{"ghost":{"kind":"literal","value":"ok"}}}),
+            json!({"outputs":{}}),
+        );
+        assert!(
+            validate_definition(&unknown_key)
+                .iter()
+                .any(|issue| issue.code == "EXIT_MAPPING_KEY_UNKNOWN")
+        );
+
+        let missing_required = exit_definition(
+            json!({"outputs":{}}),
+            json!({"outputs":{"answer":{"schema":{"type":"string"},"required":true}}}),
+        );
+        assert!(
+            validate_definition(&missing_required)
+                .iter()
+                .any(|issue| issue.code == "EXIT_REQUIRED_MAPPING_MISSING")
+        );
+
+        let bad_parameters = exit_definition(json!("nope"), json!({"outputs":{}}));
+        assert!(
+            validate_definition(&bad_parameters)
+                .iter()
+                .any(|issue| issue.code == "EXIT_PARAMETERS_INVALID")
+        );
+    }
+
+    #[test]
+    fn exit_nodes_are_terminals_and_the_end_boundary_is_gone() {
+        let mut exit_as_source = exit_definition(
+            json!({}),
+            json!({"outputs":{}}),
+        );
+        exit_as_source.connections[0] = serde_json::from_value(json!({
+            "id":"exit-leak","sourceNodeId":"exit","sourceHandle":"main",
+            "targetNodeId":"source","targetHandle":"main","order":0
+        }))
+        .unwrap();
+        assert!(
+            validate_definition(&exit_as_source)
+                .iter()
+                .any(|issue| issue.code == "INVALID_BOUNDARY_DIRECTION")
+        );
+
+        let mut end_boundary = exit_definition(json!({}), json!({"outputs":{}}));
+        end_boundary.connections[0] = serde_json::from_value(json!({
+            "id":"legacy","sourceNodeId":"source","sourceHandle":"main",
+            "targetNodeId":"__end__","targetHandle":"main","order":0
+        }))
+        .unwrap();
+        assert!(
+            validate_definition(&end_boundary)
+                .iter()
+                .any(|issue| issue.code == "END_BOUNDARY_REMOVED")
+        );
+
+        let mut bad_port = exit_definition(json!({}), json!({"outputs":{}}));
+        bad_port.connections[0].target_handle = "side".into();
+        assert!(
+            validate_definition(&bad_port)
+                .iter()
+                .any(|issue| issue.code == "INVALID_END_PORT")
+        );
     }
 
     #[test]
@@ -1535,7 +1774,7 @@ mod tests {
     #[test]
     fn rejects_dangling_cycles_and_mismatched_resources() {
         let definition: WorkflowDefinition = serde_json::from_value(json!({
-            "schemaVersion":"6.0",
+            "schemaVersion":"7.0",
             "start":{"inputs":{"type":"object","properties":{},"additionalProperties":false},"contexts":{}},
             "nodes":[
                 {"id":"root","key":"root","type":"no_op","typeVersion":1,"name":"Root","outputProjection":{},"contextWrites":[],"resourceReferences":[]},
@@ -1562,7 +1801,7 @@ mod tests {
     #[test]
     fn accepts_controlled_cycles() {
         let definition: WorkflowDefinition = serde_json::from_value(json!({
-            "schemaVersion":"6.0",
+            "schemaVersion":"7.0",
             "start":{"inputs":{"type":"object","properties":{},"additionalProperties":false},"contexts":{}},
             "nodes":[
                 {"id":"root","key":"root","type":"no_op","typeVersion":1,"name":"Root","outputProjection":{},"contextWrites":[]},
@@ -1580,7 +1819,7 @@ mod tests {
     #[test]
     fn connection_order_is_scoped_to_the_source_port() {
         let definition: WorkflowDefinition = serde_json::from_value(json!({
-            "schemaVersion":"6.0",
+            "schemaVersion":"7.0",
             "start":{"inputs":{"type":"object","properties":{},"additionalProperties":false},"contexts":{}},
             "nodes":[
                 {"id":"source","key":"source","type":"switch","typeVersion":1,"name":"Source","outputProjection":{},"contextWrites":[]},

@@ -89,6 +89,9 @@ export class IncrementalGraphIndex {
       const key = portHandleKey(node.id, 'output', 'resource')
       this.value.portByHandle.set(key, { direction: 'output', nodeId: node.id, port: { name: 'resource', kind: 'main', required: false, variadic: true } })
       keys.push(key)
+    } else if (node.data.editorKind === 'exit') {
+      keys.push(this.addPort(node.id, 'input', { name: 'main', kind: 'main', required: false, variadic: true }))
+      keys.push(this.addPort(node.id, 'input', { name: 'error', kind: 'error', required: false, variadic: true }))
     } else {
       const manifest = manifests.get(`${node.data.nodeType}@${node.data.typeVersion}`)
       for (const port of manifest?.inputPorts ?? []) keys.push(this.addPort(node.id, 'input', port))
@@ -161,6 +164,7 @@ export function resolveIndexedPort(index: GraphIndex, nodeId: string, handle: st
 
 function nodePortSignature(node: StudioNode, manifests: Map<string, NodeManifest>) {
   if (node.data.editorKind === 'binding') return `binding:${node.data.resourceType}`
+  if (node.data.editorKind === 'exit') return 'exit'
   const manifest = manifests.get(`${node.data.nodeType}@${node.data.typeVersion}`)
   return JSON.stringify([node.data.editorKind, node.data.nodeType, node.data.typeVersion, manifest?.inputPorts.map((port) => [port.name, port.kind, port.variadic]), manifest?.outputPorts.map((port) => [port.name, port.kind, port.variadic]), manifest?.bindingSlots.map((slot) => [slot.name, slot.resourceType, slot.placement, slot.multiple])])
 }

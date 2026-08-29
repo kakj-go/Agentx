@@ -52,6 +52,7 @@ Agentx 是一个采用 n8n 式画布交互、但使用 Agentx 原生 Workflow/No
 | [plan/uniqueness-validation-acceptance-evidence.md](plan/uniqueness-validation-acceptance-evidence.md) | 用户输入唯一字段前检、并发兜底、字段错误、Artifact 补偿与 UI 验收证据 |
 | [plan/e2e-testing-standard.md](plan/e2e-testing-standard.md) | 临时 Kubernetes Playwright 端到端测试规范 |
 | [plan/safe-deletion-acceptance-evidence.md](plan/safe-deletion-acceptance-evidence.md) | 业务域国际化、统一删除契约、引用保护和临时 Kubernetes 验收证据 |
+| [plan/workflow-multi-exit.md](plan/workflow-multi-exit.md) | Definition 7.0 多结束节点（exit）重构：全局共享输出契约、per-exit 映射、初始 protected 出口与验收状态 |
 | [plan/m2-acceptance-evidence.md](plan/m2-acceptance-evidence.md) | 已被 M2.1 取代的旧 M2 历史证据 |
 
 ## 阅读和实施顺序

@@ -9,6 +9,7 @@ import { StudioEdgeComponent } from '../edges/studio-edge'
 import { AnnotationNode, GroupNode } from './editor-overlays'
 import { AttachmentNode, ManifestNode } from '../nodes/manifest-node'
 import { BoundaryNode } from '../nodes/boundary-node'
+import { ExitNode } from '../nodes/exit-node'
 import { canvasNodeMetrics, canvasNodeRole } from '../nodes/node-appearance'
 import { canvasZoomTier, syncCanvasRenderState } from '../store/canvas-render-store'
 import { useEditorStore } from '../store/editor-store'
@@ -24,8 +25,9 @@ type FlowProps = {
   runtimeStatuses: Map<string, string>
   onDropAction: (manifest: NodeManifest, position: { x: number; y: number }) => void
   onDropBinding: (resourceType: ResourceType, role: string, position: { x: number; y: number }) => void
+  onDropExit?: (position: { x: number; y: number }) => void
   onNodeOpen?: (nodeId: string) => void
-  onBoundaryOpen?: (boundary: 'start' | 'end') => void
+  onBoundaryOpen?: (boundary: 'start') => void
   onPaneClear?: () => void
 }
 
@@ -34,10 +36,10 @@ export type WorkflowFlowHandle = {
   getViewportBounds: () => { x: number; y: number; width: number; height: number } | undefined
 }
 
-const NODE_TYPES = { manifest: ManifestNode, attachment: AttachmentNode, annotation: AnnotationNode, group: GroupNode, boundary: BoundaryNode }
+const NODE_TYPES = { manifest: ManifestNode, attachment: AttachmentNode, exit: ExitNode, annotation: AnnotationNode, group: GroupNode, boundary: BoundaryNode }
 const EDGE_TYPES = { studio: StudioEdgeComponent }
 
-export const WorkflowFlow = forwardRef<WorkflowFlowHandle, FlowProps>(function WorkflowFlow({ manifests, runtimeStatuses, onDropAction, onDropBinding, onNodeOpen, onBoundaryOpen, onPaneClear }, ref) {
+export const WorkflowFlow = forwardRef<WorkflowFlowHandle, FlowProps>(function WorkflowFlow({ manifests, runtimeStatuses, onDropAction, onDropBinding, onDropExit, onNodeOpen, onBoundaryOpen, onPaneClear }, ref) {
   const { t } = useTranslation()
   const instance = useRef<ReactFlowInstance<CanvasNode, StudioEdge>>()
   const [connectionState, setConnectionState] = useState<ConnectionInteractionState>({ status: 'idle' })
@@ -132,8 +134,8 @@ export const WorkflowFlow = forwardRef<WorkflowFlowHandle, FlowProps>(function W
     const canonical: NodeChange<CanvasNode>[] = []
     for (const change of changes) {
       if (!('id' in change)) continue
-      if (change.id === '__start__' || change.id === '__end__') {
-        if (change.type === 'position' && change.position) editor.updateBoundaryPosition(change.id === '__start__' ? 'start' : 'end', change.position)
+      if (change.id === '__start__') {
+        if (change.type === 'position' && change.position) editor.updateBoundaryPosition('start', change.position)
         continue
       }
       if (change.id.startsWith('annotation:')) {
@@ -159,7 +161,7 @@ export const WorkflowFlow = forwardRef<WorkflowFlowHandle, FlowProps>(function W
     editor.clearEdgeReconnectRequest()
   }, [edges, editor, manifests, nodes])
   const onNodeDragStart = useCallback((_: unknown, node: CanvasNode) => {
-    if (node.id === '__start__' || node.id === '__end__') return editor.beginEdit({ boundary: node.id === '__start__' ? 'start' : 'end' })
+    if (node.id === '__start__') return editor.beginEdit({ boundary: 'start' })
     if (node.id.startsWith('annotation:')) return editor.beginEdit({ annotationIds: [node.id.slice('annotation:'.length)] })
     const group = groupViewMap.get(node.id)
     if (group) return editor.beginEdit({ nodeIds: group.group.nodeIds })
@@ -174,6 +176,7 @@ export const WorkflowFlow = forwardRef<WorkflowFlowHandle, FlowProps>(function W
     const position = instance.current.screenToFlowPosition({ x: event.clientX, y: event.clientY })
     if (value.kind === 'action') { const manifest = manifests.get(`${value.nodeType}@${value.version}`); if (manifest) onDropAction(manifest, position) }
     if (value.kind === 'binding' && value.resourceType && value.role) onDropBinding(value.resourceType, value.role, position)
+    if (value.kind === 'exit') onDropExit?.(position)
   }
   const ariaLabelConfig: Partial<AriaLabelConfig> = {
     'node.a11yDescription.default': t('studio.canvasA11y.node'),
@@ -190,7 +193,7 @@ export const WorkflowFlow = forwardRef<WorkflowFlowHandle, FlowProps>(function W
   }
   return <div className="relative min-w-0 flex-1 bg-canvas" data-connection-state={connectionState.status} data-testid="workflow-canvas" onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = 'copy' }} onDrop={onDrop}>
     <div className="pointer-events-none absolute right-3 top-3 z-10 flex items-center gap-3 rounded-md border border-border bg-surface/90 px-2.5 py-1.5 text-[9px] text-muted-foreground shadow-sm backdrop-blur"><LegendDot className="bg-primary" label={t('studio.ports.flow')} /><LegendDot className="bg-danger" label={t('studio.ports.error')} /><LegendDot className="bg-warning" label={t('studio.ports.resource')} /></div>
-    <ReactFlow<CanvasNode, StudioEdge> ariaLabelConfig={ariaLabelConfig} connectionRadius={60} defaultViewport={viewport} edges={flowEdges} edgeTypes={EDGE_TYPES} edgesReconnectable fitViewOptions={{ maxZoom: 1, padding: 0.2 }} nodes={flowNodes} nodeTypes={NODE_TYPES} onConnect={onConnect} onConnectEnd={() => { setConnectionState({ status: 'cancelled' }); window.requestAnimationFrame(() => setConnectionState({ status: 'idle' })) }} onConnectStart={(_, params) => setConnectionState({ status: 'connecting', nodeId: params.nodeId ?? '', handleId: params.handleId ?? undefined })} onEdgesChange={onEdgesChange} onInit={(value) => { instance.current = value }} onMoveEnd={(_, next) => setViewport(next)} onNodeClick={(_, node) => { if (node.data.editorKind === 'boundary') { select(undefined); onBoundaryOpen?.(node.data.boundary) } else { select(node.id); if (node.data.editorKind === 'action' || node.data.editorKind === 'binding') onNodeOpen?.(node.id) } }} onNodeDragStart={onNodeDragStart} onNodeDragStop={commitEdit} onNodesChange={onNodesChange} onPaneClick={() => { select(undefined); onPaneClear?.() }} onReconnect={onReconnect} onReconnectEnd={() => editor.clearEdgeReconnectRequest()} isValidConnection={valid} multiSelectionKeyCode="Shift" onlyRenderVisibleElements={nodes.length >= LARGE_GRAPH_RENDER_THRESHOLD} proOptions={{ hideAttribution: true }} selectionOnDrag>
+    <ReactFlow<CanvasNode, StudioEdge> ariaLabelConfig={ariaLabelConfig} connectionRadius={60} defaultViewport={viewport} edges={flowEdges} edgeTypes={EDGE_TYPES} edgesReconnectable fitViewOptions={{ maxZoom: 1, padding: 0.2 }} nodes={flowNodes} nodeTypes={NODE_TYPES} onConnect={onConnect} onConnectEnd={() => { setConnectionState({ status: 'cancelled' }); window.requestAnimationFrame(() => setConnectionState({ status: 'idle' })) }} onConnectStart={(_, params) => setConnectionState({ status: 'connecting', nodeId: params.nodeId ?? '', handleId: params.handleId ?? undefined })} onEdgesChange={onEdgesChange} onInit={(value) => { instance.current = value }} onMoveEnd={(_, next) => setViewport(next)} onNodeClick={(_, node) => { if (node.data.editorKind === 'boundary') { select(undefined); onBoundaryOpen?.(node.data.boundary) } else { select(node.id); if (node.data.editorKind === 'action' || node.data.editorKind === 'binding' || node.data.editorKind === 'exit') onNodeOpen?.(node.id) } }} onNodeDragStart={onNodeDragStart} onNodeDragStop={commitEdit} onNodesChange={onNodesChange} onPaneClick={() => { select(undefined); onPaneClear?.() }} onReconnect={onReconnect} onReconnectEnd={() => editor.clearEdgeReconnectRequest()} isValidConnection={valid} multiSelectionKeyCode="Shift" onlyRenderVisibleElements={nodes.length >= LARGE_GRAPH_RENDER_THRESHOLD} proOptions={{ hideAttribution: true }} selectionOnDrag>
       <Background color="var(--ui-canvas-dot)" gap={22} size={1} variant={BackgroundVariant.Dots} />
       <Controls aria-label={t('studio.canvasA11y.controls')} className="!border-border !bg-surface !shadow-md" />
       {nodes.length < LARGE_GRAPH_MINIMAP_THRESHOLD && <MiniMap ariaLabel={t('studio.canvasA11y.minimap')} className="!border !border-border !bg-surface" maskColor="color-mix(in srgb, var(--ui-background) 70%, transparent)" pannable zoomable />}
@@ -200,10 +203,8 @@ export const WorkflowFlow = forwardRef<WorkflowFlowHandle, FlowProps>(function W
 
 function boundaryNodes(layouts: EditorDocument['boundaryLayouts']): CanvasNode[] {
   const start = layouts.find((layout) => layout.boundary === 'start') ?? { x: 40, y: 220 }
-  const end = layouts.find((layout) => layout.boundary === 'end') ?? { x: 560, y: 220 }
   return [
     { id: '__start__', type: 'boundary', position: { x: start.x, y: start.y }, draggable: true, deletable: false, data: { editorKind: 'boundary', boundary: 'start', label: '' } },
-    { id: '__end__', type: 'boundary', position: { x: end.x, y: end.y }, draggable: true, deletable: false, data: { editorKind: 'boundary', boundary: 'end', label: '' } },
   ]
 }
 
@@ -260,6 +261,7 @@ function computeGroupView(group: EditorDocument['groups'][number], nodeMap: Map<
 
 function nodeMetrics(node: StudioNode, manifests: Map<string, NodeManifest>) {
   if (node.data.editorKind === 'binding') return canvasNodeMetrics('default', { kind: 'binding' })
+  if (node.data.editorKind === 'exit') return { width: 160, height: 80 }
   if (node.data.editorKind !== 'action') return { width: 96, height: 96 }
   const manifest = manifests.get(`${node.data.nodeType}@${node.data.typeVersion}`)
   const metrics = canvasNodeMetrics(canvasNodeRole(manifest), { inputs: manifest?.inputPorts.length, outputs: manifest?.outputPorts.length, bindings: manifest?.bindingSlots.filter((slot) => slot.placement === 'canvas').length, richHeight: node.height ?? node.measured?.height })
@@ -283,6 +285,9 @@ function withInitialNodeMetrics(node: StudioNode, manifest?: NodeManifest): Stud
   if (node.data.editorKind === 'binding') {
     const metrics = canvasNodeMetrics('default', { kind: 'binding' })
     return { ...node, initialWidth: metrics.width, initialHeight: metrics.height, style: { ...node.style, zIndex: 3 } }
+  }
+  if (node.data.editorKind === 'exit') {
+    return { ...node, initialWidth: 160, initialHeight: 80, style: { ...node.style, zIndex: 3 } }
   }
   if (node.data.editorKind !== 'action') return node
   const metrics = canvasNodeMetrics(canvasNodeRole(manifest))

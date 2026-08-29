@@ -18,14 +18,14 @@
 
 ## 2. Workflow Definition
 
-当前运行定义为不兼容旧版本的 `WorkflowDefinition 5.0`。项目尚未发布，不保留旧版本双读或迁移；开发数据、Fixture、Schema 和编译测试一次性切换。完整契约见 [Workflow 5.0](12-workflow-5.md)。
+当前运行定义为不兼容旧版本的 `WorkflowDefinition 7.0`。项目尚未发布，不保留旧版本双读或迁移；开发数据、Fixture、Schema 和编译测试一次性切换。完整契约见 [Workflow 5.0](12-workflow-5.md)。
 
 Workflow Definition 包含：
 
 - 固定虚拟 Start，以及不可变 Inputs Schema 和 Context Contract
-- Nodes
+- Nodes（含多个 `exit` 结束节点：终止点表达为真实节点，`__end__` 仅保留为编译期虚拟锚点，画布不再渲染）
 - Connections
-- 固定虚拟 End，以及唯一正式 Outputs Contract
+- 唯一正式 Outputs Contract（字段契约存于 `end.outputs`/`end.error.outputs`，全局共享；每个 exit 节点在自己的 parameters 中维护 main/error 两组取值映射）
 - Settings
 - 错误策略
 - 默认超时和重试策略

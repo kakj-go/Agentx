@@ -141,6 +141,10 @@ pub struct EndDelivery {
     pub source_node: usize,
     pub source_port: String,
     pub target_port: String,
+    /// Exit node id the delivery reached; empty for partial-execution
+    /// redirected terminals.
+    #[serde(default)]
+    pub target_exit: String,
     pub items: Vec<Item>,
 }
 
@@ -668,6 +672,7 @@ impl ExecutionMachine {
                 source_node: source.node_index,
                 source_port: connection.source_port,
                 target_port: connection.target_port.clone(),
+                target_exit: connection.target_exit.clone(),
                 items,
             });
             self.next_delivery_sequence += 1;
@@ -968,7 +973,7 @@ impl ExecutionMachine {
             {
                 RuntimeExecutionStatus::Failed
             } else if self.partial_completion
-                || self.workflow.start_to_end
+                || self.workflow.start_to_exit.is_some()
                 || self
                     .end_deliveries
                     .iter()
@@ -1088,6 +1093,7 @@ fn subgraph(
                 source_node: *indexes.get(&connection.source_node)?,
                 source_port: connection.source_port.clone(),
                 target_port: connection.target_port.clone(),
+                target_exit: connection.target_exit.clone(),
                 branch_order: connection.branch_order,
             })
         })
@@ -1109,12 +1115,16 @@ fn subgraph(
             source_node: selected,
             source_port,
             target_port: "main".into(),
+            target_exit: String::new(),
             branch_order: 0,
         });
         workflow.end.outputs.clear();
+        for exit in workflow.exits.values_mut() {
+            exit.outputs.clear();
+        }
     }
     workflow.terminal_connections = terminal_connections;
-    workflow.start_to_end = source.start_to_end && start_nodes.is_empty();
+    workflow.start_to_exit = source.start_to_exit.clone().filter(|_| start_nodes.is_empty());
     workflow.start_nodes = start_nodes;
     workflow.strongly_connected_components = components;
     (workflow, indexes)
@@ -1187,6 +1197,7 @@ mod tests {
 
     fn compile(mut value: serde_json::Value) -> CompiledWorkflow {
         let definition = value.as_object_mut().expect("workflow fixture object");
+        definition.insert("schemaVersion".into(), json!("7.0"));
         definition.insert(
             "start".into(),
             json!({"inputs":{"type":"object","properties":{},"additionalProperties":false},"contexts":{}}),
@@ -1240,23 +1251,37 @@ mod tests {
         if let Some(root) = node_ids.iter().find(|id| !has_incoming.contains(*id)) {
             connections.push(json!({"id":"__test_start__","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":root,"targetHandle":"main","order":0}));
         }
-        let end_source = node_ids
-            .iter()
-            .find(|id| !has_outgoing.contains(*id))
-            .or_else(|| node_ids.last())
-            .expect("workflow fixture has node");
-        let end_handle = node_types
-            .get(end_source)
-            .map(|node_type| match node_type.as_str() {
-                "if" => "true",
-                "wait" => "resumed",
-                "approval" => "approved",
-                "loop_over_items" => "done",
-                "error_handler" => "recovered",
-                _ => "main",
-            })
-            .unwrap_or("main");
-        connections.push(json!({"id":"__test_end__","sourceNodeId":end_source,"sourceHandle":end_handle,"targetNodeId":"__end__","targetHandle":"main","order":99}));
+        let has_exit_connection = connections.iter().any(|connection| {
+            connection.get("targetNodeId").and_then(Value::as_str) == Some("__test_exit__")
+                && connection.get("targetHandle").and_then(Value::as_str) == Some("main")
+        });
+        if !has_exit_connection {
+            let end_source = node_ids
+                .iter()
+                .find(|id| !has_outgoing.contains(*id))
+                .or_else(|| node_ids.last())
+                .expect("workflow fixture has node");
+            let end_handle = node_types
+                .get(end_source)
+                .map(|node_type| match node_type.as_str() {
+                    "if" => "true",
+                    "wait" => "resumed",
+                    "approval" => "approved",
+                    "loop_over_items" => "done",
+                    "error_handler" => "recovered",
+                    _ => "main",
+                })
+                .unwrap_or("main");
+            connections.push(json!({"id":"__test_end__","sourceNodeId":end_source,"sourceHandle":end_handle,"targetNodeId":"__test_exit__","targetHandle":"main","order":99}));
+        }
+        definition
+            .get_mut("nodes")
+            .and_then(Value::as_array_mut)
+            .expect("workflow fixture nodes")
+            .push(json!({
+                "id":"__test_exit__","key":"__test_exit__","type":"exit","typeVersion":1,"name":"End",
+                "parameters":{"outputs":{},"errorOutputs":{}}
+            }));
         let registry = NodeRegistry::m4_defaults();
         WorkflowCompiler::new(&registry)
             .compile(
@@ -1276,7 +1301,7 @@ mod tests {
     #[test]
     fn closes_unselected_branch_without_blocking_merge() {
         let workflow = compile(json!({
-            "schemaVersion":"6.0",
+            "schemaVersion":"7.0",
             "nodes":[
                 {"id":"trigger","type":"no_op","typeVersion":1,"name":"Root",},
                 {"id":"if","type":"if","typeVersion":1,"name":"IF","parameters":{"condition":true}},
@@ -1306,7 +1331,7 @@ mod tests {
     #[test]
     fn retry_adds_attempt_to_same_activation_and_late_transitions_fail() {
         let workflow = compile(json!({
-            "schemaVersion":"6.0",
+            "schemaVersion":"7.0",
             "nodes":[{"id":"trigger","type":"no_op","typeVersion":1,"name":"Root","settings":{"retryOnFail":true,"maxTries":2}}],
             "connections":[]
         }));
@@ -1330,7 +1355,7 @@ mod tests {
     #[test]
     fn timeout_is_terminal_and_marks_the_active_attempt_failed() {
         let workflow = compile(json!({
-            "schemaVersion":"6.0",
+            "schemaVersion":"7.0",
             "nodes":[{"id":"model","type":"model","typeVersion":1,"name":"Model"}],
             "connections":[]
         }));
@@ -1421,7 +1446,7 @@ mod tests {
     #[test]
     fn end_error_collect_finishes_when_only_unscheduled_error_handlers_remain() {
         let workflow = compile(json!({
-            "schemaVersion":"6.0",
+            "schemaVersion":"7.0",
             "end":{"outputs":{},"error":{"strategy":"collect","collectWindowMs":100,"outputs":{}}},
             "nodes":[
                 {"id":"source","type":"set","typeVersion":1,"name":"Source","settings":{"onError":"continue_error_output"}},
@@ -1431,10 +1456,10 @@ mod tests {
             "connections":[
                 {"id":"start-source","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"source","targetHandle":"main","order":0},
                 {"id":"source-normal","sourceNodeId":"source","sourceHandle":"main","targetNodeId":"normal","targetHandle":"main","order":0},
-                {"id":"normal-end","sourceNodeId":"normal","sourceHandle":"main","targetNodeId":"__end__","targetHandle":"main","order":0},
+                {"id":"normal-end","sourceNodeId":"normal","sourceHandle":"main","targetNodeId":"__test_exit__","targetHandle":"main","order":0},
                 {"id":"source-handler","sourceNodeId":"source","sourceHandle":"error","targetNodeId":"handler","targetHandle":"error","order":0},
-                {"id":"source-error","sourceNodeId":"source","sourceHandle":"error","targetNodeId":"__end__","targetHandle":"error","order":1},
-                {"id":"handler-end","sourceNodeId":"handler","sourceHandle":"recovered","targetNodeId":"__end__","targetHandle":"main","order":0}
+                {"id":"source-error","sourceNodeId":"source","sourceHandle":"error","targetNodeId":"__test_exit__","targetHandle":"error","order":1},
+                {"id":"handler-end","sourceNodeId":"handler","sourceHandle":"recovered","targetNodeId":"__test_exit__","targetHandle":"main","order":0}
             ]
         }));
         let mut machine = ExecutionMachine::new(workflow, vec![item(1)]).unwrap();
@@ -1454,7 +1479,7 @@ mod tests {
 
     fn error_terminal_fixture(strategy: &str) -> Value {
         json!({
-            "schemaVersion":"6.0",
+            "schemaVersion":"7.0",
             "end":{"outputs":{},"error":{"strategy":strategy,"collectWindowMs":100,"outputs":{}}},
             "nodes":[
                 {"id":"first","type":"set","typeVersion":1,"name":"First","settings":{"onError":"continue_error_output"}},
@@ -1463,10 +1488,10 @@ mod tests {
             "connections":[
                 {"id":"start-first","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"first","targetHandle":"main","order":0},
                 {"id":"start-second","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"second","targetHandle":"main","order":1},
-                {"id":"first-main","sourceNodeId":"first","sourceHandle":"main","targetNodeId":"__end__","targetHandle":"main","order":0},
-                {"id":"second-main","sourceNodeId":"second","sourceHandle":"main","targetNodeId":"__end__","targetHandle":"main","order":1},
-                {"id":"first-error","sourceNodeId":"first","sourceHandle":"error","targetNodeId":"__end__","targetHandle":"error","order":0},
-                {"id":"second-error","sourceNodeId":"second","sourceHandle":"error","targetNodeId":"__end__","targetHandle":"error","order":1}
+                {"id":"first-main","sourceNodeId":"first","sourceHandle":"main","targetNodeId":"__test_exit__","targetHandle":"main","order":0},
+                {"id":"second-main","sourceNodeId":"second","sourceHandle":"main","targetNodeId":"__test_exit__","targetHandle":"main","order":1},
+                {"id":"first-error","sourceNodeId":"first","sourceHandle":"error","targetNodeId":"__test_exit__","targetHandle":"error","order":0},
+                {"id":"second-error","sourceNodeId":"second","sourceHandle":"error","targetNodeId":"__test_exit__","targetHandle":"error","order":1}
             ]
         })
     }
@@ -1474,7 +1499,7 @@ mod tests {
     #[test]
     fn wait_releases_execution_and_resumes_once() {
         let workflow = compile(json!({
-            "schemaVersion":"6.0",
+            "schemaVersion":"7.0",
             "nodes":[
                 {"id":"trigger","type":"no_op","typeVersion":1,"name":"Root",},
                 {"id":"wait","type":"wait","typeVersion":1,"name":"Wait",}
@@ -1502,12 +1527,12 @@ mod tests {
     #[test]
     fn suspended_composite_can_converge_to_a_failed_terminal() {
         let workflow = compile(json!({
-            "schemaVersion":"6.0",
+            "schemaVersion":"7.0",
             "nodes":[
                 {"id":"child","type":"wait","typeVersion":1,"name":"Child","settings":{"onError":"continue_error_output"}}
             ],
             "connections":[
-                {"id":"child-error","sourceNodeId":"child","sourceHandle":"error","targetNodeId":"__end__","targetHandle":"error","order":0}
+                {"id":"child-error","sourceNodeId":"child","sourceHandle":"error","targetNodeId":"__test_exit__","targetHandle":"error","order":0}
             ],
             "end":{"outputs":{},"error":{"strategy":"fail_fast","collectWindowMs":100,"outputs":{}}}
         }));
@@ -1531,7 +1556,7 @@ mod tests {
     #[test]
     fn partial_forks_select_the_expected_subgraph_and_inputs() {
         let workflow = compile(json!({
-            "schemaVersion":"6.0",
+            "schemaVersion":"7.0",
             "nodes":[
                 {"id":"trigger","type":"no_op","typeVersion":1,"name":"Root",},
                 {"id":"first","type":"set","typeVersion":1,"name":"First",},
@@ -1623,7 +1648,7 @@ mod tests {
     #[test]
     fn checkpoint_state_round_trips_through_json() {
         let workflow = compile(json!({
-            "schemaVersion":"6.0",
+            "schemaVersion":"7.0",
             "nodes":[{"id":"trigger","type":"no_op","typeVersion":1,"name":"Root"}],
             "connections":[]
         }));
@@ -1637,7 +1662,7 @@ mod tests {
     #[test]
     fn confirmation_wait_is_visible_and_resumes_the_same_activation() {
         let workflow = compile(json!({
-            "schemaVersion":"6.0",
+            "schemaVersion":"7.0",
             "nodes":[
                 {"id":"trigger","type":"no_op","typeVersion":1,"name":"Root",},
                 {"id":"remote","type":"remote_action","typeVersion":1,"name":"Remote","parameters":{"endpoint":"http://node"}}
@@ -1669,7 +1694,7 @@ mod tests {
     #[test]
     fn ordinary_cycle_stops_at_the_activation_budget() {
         let workflow = compile(json!({
-            "schemaVersion":"6.0",
+            "schemaVersion":"7.0",
             "settings":{"activationBudget":7},
             "nodes":[
                 {"id":"trigger","type":"no_op","typeVersion":1,"name":"Root",},

@@ -134,7 +134,7 @@ async function findM6Workflow(page: Page, token: string) {
       const hasChatInputs = 'question' in properties && 'attachments' in properties
       const hasApproval = nodes.some((node) => node.type === 'approval')
       const hasModel = nodes.some((node) => node.resourceReferences?.some((reference) => reference.resourceType === 'model'))
-      return item.versionNumber === 1 && (item.schemaVersion ?? definition?.schemaVersion) === '6.0' && hasChatInputs && hasApproval && hasModel
+      return item.versionNumber === 1 && (item.schemaVersion ?? definition?.schemaVersion) === '7.0' && hasChatInputs && hasApproval && hasModel
     })
     if (version) return { workflow: candidate, version }
   }

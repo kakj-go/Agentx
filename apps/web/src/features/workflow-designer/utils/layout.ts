@@ -15,6 +15,9 @@ export async function autoLayout(nodes: StudioNode[], edges: StudioEdge[], manif
         const metrics = canvasNodeMetrics('default', { kind: 'binding' })
         return { id: node.id, width: metrics.width, height: metrics.height }
       }
+      if (node.data.editorKind === 'exit') {
+        return { id: node.id, width: 160, height: 80 }
+      }
       const manifest = manifests?.get(`${node.data.nodeType}@${node.data.typeVersion}`)
       const metrics = canvasNodeMetrics(canvasNodeRole(manifest), {
         inputs: manifest?.inputPorts.length,
@@ -32,7 +35,7 @@ export async function autoLayout(nodes: StudioNode[], edges: StudioEdge[], manif
 }
 
 export function largeGraphLayout(nodes: StudioNode[], edges: StudioEdge[], manifests?: Map<string, NodeManifest>) {
-  const actions = nodes.filter((node) => node.data.editorKind === 'action')
+  const actions = nodes.filter((node) => node.data.editorKind === 'action' || node.data.editorKind === 'exit')
   const actionById = new Map(actions.map((node) => [node.id, node]))
   const actionIds = new Set(actions.map((node) => node.id))
   const outgoing = new Map<string, string[]>()

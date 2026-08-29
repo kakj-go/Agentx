@@ -12,6 +12,7 @@ import { create } from "zustand";
 import type {
   ActionNodeData,
   BindingNodeData,
+  ExitNodeData,
   StudioDocument,
   StudioEdge,
   StudioNode,
@@ -36,7 +37,7 @@ type InteractionSlice = {
   edgeReconnectRequest?: string;
 };
 type HistorySlice = { past: HistoryPatch[]; future: HistoryPatch[] };
-type EditTargets = { nodeIds?: string[]; annotationIds?: string[]; boundary?: "start" | "end" };
+type EditTargets = { nodeIds?: string[]; annotationIds?: string[]; boundary?: "start" };
 
 type EditorState = DocumentSlice &
   InteractionSlice &
@@ -75,6 +76,7 @@ type EditorState = DocumentSlice &
       data: BindingNodeData,
       position?: { x: number; y: number },
     ) => string;
+    addExit: (position?: { x: number; y: number }) => string;
     addConnectedBinding: (
       data: BindingNodeData,
       target: { nodeId: string; handleId: string },
@@ -102,11 +104,11 @@ type EditorState = DocumentSlice &
     select: (id?: string) => void;
     updateNode: (
       id: string,
-      data: Partial<ActionNodeData> | Partial<BindingNodeData>,
+      data: Partial<ActionNodeData> | Partial<BindingNodeData> | Partial<ExitNodeData>,
     ) => void;
     setStart: (start: StudioDocument["start"] | ((current: StudioDocument["start"]) => StudioDocument["start"])) => void;
     setEnd: (end: StudioDocument["end"] | ((current: StudioDocument["end"]) => StudioDocument["end"])) => void;
-    updateBoundaryPosition: (boundary: "start" | "end", position: { x: number; y: number }) => void;
+    updateBoundaryPosition: (boundary: "start", position: { x: number; y: number }) => void;
     removeSelected: () => void;
     setViewport: (viewport: Viewport) => void;
     replaceNodes: (nodes: StudioNode[]) => void;
@@ -161,10 +163,7 @@ const documentSlice = (): DocumentSlice => ({
   nodes: [],
   edges: [],
   end: { outputs: {}, error: { strategy: "fail_fast", collectWindowMs: 5000, outputs: {} } },
-  boundaryLayouts: [
-    { boundary: "start", x: 40, y: 220 },
-    { boundary: "end", x: 560, y: 220 },
-  ],
+  boundaryLayouts: [{ boundary: "start", x: 40, y: 220 }],
   viewport: { x: 0, y: 0, zoom: 1 },
   annotations: [],
   groups: [],
@@ -196,16 +195,28 @@ export const useEditorStore = create<EditorState>((set) => ({
     })),
   onNodesChange: (changes) =>
     set((state) => {
-      const structural = changes.some(
+      const protectedExits = new Set(
+        state.nodes
+          .filter(
+            (node) =>
+              node.data.editorKind === "exit" &&
+              (node.data as ExitNodeData).protected,
+          )
+          .map((node) => node.id),
+      );
+      const guarded = changes.filter(
+        (change) => !(change.type === "remove" && protectedExits.has(change.id)),
+      );
+      const structural = guarded.some(
         (change) =>
           change.type === "remove" ||
           change.type === "add" ||
           change.type === "replace",
       );
-      const documentChange = changes.some(
+      const documentChange = guarded.some(
         (change) => change.type !== "select" && change.type !== "dimensions",
       );
-      const nodes = applyNodeChanges(changes, state.nodes);
+      const nodes = applyNodeChanges(guarded, state.nodes);
       return structural
         ? {
             ...commit(state, { nodes }),
@@ -475,6 +486,34 @@ export const useEditorStore = create<EditorState>((set) => ({
     });
     return id;
   },
+  addExit: (position) => {
+    const id = crypto.randomUUID();
+    set((state) => {
+      const count = state.nodes.filter(
+        (node) => node.data.editorKind === "exit",
+      ).length;
+      const suffix = count === 0 ? "" : ` ${count + 1}`;
+      const nextPosition = position ?? { x: 560, y: 120 + count * 140 };
+      const data: ExitNodeData = {
+        editorKind: "exit",
+        key: `exit${suffix ? `_${count + 1}` : ""}`,
+        label: `End${suffix}`,
+        protected: false,
+        parameters: { outputs: {}, errorOutputs: {} },
+      };
+      return {
+        ...commit(state, {
+          nodes: [
+            ...state.nodes.map((node) => ({ ...node, selected: false })),
+            { id, type: "exit", position: nextPosition, data, selected: true },
+          ],
+        }),
+        graphRevision: state.graphRevision + 1,
+        selectedId: id,
+      };
+    });
+    return id;
+  },
   addConnectedBinding: (data, target, position) => {
     const id = `binding:${data.bindingId}`;
     set((state) => {
@@ -651,6 +690,11 @@ export const useEditorStore = create<EditorState>((set) => ({
         state.nodes.filter((node) => node.selected).map((node) => node.id),
       );
       if (state.selectedId) ids.add(state.selectedId);
+      for (const node of state.nodes) {
+        if (node.data.editorKind === "exit" && (node.data as ExitNodeData).protected) {
+          ids.delete(node.id);
+        }
+      }
       return ids.size
         ? {
             ...commit(state, {

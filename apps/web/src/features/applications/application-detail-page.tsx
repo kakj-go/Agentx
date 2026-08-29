@@ -7,7 +7,7 @@ import { Link, useParams } from 'react-router-dom'
 import { useAuth } from '../../app/providers/auth-provider'
 import { ApplicationIntegrationDocs, type ApplicationIntegrationDoc, useApplicationIntegrationDocsText } from '../../docs/applications'
 import { apiRequest, jsonBody, runtimePublicBaseUrl } from '../../shared/api/client'
-import type { Application, ApplicationApiKey, ApplicationDeployment, ApplicationSchedule, ApplicationSession, ApplicationWebhook, PublishAttempt, WorkflowEnvironment, WorkflowVersion } from '../../shared/api/types'
+import type { Application, ApplicationApiKey, ApplicationDeployment, ApplicationSchedule, ApplicationSession, ApplicationWebhook, PublishAttempt, WebhookProviderTemplate, WorkflowEnvironment, WorkflowVersion } from '../../shared/api/types'
 import { ConfirmDialog } from '../../shared/components/confirm-dialog'
 import { EmptyState } from '../../shared/components/empty-state'
 import { EntityFormDialog, type EntityFormField } from '../../shared/components/entity-form-dialog'
@@ -71,8 +71,8 @@ export function ApplicationDetailPage() {
       if (kind === 'edit') return apiRequest<Application>(`/applications/${id}`, { method: 'PATCH', body: jsonBody({ name: values.name, description: values.description || null, visibility: values.visibility, status: values.status, version: application.data?.version }) })
       if (kind === 'deployment') return apiRequest<ApplicationDeployment>(`/applications/${id}/deployments`, { method: 'POST', body: jsonBody({ workflowVersionId: values.workflowVersionId, environmentId: values.environmentId, sessionVersionPolicy: values.sessionVersionPolicy }) })
       if (kind === 'key') return apiRequest<ApplicationApiKey>(`/applications/${id}/api-keys`, { method: 'POST', body: jsonBody({ name: values.name }) })
-      if (kind === 'webhook') return apiRequest<ApplicationWebhook>(`/applications/${id}/webhooks`, { method: 'POST', body: jsonBody({ name: values.name, providerType: values.providerType, channelMode: effectiveChannelMode(values), channelConfig: buildChannelConfig(templates.data ?? [], values), inputMappings: JSON.parse(values.inputMappings || '[]'), fixedInputs: parseFixedInputs(values.fixedInputs) }) })
-      if (kind === 'webhookEdit' && selectedWebhook) return apiRequest<ApplicationWebhook>(`/applications/${id}/webhooks/${selectedWebhook.id}`, { method: 'PATCH', body: jsonBody({ name: values.name, status: values.status, providerType: values.providerType, channelMode: effectiveChannelMode(values), channelConfig: buildChannelConfig(templates.data ?? [], values), inputMappings: JSON.parse(values.inputMappings || '[]'), fixedInputs: parseFixedInputs(values.fixedInputs), version: selectedWebhook.version }) })
+      if (kind === 'webhook') return apiRequest<ApplicationWebhook>(`/applications/${id}/webhooks`, { method: 'POST', body: jsonBody({ name: values.name, providerType: values.providerType, channelMode: effectiveChannelMode(values), channelConfig: buildChannelConfig(templates.data ?? [], values), inputMappings: JSON.parse(values.inputMappings || '[]'), fixedInputs: parseFixedInputs(values.fixedInputs, activeDeployment?.inputSchema) }) })
+      if (kind === 'webhookEdit' && selectedWebhook) return apiRequest<ApplicationWebhook>(`/applications/${id}/webhooks/${selectedWebhook.id}`, { method: 'PATCH', body: jsonBody({ name: values.name, status: values.status, providerType: values.providerType, channelMode: effectiveChannelMode(values), channelConfig: buildChannelConfig(templates.data ?? [], values), inputMappings: JSON.parse(values.inputMappings || '[]'), fixedInputs: parseFixedInputs(values.fixedInputs, activeDeployment?.inputSchema), version: selectedWebhook.version }) })
       if (kind === 'sessionUpgrade' && selectedSession) return apiRequest<ApplicationSession>(`/sessions/${selectedSession.id}/upgrade`, { method: 'POST', body: jsonBody({ workflowVersionId: values.workflowVersionId, version: selectedSession.version }) })
       const path = kind === 'scheduleEdit' && selectedSchedule ? `/applications/${id}/schedules/${selectedSchedule.id}` : `/applications/${id}/schedules`
       return apiRequest<ApplicationSchedule>(path, { method: kind === 'scheduleEdit' ? 'PATCH' : 'POST', body: jsonBody({ name: values.name, cronExpression: values.cron, timezone: values.timezone, input: JSON.parse(values.input), misfirePolicy: values.misfirePolicy, ...(kind === 'scheduleEdit' ? { status: values.status, version: selectedSchedule?.version } : {}) }) })
@@ -128,14 +128,14 @@ export function ApplicationDetailPage() {
     webhook: [
       { name: 'name', label: t('common.name'), required: true },
       ...channelConfigFields(t, templates.data ?? []),
-      { name: 'inputMappings', label: t('applications.inputMappings'), required: true, defaultValue: JSON.stringify(defaultChannelMappings(activeDeployment?.inputSchema), null, 2), render: ({ value: mappings, update }) => <MappingEditor schema={activeDeployment?.inputSchema} value={mappings} onChange={update} /> },
-      { name: 'fixedInputs', label: t('applications.fixedInputs'), defaultValue: '{}', render: ({ value: fixed, update }) => <FixedInputsEditor value={fixed} onChange={update} /> },
+      { name: 'inputMappings', label: t('applications.inputMappings'), required: true, defaultValue: JSON.stringify(defaultChannelMappings(activeDeployment?.inputSchema), null, 2), render: ({ value: mappings, values, update }) => <MappingEditor mode={values.channelMode} provider={values.providerType} schema={activeDeployment?.inputSchema} templates={templates.data ?? []} value={mappings} onChange={update} /> },
+      { name: 'fixedInputs', label: t('applications.fixedInputs'), defaultValue: '{}', render: ({ value: fixed, update }) => <FixedInputsEditor schema={activeDeployment?.inputSchema} value={fixed} onChange={update} /> },
     ],
     webhookEdit: [
       { name: 'name', label: t('common.name'), required: true, defaultValue: selectedWebhook?.name ?? '' },
       ...channelConfigFields(t, templates.data ?? [], selectedWebhook),
-      { name: 'inputMappings', label: t('applications.inputMappings'), required: true, defaultValue: JSON.stringify(selectedWebhook?.inputMappings ?? defaultChannelMappings(activeDeployment?.inputSchema), null, 2), render: ({ value: mappings, update }) => <MappingEditor schema={activeDeployment?.inputSchema} value={mappings} onChange={update} /> },
-      { name: 'fixedInputs', label: t('applications.fixedInputs'), defaultValue: JSON.stringify(selectedWebhook?.fixedInputs ?? {}, null, 2), render: ({ value: fixed, update }) => <FixedInputsEditor value={fixed} onChange={update} /> },
+      { name: 'inputMappings', label: t('applications.inputMappings'), required: true, defaultValue: JSON.stringify(selectedWebhook?.inputMappings ?? defaultChannelMappings(activeDeployment?.inputSchema), null, 2), render: ({ value: mappings, values, update }) => <MappingEditor mode={values.channelMode} provider={values.providerType} schema={activeDeployment?.inputSchema} templates={templates.data ?? []} value={mappings} onChange={update} /> },
+      { name: 'fixedInputs', label: t('applications.fixedInputs'), defaultValue: JSON.stringify(selectedWebhook?.fixedInputs ?? {}, null, 2), render: ({ value: fixed, update }) => <FixedInputsEditor schema={activeDeployment?.inputSchema} value={fixed} onChange={update} /> },
       { name: 'status', label: t('common.status'), type: 'select', defaultValue: selectedWebhook?.status ?? 'active', required: true, options: ['active', 'disabled'].map((item) => ({ value: item, label: t(`applications.${item}`) })) },
     ],
     schedule: scheduleFields(t),
@@ -158,7 +158,7 @@ export function ApplicationDetailPage() {
           {!webhooks.isLoading && webhooks.data?.length === 0 && <p className="py-8 text-center text-xs text-muted-foreground">{t('applications.noChannels')}</p>}
         </Section>
         <Section title={t('applications.channelDetails')}>
-          {selectedChannel && <div className="space-y-4 py-4">{selectedChannel.channelMode === 'stream' ? <><p className="text-xs text-muted-foreground">{t('applications.connectionStatus')}</p><div className="flex items-center gap-3"><StatusBadge label={connectionStatusLabel(t, selectedChannel.connectionStatus)} status={connectionStatus(selectedChannel.connectionStatus)} />{selectedChannel.lastConnectedAt && <span className="text-[11px] text-muted-foreground">{selectedChannel.lastConnectedAt}</span>}</div>{selectedChannel.connectionError && <p className="rounded-md border border-danger/30 bg-danger/5 p-3 text-[11px] text-danger">{selectedChannel.connectionError}</p>}<div className="rounded-md border border-dashed border-border p-3 text-xs text-muted-foreground">{t('applications.streamNoEndpoint')}</div></> : <><p className="text-xs text-muted-foreground">{t('applications.productionEndpoint')}</p>{endpointActive ? <div className="flex items-start gap-2"><code className="min-w-0 flex-1 break-all rounded-md border border-border bg-canvas p-3 text-[11px]">{runtimePublicBaseUrl().replace(/\/$/, '')}{selectedChannel.path}</code><Button aria-label={t('common.copy')} onClick={() => void navigator.clipboard.writeText(`${runtimePublicBaseUrl().replace(/\/$/, '')}${selectedChannel.path}`)} size="icon" variant="ghost"><Copy className="size-4" /></Button></div> : <p className="rounded-md border border-dashed border-border p-3 text-xs text-muted-foreground">{t('applications.endpointInactive')}</p>}</>}<p className="text-xs text-muted-foreground">{t('applications.sourceMapping')}</p><div className="space-y-2 text-[11px]">{(selectedChannel.inputMappings ?? []).map((mapping) => <div key={`${mapping.source}:${mapping.target}`}><code>{mapping.source}</code> → <strong>{mapping.target}</strong></div>)}</div><div className="rounded-md border-l-2 border-primary bg-primary/5 p-3 text-[11px] text-muted-foreground">{t('applications.multiConversationHint')}</div></div>}
+          {selectedChannel && <div className="space-y-4 py-4">{selectedChannel.channelMode === 'stream' ? <><p className="text-xs text-muted-foreground">{t('applications.connectionStatus')}</p><div className="flex items-center gap-3"><StatusBadge label={connectionStatusLabel(t, selectedChannel.connectionStatus)} status={connectionStatus(selectedChannel.connectionStatus)} />{selectedChannel.lastConnectedAt && <span className="text-[11px] text-muted-foreground">{selectedChannel.lastConnectedAt}</span>}</div>{selectedChannel.connectionError && <p className="rounded-md border border-danger/30 bg-danger/5 p-3 text-[11px] text-danger">{selectedChannel.connectionError}</p>}<div className="rounded-md border border-dashed border-border p-3 text-xs text-muted-foreground">{t('applications.streamNoEndpoint')}</div></> : <><p className="text-xs text-muted-foreground">{t('applications.productionEndpoint')}</p>{endpointActive ? <div className="flex items-start gap-2"><code className="min-w-0 flex-1 break-all rounded-md border border-border bg-canvas p-3 text-[11px]">{runtimePublicBaseUrl().replace(/\/$/, '')}{selectedChannel.path}</code><Button aria-label={t('common.copy')} onClick={() => void navigator.clipboard.writeText(`${runtimePublicBaseUrl().replace(/\/$/, '')}${selectedChannel.path}`)} size="icon" variant="ghost"><Copy className="size-4" /></Button></div> : <p className="rounded-md border border-dashed border-border p-3 text-xs text-muted-foreground">{t('applications.endpointInactive')}</p>}</>}<p className="text-xs text-muted-foreground">{t('applications.sourceMapping')}</p><div className="space-y-2 text-[11px]">{(selectedChannel.inputMappings ?? []).map((mapping) => <div key={`${mapping.source}:${mapping.target}`}><strong>{mapping.target}</strong> ← <code>{mapping.source}</code></div>)}{(Object.entries(selectedChannel.fixedInputs ?? {}) as Array<[string, unknown]>).map(([key, item]) => <div key={`fixed:${key}`}><strong>{key}</strong> = <code>{typeof item === 'string' ? item : JSON.stringify(item)}</code></div>)}</div><div className="rounded-md border-l-2 border-primary bg-primary/5 p-3 text-[11px] text-muted-foreground">{t('applications.multiConversationHint')}</div></div>}
         </Section>
       </TabsContent>
       <TabsContent className="pt-5" value="triggers">
@@ -201,8 +201,26 @@ function connectionStatusLabel(t: (key: string) => string, status?: string | nul
   return status ? labels[status] ?? status : t('applications.connectionPending')
 }
 
-function parseFixedInputs(value: string) {
-  try { const parsed = JSON.parse(value || '{}') as Record<string, unknown>; return Object.fromEntries(Object.entries(parsed).filter(([key]) => key.trim())) } catch { return {} }
+/// Coerces fixed input strings to the Workflow Start Input schema type so
+/// number/boolean parameters can be configured from a plain text field.
+function parseFixedInputs(value: string, schema: unknown) {
+  try {
+    const parsed = JSON.parse(value || '{}') as Record<string, unknown>
+    const result: Record<string, unknown> = {}
+    for (const [key, item] of Object.entries(parsed)) {
+      if (!key.trim()) continue
+      const type = schemaPropertyType(schema, key)
+      if (typeof item === 'string' && (type === 'number' || type === 'integer')) {
+        const numeric = Number(item)
+        result[key] = item.trim() !== '' && Number.isFinite(numeric) ? numeric : item
+      } else if (typeof item === 'string' && type === 'boolean' && (item === 'true' || item === 'false')) {
+        result[key] = item === 'true'
+      } else {
+        result[key] = item
+      }
+    }
+    return result
+  } catch { return {} }
 }
 
 function schemaProperties(schema: unknown): string[] {
@@ -210,6 +228,13 @@ function schemaProperties(schema: unknown): string[] {
   const properties = (schema as { properties?: unknown }).properties
   if (!properties || typeof properties !== 'object' || Array.isArray(properties)) return []
   return Object.keys(properties)
+}
+
+function schemaPropertyType(schema: unknown, key: string): string | undefined {
+  if (!schema || typeof schema !== 'object' || Array.isArray(schema)) return undefined
+  const properties = (schema as { properties?: Record<string, { type?: unknown }> }).properties
+  const type = properties?.[key]?.type
+  return typeof type === 'string' ? type : undefined
 }
 
 function defaultChannelMappings(schema: unknown) {
@@ -232,21 +257,80 @@ function parseMappings(value: string): MappingValue[] {
   } catch { return [] }
 }
 
-function MappingEditor({ schema, value, onChange }: { schema: unknown; value: string; onChange: (value: string) => void }) {
+/// Standardized Trigger Context sources shared by every provider. Provider
+/// payload fields beyond these are addressed as raw.<dotted.path>.
+function standardSourceOptions(t: (key: string) => string): Array<{ value: string; label: string }> {
+  return [
+    { value: 'message.text', label: t('applications.sourceMessageText') },
+    { value: 'conversation.id', label: t('applications.sourceConversationId') },
+    { value: 'conversation.name', label: t('applications.sourceConversationName') },
+    { value: 'conversation.type', label: t('applications.sourceConversationType') },
+    { value: 'sender.id', label: t('applications.sourceSenderId') },
+    { value: 'sender.name', label: t('applications.sourceSenderName') },
+    { value: 'provider', label: t('applications.sourceProvider') },
+    { value: 'provider_event_id', label: t('applications.sourceProviderEventId') },
+  ]
+}
+
+/// Mapping rows read workflow-input-first: pick the Workflow Start Input to
+/// fill, then pick where its value comes from — a standardized channel field
+/// or a provider payload field from the template catalog. Anything else
+/// (e.g. an agentx caller's own JSON) can be typed as a raw.* path.
+function MappingEditor({ schema, templates, provider, mode, value, onChange }: { schema: unknown; templates: WebhookProviderTemplate[]; provider?: string; mode?: string; value: string; onChange: (value: string) => void }) {
   const { t } = useTranslation()
   const rows = parseMappings(value)
   const targets = schemaProperties(schema)
-  const sources = ['message.text', 'conversation.id', 'sender.id', 'provider_event_id']
+  const effectiveMode = effectiveChannelMode({ providerType: provider ?? '', channelMode: mode ?? 'callback' })
+  const providerSources = templates.find((item) => item.provider === provider && item.mode === effectiveMode)?.mappingSources ?? []
+  const options = [
+    ...standardSourceOptions(t),
+    ...providerSources.map((source) => ({ value: source, label: source })),
+  ]
   const update = (index: number, patch: Partial<MappingValue>) => onChange(JSON.stringify(rows.map((row, current) => current === index ? { ...row, ...patch } : row)))
-  return <div className="space-y-2"><input name="inputMappings" type="hidden" value={value} />{rows.map((row, index) => <div className="grid grid-cols-[1fr_1fr_auto] gap-2" key={`${index}:${row.source}`}><Select aria-label={t('applications.sourceField')} className="min-w-0" onValueChange={(source) => update(index, { source })} options={sources.map((source) => ({ value: source, label: source }))} value={row.source} /><Select aria-label={t('applications.workflowInput')} className="min-w-0" onValueChange={(target) => update(index, { target })} options={targets.map((target) => ({ value: target, label: target }))} value={row.target} /><Button aria-label={t('applications.removeMapping')} onClick={() => onChange(JSON.stringify(rows.filter((_, current) => current !== index)))} size="icon" type="button" variant="ghost"><Trash2 className="size-3.5" /></Button></div>)}<Button onClick={() => onChange(JSON.stringify([...rows, { source: 'message.text', target: targets[0] ?? '', missingPolicy: 'error' }]))} size="sm" type="button" variant="secondary"><Plus className="size-3.5" />{t('applications.addMapping')}</Button></div>
+  return <div className="space-y-2">
+    <input name="inputMappings" type="hidden" value={value} />
+    {rows.map((row, index) => {
+      const knownSource = options.some((option) => option.value === row.source)
+      return <div className="grid grid-cols-[1fr_1fr_auto] gap-2" key={`${index}:${row.source}:${row.target}`}>
+        <Select aria-label={t('applications.workflowInput')} className="min-w-0" onValueChange={(target) => update(index, { target })} options={targets.map((target) => ({ value: target, label: target }))} value={row.target} />
+        {knownSource
+          ? <Select aria-label={t('applications.sourceField')} className="min-w-0" onValueChange={(source) => update(index, { source })} options={options} value={row.source} />
+          : <Input aria-label={t('applications.sourceField')} className="min-w-0" onChange={(event) => update(index, { source: event.target.value })} placeholder="raw.senderNick" value={row.source} />}
+        <Button aria-label={t('applications.removeMapping')} onClick={() => onChange(JSON.stringify(rows.filter((_, current) => current !== index)))} size="icon" type="button" variant="ghost"><Trash2 className="size-3.5" /></Button>
+      </div>
+    })}
+    <div className="flex gap-2">
+      <Button onClick={() => onChange(JSON.stringify([...rows, { source: 'message.text', target: targets[0] ?? '', missingPolicy: 'error' }]))} size="sm" type="button" variant="secondary"><Plus className="size-3.5" />{t('applications.addMapping')}</Button>
+      <Button onClick={() => onChange(JSON.stringify([...rows, { source: 'raw.', target: targets[0] ?? '', missingPolicy: 'error' }]))} size="sm" type="button" variant="secondary"><Plus className="size-3.5" />{t('applications.addCustomMapping')}</Button>
+    </div>
+    <p className="text-[11px] leading-5 text-muted-foreground">{t('applications.mappingHint')}</p>
+  </div>
 }
 
-function FixedInputsEditor({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+/// Fixed inputs are workflow-input-first as well: pick the Workflow Start
+/// Input, then type the constant value (coerced to the schema type on save).
+function FixedInputsEditor({ schema, value, onChange }: { schema: unknown; value: string; onChange: (value: string) => void }) {
   const { t } = useTranslation()
+  const targets = schemaProperties(schema)
   let entries: Array<[string, string]> = []
   try { const parsed = JSON.parse(value || '{}') as Record<string, unknown>; entries = Object.entries(parsed).map(([key, item]) => [key, typeof item === 'string' ? item : JSON.stringify(item)]) } catch { entries = [] }
   const update = (next: Array<[string, string]>) => { const object: Record<string, string> = {}; for (const [key, item] of next) object[key] = item; onChange(JSON.stringify(object)) }
-  return <div className="space-y-2"><input name="fixedInputs" type="hidden" value={value} />{entries.map(([key, item], index) => <div className="grid grid-cols-[1fr_1fr_auto] gap-2" key={`${index}:${key}`}><Input aria-label={t('applications.fixedInputName')} onChange={(event) => { const next = entries.slice(); next[index] = [event.target.value, item]; update(next) }} placeholder="department" value={key} /><Input aria-label={t('applications.fixedInputValue')} onChange={(event) => { const next = entries.slice(); next[index] = [key, event.target.value]; update(next) }} placeholder="customer_service" value={item} /><Button aria-label={t('applications.removeFixedInput')} onClick={() => update(entries.filter((_, current) => current !== index))} size="icon" type="button" variant="ghost"><Trash2 className="size-3.5" /></Button></div>)}<Button onClick={() => update([...entries, ['', '']])} size="sm" type="button" variant="secondary"><Plus className="size-3.5" />{t('applications.addFixedInput')}</Button></div>
+  return <div className="space-y-2">
+    <input name="fixedInputs" type="hidden" value={value} />
+    {entries.map(([key, item], index) => <div className="grid grid-cols-[1fr_1fr_auto] gap-2" key={`${index}:${key}`}>
+      {targets.length
+        ? <Select aria-label={t('applications.workflowInput')} className="min-w-0" onValueChange={(nextKey) => { const next = entries.slice(); next[index] = [nextKey, item]; update(next) }} options={targets.map((target) => ({ value: target, label: target }))} value={targets.includes(key) ? key : ''} placeholder={key || undefined} />
+        : <Input aria-label={t('applications.fixedInputName')} onChange={(event) => { const next = entries.slice(); next[index] = [event.target.value, item]; update(next) }} placeholder="department" value={key} />}
+      <Input aria-label={t('applications.fixedInputValue')} onChange={(event) => { const next = entries.slice(); next[index] = [key, event.target.value]; update(next) }} placeholder={typePlaceholder(schema, key)} value={item} />
+      <Button aria-label={t('applications.removeFixedInput')} onClick={() => update(entries.filter((_, current) => current !== index))} size="icon" type="button" variant="ghost"><Trash2 className="size-3.5" /></Button>
+    </div>)}
+    <Button onClick={() => update([...entries, [targets[0] ?? '', '']])} size="sm" type="button" variant="secondary"><Plus className="size-3.5" />{t('applications.addFixedInput')}</Button>
+  </div>
+}
+
+function typePlaceholder(schema: unknown, key: string) {
+  const type = schemaPropertyType(schema, key)
+  return type === 'number' || type === 'integer' ? '42' : type === 'boolean' ? 'true' : 'customer_service'
 }
 
 function scheduleFields(t: (key: string) => string, value?: ApplicationSchedule | null): EntityFormField[] {

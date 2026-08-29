@@ -29,7 +29,7 @@ pub fn decode(provider: WebhookProviderV1, trigger_id: Uuid, connection_id: Stri
     if challenge { return Ok(WebhookDecode::Challenge(challenge_response(provider, &payload))); }
     if !is_text_message(provider, &payload) { return Ok(WebhookDecode::Ignore); }
     let context = normalize(provider, trigger_id, connection_id, &payload)?;
-    let input = map_input(&context, mappings, fixed_inputs)?;
+    let input = map_input(&context, &payload, mappings, fixed_inputs)?;
     Ok(WebhookDecode::Event { context, input })
 }
 
@@ -116,10 +116,27 @@ pub(crate) fn normalize(provider: WebhookProviderV1, trigger_id: Uuid, connectio
     let conversation_id = first_string(payload, conversation_paths(provider)).or_else(|| first_string(payload, sender_paths(provider)).map(|id| format!("direct:{id}"))).ok_or("PROVIDER_CONVERSATION_ID_REQUIRED")?;
     let sender_id = first_string(payload, sender_paths(provider)).unwrap_or_else(|| "unknown".into());
     let text = message_text(provider, payload).unwrap_or_default();
-    let conversation_type = if conversation_id.starts_with("direct:") { "direct" } else { "group" };
+    let conversation_type = explicit_conversation_type(provider, payload).unwrap_or_else(|| if conversation_id.starts_with("direct:") { "direct" } else { "group" });
     let session_webhook = if provider == WebhookProviderV1::Dingtalk { first_string(payload, &["sessionWebhook"]) } else { None };
     let session_webhook_expires_at = if provider == WebhookProviderV1::Dingtalk { payload.get("sessionWebhookExpiredTime").and_then(Value::as_i64) } else { None };
-    Ok(WebhookTriggerContextV1 { provider, provider_connection_id: connection_id, webhook_trigger_id: trigger_id, provider_event_id: event_id, conversation: WebhookConversationV1 { id: conversation_id, name: first_string(payload, &["conversationName", "chat_name", "event.message.chat_name"]), conversation_type: conversation_type.into() }, sender: WebhookSenderV1 { id: sender_id }, message: WebhookMessageV1 { text }, session_webhook, session_webhook_expires_at })
+    Ok(WebhookTriggerContextV1 { provider, provider_connection_id: connection_id, webhook_trigger_id: trigger_id, provider_event_id: event_id, conversation: WebhookConversationV1 { id: conversation_id, name: first_string(payload, &["conversationName", "conversationTitle", "chat_name", "event.message.chat_name"]), conversation_type: conversation_type.into() }, sender: WebhookSenderV1 { id: sender_id, name: first_string(payload, &["senderNick"]) }, message: WebhookMessageV1 { text }, session_webhook, session_webhook_expires_at })
+}
+
+/// Platform-explicit conversation type, normalized to direct/group:
+/// DingTalk conversationType ("1"/"2"), Feishu chat_type ("p2p"/"group"),
+/// WeCom chattype ("single"/"group"). Agentx has no explicit marker.
+fn explicit_conversation_type(provider: WebhookProviderV1, payload: &Value) -> Option<&'static str> {
+    let raw = match provider {
+        WebhookProviderV1::Dingtalk => first_string(payload, &["conversationType"])?,
+        WebhookProviderV1::Feishu => first_string(payload, &["event.message.chat_type", "chat_type"])?,
+        WebhookProviderV1::Wecom => first_string(payload, &["chattype", "chatType"])?,
+        WebhookProviderV1::Agentx => return None,
+    };
+    match (provider, raw.as_str()) {
+        (WebhookProviderV1::Dingtalk, "1") | (WebhookProviderV1::Feishu, "p2p") | (WebhookProviderV1::Wecom, "single") => Some("direct"),
+        (WebhookProviderV1::Dingtalk, "2") | (WebhookProviderV1::Feishu, "group") | (WebhookProviderV1::Wecom, "group") => Some("group"),
+        _ => None,
+    }
 }
 fn event_paths(provider: WebhookProviderV1) -> &'static [&'static str] { match provider { WebhookProviderV1::Dingtalk => &["msgId", "eventId"], WebhookProviderV1::Wecom => &["msgid", "event_id", "eventId"], WebhookProviderV1::Feishu => &["header.event_id", "event_id", "eventId"], WebhookProviderV1::Agentx => &["eventId", "event_id"] } }
 fn conversation_paths(provider: WebhookProviderV1) -> &'static [&'static str] { match provider { WebhookProviderV1::Dingtalk => &["conversationId"], WebhookProviderV1::Wecom => &["chatid", "conversation_id", "conversationId"], WebhookProviderV1::Feishu => &["event.message.chat_id", "conversation_id", "conversationId"], WebhookProviderV1::Agentx => &["conversationId", "conversation_id"] } }
@@ -127,10 +144,34 @@ fn sender_paths(provider: WebhookProviderV1) -> &'static [&'static str] { match 
 fn message_text(provider: WebhookProviderV1, payload: &Value) -> Option<String> { let value = first_string(payload, match provider { WebhookProviderV1::Dingtalk => &["text.content", "text"], WebhookProviderV1::Wecom => &["text.content", "content", "message.text"], WebhookProviderV1::Feishu => &["event.message.content", "message.text", "text"], WebhookProviderV1::Agentx => &["message.text", "text", "content"] })?; if provider == WebhookProviderV1::Feishu && value.trim_start().starts_with('{') { serde_json::from_str::<Value>(&value).ok().and_then(|v| v.get("text").and_then(Value::as_str).map(str::to_owned)) } else { Some(value) } }
 pub(crate) fn is_text_message(provider: WebhookProviderV1, payload: &Value) -> bool { if provider == WebhookProviderV1::Dingtalk { return payload.get("msgtype").and_then(Value::as_str).map(|v| v == "text").unwrap_or(payload.get("text").is_some()); } if provider == WebhookProviderV1::Feishu { return payload.get("event").and_then(|v| v.get("message")).and_then(|v| v.get("message_type")).and_then(Value::as_str).map(|v| v == "text").unwrap_or(message_text(provider, payload).is_some()); } payload.get("msgtype").and_then(Value::as_str).map(|v| v == "text").unwrap_or(message_text(provider, payload).is_some()) }
 
-pub(crate) fn map_input(context: &WebhookTriggerContextV1, mappings: &[WebhookInputMappingV1], fixed_inputs: &Value) -> Result<Value, &'static str> {    let mut output = Map::new();
-    for mapping in mappings { let value = match mapping.source.as_str() { "message.text" => json!(context.message.text), "sender.id" => json!(context.sender.id), "conversation.id" => json!(context.conversation.id), "conversation.name" => context.conversation.name.clone().map(Value::String).unwrap_or(Value::Null), "conversation.type" => json!(context.conversation.conversation_type), "provider" => serde_json::to_value(context.provider).map_err(|_| "INVALID_WEBHOOK_MAPPING")?, "provider_event_id" => json!(context.provider_event_id), _ => return Err("INVALID_WEBHOOK_SOURCE") }; if value.is_null() && mapping.missing_policy == "error" { return Err("WEBHOOK_REQUIRED_SOURCE_MISSING"); } if output.insert(mapping.target.clone(), value).is_some() { return Err("WEBHOOK_MAPPING_CONFLICT"); } }
+pub(crate) fn map_input(context: &WebhookTriggerContextV1, payload: &Value, mappings: &[WebhookInputMappingV1], fixed_inputs: &Value) -> Result<Value, &'static str> {
+    let mut output = Map::new();
+    for mapping in mappings {
+        let value = match mapping.source.as_str() {
+            "message.text" => json!(context.message.text),
+            "sender.id" => json!(context.sender.id),
+            "sender.name" => context.sender.name.clone().map(Value::String).unwrap_or(Value::Null),
+            "conversation.id" => json!(context.conversation.id),
+            "conversation.name" => context.conversation.name.clone().map(Value::String).unwrap_or(Value::Null),
+            "conversation.type" => json!(context.conversation.conversation_type),
+            "provider" => serde_json::to_value(context.provider).map_err(|_| "INVALID_WEBHOOK_MAPPING")?,
+            "provider_event_id" => json!(context.provider_event_id),
+            // raw.<dotted.path> passes any decrypted platform payload field
+            // through as-is, so providers can expose fields beyond the
+            // standardized Trigger Context without a contract change.
+            source if source.starts_with("raw.") && source.len() > 4 => raw_payload_value(payload, &source["raw.".len()..]),
+            _ => return Err("INVALID_WEBHOOK_SOURCE"),
+        };
+        if value.is_null() && mapping.missing_policy == "error" { return Err("WEBHOOK_REQUIRED_SOURCE_MISSING"); }
+        if output.insert(mapping.target.clone(), value).is_some() { return Err("WEBHOOK_MAPPING_CONFLICT"); }
+    }
     if let Some(fixed) = fixed_inputs.as_object() { for (key, value) in fixed { if output.contains_key(key) || ["conversation_id", "sender_id", "provider_event_id"].contains(&key.as_str()) { return Err("WEBHOOK_MAPPING_CONFLICT"); } output.insert(key.clone(), value.clone()); } }
     Ok(Value::Object(output))
+}
+
+fn raw_payload_value(payload: &Value, dotted_path: &str) -> Value {
+    let pointer = format!("/{}", dotted_path.replace('.', "/"));
+    payload.pointer(&pointer).cloned().unwrap_or(Value::Null)
 }
 /// Shared stream-side dispatch context: normalizes a provider event payload,
 /// applies input mappings and creates the Invocation. Text-message gating and
@@ -154,7 +195,7 @@ impl DispatchState {
             return;
         }
         let result = normalize(self.provider, self.binding_id, self.connection_id.clone(), &payload)
-            .and_then(|context| map_input(&context, &self.input_mappings, &self.fixed_inputs).map(|input| (context, input)));
+            .and_then(|context| map_input(&context, &payload, &self.input_mappings, &self.fixed_inputs).map(|input| (context, input)));
         match result {
             Ok((context, input)) => {
                 if let Err(error) = dispatch_event(&self.pool, self.tenant_id, self.application_id, self.binding_id, self.trigger_name.clone(), self.configuration_revision, context, input).await {
@@ -225,7 +266,11 @@ fn parse_wecom_payload(bytes: &[u8]) -> Result<Value, &'static str> {
     let sender_id = xml_tag_named(bytes, "FromUserName").unwrap_or_else(|| "unknown".into());
     let msg_type = xml_tag_named(bytes, "MsgType").unwrap_or_else(|| "text".into());
     let content = xml_tag_named(bytes, "Content").unwrap_or_default();
-    Ok(json!({"msgid": event_id, "chatid": conversation_id, "from": {"userid": sender_id}, "msgtype": msg_type, "text": {"content": content}}))
+    let chat_type = xml_tag_named(bytes, "ChatType");
+    let create_time = xml_tag_named(bytes, "CreateTime");
+    let agent_id = xml_tag_named(bytes, "AgentID");
+    let to_user = xml_tag_named(bytes, "ToUserName");
+    Ok(json!({"msgid": event_id, "chatid": conversation_id, "from": {"userid": sender_id}, "msgtype": msg_type, "text": {"content": content}, "chattype": chat_type, "createTime": create_time, "agentId": agent_id, "toUserName": to_user}))
 }
 fn decrypt_cbc(key: &mut Vec<u8>, iv: &[u8], encoded: &str) -> Result<Vec<u8>, &'static str> { let mut bytes = STANDARD.decode(encoded).map_err(|_| "INVALID_ENCRYPTED_PAYLOAD")?; if bytes.len() % 16 != 0 || key.len() != 32 { return Err("INVALID_ENCRYPTED_PAYLOAD"); } let cipher = Aes256::new_from_slice(key).map_err(|_| "INVALID_ENCRYPTED_PAYLOAD")?; let mut previous = iv.to_vec(); for chunk in bytes.chunks_mut(16) { let original = chunk.to_vec(); cipher.decrypt_block(GenericArray::from_mut_slice(chunk)); for (index, byte) in chunk.iter_mut().enumerate() { *byte ^= previous[index]; } previous = original; } let padding = *bytes.last().ok_or("INVALID_ENCRYPTED_PAYLOAD")? as usize; if padding == 0 || padding > 32 || bytes.len() < padding || !bytes[bytes.len()-padding..].iter().all(|byte| usize::from(*byte) == padding) { return Err("INVALID_ENCRYPTED_PAYLOAD"); } bytes.truncate(bytes.len() - padding); Ok(bytes) }
 fn xml_tag(body: &[u8]) -> Option<String> { xml_tag_named(body, "Encrypt") }
@@ -240,7 +285,37 @@ mod tests {
     use super::*;
     use axum::http::HeaderValue;
     fn mapping(source: &str, target: &str) -> WebhookInputMappingV1 { WebhookInputMappingV1 { source: source.into(), target: target.into(), missing_policy: "error".into() } }
-    #[test] fn fixed_input_cannot_override_source() { let context = WebhookTriggerContextV1 { provider: WebhookProviderV1::Feishu, provider_connection_id: "c".into(), webhook_trigger_id: Uuid::nil(), provider_event_id: "e".into(), conversation: WebhookConversationV1 { id: "chat".into(), name: None, conversation_type: "group".into() }, sender: WebhookSenderV1 { id: "u".into() }, message: WebhookMessageV1 { text: "x".into() }, session_webhook: None, session_webhook_expires_at: None }; assert_eq!(map_input(&context, &[mapping("conversation.id", "conversation_id")], &json!({"conversation_id":"bad"})), Err("WEBHOOK_MAPPING_CONFLICT")); }
+    #[test] fn fixed_input_cannot_override_source() { let context = WebhookTriggerContextV1 { provider: WebhookProviderV1::Feishu, provider_connection_id: "c".into(), webhook_trigger_id: Uuid::nil(), provider_event_id: "e".into(), conversation: WebhookConversationV1 { id: "chat".into(), name: None, conversation_type: "group".into() }, sender: WebhookSenderV1 { id: "u".into(), name: None }, message: WebhookMessageV1 { text: "x".into() }, session_webhook: None, session_webhook_expires_at: None }; assert_eq!(map_input(&context, &json!({}), &[mapping("conversation.id", "conversation_id")], &json!({"conversation_id":"bad"})), Err("WEBHOOK_MAPPING_CONFLICT")); }
+    #[test]
+    fn dingtalk_group_name_and_sender_nick_are_normalized() {
+        let payload = json!({"msgId":"event-n","conversationId":"chat-n","conversationType":"2","conversationTitle":"客服一群","senderStaffId":"user-n","senderNick":"张三","msgtype":"text","text":{"content":"hi"}});
+        let context = normalize(WebhookProviderV1::Dingtalk, Uuid::nil(), "c".into(), &payload).unwrap();
+        assert_eq!(context.conversation.name.as_deref(), Some("客服一群"));
+        assert_eq!(context.conversation.conversation_type, "group");
+        assert_eq!(context.sender.name.as_deref(), Some("张三"));
+    }
+    #[test]
+    fn dingtalk_direct_chat_type_is_detected_from_explicit_marker() {
+        let payload = json!({"msgId":"event-d","conversationId":"chat-d","conversationType":"1","senderStaffId":"user-d","msgtype":"text","text":{"content":"hi"}});
+        let context = normalize(WebhookProviderV1::Dingtalk, Uuid::nil(), "c".into(), &payload).unwrap();
+        assert_eq!(context.conversation.conversation_type, "direct");
+    }
+    #[test]
+    fn feishu_and_wecom_explicit_chat_types_are_normalized() {
+        let feishu = json!({"header":{"event_id":"e-f"},"event":{"sender":{"sender_id":{"open_id":"u"}},"message":{"chat_id":"c","chat_type":"p2p","message_type":"text","content":"{\"text\":\"hi\"}"}}});
+        assert_eq!(normalize(WebhookProviderV1::Feishu, Uuid::nil(), "c".into(), &feishu).unwrap().conversation.conversation_type, "direct");
+        let wecom = json!({"msgid":"e-w","chatid":"chat-w","chattype":"group","from":{"userid":"u"},"msgtype":"text","text":{"content":"hi"}});
+        assert_eq!(normalize(WebhookProviderV1::Wecom, Uuid::nil(), "c".into(), &wecom).unwrap().conversation.conversation_type, "group");
+    }
+    #[test]
+    fn raw_source_paths_pass_platform_payload_fields_through() {
+        let context = WebhookTriggerContextV1 { provider: WebhookProviderV1::Dingtalk, provider_connection_id: "c".into(), webhook_trigger_id: Uuid::nil(), provider_event_id: "e".into(), conversation: WebhookConversationV1 { id: "chat".into(), name: None, conversation_type: "group".into() }, sender: WebhookSenderV1 { id: "u".into(), name: None }, message: WebhookMessageV1 { text: "x".into() }, session_webhook: None, session_webhook_expires_at: None };
+        let payload = json!({"msgId":"e","conversationId":"chat","createAt":1780000000000i64,"atUsers":[{"dingtalkId":"u1","nick":"@甲"}]});
+        let input = map_input(&context, &payload, &[mapping("raw.createAt", "sent_at"), mapping("raw.atUsers.0.nick", "mentioned"), WebhookInputMappingV1 { source: "raw.conversationTitle".into(), target: "group_name".into(), missing_policy: "null".into() }], &json!({})).unwrap();
+        assert_eq!(input, json!({"sent_at":1780000000000i64,"mentioned":"@甲","group_name":null}));
+        assert_eq!(map_input(&context, &payload, &[mapping("raw.missing", "x")], &json!({})), Err("WEBHOOK_REQUIRED_SOURCE_MISSING"));
+        assert_eq!(map_input(&context, &payload, &[mapping("raw.", "x")], &json!({})), Err("INVALID_WEBHOOK_SOURCE"));
+    }
     #[test] fn dingtalk_session_webhook_is_captured_for_outbound_delivery() {
         let payload = json!({"msgId":"event-sw","conversationId":"chat-sw","senderStaffId":"user-sw","msgtype":"text","text":{"content":"hi"},"sessionWebhook":"https://oapi.dingtalk.com/robot/sendBySession/abc","sessionWebhookExpiredTime":1780000000000i64});
         let context = normalize(WebhookProviderV1::Dingtalk, Uuid::nil(), "c".into(), &payload).unwrap();

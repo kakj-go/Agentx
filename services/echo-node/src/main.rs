@@ -694,7 +694,7 @@ mod tests {
         let result = schema::<NodeActionResult>();
         assert_eq!(
             definition["$defs"]["WorkflowSchemaVersion"]["enum"][0],
-            "6.0"
+            "7.0"
         );
         assert_eq!(manifest["$defs"]["NodeProtocolVersion"]["enum"][0], "2.0");
         assert!(

@@ -37,6 +37,8 @@ const translations = {
     "attachments": "AI attachments",
     "note": "Sticky note",
     "group": "Group",
+    "exit": "End node",
+    "exitGroup": "End",
     "ai": "AI",
     "back": "Back to nodes",
     "chooseInput": "Choose an input for {{node}}",
@@ -343,6 +345,23 @@ const translations = {
   "errorStrategies": {
     "fail_fast": "Fail fast",
     "collect": "Collect errors"
+  },
+  "exit": {
+    "title": "End node",
+    "description": "The output contract is shared; each end node maps its own values",
+    "summary": "Output / Error",
+    "protected": "The initial end node cannot be deleted",
+    "paletteLabel": "End node",
+    "paletteMeta": "A workflow terminal; add as many as you need",
+    "contractDescription": "Global output fields shared by every end node",
+    "errorContractDescription": "Global error output fields shared by every end node",
+    "contractDialogDescription": "Output field definitions apply to every end node",
+    "contractRenameHint": "Renaming a field updates mappings on all end nodes",
+    "successMappings": "This node's output mappings",
+    "errorMappings": "This node's error mappings",
+    "mappingDescription": "Fields come from the global contract; pick this node's sources",
+    "errorMappingDescription": "Error fields come from the global contract; pick this node's sources",
+    "emptyContract": "Define output fields above first"
   },
   "boundary": {
     "start": "Start",

@@ -145,20 +145,6 @@ fn annotate_string_coercions(value: &mut Value, schema: &Value) {
     }
 }
 
-pub(super) fn normalized_workflow_end(
-    definition: &WorkflowDefinition,
-) -> agentx_domain::WorkflowEnd {
-    let mut end = definition.end.clone();
-    for output in end.outputs.values_mut() {
-        if output.schema.get("type").and_then(Value::as_str) == Some("string")
-            && let DynamicValue::Reference { coerce, .. } = &mut output.value
-        {
-            *coerce = Some(ValueCoercion::String);
-        }
-    }
-    end
-}
-
 pub(super) fn normalized_context_writes(
     node: &WorkflowNode,
     definition: &WorkflowDefinition,

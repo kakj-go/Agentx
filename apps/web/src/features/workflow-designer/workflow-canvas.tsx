@@ -29,7 +29,7 @@ import { useExecutionEvents } from "./api/use-execution-events";
 import { useResourceOptions, type ResourceOptionRequest } from "./api/use-resource-options";
 import { WorkflowFlow, type WorkflowFlowHandle } from "./canvas/workflow-flow";
 import { deserializeDraft, serializeStudio } from "./model/serializer";
-import type { NodeManifest, ResourceOption, ResourceRequestContext, ResourceType, StudioDocument } from "./model/types";
+import type { ExitNodeData, NodeManifest, ResourceOption, ResourceRequestContext, ResourceType, StudioDocument } from "./model/types";
 import {
   canvasNodeMetrics,
   canvasNodeRole,
@@ -37,6 +37,7 @@ import {
   type CanvasPlacementRect,
 } from "./nodes/node-appearance";
 import { NodeInspector } from "./panels/node-inspector";
+import { ExitPanel } from "./panels/exit-panel";
 import { WorkflowInterfacePanel } from "./panels/workflow-interface-panel";
 import { NodePalette } from "./panels/node-palette";
 import { RuntimePanel } from "./panels/runtime-panel";
@@ -93,7 +94,8 @@ export function WorkflowCanvas() {
   const [debugDialogOpen, setDebugDialogOpen] = useState(false);
   const [runParametersOpen, setRunParametersOpen] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
-  const [interfaceBoundary, setInterfaceBoundary] = useState<"start" | "end">();
+  const [interfaceBoundary, setInterfaceBoundary] = useState<"start">();
+  const [exitPanelId, setExitPanelId] = useState<string>();
   const [creatorOpen, setCreatorOpen] = useState(false);
   const [creatorSource, setCreatorSource] = useState<{
     nodeId: string;
@@ -181,6 +183,7 @@ export function WorkflowCanvas() {
       clearEdgeInsertRequest: state.clearEdgeInsertRequest,
       addBinding: state.addBinding,
       addConnectedBinding: state.addConnectedBinding,
+      addExit: state.addExit,
       addAnnotation: state.addAnnotation,
       addGroup: state.addGroup,
       select: state.select,
@@ -203,6 +206,14 @@ export function WorkflowCanvas() {
       ).length,
   );
   const edgeInsertRequest = useEditorStore((state) => state.edgeInsertRequest);
+  const canvasNodes = useEditorStore(useShallow((state) => state.nodes));
+  const exitNodes = useMemo(
+    () =>
+      canvasNodes
+        .filter((node) => node.data.editorKind === "exit")
+        .map((node) => ({ id: node.id, data: node.data as ExitNodeData })),
+    [canvasNodes],
+  );
   const referenceSource = useEditorStore(
     useShallow((state) => ({
       start: state.start,
@@ -918,6 +929,13 @@ export function WorkflowCanvas() {
             setInterfaceBoundary(undefined);
             setDetailsOpen(true);
           }}
+          onAddExit={() => {
+            const id = editor.addExit();
+            setCreatorSource(undefined);
+            setInterfaceBoundary(undefined);
+            setExitPanelId(id);
+            setDetailsOpen(false);
+          }}
           onAddGroup={() => {
             editor.addGroup(t("studio.group.default"));
             setCreatorSource(undefined);
@@ -954,18 +972,32 @@ export function WorkflowCanvas() {
               addBinding(type, role, position);
               setDetailsOpen(true);
             }}
+            onDropExit={(position) => {
+              const id = editor.addExit(position);
+              setExitPanelId(id);
+              setDetailsOpen(false);
+            }}
             onBoundaryOpen={(boundary) => {
               setInterfaceBoundary(boundary);
+              setExitPanelId(undefined);
               setDetailsOpen(false);
             }}
             onNodeOpen={(nodeId) => {
               setInterfaceBoundary(undefined);
               editor.select(nodeId);
-              setDetailsOpen(true);
+              const node = useEditorStore.getState().nodes.find((item) => item.id === nodeId);
+              if (node?.data.editorKind === "exit") {
+                setExitPanelId(nodeId);
+                setDetailsOpen(false);
+              } else {
+                setExitPanelId(undefined);
+                setDetailsOpen(true);
+              }
             }}
             onPaneClear={() => {
               setDetailsOpen(false);
               setInterfaceBoundary(undefined);
+              setExitPanelId(undefined);
             }}
             runtimeStatuses={runtime.nodeStatuses}
           />
@@ -1025,13 +1057,21 @@ export function WorkflowCanvas() {
         />
         <WorkflowInterfacePanel
           boundary={interfaceBoundary}
-          end={referenceSource.end}
-          referenceCatalog={referenceCatalog}
           onClose={() => setInterfaceBoundary(undefined)}
-          onEndChange={editor.setEnd}
           onStartChange={editor.setStart}
           start={referenceSource.start}
         />
+        {exitPanelId && selected?.data.editorKind === "exit" && selected.id === exitPanelId && (
+          <ExitPanel
+            end={referenceSource.end}
+            exitId={exitPanelId}
+            exits={exitNodes}
+            onClose={() => setExitPanelId(undefined)}
+            onEndChange={editor.setEnd}
+            onExitUpdate={(id, patch) => editor.updateNode(id, patch)}
+            referenceCatalog={referenceCatalog}
+          />
+        )}
       </main>
       <ConflictDialog
         onClose={() => setConflictOpen(false)}

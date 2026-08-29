@@ -115,6 +115,7 @@ def test_product_playwright_suite(
                     "tests/safe-deletion.spec.ts",
                 ),
             ),
+            ("workflow-multi-exit", ("tests/workflow-multi-exit.spec.ts",)),
         )
         only_suite = os.environ.get("AGENTX_E2E_ONLY_SUITE")
         for suite, tests in suites:

@@ -1669,6 +1669,8 @@ export interface components {
                 sensitive: boolean;
                 required: boolean;
             }[];
+            /** @description Raw payload paths (raw.<dotted.path>) this provider's messages carry beyond the standardized Trigger Context fields, offered as mapping source suggestions. */
+            mappingSources?: string[];
         };
         WebhookResponse: {
             id: string;

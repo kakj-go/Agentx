@@ -523,11 +523,15 @@ async fn materialize_result(
     };
     let engine = ExpressionEngine;
     let mut string_conversions = Vec::new();
+    let workflow = machine.workflow();
     if machine.status() != RuntimeExecutionStatus::Succeeded {
-        let mut errors = machine
+        let error_deliveries = machine
             .end_deliveries()
             .iter()
             .filter(|delivery| delivery.target_port == "error")
+            .collect::<Vec<_>>();
+        let mut errors = error_deliveries
+            .iter()
             .flat_map(|delivery| &delivery.items)
             .map(|item| item.json.clone())
             .collect::<Vec<_>>();
@@ -546,47 +550,60 @@ async fn materialize_result(
         let primary = errors.first().cloned().unwrap_or_else(
             || json!({"code":"WORKFLOW_FAILED","message":"Workflow did not succeed"}),
         );
+        let error_exit = error_deliveries
+            .first()
+            .and_then(|delivery| workflow.exits.get(&delivery.target_exit))
+            .or_else(|| workflow.exits.values().next());
         let mut error_context = expression_context.clone();
         error_context.json = primary.clone();
         let mut error_outputs = Map::new();
-        for (name, output) in &machine.workflow().end.error.outputs {
-            let (value, mut conversions) = engine
-                .resolve_dynamic_optional_with_conversions(
-                    &output.value,
-                    &error_context,
-                    format!("end.error.outputs.{name}"),
-                )
-                .map_err(|error| RuntimeError::Deterministic {
-                    code: "END_OUTPUT_EVALUATION_FAILED",
-                    message: error.to_string(),
-                })?;
-            string_conversions.append(&mut conversions);
-            let Some(value) = value else {
-                if output.required {
-                    return Err(RuntimeError::Deterministic {
-                        code: "REQUIRED_END_ERROR_OUTPUT_OMITTED",
-                        message: format!("required End error output {name} was omitted"),
-                    });
+        if let Some(exit) = error_exit {
+            let exit_id = error_deliveries
+                .first()
+                .map_or_else(String::new, |delivery| delivery.target_exit.clone());
+            for (name, dynamic) in &exit.error_outputs {
+                let contract = workflow.end.error.outputs.get(name);
+                let (value, mut conversions) = engine
+                    .resolve_dynamic_optional_with_conversions(
+                        dynamic,
+                        &error_context,
+                        format!("exit.{exit_id}.errorOutputs.{name}"),
+                    )
+                    .map_err(|error| RuntimeError::Deterministic {
+                        code: "END_OUTPUT_EVALUATION_FAILED",
+                        message: error.to_string(),
+                    })?;
+                string_conversions.append(&mut conversions);
+                let required = contract.is_some_and(|output| output.required);
+                let Some(value) = value else {
+                    if required {
+                        return Err(RuntimeError::Deterministic {
+                            code: "REQUIRED_END_ERROR_OUTPUT_OMITTED",
+                            message: format!("required End error output {name} was omitted"),
+                        });
+                    }
+                    continue;
+                };
+                if required && value.is_null() {
+                    return Err(runtime_bad_request(
+                        "REQUIRED_END_ERROR_OUTPUT_NULL",
+                        &format!("required End error output {name} resolved to null"),
+                    ));
                 }
-                continue;
-            };
-            if output.required && value.is_null() {
-                return Err(runtime_bad_request(
-                    "REQUIRED_END_ERROR_OUTPUT_NULL",
-                    &format!("required End error output {name} resolved to null"),
-                ));
+                if let Some(contract) = contract {
+                    jsonschema::validator_for(&contract.schema)
+                        .map_err(|error| RuntimeError::Deterministic {
+                            code: "END_OUTPUT_SCHEMA_INVALID",
+                            message: error.to_string(),
+                        })?
+                        .validate(&value)
+                        .map_err(|error| RuntimeError::Deterministic {
+                            code: "END_OUTPUT_SCHEMA_VALIDATION_FAILED",
+                            message: error.to_string(),
+                        })?;
+                }
+                error_outputs.insert(name.clone(), value);
             }
-            jsonschema::validator_for(&output.schema)
-                .map_err(|error| RuntimeError::Deterministic {
-                    code: "END_OUTPUT_SCHEMA_INVALID",
-                    message: error.to_string(),
-                })?
-                .validate(&value)
-                .map_err(|error| RuntimeError::Deterministic {
-                    code: "END_OUTPUT_SCHEMA_VALIDATION_FAILED",
-                    message: error.to_string(),
-                })?;
-            error_outputs.insert(name.clone(), value);
         }
         let code = primary
             .get("code")
@@ -608,45 +625,70 @@ async fn materialize_result(
             string_conversions,
         ));
     }
+    let main_delivery = machine
+        .end_deliveries()
+        .iter()
+        .find(|delivery| delivery.target_port == "main");
+    let selected_exit = main_delivery
+        .and_then(|delivery| workflow.exits.get(&delivery.target_exit))
+        .or_else(|| {
+            workflow
+                .start_to_exit
+                .as_ref()
+                .and_then(|exit_id| workflow.exits.get(exit_id))
+        });
     let mut result = Map::new();
-    for (name, output) in &machine.workflow().end.outputs {
-        let (value, mut conversions) = engine
-            .resolve_dynamic_optional_with_conversions(
-                &output.value,
-                &expression_context,
-                format!("end.outputs.{name}"),
-            )
-            .map_err(|error| RuntimeError::Deterministic {
-                code: "END_OUTPUT_EVALUATION_FAILED",
-                message: error.to_string(),
-            })?;
-        string_conversions.append(&mut conversions);
-        let Some(value) = value else {
-            if output.required {
-                return Err(RuntimeError::Deterministic {
-                    code: "REQUIRED_END_OUTPUT_OMITTED",
-                    message: format!("required End output {name} was omitted"),
-                });
+    if let Some(exit) = selected_exit {
+        let exit_id = main_delivery.map_or(
+            workflow
+                .start_to_exit
+                .clone()
+                .unwrap_or_default(),
+            |delivery| delivery.target_exit.clone(),
+        );
+        for (name, dynamic) in &exit.outputs {
+            let contract = workflow.end.outputs.get(name);
+            let (value, mut conversions) = engine
+                .resolve_dynamic_optional_with_conversions(
+                    dynamic,
+                    &expression_context,
+                    format!("exit.{exit_id}.outputs.{name}"),
+                )
+                .map_err(|error| RuntimeError::Deterministic {
+                    code: "END_OUTPUT_EVALUATION_FAILED",
+                    message: error.to_string(),
+                })?;
+            string_conversions.append(&mut conversions);
+            let required = contract.is_some_and(|output| output.required);
+            let Some(value) = value else {
+                if required {
+                    return Err(RuntimeError::Deterministic {
+                        code: "REQUIRED_END_OUTPUT_OMITTED",
+                        message: format!("required End output {name} was omitted"),
+                    });
+                }
+                continue;
+            };
+            if required && value.is_null() {
+                return Err(runtime_bad_request(
+                    "REQUIRED_END_OUTPUT_NULL",
+                    &format!("required End output {name} resolved to null"),
+                ));
             }
-            continue;
-        };
-        if output.required && value.is_null() {
-            return Err(runtime_bad_request(
-                "REQUIRED_END_OUTPUT_NULL",
-                &format!("required End output {name} resolved to null"),
-            ));
+            if let Some(contract) = contract {
+                jsonschema::validator_for(&contract.schema)
+                    .map_err(|error| RuntimeError::Deterministic {
+                        code: "END_OUTPUT_SCHEMA_INVALID",
+                        message: error.to_string(),
+                    })?
+                    .validate(&value)
+                    .map_err(|error| RuntimeError::Deterministic {
+                        code: "END_OUTPUT_SCHEMA_VALIDATION_FAILED",
+                        message: error.to_string(),
+                    })?;
+            }
+            result.insert(name.clone(), value);
         }
-        jsonschema::validator_for(&output.schema)
-            .map_err(|error| RuntimeError::Deterministic {
-                code: "END_OUTPUT_SCHEMA_INVALID",
-                message: error.to_string(),
-            })?
-            .validate(&value)
-            .map_err(|error| RuntimeError::Deterministic {
-                code: "END_OUTPUT_SCHEMA_VALIDATION_FAILED",
-                message: error.to_string(),
-            })?;
-        result.insert(name.clone(), value);
     }
     if result.is_empty()
         && let Some(item) = machine

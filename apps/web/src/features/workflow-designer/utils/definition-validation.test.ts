@@ -36,8 +36,10 @@ describe("workflow definition validation", () => {
     const value = document();
     value.settings.activationBudget = 0;
     value.start.contexts["Bad-name"] = { schema: { type: "string" }, default: "", mutable: true, sensitive: false, clientWritable: false, scope: "execution_tree", maxSize: 0, mergePolicy: "replace" };
-    value.end.outputs["中文"] = { value: { kind: "literal", value: "" }, schema: { type: "string" }, required: false, sensitive: false };
+    value.end.outputs["中文"] = { schema: { type: "string" }, required: false, sensitive: false };
+    value.end.outputs["answer"] = { schema: { type: "string" }, required: false, sensitive: false };
     value.end.error.collectWindowMs = 99;
+    value.nodes = [{ id: "exit", type: "exit", position: { x: 0, y: 0 }, data: { editorKind: "exit", key: "exit", label: "End", protected: false, parameters: { outputs: { answer: { kind: "literal", value: "  " } }, errorOutputs: {} } } }];
 
     expect(definitionIssues(value).map((issue) => issue.code)).toEqual(expect.arrayContaining([
       "INVALID_ACTIVATION_BUDGET",
@@ -47,6 +49,21 @@ describe("workflow definition validation", () => {
       "END_OUTPUT_EXPRESSION_REQUIRED",
       "INVALID_ERROR_COLLECT_WINDOW",
     ]));
+  });
+
+  it("keeps end node mappings aligned with the shared contract", () => {
+    const value = document();
+    value.end.outputs["answer"] = { schema: { type: "string" }, required: true, sensitive: false };
+    value.nodes = [{ id: "exit", type: "exit", position: { x: 0, y: 0 }, data: { editorKind: "exit", key: "exit", label: "End", protected: false, parameters: { outputs: { ghost: { kind: "literal", value: "x" } }, errorOutputs: {} } } }];
+
+    expect(definitionIssues(value).map((issue) => issue.code)).toEqual(expect.arrayContaining([
+      "EXIT_MAPPING_KEY_UNKNOWN",
+      "EXIT_REQUIRED_MAPPING_MISSING",
+    ]));
+  });
+
+  it("rejects a document without any end node", () => {
+    expect(definitionIssues(document()).map((issue) => issue.code)).toContain("EXIT_REQUIRED");
   });
 
   it("checks generated node and connection invariants before sending a draft", () => {
@@ -84,7 +101,7 @@ describe("workflow definition validation", () => {
       "INVALID_PROJECTION_FIELD_KEY",
       "INVALID_PROJECTION_SCHEMA",
       "INVALID_CONNECTION_ID",
-      "INVALID_BOUNDARY_DIRECTION",
+      "END_BOUNDARY_REMOVED",
     ]));
   });
 });

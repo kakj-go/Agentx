@@ -37,6 +37,8 @@ const translations = {
     "attachments": "AI 附件",
     "note": "便签",
     "group": "分组",
+    "exit": "结束节点",
+    "exitGroup": "结束",
     "ai": "AI",
     "back": "返回节点列表",
     "chooseInput": "选择 {{node}} 的输入端口",
@@ -343,6 +345,23 @@ const translations = {
   "errorStrategies": {
     "fail_fast": "快速失败",
     "collect": "收集错误"
+  },
+  "exit": {
+    "title": "结束节点",
+    "description": "输出契约全局共享，本节点配置各自的取值映射",
+    "summary": "输出 / 错误",
+    "protected": "初始结束节点不可删除",
+    "paletteLabel": "结束节点",
+    "paletteMeta": "工作流的终止出口，可添加多个",
+    "contractDescription": "全局输出字段契约，所有结束节点共享",
+    "errorContractDescription": "全局错误输出字段契约，所有结束节点共享",
+    "contractDialogDescription": "输出字段定义对所有结束节点生效",
+    "contractRenameHint": "重命名字段会同步更新所有结束节点的映射",
+    "successMappings": "本节点输出映射",
+    "errorMappings": "本节点错误映射",
+    "mappingDescription": "字段来自全局契约，为本节点选择各自的取值来源",
+    "errorMappingDescription": "错误字段来自全局契约，为本节点选择各自的取值来源",
+    "emptyContract": "请先在上方定义输出字段"
   },
   "boundary": {
     "start": "开始",

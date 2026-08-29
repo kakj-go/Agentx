@@ -181,6 +181,7 @@ export type DefinitionNode = {
   typeVersion: number;
   name: string;
   disabled: boolean;
+  protected: boolean;
   parameters: Record<string, unknown>;
   outputProjection: OutputProjection;
   contextWrites: ContextWrite[];
@@ -266,10 +267,13 @@ export type ContextWrite = {
   value: DynamicValue;
 };
 export type WorkflowOutput = {
-  value: DynamicValue;
   schema: unknown;
   required: boolean;
   sensitive: boolean;
+};
+export type ExitParameters = {
+  outputs: Record<string, DynamicValue>;
+  errorOutputs: Record<string, DynamicValue>;
 };
 export type EndErrorStrategy = "fail_fast" | "collect";
 export type WorkflowErrorEnd = {
@@ -283,7 +287,7 @@ export type WorkflowStart = {
 };
 export type WorkflowEnd = { outputs: Record<string, WorkflowOutput>; error: WorkflowErrorEnd };
 export type WorkflowDefinition = {
-  schemaVersion: "6.0";
+  schemaVersion: "7.0";
   start: WorkflowStart;
   nodes: DefinitionNode[];
   connections: DefinitionConnection[];
@@ -300,7 +304,7 @@ export type EditorDocument = {
     height?: number;
     collapsed?: boolean;
   }>;
-  boundaryLayouts: Array<{ boundary: "start" | "end"; x: number; y: number }>;
+  boundaryLayouts: Array<{ boundary: "start"; x: number; y: number }>;
   bindingLayouts: Array<{ bindingId: string; x: number; y: number }>;
   edges: Array<{ edgeId: string; labelPosition?: number }>;
   bindingEdges: Array<{
@@ -380,16 +384,23 @@ export type AnnotationNodeData = {
 };
 export type BoundaryNodeData = {
   editorKind: "boundary";
-  boundary: "start" | "end";
+  boundary: "start";
   label: string;
 };
-export type StudioNodeData = ActionNodeData | BindingNodeData;
-export type StudioNode = Node<StudioNodeData, "manifest" | "attachment">;
+export type ExitNodeData = {
+  editorKind: "exit";
+  key: string;
+  label: string;
+  protected: boolean;
+  parameters: ExitParameters;
+};
+export type StudioNodeData = ActionNodeData | BindingNodeData | ExitNodeData;
+export type StudioNode = Node<StudioNodeData, "manifest" | "attachment" | "exit">;
 export type CanvasNodeData =
   StudioNodeData | GroupNodeData | AnnotationNodeData | BoundaryNodeData;
 export type CanvasNode = Node<
   CanvasNodeData,
-  "manifest" | "attachment" | "group" | "annotation" | "boundary"
+  "manifest" | "attachment" | "exit" | "group" | "annotation" | "boundary"
 >;
 export type StudioEdgeData = {
   edgeKind: "execution" | "binding";

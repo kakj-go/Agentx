@@ -1,10 +1,9 @@
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { useState } from 'react'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { i18n } from '../../../app/i18n'
 import type { ReferenceCatalog, WorkflowEnd, WorkflowStart } from '../model/types'
-import { ExitPanel } from './exit-panel'
 import { WorkflowInterfacePanel } from './workflow-interface-panel'
 
 const start: WorkflowStart = {
@@ -19,6 +18,7 @@ const end: WorkflowEnd = {
     collectWindowMs: 5000,
     outputs: {
       failure_message: {
+        value: { kind: 'literal', value: '' },
         schema: { type: 'string' },
         required: true,
         sensitive: false,
@@ -33,38 +33,40 @@ const catalog: ReferenceCatalog = {
   contexts: [],
   execution: [{ id: 'execution.root', label: '运行信息', path: 'execution', children: [] }],
 }
+const dynamicValueMime = 'application/x-agentx-dynamic-value+json'
 
 afterEach(async () => { await i18n.changeLanguage('zh-CN') })
 
-function Harness({ boundary }: { boundary: 'start' }) {
+function Harness({ boundary }: { boundary: 'start' | 'end' }) {
   const [startValue, setStart] = useState(start)
-  return <><WorkflowInterfacePanel boundary={boundary} onClose={() => undefined} onStartChange={setStart} start={startValue} /><output data-testid="definition-state">{JSON.stringify({ start: startValue })}</output></>
+  const [endValue, setEnd] = useState(end)
+  return <><WorkflowInterfacePanel boundary={boundary} end={endValue} onClose={() => undefined} onEndChange={setEnd} onStartChange={setStart} referenceCatalog={catalog} start={startValue} /><output data-testid="definition-state">{JSON.stringify({ start: startValue, end: endValue })}</output></>
 }
 
-const exitEntry = (id: string, key: string) => ({
-  id,
-  data: { editorKind: 'exit' as const, key, label: key, protected: id === 'exit-1', parameters: { outputs: {}, errorOutputs: {} } },
-})
-
-function ExitHarness({ end: initialEnd = end, exits: initialExits }: { end?: WorkflowEnd; exits?: ReturnType<typeof exitEntry>[] }) {
-  const [endValue, setEnd] = useState(initialEnd)
-  const [exits, setExits] = useState(initialExits ?? [exitEntry('exit-1', 'exit')])
-  return <><ExitPanel end={endValue} exitId="exit-1" exits={exits} onClose={() => undefined} onEndChange={setEnd} onExitUpdate={(id, patch) => setExits((current) => current.map((exit) => exit.id === id ? { ...exit, data: { ...exit.data, ...patch } } : exit))} referenceCatalog={catalog} /><output data-testid="definition-state">{JSON.stringify({ end: endValue, exits })}</output></>
+function pasteDynamicValue(value: unknown) {
+  fireEvent.paste(screen.getByLabelText('Value'), {
+    clipboardData: { getData: (type: string) => type === dynamicValueMime ? JSON.stringify(value) : '' },
+  })
 }
 
 describe('Workflow boundary forms', () => {
-  it('renders the Start interface in Chinese without English fallback copy', async () => {
+  it('renders the Start and End interfaces in Chinese without English fallback copy', async () => {
     await i18n.changeLanguage('zh-CN')
-    render(<Harness boundary="start" />)
+    const { rerender } = render(<Harness boundary="start" />)
     expect(screen.getByText('开始')).toBeInTheDocument()
     expect(screen.getByText('配置每次执行的输入和全局变量')).toBeInTheDocument()
     expect(screen.getByText('每次执行时由调用方提供的值')).toBeInTheDocument()
     expect(screen.getByText('执行树或会话范围内共享的变量')).toBeInTheDocument()
 
+    rerender(<Harness boundary="end" />)
+    expect(screen.getByText('结束')).toBeInTheDocument()
+    expect(screen.getByText('配置成功与错误终态输出')).toBeInTheDocument()
+    expect(screen.getByText('成功输出')).toBeInTheDocument()
+    expect(screen.getByText('错误输出')).toBeInTheDocument()
   })
 
   it('does not render a boundary form when no boundary is selected', () => {
-    render(<WorkflowInterfacePanel boundary={undefined} onClose={() => undefined} onStartChange={() => undefined} start={start} />)
+    render(<WorkflowInterfacePanel boundary={undefined} end={end} onClose={() => undefined} onEndChange={() => undefined} onStartChange={() => undefined} referenceCatalog={catalog} start={start} />)
     expect(screen.queryByTestId('workflow-interface-panel')).not.toBeInTheDocument()
   })
 
@@ -190,106 +192,3 @@ describe('Workflow boundary forms', () => {
     })
   })
 
-  it('does not render a boundary form when no boundary is selected', () => {
-    render(<WorkflowInterfacePanel boundary={undefined} onClose={() => undefined} onStartChange={() => undefined} start={start} />)
-    expect(screen.queryByTestId('workflow-interface-panel')).not.toBeInTheDocument()
-  })
-
-  it('rejects invalid global variable names and marks protocol-required labels', () => {
-    render(<Harness boundary="start" />)
-
-    fireEvent.click(screen.getByRole('button', { name: /Add global variable|添加全局变量/ }))
-    const name = screen.getByText(/Global variable name|全局变量名称/).closest('label')!.querySelector('input')!
-    fireEvent.change(name, { target: { value: '2bad-name' } })
-
-    expect(screen.getByRole('alert')).toHaveTextContent(/first character|不能以数字开头/i)
-    expect(screen.getByRole('button', { name: /Save|保存/ })).toBeDisabled()
-    expect(screen.getByText(/Global variable name|全局变量名称/).parentElement).toHaveTextContent('*')
-  })
-})
-
-describe('Workflow exit panel', () => {
-  it('renders the shared contract and per-node mapping sections in Chinese', () => {
-    render(<ExitHarness end={{ ...end, outputs: { answer: { schema: { type: 'string' }, required: false, sensitive: false } } }} />)
-    expect(screen.getByText('全局输出字段契约，所有结束节点共享')).toBeInTheDocument()
-    expect(screen.getByText('本节点输出映射')).toBeInTheDocument()
-    expect(screen.getByText('本节点错误映射')).toBeInTheDocument()
-    expect(screen.getByTestId('exit-mapping-answer')).toBeInTheDocument()
-    expect(screen.getByTestId('exit-mapping-failure_message')).toBeInTheDocument()
-  })
-
-  it('renames a contract field and syncs mappings across all end nodes', () => {
-    const exits = [
-      { id: 'exit-1', data: { editorKind: 'exit' as const, key: 'exit', label: 'End', protected: true, parameters: { outputs: { answer: { kind: 'literal', value: 'one' } }, errorOutputs: {} } } },
-      { id: 'exit-2', data: { editorKind: 'exit' as const, key: 'exit_2', label: 'End 2', protected: false, parameters: { outputs: { answer: { kind: 'literal', value: 'two' } }, errorOutputs: {} } } },
-    ]
-    render(<ExitHarness end={{ ...end, outputs: { answer: { schema: { type: 'string' }, required: false, sensitive: false } } }} exits={exits} />)
-
-    fireEvent.click(screen.getAllByRole('button', { name: /Edit field|编辑字段/ })[0])
-    fireEvent.change(screen.getByLabelText(/Output name|输出名称/), { target: { value: 'result' } })
-    fireEvent.click(screen.getByRole('button', { name: /Save|保存/ }))
-
-    const state = JSON.parse(screen.getByTestId('definition-state').textContent ?? '{}')
-    expect(Object.keys(state.end.outputs)).toEqual(['result'])
-    expect(state.exits[0].data.parameters.outputs.result).toMatchObject({ kind: 'literal', value: 'one' })
-    expect(state.exits[0].data.parameters.outputs.answer).toBeUndefined()
-    expect(state.exits[1].data.parameters.outputs.result).toMatchObject({ kind: 'literal', value: 'two' })
-  })
-
-  it('configures a shared output field through the contract dialog', () => {
-    render(<ExitHarness />)
-
-    fireEvent.click(screen.getAllByRole('button', { name: /Add field|添加字段/ })[0])
-    fireEvent.click(screen.getByRole('combobox', { name: /Type|类型/ }))
-    fireEvent.click(screen.getByRole('option', { name: /Number|数字/ }))
-    fireEvent.change(screen.getByLabelText(/Output name|输出名称/), { target: { value: 'answer' } })
-    fireEvent.change(screen.getByLabelText(/Title|标题/), { target: { value: 'Answer' } })
-    fireEvent.change(screen.getByLabelText(/Description|说明/), { target: { value: 'Final answer' } })
-    fireEvent.click(screen.getByLabelText(/Sensitive|敏感/))
-    fireEvent.click(screen.getByRole('button', { name: /Save|保存/ }))
-
-    const state = JSON.parse(screen.getByTestId('definition-state').textContent ?? '{}')
-    expect(state.end.outputs.answer).toMatchObject({
-      schema: { type: 'number', title: 'Answer', description: 'Final answer' },
-      sensitive: true,
-    })
-    expect(screen.getByTestId('exit-mapping-answer')).toBeInTheDocument()
-  })
-
-  it('rejects invalid and duplicate contract field names before changing the definition', () => {
-    render(<ExitHarness />)
-
-    fireEvent.click(screen.getAllByRole('button', { name: /Add field|添加字段/ })[0])
-    fireEvent.change(screen.getByLabelText(/Output name|输出名称/), { target: { value: '中文输出' } })
-
-    expect(screen.getByRole('alert')).toHaveTextContent(/lowercase letters|小写字母/i)
-    expect(screen.getByRole('button', { name: /Save|保存/ })).toBeDisabled()
-    const state = JSON.parse(screen.getByTestId('definition-state').textContent ?? '{}')
-    expect(state.end.outputs).toEqual({})
-  })
-
-  it('places required and sensitive flags before the optional description', () => {
-    render(<ExitHarness />)
-
-    fireEvent.click(screen.getAllByRole('button', { name: /Add field|添加字段/ })[0])
-    const required = screen.getByLabelText(/Required|必填/)
-    const sensitive = screen.getByLabelText(/Sensitive|敏感/)
-    const description = screen.getByLabelText(/Description|说明/)
-
-    expect(required.compareDocumentPosition(description) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(sensitive.compareDocumentPosition(description) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-  })
-
-  it('configures the End error collect strategy and bounded window', () => {
-    render(<ExitHarness />)
-
-    fireEvent.click(screen.getByRole('combobox', { name: /Error strategy|错误策略/ }))
-    fireEvent.click(screen.getByRole('option', { name: /Collect|收集/ }))
-    const collectWindow = screen.getByLabelText(/Collect window|收集窗口/)
-    fireEvent.change(collectWindow, { target: { value: '5000' } })
-
-    const state = JSON.parse(screen.getByTestId('definition-state').textContent ?? '{}')
-    expect(state.end.error.strategy).toBe('collect')
-    expect(state.end.error.collectWindowMs).toBe(5000)
-  })
-})

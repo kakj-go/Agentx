@@ -199,7 +199,7 @@ async function selectSaveVersionAndRun(page: Page, workflowId: string, modelNode
   await page.getByTestId('parameter-prompt').getByRole('textbox').fill('Return a short E2E response')
   await page.getByRole('button', { name: /^(适应画布|Fit View)$/ }).click()
   await connect(page, page.getByTestId('workflow-start').locator('.react-flow__handle.source[data-handleid="main"]'), modelNode.locator('.react-flow__handle.target[data-handleid="main"]'))
-  await connect(page, modelNode.locator('.react-flow__handle.source[data-handleid="main"]'), page.getByTestId('workflow-end').locator('.react-flow__handle.target[data-handleid="main"]'))
+  await connect(page, modelNode.locator('.react-flow__handle.source[data-handleid="main"]'), page.getByTestId('exit-node-exit').locator('.react-flow__handle.target[data-handleid="main"]'))
   await expect(page.locator('.react-flow__edge')).toHaveCount(2)
   const saved = page.waitForResponse((response) => response.request().method() === 'PUT' && response.url().endsWith(`/workflows/${workflowId}/draft`))
   await page.getByRole('button', { name: '保存', exact: true }).click()

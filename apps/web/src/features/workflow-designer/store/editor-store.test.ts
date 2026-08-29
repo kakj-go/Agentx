@@ -2,6 +2,47 @@ import { beforeEach, describe, expect, it } from 'vitest'
 
 import { useEditorStore } from './editor-store'
 
+describe('editor store exit nodes', () => {
+  beforeEach(() => {
+    useEditorStore.setState({
+      nodes: [
+        { id: 'trigger', type: 'manifest', position: { x: 0, y: 0 }, data: { editorKind: 'action', nodeType: 'set', typeVersion: 1, label: 'Set', key: 'set', parameters: {}, outputProjection: {}, contextWrites: [], resourceReferences: [], settings: {}, disabled: false } },
+        { id: 'exit-main', type: 'exit', position: { x: 400, y: 0 }, data: { editorKind: 'exit', key: 'exit', label: 'End', protected: true, parameters: { outputs: {}, errorOutputs: {} } } },
+        { id: 'exit-extra', type: 'exit', position: { x: 400, y: 160 }, data: { editorKind: 'exit', key: 'exit_2', label: 'End 2', protected: false, parameters: { outputs: {}, errorOutputs: {} } } },
+      ],
+      edges: [], viewport: { x: 0, y: 0, zoom: 1 }, annotations: [], groups: [],
+      settings: { executionOrder: 'deterministic', activationBudget: 10_000 },
+      dirty: false, past: [], future: [], selectedId: undefined,
+    })
+  })
+
+  it('adds a removable exit node and keeps it out of the action list', () => {
+    const id = useEditorStore.getState().addExit()
+    const state = useEditorStore.getState()
+    const added = state.nodes.find((node) => node.id === id)
+    expect(added?.data.editorKind).toBe('exit')
+    expect(added && 'protected' in added.data && added.data.protected).toBe(false)
+    expect(state.selectedId).toBe(id)
+    expect(useEditorStore.getState().past.length).toBe(1)
+  })
+
+  it('refuses to remove the protected exit but removes manual ones', () => {
+    const store = useEditorStore.getState()
+    store.select('exit-main')
+    useEditorStore.getState().removeSelected()
+    expect(useEditorStore.getState().nodes.some((node) => node.id === 'exit-main')).toBe(true)
+
+    useEditorStore.getState().select('exit-extra')
+    useEditorStore.getState().removeSelected()
+    expect(useEditorStore.getState().nodes.some((node) => node.id === 'exit-extra')).toBe(false)
+  })
+
+  it('drops remove changes that target protected exits', () => {
+    useEditorStore.getState().onNodesChange([{ id: 'exit-main', type: 'remove' }])
+    expect(useEditorStore.getState().nodes.some((node) => node.id === 'exit-main')).toBe(true)
+  })
+})
+
 describe('editor store node creation', () => {
   beforeEach(() => {
     useEditorStore.setState({ nodes: [], edges: [], viewport: { x: 0, y: 0, zoom: 1 }, annotations: [], groups: [], settings: { executionOrder: 'deterministic', activationBudget: 10_000 }, dirty: false, past: [], future: [], selectedId: undefined })
@@ -90,15 +131,13 @@ describe('editor store node creation', () => {
     expect(useEditorStore.getState().boundaryLayouts).toEqual([{ boundary: 'start', x: 180, y: 120 }])
   })
 
-  it('stores Start and End boundary positions independently', () => {
+  it('stores the Start boundary position', () => {
     useEditorStore.setState({ boundaryLayouts: [], past: [], future: [] })
 
     useEditorStore.getState().updateBoundaryPosition('start', { x: 80, y: 140 })
-    useEditorStore.getState().updateBoundaryPosition('end', { x: 640, y: 260 })
 
     expect(useEditorStore.getState().boundaryLayouts).toEqual([
       { boundary: 'start', x: 80, y: 140 },
-      { boundary: 'end', x: 640, y: 260 },
     ])
   })
 

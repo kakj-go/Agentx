@@ -1,0 +1,200 @@
+import { expect, type Locator, type Page, test } from '@playwright/test'
+
+const password = 'agentx-e2e-admin-password'
+
+type StudioDraft = {
+  revision: number
+  definition: {
+    nodes: Array<{ id: string; key: string; type: string; name: string; protected?: boolean; parameters: Record<string, unknown> }>
+    connections: Array<{ id: string; sourceNodeId: string; targetNodeId: string; targetHandle: string }>
+    end: { outputs: Record<string, { schema: { type: string }; required: boolean }> }
+  }
+}
+
+async function login(page: Page) {
+  const bootstrapStatus = await page.request.get('/api/v1/bootstrap/status')
+  if (!bootstrapStatus.ok()) throw new Error(`bootstrap status: ${bootstrapStatus.status()}`)
+  if (((await bootstrapStatus.json()) as { required: boolean }).required) {
+    await page.goto('/setup')
+    await page.getByLabel('公司名称').fill('Agentx E2E')
+    await page.getByLabel('用户名').fill('admin')
+    await page.getByLabel('管理员姓名').fill('E2E Admin')
+    await page.getByLabel('密码').fill(password)
+    const response = page.waitForResponse((value) => value.url().endsWith('/api/v1/bootstrap') && value.request().method() === 'POST')
+    await page.getByRole('button', { name: '初始化并进入工作台' }).click()
+    await expect(page).toHaveURL(/\/$/)
+    return ((await (await response).json()) as { accessToken: string }).accessToken
+  }
+  await page.goto('/login')
+  await page.getByLabel('用户名').fill('admin')
+  await page.getByLabel('密码').fill(password)
+  const response = page.waitForResponse((value) => value.url().endsWith('/api/v1/auth/login') && value.request().method() === 'POST')
+  await page.getByRole('button', { name: '登录' }).click()
+  await expect(page).toHaveURL(/\/$/)
+  return ((await (await response).json()) as { accessToken: string }).accessToken
+}
+
+async function api<T>(page: Page, token: string, path: string): Promise<T> {
+  const response = await page.request.get(`/api/v1${path}`, { headers: { Authorization: `Bearer ${token}` } })
+  if (!response.ok()) throw new Error(`${path}: ${response.status()} ${await response.text()}`)
+  return response.json() as Promise<T>
+}
+
+async function createWorkflow(page: Page, name: string) {
+  await page.getByRole('link', { name: '工作流', exact: true }).click()
+  await page.getByRole('button', { name: '新建工作流' }).click()
+  const dialog = page.getByRole('dialog', { name: '新建工作流' })
+  await dialog.getByLabel('工作流名称').fill(name)
+  await dialog.getByLabel('描述').fill('Multi Exit Kubernetes E2E')
+  await dialog.getByRole('button', { name: '保存' }).click()
+  await expect(page).toHaveURL(/\/workflows\/[0-9a-f-]+\/editor$/)
+  return page.url().split('/').at(-2) as string
+}
+
+async function connect(page: Page, source: Locator, sourceHandle: string, target: Locator, targetHandle: string) {
+  const edges = page.locator('.react-flow__edge')
+  const edgeCount = await edges.count()
+  const from = source.locator(`.react-flow__handle.source[data-handleid="${sourceHandle}"]`)
+  const to = target.locator(`.react-flow__handle.target[data-handleid="${targetHandle}"]`)
+  await expect(from).toBeVisible()
+  await expect(to).toBeVisible()
+  let boxes: Awaited<ReturnType<Locator['boundingBox']>>[] | undefined
+  await expect.poll(async () => {
+    const next = await Promise.all([from.boundingBox(), to.boundingBox()])
+    if (next.some((box) => box === null)) return false
+    boxes = next
+    return true
+  }).toBeTruthy()
+  const [fromBox, toBox] = boxes!
+  await page.mouse.move(fromBox!.x + fromBox!.width / 2, fromBox!.y + fromBox!.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(toBox!.x + toBox!.width / 2, toBox!.y + toBox!.height / 2, { steps: 12 })
+  await page.waitForTimeout(75)
+  await page.mouse.up()
+  await expect(edges).toHaveCount(edgeCount + 1)
+}
+
+async function chooseInputsReference(page: Page, mapping: Locator) {
+  await mapping.getByRole('textbox', { name: 'Value' }).click()
+  const picker = page.getByTestId('reference-picker')
+  await expect(picker).toBeVisible()
+  const inputsRoot = picker.getByRole('button', { name: /输入|Inputs/ }).first()
+  const toggle = inputsRoot.locator('[data-tree-toggle]')
+  if (await toggle.count()) await toggle.click()
+  await picker.getByRole('button', { name: /question/i }).first().click()
+  await expect(picker).toBeHidden()
+}
+
+async function saveAndReadDraft(page: Page, token: string, workflowId: string) {
+  const save = page.getByRole('button', { name: '保存', exact: true })
+  const responsePromise = page.waitForResponse((response) => response.url().endsWith(`/api/v1/workflows/${workflowId}/draft`) && response.request().method() === 'PUT')
+  await save.click()
+  const response = await responsePromise
+  if (!response.ok()) throw new Error(`save draft: ${response.status()} ${await response.text()}`)
+  await expect(page.locator('header').getByText(/修订号 \d+ · 已保存/)).toBeVisible({ timeout: 30_000 })
+  return api<StudioDraft>(page, token, `/workflows/${workflowId}/draft`)
+}
+
+async function setStartQuestionInput(page: Page) {
+  await page.getByTestId('workflow-start').click()
+  const panel = page.getByTestId('workflow-interface-panel')
+  await expect(panel).toBeVisible()
+  await panel.getByRole('button', { name: /添加字段|Add field/ }).first().click()
+  const dialog = page.getByRole('dialog', { name: /添加字段|Add field/ })
+  await dialog.getByLabel(/字段名|Field name/).fill('question')
+  await dialog.getByLabel(/必填|Required/).check()
+  await dialog.getByRole('button', { name: /保存|Save/ }).click()
+  await panel.getByRole('button', { name: /^(关闭|Close)$/ }).first().click()
+}
+
+test.describe.configure({ mode: 'serial' })
+
+test('multi exit workflow keeps one shared contract with per-node mappings', async ({ page }) => {
+  const token = await login(page)
+  const workflowName = `multi-exit-${Date.now()}`
+  const workflowId = await createWorkflow(page, workflowName)
+
+  await expect(page.getByTestId('exit-node-exit')).toBeVisible()
+  await expect(page.getByTestId('exit-node-exit').locator('[data-testid="exit-protected"]')).toBeVisible()
+
+  // the initial exit cannot be deleted
+  await page.getByTestId('exit-node-exit').click()
+  await page.keyboard.press('Delete')
+  await expect(page.getByTestId('exit-node-exit')).toBeVisible()
+
+  // add a second, removable exit from the palette
+  await page.getByTestId('node-creator-trigger').click()
+  await page.getByTestId('palette-exit').click()
+  await expect(page.getByTestId('exit-panel')).toBeVisible()
+  await page.getByTestId('exit-panel').getByRole('button', { name: /^(关闭|Close)$/ }).first().click()
+  const secondExit = page.getByTestId('exit-node-exit_2')
+  await expect(secondExit).toBeVisible()
+
+  // two parallel branches, each terminating at its own exit
+  await setStartQuestionInput(page)
+  const start = page.getByTestId('workflow-start')
+  const initialExit = page.getByTestId('exit-node-exit')
+  async function addSet() {
+    await page.getByTestId('node-creator-trigger').click()
+    await page.getByRole('textbox', { name: '搜索节点' }).fill('set')
+    await page.getByTestId('palette-action-set').click()
+    await page.getByTestId('node-details-view').getByRole('button', { name: /^(关闭|Close)$/ }).first().click()
+    return page.locator('.react-flow__node[type="manifest"]').filter({ hasText: /Set/i }).last()
+  }
+  const firstSet = await addSet()
+  const secondSet = await addSet()
+  await connect(page, start, 'main', firstSet, 'main')
+  await connect(page, start, 'main', secondSet, 'main')
+  await connect(page, firstSet, 'main', initialExit, 'main')
+  await connect(page, secondSet, 'main', secondExit, 'main')
+
+  // shared contract declared once, mapped per exit
+  await initialExit.click()
+  const panel = page.getByTestId('exit-panel')
+  await expect(panel).toBeVisible()
+  await panel.getByRole('button', { name: /添加字段|Add field/ }).first().click()
+  const dialog = page.getByRole('dialog', { name: /输出字段|Output field/ })
+  await dialog.getByLabel(/输出名称|Output name/).fill('answer')
+  await dialog.getByLabel(/必填|Required/).check()
+  await dialog.getByRole('button', { name: /保存|Save/ }).click()
+  await expect(panel.getByTestId('exit-mapping-answer')).toBeVisible()
+  await chooseInputsReference(page, panel.getByTestId('exit-mapping-answer'))
+  await panel.getByRole('button', { name: /^(关闭|Close)$/ }).first().click()
+
+  await secondExit.click()
+  const secondPanel = page.getByTestId('exit-panel')
+  await expect(secondPanel).toBeVisible()
+  await chooseInputsReference(page, secondPanel.getByTestId('exit-mapping-answer'))
+  await secondPanel.getByRole('button', { name: /^(关闭|Close)$/ }).first().click()
+
+  const { definition } = await saveAndReadDraft(page, token, workflowId)
+  const exitNodes = definition.nodes.filter((node) => node.type === 'exit')
+  expect(exitNodes).toHaveLength(2)
+  expect(exitNodes.map((node) => node.protected ?? false).sort()).toEqual([false, true])
+  for (const node of exitNodes) {
+    const outputs = (node.parameters as { outputs?: Record<string, unknown> }).outputs ?? {}
+    expect(outputs).toHaveProperty('answer')
+  }
+  const exitIds = new Set(exitNodes.map((node) => node.id))
+  expect(definition.connections.some((connection) => exitIds.has(connection.targetNodeId) && connection.targetHandle === 'main')).toBe(true)
+  expect(definition.end.outputs.answer).toMatchObject({ schema: { type: 'string' }, required: true })
+
+  // the manually added exit can be removed; the protected one cannot
+  await secondExit.click()
+  await page.keyboard.press('Delete')
+  await expect(secondExit).toHaveCount(0)
+  await expect(initialExit).toBeVisible()
+
+  // the remaining exit materializes the workflow output from the start input
+  await saveAndReadDraft(page, token, workflowId)
+  page.once('dialog', (dialog) => dialog.accept())
+  const runResponse = page.waitForResponse((response) => response.url().includes('/debug-executions') && response.request().method() === 'POST')
+  await page.locator('header').getByRole('button', { name: '运行', exact: true }).click()
+  const parameters = page.getByRole('dialog', { name: /运行工作流|调试输入|Run workflow|Debug input/ })
+  if (await parameters.waitFor({ state: 'visible', timeout: 2_000 }).then(() => true).catch(() => false)) {
+    await parameters.getByLabel(/Question|问题/).fill('first-branch-answer')
+    await parameters.getByRole('button', { name: /运行|Run/ }).click()
+  }
+  await runResponse
+  await expect(page.getByText('first-branch-answer').first()).toBeVisible({ timeout: 120_000 })
+})

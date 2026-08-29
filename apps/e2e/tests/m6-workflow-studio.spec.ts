@@ -366,54 +366,44 @@ async function chooseReference(page: Page, scope: Locator, namespace: RegExp, la
   await expect(picker).toBeHidden()
 }
 
-async function setEndOutput(page: Page, nodeKey: string, fieldPath = 'json', port = 'main', required = true, type = 'string', verifyBoundaryEditing = false) {
-  await page.getByTestId('workflow-end').click()
-  const panel = page.getByTestId('workflow-interface-panel')
-  await expect(panel).toBeVisible()
+async function setExitContractField(page: Page, panel: Locator, name: string, required: boolean, type = 'string') {
   await panel.getByRole('button', { name: /添加字段|Add field/ }).first().click()
   const dialog = page.getByRole('dialog', { name: /输出字段|Output field/ })
   const outputName = dialog.getByLabel(/输出名称|Output name/)
-  await outputName.fill('answer')
+  await outputName.fill(name)
   await outputName.blur()
-  if (verifyBoundaryEditing) {
-    await dialog.getByRole('button', { name: /保存|Save/ }).click()
-    await expect(dialog.getByRole('alert')).toContainText(/输出表达式不能为空|expression is required/i)
-    await expect(dialog).toBeVisible()
-  }
   if (type !== 'string') {
     await dialog.getByLabel(/类型|Type/).click()
     await page.getByRole('option', { name: /对象|Object/ }).click()
   }
-  const fields = fieldPath.split('.').filter((field) => field !== 'json')
-  await chooseReference(page, dialog, /输出|Outputs/, [nodeKey, port, 'current', ...fields])
-  if (verifyBoundaryEditing) {
-    const editor = dialog.getByRole('textbox', { name: 'Value' })
-    await editor.press('ArrowLeft')
-    await editor.pressSequentially('before ')
-    await editor.press('End')
-    await editor.pressSequentially(' after')
-    await expect(editor).toContainText('before')
-    await expect(editor).toContainText('after')
-    await expect(dialog.locator('[data-agentx-variable]')).toBeVisible()
-  }
   if (required) await dialog.getByLabel(/必填|Required/).check()
-  await expect(dialog.locator('[data-agentx-variable]')).toBeVisible()
   await dialog.getByRole('button', { name: /保存|Save/ }).click()
-  await panel.getByRole('button', { name: /^(关闭|Close)$/ }).click()
+  await expect(page.getByTestId(`exit-mapping-${name}`)).toBeVisible()
+}
+
+async function openExitPanel(page: Page, key = 'exit') {
+  await page.getByTestId(`exit-node-${key}`).click()
+  const panel = page.getByTestId('exit-panel')
+  await expect(panel).toBeVisible()
+  return panel
+}
+
+async function setEndOutput(page: Page, nodeKey: string, fieldPath = 'json', port = 'main', required = true, type = 'string') {
+  const panel = await openExitPanel(page)
+  await setExitContractField(page, panel, 'answer', required, type)
+  const mapping = panel.getByTestId('exit-mapping-answer')
+  const fields = fieldPath.split('.').filter((field) => field !== 'json')
+  await chooseReference(page, mapping, /输出|Outputs/, [nodeKey, port, 'current', ...fields])
+  await expect(mapping.locator('[data-agentx-variable]')).toBeVisible()
+  await panel.getByRole('button', { name: /^(关闭|Close)$/ }).first().click()
 }
 
 async function setEndContextOutput(page: Page) {
-  await page.getByTestId('workflow-end').click()
-  const panel = page.getByTestId('workflow-interface-panel')
-  await expect(panel).toBeVisible()
-  await panel.getByRole('button', { name: /添加字段|Add field/ }).first().click()
-  const dialog = page.getByRole('dialog', { name: /输出字段|Output field/ })
-  const outputName = dialog.getByLabel(/输出名称|Output name/)
-  await outputName.fill('context_workflow_name')
-  await outputName.blur()
-  await chooseReference(page, dialog, /全局变量|Global variables|Contexts/, ['session_note'])
-  await dialog.getByRole('button', { name: /保存|Save/ }).click()
-  await panel.getByRole('button', { name: /^(关闭|Close)$/ }).click()
+  const panel = await openExitPanel(page)
+  await setExitContractField(page, panel, 'context_workflow_name', false)
+  const mapping = panel.getByTestId('exit-mapping-context_workflow_name')
+  await chooseReference(page, mapping, /全局变量|Global variables|Contexts/, ['session_note'])
+  await panel.getByRole('button', { name: /^(关闭|Close)$/ }).first().click()
 }
 
 async function setStartInputs(page: Page) {
@@ -489,8 +479,7 @@ async function configureProjectionAndContextWrite(page: Page, details: Locator) 
 }
 
 async function setEndErrorOutput(page: Page) {
-  await page.getByTestId('workflow-end').click()
-  const panel = page.getByTestId('workflow-interface-panel')
+  const panel = await openExitPanel(page)
   await panel.getByLabel(/错误策略|Error strategy/).click()
   await page.getByRole('option', { name: /收集错误|Collect errors/ }).click()
   await panel.getByLabel(/收集窗口|Collect window/).fill('1200')
@@ -500,10 +489,10 @@ async function setEndErrorOutput(page: Page) {
   const outputName = dialog.getByLabel(/输出名称|Output name/)
   await outputName.fill('failure_message')
   await outputName.blur()
-  await chooseReference(page, dialog, /当前数据|Current data/, ['当前错误', '错误消息'])
-  await expect(dialog.locator('[data-agentx-variable]')).toBeVisible()
   await dialog.getByRole('button', { name: /保存|Save/ }).click()
-  await panel.getByRole('button', { name: /^(关闭|Close)$/ }).click()
+  await expect(panel.getByTestId('exit-mapping-failure_message')).toBeVisible()
+  await chooseReference(page, panel.getByTestId('exit-mapping-failure_message'), /当前数据|Current data/, ['当前错误', '错误消息'])
+  await panel.getByRole('button', { name: /^(关闭|Close)$/ }).first().click()
 }
 
 async function saveAndReadDraft(page: Page, token: string, workflowId: string) {
@@ -677,12 +666,12 @@ test('M6 Studio creates, debugs, versions and publishes a manifest-driven Workfl
   await page.getByTestId('node-details-view').getByRole('button', { name: /^(关闭|Close)$/ }).first().click()
   await page.getByRole('button', { name: /^(适应画布|Fit View)$/ }).click({ force: true })
   await connect(page, code, 'error', errorHandler, 'error')
-  await connect(page, code, 'error', page.getByTestId('workflow-end'), 'error')
-  await connect(page, approval, 'approved', page.getByTestId('workflow-end'), 'main')
-  await connectIntoOccupiedBoundary(page, errorHandler, 'recovered', page.getByTestId('workflow-end'), 'main')
+  await connect(page, code, 'error', page.getByTestId('exit-node-exit'), 'error')
+  await connect(page, approval, 'approved', page.getByTestId('exit-node-exit'), 'main')
+  await connectIntoOccupiedBoundary(page, errorHandler, 'recovered', page.getByTestId('exit-node-exit'), 'main')
 
   const approvalKey = (await saveAndReadDraft(page, token, workflowId)).definition.nodes.find((node) => node.type === 'approval')!.key
-  await setEndOutput(page, approvalKey, 'json.decision', 'approved', false, 'string', true)
+  await setEndOutput(page, approvalKey, 'json.decision', 'approved', false)
   await setEndContextOutput(page)
   await setEndErrorOutput(page)
 
@@ -1094,7 +1083,7 @@ test('M6 standalone Model sends prompt and question as ordered messages and expo
   await details.getByRole('button', { name: /^(关闭|Close)$/ }).first().click()
 
   await connect(page, page.getByTestId('workflow-start'), 'main', model, 'main')
-  await connect(page, model, 'main', page.getByTestId('workflow-end'), 'main')
+  await connect(page, model, 'main', page.getByTestId('exit-node-exit'), 'main')
   await setEndOutput(page, modelKey, 'json.text')
   const draft = await saveAndReadDraft(page, token, workflowId)
   const modelDefinition = draft.definition.nodes.find((node) => node.type === 'model')
@@ -1225,7 +1214,7 @@ test('M6 standalone MCP consumes configured arguments and returns semantic field
   await details.getByRole('button', { name: /^(关闭|Close)$/ }).first().click()
 
   await connect(page, page.getByTestId('workflow-start'), 'main', mcp, 'main')
-  await connect(page, mcp, 'main', page.getByTestId('workflow-end'), 'main')
+  await connect(page, mcp, 'main', page.getByTestId('exit-node-exit'), 'main')
   await setEndOutput(page, mcpKey, 'json.text')
   const draft = await saveAndReadDraft(page, token, workflowId)
   const mcpDefinition = draft.definition.nodes.find((node) => node.type === 'mcp_tool')
@@ -1256,7 +1245,7 @@ test('M6 standalone Wait resumes a duration suspension with the stable output co
   await details.getByRole('button', { name: /^(关闭|Close)$/ }).first().click()
 
   await connect(page, page.getByTestId('workflow-start'), 'main', wait, 'main')
-  await connect(page, wait, 'resumed', page.getByTestId('workflow-end'), 'main')
+  await connect(page, wait, 'resumed', page.getByTestId('exit-node-exit'), 'main')
   await setEndOutput(page, waitKey, 'json.status', 'resumed', false)
   const draft = await saveAndReadDraft(page, token, workflowId)
   const waitDefinition = draft.definition.nodes.find((node) => node.type === 'wait')
@@ -1300,7 +1289,7 @@ test('M6 Studio makes dual-Agent output selection explicit across serial, parall
 
   await connect(page, page.getByTestId('workflow-start'), 'main', firstAgent, 'main')
   await connect(page, firstAgent, 'main', secondAgent, 'main')
-  await connect(page, secondAgent, 'main', page.getByTestId('workflow-end'), 'main')
+  await connect(page, secondAgent, 'main', page.getByTestId('exit-node-exit'), 'main')
   const draftBeforeEnd = await saveAndReadDraft(page, token, workflowId)
   const secondAgentKey = draftBeforeEnd.definition.nodes.find((node) => node.name === 'Agent B')!.key
   await setEndOutput(page, secondAgentKey, 'json.text')
@@ -1323,7 +1312,7 @@ test('M6 Studio makes dual-Agent output selection explicit across serial, parall
   await expect(page.locator('.react-flow__edge:not([data-testid*="__start__"]):not([data-testid*="__end__"])')).toHaveCount(2)
   await page.getByRole('button', { name: /^(适应画布|Fit View)$/ }).click({ force: true })
   await connect(page, page.getByTestId('workflow-start'), 'main', secondAgent, 'main')
-  await connect(page, firstAgent, 'main', page.getByTestId('workflow-end'), 'main')
+  await connect(page, firstAgent, 'main', page.getByTestId('exit-node-exit'), 'main')
   const parallelDraft = await saveAndReadDraft(page, token, workflowId)
   const parallelVersion = await mutate<WorkflowVersion>(page, token, `/workflows/${workflowId}/versions`, 'POST', { draftRevision: parallelDraft.revision })
   const application = await mutate<Application>(page, token, '/applications', 'POST', { workflowId, name: workflowName, slug: `m6-multi-agent-${Date.now()}`, description: 'Dual Agent output contract E2E', visibility: 'company' })
@@ -1386,7 +1375,7 @@ test('M6 Studio makes dual-Agent output selection explicit across serial, parall
   await page.getByRole('button', { name: /^(适应画布|Fit View)$/ }).click({ force: true })
   await connect(page, firstAgent, 'main', merge, 'main')
   await connect(page, secondAgent, 'main', merge, 'main')
-  await connect(page, merge, 'main', page.getByTestId('workflow-end'), 'main')
+  await connect(page, merge, 'main', page.getByTestId('exit-node-exit'), 'main')
   const mergedDraft = await saveAndReadDraft(page, token, workflowId)
   expect(mergedDraft.definition.nodes.some((node) => node.type === 'merge')).toBeTruthy()
   expect(mergedDraft.definition.end.outputs.answer.value).toMatchObject({ kind: 'reference', selector: { namespace: 'outputs', port: 'main', path: ['text'] } })

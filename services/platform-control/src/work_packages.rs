@@ -1789,18 +1789,19 @@ mod debug_plan_tests {
 
     fn compiled() -> agentx_runtime_contracts::CompiledWorkflowV1 {
         let definition: WorkflowDefinition = serde_json::from_value(json!({
-            "schemaVersion":"6.0",
+            "schemaVersion":"7.0",
             "start":{"inputs":{"type":"object","additionalProperties":true},"contexts":{}},
             "nodes":[
                 {"id":"root","key":"root","type":"no_op","typeVersion":1,"name":"Root","disabled":false,"parameters":{},"outputProjection":{},"contextWrites":[],"resourceReferences":[],"settings":{}},
                 {"id":"target","key":"target","type":"no_op","typeVersion":1,"name":"Target","disabled":false,"parameters":{},"outputProjection":{},"contextWrites":[],"resourceReferences":[],"settings":{}},
-                {"id":"tail","key":"tail","type":"no_op","typeVersion":1,"name":"Tail","disabled":false,"parameters":{},"outputProjection":{},"contextWrites":[],"resourceReferences":[],"settings":{}}
+                {"id":"tail","key":"tail","type":"no_op","typeVersion":1,"name":"Tail","disabled":false,"parameters":{},"outputProjection":{},"contextWrites":[],"resourceReferences":[],"settings":{}},
+                {"id":"__exit__","key":"__exit__","type":"exit","typeVersion":1,"name":"End","disabled":false,"protected":true,"parameters":{"outputs":{},"errorOutputs":{}},"outputProjection":{},"contextWrites":[],"resourceReferences":[],"settings":{}}
             ],
             "connections":[
                 {"id":"start-root","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"root","targetHandle":"main","order":0},
                 {"id":"root-target","sourceNodeId":"root","sourceHandle":"main","targetNodeId":"target","targetHandle":"main","order":0},
                 {"id":"target-tail","sourceNodeId":"target","sourceHandle":"main","targetNodeId":"tail","targetHandle":"main","order":0},
-                {"id":"tail-end","sourceNodeId":"tail","sourceHandle":"main","targetNodeId":"__end__","targetHandle":"main","order":0}
+                {"id":"tail-end","sourceNodeId":"tail","sourceHandle":"main","targetNodeId":"__exit__","targetHandle":"main","order":0}
             ],
             "end":{"outputs":{}},
             "settings":{"activationBudget":8,"executionOrder":"deterministic"}

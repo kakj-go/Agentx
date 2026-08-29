@@ -11,10 +11,10 @@ import type { NodeManifest, WorkflowDefinition } from './model/types'
 import { useEditorStore } from './store/editor-store'
 import { WorkflowCanvas } from './workflow-canvas'
 
-const editorDocument = { nodeLayouts: [{ nodeId: 'trigger', x: 100, y: 100 }], boundaryLayouts: [], bindingLayouts: [], edges: [], bindingEdges: [], annotations: [], groups: [], viewport: { x: 0, y: 0, zoom: 1 } }
+const editorDocument = { nodeLayouts: [{ nodeId: 'trigger', x: 100, y: 100 }, { nodeId: 'exit', x: 560, y: 100 }], boundaryLayouts: [], bindingLayouts: [], edges: [], bindingEdges: [], annotations: [], groups: [], viewport: { x: 0, y: 0, zoom: 1 } }
 const draft = {
-  id: 'draft-1', workflowId: 'workflow-1', revision: 1, schemaVersion: '6.0', definitionHash: 'sha256:def', editorHash: 'sha256:editor', updatedAt: '2026-08-02T10:00:00Z', editorDocument,
-  definition: { schemaVersion: '6.0', start: { inputs: {}, contexts: {} }, settings: { executionOrder: 'deterministic', activationBudget: 10000 }, nodes: [{ id: 'trigger', key: 'source', type: 'set', typeVersion: 1, name: 'Set', disabled: false, parameters: {}, outputProjection: {}, contextWrites: [], resourceReferences: [], settings: {} }], connections: [], end: { outputs: {}, error: { strategy: 'fail_fast', collectWindowMs: 5000, outputs: {} } } },
+  id: 'draft-1', workflowId: 'workflow-1', revision: 1, schemaVersion: '7.0', definitionHash: 'sha256:def', editorHash: 'sha256:editor', updatedAt: '2026-08-02T10:00:00Z', editorDocument,
+  definition: { schemaVersion: '7.0', start: { inputs: {}, contexts: {} }, settings: { executionOrder: 'deterministic', activationBudget: 10000 }, nodes: [{ id: 'trigger', key: 'source', type: 'set', typeVersion: 1, name: 'Set', disabled: false, protected: false, parameters: {}, outputProjection: {}, contextWrites: [], resourceReferences: [], settings: {} }, { id: 'exit', key: 'exit', type: 'exit', typeVersion: 1, name: 'End', disabled: false, protected: true, parameters: { outputs: {}, errorOutputs: {} }, outputProjection: {}, contextWrites: [], resourceReferences: [], settings: {} }], connections: [{ id: 'start-trigger', sourceNodeId: '__start__', sourceHandle: 'main', targetNodeId: 'trigger', targetHandle: 'main', order: 0 }, { id: 'trigger-exit', sourceNodeId: 'trigger', sourceHandle: 'main', targetNodeId: 'exit', targetHandle: 'main', order: 0 }], end: { outputs: {}, error: { strategy: 'fail_fast', collectWindowMs: 5000, outputs: {} } } },
 }
 
 let requiredAgentBinding = false
@@ -83,11 +83,11 @@ describe('workflow studio shell', () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
     render(<QueryClientProvider client={queryClient}><Tooltip.Provider><ToastProvider><MemoryRouter initialEntries={['/workflows/workflow-1/editor']}><Routes><Route element={<WorkflowCanvas />} path="/workflows/:workflowId/editor" /></Routes></MemoryRouter></ToastProvider></Tooltip.Provider></QueryClientProvider>)
 
-    await waitFor(() => expect(useEditorStore.getState().nodes).toHaveLength(1))
+    await waitFor(() => expect(useEditorStore.getState().nodes).toHaveLength(2))
     vi.mocked(fetch).mockClear()
     act(() => {
       useEditorStore.getState().setEnd({
-        outputs: { 'Invalid-name': { value: { kind: 'literal', value: '' }, schema: { type: 'string' }, required: false, sensitive: false } },
+        outputs: { 'Invalid-name': { schema: { type: 'string' }, required: false, sensitive: false } },
         error: { strategy: 'fail_fast', collectWindowMs: 5000, outputs: {} },
       })
     })
@@ -127,22 +127,22 @@ describe('workflow studio shell', () => {
 })
 
 describe('workflow studio serializer', () => {
-  it('rejects Definition 5.0 without conversion or fallback', () => {
+  it('rejects Definition 6.0 without conversion or fallback', () => {
     expect(() => deserializeDraft({
       ...draft,
-      definition: { ...draft.definition, schemaVersion: '5.0' },
-    } as never)).toThrow(/Unsupported Workflow Definition 5\.0/)
+      definition: { ...draft.definition, schemaVersion: '6.0' },
+    } as never)).toThrow(/Unsupported Workflow Definition 6\.0/)
   })
 
   it('keeps inspector references internal and materializes only canvas attachments', () => {
     const definition: WorkflowDefinition = {
-      schemaVersion: '6.0', start: { inputs: {}, contexts: {} }, settings: { executionOrder: 'deterministic', activationBudget: 10000 }, connections: [], end: { outputs: {}, error: { strategy: 'fail_fast', collectWindowMs: 5000, outputs: {} } },
-      nodes: [{ id: 'agent-1', key: 'agent', type: 'agent', typeVersion: 2, name: 'Agent', disabled: false, parameters: { sessionPolicy: { mode: 'invocation' } }, outputProjection: {}, contextWrites: [], settings: {}, resourceReferences: [{ resourceType: 'model', resourceId: '11111111-1111-4111-8111-111111111111', resourceVersionId: '22222222-2222-4222-8222-222222222222', operation: 'use' }, { bindingId: 'binding-1', bindingRole: 'mcp_tools', resourceType: 'mcp_tool', resourceId: '33333333-3333-4333-8333-333333333333', resourceVersionId: '44444444-4444-4444-8444-444444444444', operation: 'use' }] }],
+      schemaVersion: '7.0', start: { inputs: {}, contexts: {} }, settings: { executionOrder: 'deterministic', activationBudget: 10000 }, connections: [], end: { outputs: {}, error: { strategy: 'fail_fast', collectWindowMs: 5000, outputs: {} } },
+      nodes: [{ id: 'agent-1', key: 'agent', type: 'agent', typeVersion: 2, name: 'Agent', disabled: false, protected: false, parameters: { sessionPolicy: { mode: 'invocation' } }, outputProjection: {}, contextWrites: [], settings: {}, resourceReferences: [{ resourceType: 'model', resourceId: '11111111-1111-4111-8111-111111111111', resourceVersionId: '22222222-2222-4222-8222-222222222222', operation: 'use' }, { bindingId: 'binding-1', bindingRole: 'mcp_tools', resourceType: 'mcp_tool', resourceId: '33333333-3333-4333-8333-333333333333', resourceVersionId: '44444444-4444-4444-8444-444444444444', operation: 'use' }] }],
     }
     const source = { ...draft, definition, editorDocument: { ...editorDocument, nodeLayouts: [{ nodeId: 'agent-1', x: 410, y: 230 }], bindingLayouts: [{ bindingId: 'binding-1', x: 390, y: 410 }], bindingEdges: [{ edgeId: 'binding-edge-1', sourceBindingId: 'binding-1', targetNodeId: 'agent-1', targetSlot: 'mcp_tools' }] } }
     const serialized = serializeStudio(deserializeDraft(source))
 
-    expect(serialized.definition.schemaVersion).toBe('6.0')
+    expect(serialized.definition.schemaVersion).toBe('7.0')
     expect(serialized.definition.nodes).toHaveLength(1)
     expect(serialized.definition.nodes[0]).not.toHaveProperty('position')
     expect(serialized.definition.nodes[0].resourceReferences).toEqual(expect.arrayContaining([

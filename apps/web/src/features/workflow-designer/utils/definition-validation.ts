@@ -7,6 +7,7 @@ export const REFERENCE_KEY_PATTERN = /^[a-z_][a-z0-9_]{0,127}$/;
 const NODE_TYPE_PATTERN = /^[a-z0-9_.-]{1,128}$/;
 const START_NODE_ID = "__start__";
 const END_NODE_ID = "__end__";
+const EXIT_NODE_TYPE = "exit";
 
 export function isReferenceKey(value: string) {
   return REFERENCE_KEY_PATTERN.test(value);
@@ -37,6 +38,13 @@ export function definitionIssues(document: StudioDocument): StudioIssue[] {
   if (!Number.isInteger(definition.end.error.collectWindowMs) || definition.end.error.collectWindowMs < 100 || definition.end.error.collectWindowMs > 60_000) {
     issues.push(workflowIssue("INVALID_ERROR_COLLECT_WINDOW", "end.error.collectWindowMs", "Error collection window must be between 100 and 60000 milliseconds."));
   }
+  const exitNodes = definition.nodes.filter((node) => node.type === EXIT_NODE_TYPE);
+  if (!exitNodes.length) issues.push(workflowIssue("EXIT_REQUIRED", "nodes", "At least one end node is required."));
+  for (const node of exitNodes) {
+    const parameters = node.parameters as { outputs?: Record<string, DynamicValue>; errorOutputs?: Record<string, DynamicValue> };
+    validateExitMappings(node.id, parameters.outputs ?? {}, definition.end.outputs, "outputs", issues);
+    validateExitMappings(node.id, parameters.errorOutputs ?? {}, definition.end.error.outputs, "errorOutputs", issues);
+  }
 
   const ids = new Set<string>();
   const keys = new Set<string>();
@@ -51,7 +59,7 @@ export function definitionIssues(document: StudioDocument): StudioIssue[] {
     else if (keys.has(node.key)) issues.push(nodeIssue("DUPLICATE_NODE_KEY", "key", "Node key must be unique within the workflow."));
     keys.add(node.key);
 
-    if (node.type === "manual_trigger" || node.type === "remote_trigger") issues.push(nodeIssue("TRIGGER_NODE_REMOVED", "type", "Trigger nodes are not supported in Workflow Definition 6.0."));
+    if (node.type === "manual_trigger" || node.type === "remote_trigger") issues.push(nodeIssue("TRIGGER_NODE_REMOVED", "type", "Trigger nodes are not supported in Workflow Definition 7.0."));
     if (!NODE_TYPE_PATTERN.test(node.type)) issues.push(nodeIssue("INVALID_NODE_TYPE", "type", "Node type may contain only lowercase letters, digits, dots, underscores, and hyphens."));
     if (!node.name.trim() || [...node.name].length > 160) issues.push(nodeIssue("INVALID_NODE_NAME", "name", "Node name must contain 1 to 160 characters."));
     if (!isUnsignedInteger(node.typeVersion, 32) || node.typeVersion === 0) issues.push(nodeIssue("UNSUPPORTED_NODE_VERSION", "typeVersion", "Node type version must be greater than zero."));
@@ -87,7 +95,7 @@ export function definitionIssues(document: StudioDocument): StudioIssue[] {
     }
   }
 
-  validateConnections(definition.connections, ids, issues);
+  validateConnections(definition.connections, ids, new Set(exitNodes.map((node) => node.id)), issues);
   return issues;
 }
 
@@ -95,13 +103,23 @@ function validateOutputs(outputs: StudioDocument["end"]["outputs"], path: string
   for (const [name, output] of Object.entries(outputs)) {
     if (!isReferenceKey(name)) issues.push(workflowIssue("INVALID_END_OUTPUT_KEY", `${path}.${name}`, "End output names may contain only lowercase letters, digits, and underscores."));
     if (!isObject(output.schema)) issues.push(workflowIssue("INVALID_END_OUTPUT_SCHEMA", `${path}.${name}.schema`, "End output schema must be an object."));
-    if (isDynamicValueEmpty(output.value)) issues.push(workflowIssue("END_OUTPUT_EXPRESSION_REQUIRED", `${path}.${name}.value`, "End output expressions are required."));
   }
 }
 
-function validateConnections(connections: DefinitionConnection[], nodeIds: Set<string>, issues: StudioIssue[]) {
+function validateExitMappings(nodeId: string, mappings: Record<string, DynamicValue>, contract: StudioDocument["end"]["outputs"], group: string, issues: StudioIssue[]) {
+  for (const [name, value] of Object.entries(mappings)) {
+    if (!(name in contract)) issues.push({ code: "EXIT_MAPPING_KEY_UNKNOWN", nodeId, fieldPath: `parameters.${group}.${name}`, message: "End node mappings must reference fields declared in the global output contract." });
+    if (isDynamicValueEmpty(value)) issues.push({ code: "END_OUTPUT_EXPRESSION_REQUIRED", nodeId, fieldPath: `parameters.${group}.${name}`, message: "End output expressions are required." });
+  }
+  for (const [name, output] of Object.entries(contract)) {
+    if (output.required && !(name in mappings)) issues.push({ code: "EXIT_REQUIRED_MAPPING_MISSING", nodeId, fieldPath: `parameters.${group}.${name}`, message: "Every end node must map each required output field." });
+  }
+}
+
+function validateConnections(connections: DefinitionConnection[], nodeIds: Set<string>, exitIds: Set<string>, issues: StudioIssue[]) {
   const ids = new Set<string>();
   const orders = new Set<string>();
+  const terminalFanouts = new Set<string>();
   for (const connection of connections) {
     if (!connection.id || ids.has(connection.id)) issues.push(workflowIssue("INVALID_CONNECTION_ID", "connections", "Connection id must be present and unique."));
     ids.add(connection.id);
@@ -111,17 +129,18 @@ function validateConnections(connections: DefinitionConnection[], nodeIds: Set<s
     orders.add(orderKey);
 
     const sourceIsStart = connection.sourceNodeId === START_NODE_ID;
-    const sourceIsEnd = connection.sourceNodeId === END_NODE_ID;
-    const targetIsStart = connection.targetNodeId === START_NODE_ID;
-    const targetIsEnd = connection.targetNodeId === END_NODE_ID;
-    if (sourceIsEnd || targetIsStart) {
-      issues.push(workflowIssue("INVALID_BOUNDARY_DIRECTION", "connections", "Start can only be a connection source and End can only be a connection target."));
+    const boundaryRef = connection.sourceNodeId === END_NODE_ID || connection.targetNodeId === END_NODE_ID || connection.targetNodeId === START_NODE_ID;
+    if (boundaryRef) {
+      issues.push(workflowIssue("END_BOUNDARY_REMOVED", "connections", "Workflow Definition 7.0 replaced the __end__ boundary with end nodes; connect to an end node instead."));
       continue;
     }
     if (sourceIsStart && connection.sourceHandle !== "main") issues.push(workflowIssue("INVALID_START_PORT", "connections", "Start only exposes the main output port."));
-    if (targetIsEnd && connection.targetHandle !== "main" && connection.targetHandle !== "error") issues.push(workflowIssue("INVALID_END_PORT", "connections", "End only accepts main or error input ports."));
-    if (sourceIsStart && targetIsEnd && connection.targetHandle !== "main") issues.push(workflowIssue("INVALID_DIRECT_ERROR_CONNECTION", "connections", "Start can only connect directly to End.main."));
-    if ((!sourceIsStart && !nodeIds.has(connection.sourceNodeId)) || (!targetIsEnd && !nodeIds.has(connection.targetNodeId))) issues.push(workflowIssue("DANGLING_CONNECTION", "connections", "Connection references a missing node."));
+    if (exitIds.has(connection.targetNodeId)) {
+      const fanoutKey = `${connection.sourceNodeId}\u0000${connection.sourceHandle}`;
+      if (terminalFanouts.has(fanoutKey)) issues.push(workflowIssue("DUPLICATE_TERMINAL_FANOUT", "connections", "A node port may only connect to a single end node."));
+      terminalFanouts.add(fanoutKey);
+    }
+    if ((!sourceIsStart && !nodeIds.has(connection.sourceNodeId)) || !nodeIds.has(connection.targetNodeId)) issues.push(workflowIssue("DANGLING_CONNECTION", "connections", "Connection references a missing node."));
   }
 }
 
