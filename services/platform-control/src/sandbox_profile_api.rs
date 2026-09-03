@@ -396,7 +396,7 @@ fn validate_configuration(input: &VersionInput) -> ApiResult<()> {
     if policy.get("defaultAction").and_then(Value::as_str) != Some("deny")
         || !matches!(
             policy.get("egressMode").and_then(Value::as_str),
-            Some("none" | "public_https")
+            Some("none" | "tcp_proxy")
         )
         || policy
             .keys()
@@ -404,7 +404,7 @@ fn validate_configuration(input: &VersionInput) -> ApiResult<()> {
     {
         return Err(ApiError::bad_request(
             "SANDBOX_NETWORK_POLICY_INVALID",
-            "Sandbox network policy only accepts defaultAction=deny and egressMode=none|public_https",
+            "Sandbox network policy only accepts defaultAction=deny and egressMode=none|tcp_proxy",
         ));
     }
     Ok(())

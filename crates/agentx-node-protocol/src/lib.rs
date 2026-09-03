@@ -1,11 +1,10 @@
 use std::collections::BTreeMap;
 
-use agentx_domain::{ExecutionId, NodeExecutionId, ResourceType, TenantId, WorkflowVersionId};
+use agentx_domain::{NodeExecutionId, ResourceType};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use time::OffsetDateTime;
-use uuid::Uuid;
 
 pub const NODE_PROTOCOL_VERSION: &str = "2.0";
 
@@ -47,37 +46,11 @@ pub struct ItemSource {
     pub item_index: u32,
 }
 
-#[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct GroupedInput {
-    pub port: String,
-    pub branch_index: u32,
-    pub items: Vec<Item>,
-}
-
-#[derive(Clone, Debug, Default, Deserialize, JsonSchema, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ResolvedParameters {
-    pub common: Value,
-    #[serde(default)]
-    pub per_item: Vec<Value>,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ExecutionMode {
-    Manual,
-    Production,
-    Evaluation,
-    Partial,
-}
-
 #[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NodeCapability {
     Builtin,
     DeclarativeHttp,
-    RemoteAction,
     Agent,
     Model,
     McpTool,
@@ -90,7 +63,6 @@ pub enum NodeCapability {
 pub const ALL_RUNTIME_CAPABILITIES: &[&str] = &[
     "builtin",
     "declarative_http",
-    "remote_action",
     "agent",
     "model",
     "mcp_tool",
@@ -106,7 +78,6 @@ impl NodeCapability {
         match self {
             Self::Builtin => "builtin",
             Self::DeclarativeHttp => "declarative_http",
-            Self::RemoteAction => "remote_action",
             Self::Agent => "agent",
             Self::Model => "model",
             Self::McpTool => "mcp_tool",
@@ -278,21 +249,17 @@ pub struct NodeManifestVersion {
     #[serde(default)]
     pub output_cardinality: BTreeMap<String, OutputCardinality>,
     #[serde(default)]
-    pub expression_capabilities: ExpressionCapabilities,
+    pub selector_capabilities: SelectorCapabilities,
     #[serde(default)]
     pub context_read_capability: bool,
     #[serde(default)]
     pub context_write_capability: bool,
-    #[serde(default)]
-    pub output_projection_schema: Value,
     #[serde(default)]
     pub artifact_output_schema: Value,
     #[serde(default)]
     pub ui_schema: NodeUiSchema,
     #[serde(default)]
     pub providers: Vec<String>,
-    #[serde(default)]
-    pub lifecycle_operations: Vec<LifecycleOperation>,
     #[serde(default)]
     pub credentials: Vec<CredentialRequirement>,
     pub default_timeout_ms: Option<u64>,
@@ -317,7 +284,7 @@ pub enum OutputCardinality {
 
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ExpressionCapabilities {
+pub struct SelectorCapabilities {
     #[serde(default)]
     pub namespaces: Vec<String>,
     #[serde(default)]
@@ -447,12 +414,6 @@ impl NodeManifestVersion {
             if !names.insert(slot.name.as_str()) {
                 return Err(format!("duplicate binding slot '{}'", slot.name));
             }
-            if slot.placement == BindingSlotPlacement::Inspector && slot.multiple {
-                return Err(format!(
-                    "inspector binding slot '{}' cannot accept multiple resources",
-                    slot.name
-                ));
-            }
         }
         Ok(())
     }
@@ -483,36 +444,6 @@ fn collect_parameter_schema_paths(path: &str, schema: &Value, paths: &mut BTreeM
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct NodeActionRequest {
-    #[schemars(with = "NodeProtocolVersion")]
-    pub protocol_version: String,
-    pub node_type: String,
-    #[schemars(range(min = 1))]
-    pub node_version: u32,
-    pub tenant_id: TenantId,
-    pub workflow_version_id: Option<WorkflowVersionId>,
-    pub execution_id: ExecutionId,
-    pub node_execution_id: NodeExecutionId,
-    pub attempt_id: Uuid,
-    pub run_index: u32,
-    pub iteration_index: u32,
-    pub mode: ExecutionMode,
-    pub inputs: Vec<GroupedInput>,
-    pub parameters: ResolvedParameters,
-    #[serde(default)]
-    pub artifact_handles: Vec<InvocationHandle>,
-    #[serde(default)]
-    pub credential_handles: Vec<InvocationHandle>,
-    pub idempotency_key: String,
-    #[schemars(with = "String")]
-    #[serde(with = "time::serde::rfc3339")]
-    pub deadline: OffsetDateTime,
-    pub cancellation_url: Option<String>,
-    pub trace_context: TraceContext,
-}
-
-#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct InvocationHandle {
     pub handle: String,
     pub broker_url: String,
@@ -523,94 +454,12 @@ pub struct InvocationHandle {
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct InvocationResourceRequest {
-    pub handle: String,
-    pub tenant_id: TenantId,
-    pub node_execution_id: NodeExecutionId,
-    pub attempt_id: Uuid,
-}
-
-#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
-#[serde(
-    tag = "kind",
-    rename_all = "snake_case",
-    rename_all_fields = "camelCase"
-)]
-pub enum InvocationResourceResponse {
-    Credential {
-        credential_type: String,
-        value: Value,
-    },
-    Artifact {
-        content_type: String,
-        content_base64: String,
-        sha256: String,
-    },
-}
-
-#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct InvocationCancellationStatus {
     pub cancellation_requested: bool,
     pub lease_valid: bool,
     #[schemars(with = "String")]
     #[serde(with = "time::serde::rfc3339")]
     pub expires_at: OffsetDateTime,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct TraceContext {
-    pub trace_id: String,
-    pub span_id: String,
-    pub trace_flags: Option<String>,
-}
-
-#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
-#[serde(tag = "status", rename_all = "snake_case")]
-pub enum NodeActionResult {
-    Completed {
-        outputs: Vec<Vec<Item>>,
-        #[serde(default)]
-        artifacts: Vec<ProducedArtifact>,
-    },
-    Failed {
-        error: NodeProtocolError,
-    },
-    Suspended {
-        resume: ResumeContract,
-        #[serde(default)]
-        checkpoint: Value,
-    },
-}
-
-#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ProducedArtifact {
-    pub name: String,
-    pub artifact_handle: String,
-    pub content_type: Option<String>,
-    pub size_bytes: u64,
-}
-
-#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ResumeContract {
-    pub kind: ResumeKind,
-    #[schemars(with = "Option<String>")]
-    #[serde(default, with = "time::serde::rfc3339::option")]
-    pub timeout_at: Option<OffsetDateTime>,
-    pub allowed_output_ports: Vec<String>,
-    pub payload_schema: Value,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ResumeKind {
-    Time,
-    Webhook,
-    Form,
-    Approval,
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
@@ -652,57 +501,9 @@ pub struct ProviderOption {
     pub metadata: Value,
 }
 
-#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct LifecycleRequest {
-    #[schemars(with = "NodeProtocolVersion")]
-    pub protocol_version: String,
-    pub operation: LifecycleOperation,
-    pub node_type: String,
-    #[schemars(range(min = 1))]
-    pub node_version: u32,
-    pub tenant_id: TenantId,
-    pub workflow_version_id: WorkflowVersionId,
-    #[serde(default)]
-    pub configuration: Value,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum LifecycleOperation {
-    Activate,
-    Deactivate,
-    Poll,
-    Webhook,
-    Suspend,
-    Resume,
-}
-
-#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct LifecycleResponse {
-    pub accepted: bool,
-    #[serde(default)]
-    pub state: Value,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn completed_result_has_stable_tag() {
-        let result = NodeActionResult::Completed {
-            outputs: vec![vec![Item {
-                json: serde_json::json!({"ok": true}),
-                ..Item::default()
-            }]],
-            artifacts: Vec::new(),
-        };
-        let json = serde_json::to_value(result).unwrap();
-        assert_eq!(json["status"], "completed");
-        assert_eq!(json["outputs"][0][0]["json"]["ok"], true);
-    }
 
     #[test]
     fn item_supports_multiple_sources() {
@@ -740,7 +541,7 @@ mod tests {
     }
 
     #[test]
-    fn binding_slot_placement_is_required_and_inspector_is_single_value() {
+    fn binding_slot_placement_is_required_and_inspector_supports_multi_select() {
         assert!(
             serde_json::from_value::<BindingSlot>(serde_json::json!({
                 "name": "model",
@@ -773,6 +574,6 @@ mod tests {
         }))
         .expect("minimal manifest");
         manifest.binding_slots = vec![manifest_slot];
-        assert!(manifest.validate_binding_slots().is_err());
+        assert!(manifest.validate_binding_slots().is_ok());
     }
 }

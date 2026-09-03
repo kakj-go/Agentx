@@ -52,7 +52,10 @@ impl RuntimeWorker {
                         json!({"turn":current}),
                     )
                 }
-                agentx_agent_core::CoreEventV1::TurnEnded { turn: current } => {
+                agentx_agent_core::CoreEventV1::TurnEnded {
+                    turn: current,
+                    is_error,
+                } => {
                     let id = crate::worker_support::stable_id(
                         run_id,
                         format!("turn-{current}").as_bytes(),
@@ -64,9 +67,9 @@ impl RuntimeWorker {
                         "Agent turn",
                         "agent_turn.finished",
                         agentx_runtime_contracts::TraceEventKindV1::Finished,
-                        "succeeded",
+                        if *is_error { "failed" } else { "succeeded" },
                         None,
-                        json!({"turn":current}),
+                        json!({"turn":current,"isError":is_error}),
                     )
                 }
                 agentx_agent_core::CoreEventV1::ModelIntent { operation_id } => (
@@ -83,7 +86,10 @@ impl RuntimeWorker {
                     None,
                     json!({"operationId":operation_id,"turn":turn}),
                 ),
-                agentx_agent_core::CoreEventV1::ModelSettled { operation_id } => (
+                agentx_agent_core::CoreEventV1::ModelSettled {
+                    operation_id,
+                    is_error,
+                } => (
                     crate::worker_support::stable_id(run_id, operation_id.as_bytes()),
                     Some((
                         crate::worker_support::stable_id(run_id, format!("turn-{turn}").as_bytes()),
@@ -93,9 +99,13 @@ impl RuntimeWorker {
                     "Agent model operation",
                     "agent_model.settled",
                     agentx_runtime_contracts::TraceEventKindV1::Finished,
-                    "succeeded",
-                    None,
-                    json!({"operationId":operation_id,"turn":turn}),
+                    if *is_error { "failed" } else { "succeeded" },
+                    if *is_error {
+                        Some("AGENT_MODEL_ERROR")
+                    } else {
+                        None
+                    },
+                    json!({"operationId":operation_id,"turn":turn,"isError":is_error}),
                 ),
                 agentx_agent_core::CoreEventV1::MessageAdded { message_id } => (
                     crate::worker_support::stable_id(

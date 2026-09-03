@@ -397,7 +397,7 @@ fn import_with_loader(
         .and_then(Value::as_str)
         .unwrap();
     let namespace_manifest = serde_json::json!({
-        "apiVersion":"v1","kind":"Namespace","metadata":{"name":namespace,"labels":{"agentx.io/plane":"dependencies","app.kubernetes.io/managed-by":"agentxctl"}}
+        "apiVersion":"v1","kind":"Namespace","metadata":{"name":namespace,"labels":{"agentx.io/plane":"dependencies","agentx.io/ingress":"allowed","app.kubernetes.io/managed-by":"agentxctl"}}
     });
     apply_json(root, &namespace_manifest)?;
     let pod = serde_json::json!({

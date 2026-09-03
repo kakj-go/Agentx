@@ -1007,7 +1007,7 @@ pub async fn process_command(
     match claim.command_type.as_str() {
         "start_execution" => crate::engine::start_execution(pool, claim).await,
         "cancel_execution" => process_cancel_command(pool, claim).await,
-        "resume_wait" | "resume_execution" => crate::engine::resume_execution(pool, claim).await,
+        "resume_execution" => crate::engine::resume_execution(pool, claim).await,
         "fork_execution" => crate::engine::fork_execution(pool, claim).await,
         "confirm_side_effect" => crate::engine::confirm_side_effect(pool, claim).await,
         command => Err(RuntimeError::BadRequest(
@@ -1197,11 +1197,7 @@ async fn process_cancel_command(
             .bind(claim.execution_id).bind(claim.tenant_id).execute(&mut *tx).await?;
         sqlx::query("UPDATE execution_outbox SET status='published',published_at=UTC_TIMESTAMP(6),last_error='execution_cancelled_before_dispatch',locked_by=NULL,locked_until=NULL WHERE execution_id=? AND tenant_id=? AND message_type='dispatch_node' AND status='pending'")
             .bind(claim.execution_id).bind(claim.tenant_id).execute(&mut *tx).await?;
-        sqlx::query("UPDATE wait_subscriptions SET status='cancelled',locked_by=NULL,locked_until=NULL WHERE execution_id=? AND tenant_id=? AND status='waiting'")
-            .bind(claim.execution_id).bind(claim.tenant_id).execute(&mut *tx).await?;
         sqlx::query("UPDATE approval_tasks SET status='cancelled',version=version+1,locked_by=NULL,locked_until=NULL WHERE execution_id=? AND tenant_id=? AND status IN ('pending','claimed')")
-            .bind(claim.execution_id).bind(claim.tenant_id).execute(&mut *tx).await?;
-        sqlx::query("UPDATE execution_resume_tokens SET status='cancelled' WHERE execution_id=? AND tenant_id=? AND status='active'")
             .bind(claim.execution_id).bind(claim.tenant_id).execute(&mut *tx).await?;
         sqlx::query("UPDATE node_invocation_handles SET revoked_at=UTC_TIMESTAMP(6) WHERE execution_id=? AND tenant_id=? AND consumed_at IS NULL AND revoked_at IS NULL")
             .bind(claim.execution_id).bind(claim.tenant_id).execute(&mut *tx).await?;
@@ -1223,8 +1219,6 @@ async fn process_cancel_command(
             tracing::warn!(%error, execution_id = %claim.execution_id, "Cancelled Span finalization failed");
         }
         sqlx::query("UPDATE bundle_references SET released_at=UTC_TIMESTAMP(6) WHERE tenant_id=? AND reference_kind='active_execution' AND owner_id=? AND released_at IS NULL")
-            .bind(claim.tenant_id).bind(claim.execution_id).execute(&mut *tx).await?;
-        sqlx::query("UPDATE bundle_references r JOIN wait_subscriptions w ON w.id=r.owner_id SET r.released_at=UTC_TIMESTAMP(6) WHERE r.tenant_id=? AND r.reference_kind='pending_wait' AND w.execution_id=? AND r.released_at IS NULL")
             .bind(claim.tenant_id).bind(claim.execution_id).execute(&mut *tx).await?;
         crate::quota::release_execution(
             &mut tx,

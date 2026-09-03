@@ -26,7 +26,21 @@ def backup_adapter() -> str:
     if configured:
         return configured
     suffix = ".exe" if os.name == "nt" else ""
-    return str(ROOT / "target" / "debug" / f"agentx-backup-test-adapter{suffix}")
+    binary = ROOT / "target" / "debug" / f"agentx-backup-test-adapter{suffix}"
+    if not binary.is_file():
+        completed = subprocess.run(
+            ("cargo", "build", "--locked", "-p", "agentx-backup-test-adapter"),
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=1200,
+            check=False,
+        )
+        if completed.returncode != 0 or not binary.is_file():
+            raise RuntimeError(f"failed to build E2E backup adapter\n{redact(completed.stdout + completed.stderr)}")
+    return str(binary)
 
 
 @dataclass(frozen=True)

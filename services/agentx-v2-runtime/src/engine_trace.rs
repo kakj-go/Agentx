@@ -137,13 +137,7 @@ pub(crate) async fn finish_resumed_spans(
 
     let approval = sqlx::query("SELECT id,status,title FROM approval_tasks WHERE tenant_id=? AND execution_id=? AND node_execution_id=? ORDER BY created_at DESC LIMIT 1")
         .bind(tenant_id).bind(execution_id).bind(node_execution_id).fetch_optional(&mut **tx).await?;
-    let wait = if approval.is_none() {
-        sqlx::query("SELECT id,status,wait_kind FROM wait_subscriptions WHERE tenant_id=? AND execution_id=? AND node_execution_id=? ORDER BY created_at DESC LIMIT 1")
-            .bind(tenant_id).bind(execution_id).bind(node_execution_id).fetch_optional(&mut **tx).await?
-    } else {
-        None
-    };
-    if let Some(row) = approval.or(wait) {
+    if let Some(row) = approval {
         let wait_id: Uuid = row.try_get("id")?;
         let wait_kind = row
             .try_get::<String, _>("wait_kind")
@@ -308,15 +302,10 @@ pub(crate) async fn finish_cancelled_spans(
         trace.error_message = Some("Execution was cancelled while the Sandbox was active".into());
         enqueue_best_effort(tx, trace).await;
     }
-    for row in sqlx::query("SELECT id,node_execution_id,wait_kind FROM wait_subscriptions WHERE tenant_id=? AND execution_id=? AND status='cancelled'")
-        .bind(tenant_id).bind(execution_id).fetch_all(&mut **tx).await?
-    {
-        enqueue_cancelled_wait(tx, tenant_id, execution_id, &row, false).await?;
-    }
     for row in sqlx::query("SELECT id,node_execution_id,title wait_kind FROM approval_tasks WHERE tenant_id=? AND execution_id=? AND status='cancelled'")
         .bind(tenant_id).bind(execution_id).fetch_all(&mut **tx).await?
     {
-        enqueue_cancelled_wait(tx, tenant_id, execution_id, &row, true).await?;
+        enqueue_cancelled_wait(tx, tenant_id, execution_id, &row).await?;
     }
     Ok(())
 }
@@ -326,7 +315,6 @@ async fn enqueue_cancelled_wait(
     tenant_id: Uuid,
     execution_id: Uuid,
     row: &sqlx::mysql::MySqlRow,
-    approval: bool,
 ) -> crate::error::RuntimeResult<()> {
     let wait_id: Uuid = row.try_get("id")?;
     let node_id: Uuid = row.try_get("node_execution_id")?;
@@ -337,18 +325,14 @@ async fn enqueue_cancelled_wait(
         wait_id,
         Some((node_id, agentx_runtime_contracts::TraceSpanKindV1::Node)),
         agentx_runtime_contracts::TraceSpanKindV1::Wait,
-        if approval {
-            format!("Approval · {label}")
-        } else {
-            format!("Wait · {label}")
-        },
+        format!("Approval · {label}"),
         agentx_runtime_contracts::TraceEventKindV1::Finished,
         "wait.cancelled",
         "cancelled",
     );
     trace.node_execution_id = Some(node_id);
     trace.wait_id = Some(wait_id);
-    trace.attributes = json!({"waitKind":if approval { "approval" } else { label.as_str() }});
+    trace.attributes = json!({"waitKind":"approval"});
     enqueue_best_effort(tx, trace).await;
     Ok(())
 }

@@ -17,5 +17,5 @@ describe('VersionDialog diff', () => {
   })
 })
 
-function definition(name: string): WorkflowDefinition { return { schemaVersion: '7.0', start: { inputs: {}, contexts: {} }, nodes: [{ id: 'node-1', key: 'set', type: 'set', typeVersion: 1, name, disabled: false, protected: false, parameters: {}, outputProjection: {}, contextWrites: [], resourceReferences: [], settings: {} }], connections: [], end: { outputs: {}, error: { strategy: 'fail_fast', collectWindowMs: 5000, outputs: {} } }, settings: { executionOrder: 'deterministic', activationBudget: 10_000 } } }
-function editor(x: number): EditorDocument { return { nodeLayouts: [{ nodeId: 'node-1', x, y: 100 }], boundaryLayouts: [], bindingLayouts: [], edges: [], bindingEdges: [], annotations: [], groups: [], viewport: { x: 0, y: 0, zoom: 1 } } }
+function definition(name: string): WorkflowDefinition { return { schemaVersion: '8.0', start: { inputs: {}, contexts: {} }, nodes: [{ id: 'node-1', key: 'set', type: 'set', typeVersion: 1, name, disabled: false, protected: false, parameters: {}, contextWrites: [], resourceReferences: [], settings: {} }], connections: [], end: { completion: "first_return", outputs: {}, error: { outputs: { } } }, settings: { executionOrder: 'deterministic', activationBudget: 10_000 } } }
+function editor(x: number): EditorDocument { return { nodeLayouts: [{ nodeId: 'node-1', x, y: 100 }], boundaryLayouts: [], edges: [], annotations: [], groups: [], viewport: { x: 0, y: 0, zoom: 1 } } }

@@ -1,10 +1,14 @@
-use std::{collections::{BTreeMap, HashMap}, convert::Infallible, time::Duration};
+use std::{
+    collections::{BTreeMap, HashMap},
+    convert::Infallible,
+    time::Duration,
+};
 
 use agentx_runtime_contracts::{
     ArtifactUploadResponseV1, CommandAcceptedV1, CreateSessionRequestV1, GatewayErrorV1,
     InvocationRequestV1, InvocationResponseV1, MessagePartInputV1, MessageRequestV1,
     MessageResponseV1, SessionResponseV1, SessionVersionPolicyV1, VaultSecretReferenceV1,
-    WaitResumeRequestV1, WebhookProviderV1,
+    WebhookProviderV1,
 };
 use axum::{
     Json, Router,
@@ -66,7 +70,6 @@ pub fn router() -> Router<RuntimeState> {
         .route("/invocations/{id}/cancel", post(cancel_invocation))
         .route("/invocations/{id}/events", get(invocation_events))
         .route("/webhooks/{public_id}", post(webhook).get(webhook))
-        .route("/waits/{resume_token}/resume", post(resume_wait))
         .layer(middleware::from_fn_with_state(
             rate_limiter,
             crate::rate_limit::enforce,
@@ -766,34 +769,95 @@ async fn webhook(
         .map(str::to_owned);
     let row = sqlx::query("SELECT w.id,w.tenant_id,w.application_id,w.secret_ref_json,w.provider_type,w.input_mapping_json,w.fixed_inputs_json,w.configuration_revision,CAST(JSON_UNQUOTE(JSON_EXTRACT(t.configuration_json,'$.triggerName')) AS CHAR(255)) trigger_name FROM webhook_bindings w JOIN trigger_bindings t ON t.tenant_id=w.tenant_id AND t.id=w.id WHERE w.public_id=? AND w.status='active'")
         .bind(&public_id).fetch_optional(&state.pool).await?.ok_or(RuntimeError::NotFound)?;
-    let provider = match row.try_get::<Option<String>, _>("provider_type")?.as_deref().unwrap_or("agentx") {
+    let provider = match row
+        .try_get::<Option<String>, _>("provider_type")?
+        .as_deref()
+        .unwrap_or("agentx")
+    {
         "dingtalk" => WebhookProviderV1::Dingtalk,
         "wecom" => WebhookProviderV1::Wecom,
         "feishu" => WebhookProviderV1::Feishu,
         _ => WebhookProviderV1::Agentx,
     };
     if provider != WebhookProviderV1::Agentx {
-        let secret_ref: VaultSecretReferenceV1 = serde_json::from_value(row.try_get("secret_ref_json")?).map_err(|e| RuntimeError::Internal(e.into()))?;
-        let secret = state.vault.as_ref().ok_or(RuntimeError::SecretUnavailable)?.read(&secret_ref).await?;
-        let mappings: Vec<agentx_runtime_contracts::WebhookInputMappingV1> = row.try_get::<Option<Value>, _>("input_mapping_json")?.map(serde_json::from_value).transpose().map_err(|e| RuntimeError::Internal(e.into()))?.unwrap_or_default();
-        let fixed = row.try_get::<Option<Value>, _>("fixed_inputs_json")?.unwrap_or_else(|| json!({}));
+        let secret_ref: VaultSecretReferenceV1 =
+            serde_json::from_value(row.try_get("secret_ref_json")?)
+                .map_err(|e| RuntimeError::Internal(e.into()))?;
+        let secret = state
+            .vault
+            .as_ref()
+            .ok_or(RuntimeError::SecretUnavailable)?
+            .read(&secret_ref)
+            .await?;
+        let mappings: Vec<agentx_runtime_contracts::WebhookInputMappingV1> = row
+            .try_get::<Option<Value>, _>("input_mapping_json")?
+            .map(serde_json::from_value)
+            .transpose()
+            .map_err(|e| RuntimeError::Internal(e.into()))?
+            .unwrap_or_default();
+        let fixed = row
+            .try_get::<Option<Value>, _>("fixed_inputs_json")?
+            .unwrap_or_else(|| json!({}));
         let connection_id = row.try_get::<Uuid, _>("id")?.to_string();
-        match crate::webhook::decode(provider, row.try_get("id")?, connection_id, &secret, &headers, &query, &body, &mappings, &fixed) {
+        match crate::webhook::decode(
+            provider,
+            row.try_get("id")?,
+            connection_id,
+            &secret,
+            &headers,
+            &query,
+            &body,
+            &mappings,
+            &fixed,
+        ) {
             Ok(crate::webhook::WebhookDecode::Challenge(value)) => {
-                if let Some(text) = value.as_str() { return Ok((StatusCode::OK, text.to_owned()).into_response()); }
+                if let Some(text) = value.as_str() {
+                    return Ok((StatusCode::OK, text.to_owned()).into_response());
+                }
                 return Ok((StatusCode::OK, Json(value)).into_response());
             }
             Ok(crate::webhook::WebhookDecode::Ignore) => return Ok(StatusCode::OK.into_response()),
             Ok(crate::webhook::WebhookDecode::Event { context, input }) => {
-                crate::webhook::dispatch_event(&state.pool, row.try_get("tenant_id")?, row.try_get("application_id")?, row.try_get("id")?, row.try_get("trigger_name")?, row.try_get("configuration_revision")?, context, input).await?;
+                crate::webhook::dispatch_event(
+                    &state.pool,
+                    row.try_get("tenant_id")?,
+                    row.try_get("application_id")?,
+                    row.try_get("id")?,
+                    row.try_get("trigger_name")?,
+                    row.try_get("configuration_revision")?,
+                    context,
+                    input,
+                )
+                .await?;
                 return Ok(StatusCode::OK.into_response());
             }
-            Err(code) => return Err(match code { "UNAUTHORIZED" => RuntimeError::Unauthorized, "INVALID_JSON" => RuntimeError::InvalidRequest("INVALID_JSON", "invalid JSON body".into()), "PROVIDER_EVENT_ID_REQUIRED" => RuntimeError::InvalidRequest("PROVIDER_EVENT_ID_REQUIRED", "provider event ID is required".into()), "PROVIDER_CONVERSATION_ID_REQUIRED" => RuntimeError::InvalidRequest("PROVIDER_CONVERSATION_ID_REQUIRED", "conversation ID is required".into()), other => RuntimeError::InvalidRequest(other, "provider webhook request is invalid".into()) }),
+            Err(code) => {
+                return Err(match code {
+                    "UNAUTHORIZED" => RuntimeError::Unauthorized,
+                    "INVALID_JSON" => {
+                        RuntimeError::InvalidRequest("INVALID_JSON", "invalid JSON body".into())
+                    }
+                    "PROVIDER_EVENT_ID_REQUIRED" => RuntimeError::InvalidRequest(
+                        "PROVIDER_EVENT_ID_REQUIRED",
+                        "provider event ID is required".into(),
+                    ),
+                    "PROVIDER_CONVERSATION_ID_REQUIRED" => RuntimeError::InvalidRequest(
+                        "PROVIDER_CONVERSATION_ID_REQUIRED",
+                        "conversation ID is required".into(),
+                    ),
+                    other => RuntimeError::InvalidRequest(
+                        other,
+                        "provider webhook request is invalid".into(),
+                    ),
+                });
+            }
         }
     }
     let key = key.ok_or(RuntimeError::Unauthorized)?;
     let timestamp = timestamp.ok_or(RuntimeError::Unauthorized)?;
-    if (OffsetDateTime::now_utc().unix_timestamp() - timestamp).abs() > 300 { return Err(RuntimeError::Unauthorized); }
+    if (OffsetDateTime::now_utc().unix_timestamp() - timestamp).abs() > 300 {
+        return Err(RuntimeError::Unauthorized);
+    }
     let signature = signature.ok_or(RuntimeError::Unauthorized)?;
     let secret_ref: VaultSecretReferenceV1 =
         serde_json::from_value(row.try_get("secret_ref_json")?)
@@ -845,60 +909,8 @@ async fn webhook(
     Ok((
         StatusCode::ACCEPTED,
         Json(load_invocation(&state, &caller, accepted.invocation_id).await?),
-    ).into_response())
-}
-
-async fn resume_wait(
-    State(state): State<RuntimeState>,
-    Path(token): Path<String>,
-    headers: HeaderMap,
-    Json(request): Json<WaitResumeRequestV1>,
-) -> RuntimeResult<(StatusCode, Json<CommandAcceptedV1>)> {
-    let key = idempotency_key(&headers)?;
-    let token_hash = format!("{:x}", Sha256::digest(token.as_bytes()));
-    let request_hash = request_hash(&request)?;
-    let mut tx = state.pool.begin().await?;
-    let row = sqlx::query("SELECT id,tenant_id,execution_id,node_execution_id,status,idempotency_key,request_hash,response_json,authentication_mode,authentication_config_json FROM execution_resume_tokens WHERE token_hash=? FOR UPDATE")
-        .bind(token_hash).fetch_optional(&mut *tx).await?.ok_or(RuntimeError::NotFound)?;
-    validate_wait_auth(
-        &headers,
-        row.try_get("authentication_mode")?,
-        row.try_get("authentication_config_json")?,
-    )?;
-    if row.try_get::<String, _>("status")? != "active" {
-        if row
-            .try_get::<Option<String>, _>("idempotency_key")?
-            .as_deref()
-            == Some(key)
-            && row.try_get::<Option<String>, _>("request_hash")?.as_deref()
-                == Some(request_hash.as_str())
-        {
-            return Ok((
-                StatusCode::ACCEPTED,
-                Json(CommandAcceptedV1 {
-                    accepted: true,
-                    replayed: true,
-                }),
-            ));
-        }
-        return Err(RuntimeError::Conflict(
-            agentx_runtime_contracts::RuntimePublishErrorCodeV1::IdempotencyConflict,
-            "Resume token was already consumed".into(),
-        ));
-    }
-    let tenant_id: Uuid = row.try_get("tenant_id")?;
-    let execution_id: Uuid = row.try_get("execution_id")?;
-    let node_id: Uuid = row.try_get("node_execution_id")?;
-    sqlx::query("INSERT INTO runtime_commands(id,tenant_id,command_type,aggregate_type,aggregate_id,idempotency_key,payload_json,status) VALUES(?,?,'resume_wait','execution',?,?,?,'pending')")
-        .bind(Uuid::now_v7()).bind(tenant_id).bind(execution_id.to_string()).bind(key).bind(json!({"nodeExecutionId":node_id,"outputPort":request.output_port,"payload":request.payload})).execute(&mut *tx).await?;
-    let response = CommandAcceptedV1 {
-        accepted: true,
-        replayed: false,
-    };
-    sqlx::query("UPDATE execution_resume_tokens SET status='used',idempotency_key=?,request_hash=?,response_json=?,used_at=UTC_TIMESTAMP(6) WHERE id=? AND status='active'")
-        .bind(key).bind(request_hash.as_str()).bind(serde_json::to_value(&response).map_err(|e| RuntimeError::Internal(e.into()))?).bind(row.try_get::<Uuid,_>("id")?).execute(&mut *tx).await?;
-    tx.commit().await?;
-    Ok((StatusCode::ACCEPTED, Json(response)))
+    )
+        .into_response())
 }
 
 async fn authenticate(
@@ -1069,7 +1081,10 @@ async fn load_invocation(
         status: row.try_get("status")?,
         outputs: row.try_get("result_json")?,
         error: row.try_get("error_json")?,
-        provider: row.try_get::<Option<Value>, _>("trigger_context_json")?.and_then(|value| value.get("provider").cloned()).and_then(|value| serde_json::from_value(value).ok()),
+        provider: row
+            .try_get::<Option<Value>, _>("trigger_context_json")?
+            .and_then(|value| value.get("provider").cloned())
+            .and_then(|value| serde_json::from_value(value).ok()),
         provider_event_id: row.try_get("provider_event_id")?,
         conversation_id: row.try_get("conversation_id")?,
         trigger_context: row.try_get("trigger_context_json")?,
@@ -1153,58 +1168,6 @@ fn verify_hash(actual: &[u8], expected: &[u8]) -> RuntimeResult<()> {
         Ok(())
     }
 }
-fn validate_wait_auth(
-    headers: &HeaderMap,
-    mode: String,
-    configuration: Option<Value>,
-) -> RuntimeResult<()> {
-    match mode.as_str() {
-        "none" => Ok(()),
-        "header" => {
-            let config = configuration.ok_or(RuntimeError::Unauthorized)?;
-            let name = config
-                .get("name")
-                .and_then(Value::as_str)
-                .ok_or(RuntimeError::Unauthorized)?;
-            let hash = config
-                .get("sha256")
-                .and_then(Value::as_str)
-                .ok_or(RuntimeError::Unauthorized)?;
-            let value = headers
-                .get(name)
-                .and_then(|v| v.to_str().ok())
-                .ok_or(RuntimeError::Unauthorized)?;
-            verify_hex_hash(value.as_bytes(), hash)
-        }
-        "basic" => headers
-            .get(AUTHORIZATION)
-            .and_then(|v| v.to_str().ok())
-            .filter(|v| v.starts_with("Basic "))
-            .map(|_| ())
-            .ok_or(RuntimeError::Unauthorized),
-        "signed" => headers
-            .get("x-agentx-signature")
-            .map(|_| ())
-            .ok_or(RuntimeError::Unauthorized),
-        _ => Err(RuntimeError::Unauthorized),
-    }
-}
-fn verify_hex_hash(value: &[u8], hash: &str) -> RuntimeResult<()> {
-    let actual = format!("{:x}", Sha256::digest(value));
-    if actual
-        .as_bytes()
-        .iter()
-        .zip(hash.as_bytes())
-        .fold(0u8, |sum, (a, b)| sum | (a ^ b))
-        == 0
-        && actual.len() == hash.len()
-    {
-        Ok(())
-    } else {
-        Err(RuntimeError::Unauthorized)
-    }
-}
-
 pub fn public_openapi() -> Value {
     let mut schemas = Map::new();
     insert_public_schema::<CreateSessionRequestV1>(&mut schemas, "CreateSessionRequest");
@@ -1215,7 +1178,6 @@ pub fn public_openapi() -> Value {
     insert_public_schema::<MessageRequestV1>(&mut schemas, "MessageRequest");
     insert_public_schema::<MessageResponseV1>(&mut schemas, "MessageResponse");
     insert_public_schema::<ArtifactUploadResponseV1>(&mut schemas, "ArtifactUploadResponse");
-    insert_public_schema::<WaitResumeRequestV1>(&mut schemas, "WaitResumeRequest");
     insert_public_schema::<CommandAcceptedV1>(&mut schemas, "CommandAccepted");
     insert_public_schema::<GatewayErrorV1>(&mut schemas, "GatewayError");
     json!({
@@ -1255,7 +1217,6 @@ pub fn public_openapi() -> Value {
                 "parameters":[{"name":"timestamp","in":"query","required":true,"schema":{"type":"string"}},{"name":"nonce","in":"query","required":true,"schema":{"type":"string"}},{"name":"echostr","in":"query","required":true,"schema":{"type":"string"}},{"name":"msg_signature","in":"query","required":false,"schema":{"type":"string"}}],
                 "responses":{"200":{"description":"Provider challenge acknowledgement"},"400":error_response(),"401":error_response(),"404":error_response(),"503":error_response()}
             }},
-            "/gateway/v1/waits/{resume_token}/resume":{"post":public_post("resumeWait","WaitResumeRequest","CommandAccepted","202")}
         },
         "components":{"securitySchemes":{"runtimeBearer":{"type":"http","scheme":"bearer","bearerFormat":"RS256 JWT or Agentx API Key"}},"schemas":schemas}
     })

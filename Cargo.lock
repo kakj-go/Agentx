@@ -252,6 +252,8 @@ dependencies = [
  "agentx-domain",
  "agentx-node-protocol",
  "agentx-runtime-contracts",
+ "anyhow",
+ "ipnet",
  "jsonschema",
  "regex",
  "serde",
@@ -270,6 +272,7 @@ dependencies = [
  "anyhow",
  "base64",
  "ed25519-dalek",
+ "ipnet",
  "jsonwebtoken",
  "rand 0.8.7",
  "schemars 1.2.2",
@@ -417,6 +420,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "ureq",
+ "url",
  "uuid",
 ]
 

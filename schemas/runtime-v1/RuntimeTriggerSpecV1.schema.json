@@ -1,20 +1,31 @@
 {
   "$defs": {
-    "LifecycleOperationV1": {
-      "enum": [
-        "activate",
-        "deactivate"
-      ],
-      "type": "string"
-    },
     "RuntimeTriggerConfigurationV1": {
       "oneOf": [
         {
           "additionalProperties": false,
           "properties": {
+            "fixedInputs": {
+              "default": {}
+            },
+            "inputMappings": {
+              "default": [],
+              "items": {
+                "$ref": "#/$defs/WebhookInputMappingV1"
+              },
+              "type": "array"
+            },
             "kind": {
               "const": "webhook",
               "type": "string"
+            },
+            "mode": {
+              "$ref": "#/$defs/WebhookChannelModeV1",
+              "default": "callback"
+            },
+            "provider": {
+              "$ref": "#/$defs/WebhookProviderV1",
+              "default": "agentx"
             },
             "publicId": {
               "type": "string"
@@ -62,54 +73,6 @@
             "input"
           ],
           "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "input": true,
-            "intervalSeconds": {
-              "format": "uint32",
-              "minimum": 0,
-              "type": "integer"
-            },
-            "kind": {
-              "const": "poll",
-              "type": "string"
-            },
-            "providerEndpoint": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind",
-            "intervalSeconds",
-            "providerEndpoint",
-            "input"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "input": true,
-            "kind": {
-              "const": "lifecycle",
-              "type": "string"
-            },
-            "operation": {
-              "$ref": "#/$defs/LifecycleOperationV1"
-            },
-            "providerEndpoint": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind",
-            "operation",
-            "providerEndpoint",
-            "input"
-          ],
-          "type": "object"
         }
       ]
     },
@@ -145,6 +108,42 @@
         "version"
       ],
       "type": "object"
+    },
+    "WebhookChannelModeV1": {
+      "enum": [
+        "callback",
+        "stream"
+      ],
+      "type": "string"
+    },
+    "WebhookInputMappingV1": {
+      "additionalProperties": false,
+      "properties": {
+        "missingPolicy": {
+          "default": "error",
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "source",
+        "target"
+      ],
+      "type": "object"
+    },
+    "WebhookProviderV1": {
+      "enum": [
+        "agentx",
+        "dingtalk",
+        "wecom",
+        "feishu"
+      ],
+      "type": "string"
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",

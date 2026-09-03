@@ -92,7 +92,7 @@ def test_local_image_build_includes_the_runtime_node_fixture() -> None:
     xtask = Path("xtask/src/main.rs").read_text(encoding="utf-8")
     assert '== Some("local")' in xtask
     assert 'for fixture in ["echo-node", "echo-mcp"]' in xtask
-    assert 'selected.push(fixture.to_owned())' in xtask
+    assert "selected.push(fixture.to_owned())" in xtask
 
     rendered = run(("kubectl", "kustomize", "deploy/kustomize/e2e-fixtures/runtime-providers"), timeout=120).stdout
     resources = [document for document in yaml.safe_load_all(rendered) if isinstance(document, dict)]

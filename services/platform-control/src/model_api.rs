@@ -605,6 +605,7 @@ pub(crate) async fn execute_runtime_resource_check_with_reference(
 
 const RUNTIME_RESOURCE_CHECK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn execute_runtime_resource_operation(
     state: &ControlApiState,
     tenant_id: Uuid,

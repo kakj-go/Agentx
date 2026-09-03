@@ -5,7 +5,6 @@ import type { OnMount } from '@monaco-editor/react'
 import { Textarea } from '../../../shared/ui/textarea'
 
 const Monaco = lazy(() => import('@monaco-editor/react'))
-let expressionLanguageRegistered = false
 
 export type EditorCompletion = { label: string; insertText: string; detail?: string }
 export type CodeEditorHandle = { insertText: (value: string) => void }
@@ -25,13 +24,7 @@ export const CodeEditor = forwardRef<CodeEditorHandle, { value: string; language
     instance.pushUndoStop()
     instance.focus()
   } }), [onChange, value])
-  return <Suspense fallback={<div className="border border-border bg-muted/20 p-1"><Textarea aria-label={t('studio.editorFallback')} className="resize-none border-0 bg-transparent font-mono text-xs focus-visible:ring-0" onChange={(event) => onChange(event.target.value)} style={{ height }} value={value} /></div>}><Monaco beforeMount={(monaco) => {
-    if (language === 'agentx-expression' && !expressionLanguageRegistered) {
-      monaco.languages.register({ id: 'agentx-expression' })
-      monaco.languages.setMonarchTokensProvider('agentx-expression', { tokenizer: { root: [[/\$[a-zA-Z][\w]*/, 'variable'], [/'[^']*'|"[^"]*"/, 'string'], [/\b\d+(?:\.\d+)?\b/, 'number'], [/[a-zA-Z_]\w*(?=\()/, 'function']] } })
-      expressionLanguageRegistered = true
-    }
-  }} height={height} language={language} onChange={(next) => onChange(next ?? '')} onMount={(mountedEditor, monaco) => {
+  return <Suspense fallback={<div className="border border-border bg-muted/20 p-1"><Textarea aria-label={t('studio.editorFallback')} className="resize-none border-0 bg-transparent font-mono text-xs focus-visible:ring-0" onChange={(event) => onChange(event.target.value)} style={{ height }} value={value} /></div>}><Monaco height={height} language={language} onChange={(next) => onChange(next ?? '')} onMount={(mountedEditor, monaco) => {
     editor.current = mountedEditor
     disposable.current?.dispose()
     if (!completionItems.length) return
@@ -43,7 +36,7 @@ export const CodeEditor = forwardRef<CodeEditorHandle, { value: string; language
       },
     }
     disposable.current = monaco.languages.registerCompletionItemProvider(language, provider)
-  }} options={{ minimap: { enabled: false }, fontSize: 12, lineNumbers: language === 'json' || language === 'plaintext' || language === 'agentx-expression' ? 'off' : 'on', readOnly, scrollBeyondLastLine: false, wordWrap: 'on' }} theme={theme} value={value} /></Suspense>
+  }} options={{ automaticLayout: true, minimap: { enabled: false }, fontSize: 12, lineNumbers: language === 'plaintext' ? 'off' : 'on', readOnly, scrollBeyondLastLine: false, wordWrap: 'on' }} theme={theme} value={value} /></Suspense>
 })
 
 type EditorPosition = { lineNumber: number; column: number }

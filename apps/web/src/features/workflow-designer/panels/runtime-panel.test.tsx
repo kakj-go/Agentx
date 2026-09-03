@@ -51,6 +51,30 @@ describe('RuntimePanel execution rail', () => {
     fireEvent.pointerUp(window)
   })
 
+  it('refetches history when the active execution changes and polls while it is absent', async () => {
+    let listReads = 0
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input)
+      if (path.includes('/executions?')) {
+        listReads += 1
+        return new Response(JSON.stringify({
+          items: listReads === 1 ? [] : [{ id: 'execution-2', workflowId: 'workflow-1', workflowName: 'Workflow', status: 'failed', startedAt: '2026-08-07T01:00:00Z' }],
+          limit: 100,
+          total: listReads === 1 ? 0 : 1,
+        }), { headers: { 'Content-Type': 'application/json' } })
+      }
+      return new Response(JSON.stringify({ items: [] }), { headers: { 'Content-Type': 'application/json' } })
+    }))
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const renderPanel = (executionId: string) => <QueryClientProvider client={client}><ToastProvider><RuntimePanel events={[]} executionId={executionId} onExecutionChange={vi.fn()} workflowId="workflow-1" /></ToastProvider></QueryClientProvider>
+    const view = render(renderPanel('execution-1'))
+    await screen.findByText(/当前执行不在最近记录中/)
+
+    view.rerender(renderPanel('execution-2'))
+    await waitFor(() => expect(screen.getByRole('combobox', { name: /切换执行/ })).toHaveTextContent(/失败/))
+    expect(listReads).toBeGreaterThanOrEqual(2)
+  })
+
   it('allows the rail to reach four fifths of the viewport height', () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ items: [] }), { headers: { 'Content-Type': 'application/json' } })))
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })

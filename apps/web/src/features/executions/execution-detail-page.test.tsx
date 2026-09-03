@@ -26,8 +26,8 @@ const nodes = { items: [
     startedAt: '2026-08-03T10:00:00Z', endedAt: '2026-08-03T10:00:00Z', attempts: [{ id: 'attempt-1', attemptNumber: 1, status: 'succeeded', workerInstanceId: 'worker-a', deadlineAt: null, errorCode: null, errorMessage: null, startedAt: '2026-08-03T10:00:00Z', endedAt: '2026-08-03T10:00:00Z' }], lineage: [],
   },
   {
-    id: 'node-execution-2', executionId: 'execution-1', nodeId: 'remote-charge', nodeName: 'Remote charge', nodeType: 'remote_action', nodeVersion: 1,
-    generation: 0, activationSlot: 0, runIndex: 0, iterationIndex: 0, status: 'waiting', capability: 'remote_action', sideEffectLevel: 'irreversible',
+    id: 'node-execution-2', executionId: 'execution-1', nodeId: 'code-charge', nodeName: 'Code charge', nodeType: 'code', nodeVersion: 1,
+    generation: 0, activationSlot: 0, runIndex: 0, iterationIndex: 0, status: 'waiting', capability: 'sandbox', sideEffectLevel: 'irreversible',
     input: { main: [{ json: { amount: 42 } }] }, output: null, errorCode: null, errorMessage: null, startedAt: '2026-08-03T10:00:01Z', endedAt: null,
     attempts: [], lineage: [{ deliveryId: 'delivery-1', targetItemIndex: 0, sourceNodeExecutionId: 'node-execution-1', sourceRunIndex: 0, sourceOutputIndex: 0, sourceItemIndex: 0 }],
   },
@@ -45,14 +45,13 @@ function installFetch(options: { execution?: unknown; nodes?: unknown; traceStat
     if (path.endsWith('/nodes')) return response(options.nodes ?? nodes)
     if (path.includes('/nodes/')) return response(nodes.items.find((node) => path.endsWith(node.id)))
     if (path.endsWith('/checkpoints')) return response({ items: [{ id: 'checkpoint-1', executionId: 'execution-1', nodeExecutionId: 'node-execution-1', sequenceNumber: 2, checkpointType: 'node_completed', stateHash: 'sha256-state', activationCount: 2, deliveryCount: 1, createdAt: '2026-08-03T10:00:01Z' }] })
-    if (path.endsWith('/waits')) return response({ items: [{ id: 'wait-1', executionId: 'execution-1', nodeExecutionId: 'node-execution-2', waitKind: 'approval', status: 'waiting', wakeAt: null, timeoutAt: '2026-08-04T10:00:00Z', authenticationMode: 'signed', resumeUrl: '/gateway/v1/waits/wait-1/resume' }] })
     if (path.endsWith('/events')) return response({ items: [{ sequence: 3, eventType: 'execution.waiting', status: 'waiting', summary: { reason: 'approval' }, occurredAt: '2026-08-03T10:00:01Z' }] })
     if (path.endsWith('/trace')) return response({ executionId: 'execution-1', traceId: 'trace-1', nextCursor: null, complete: options.traceStatus !== 202, degraded: false, warningCode: options.traceStatus === 202 ? 'TRACE_DELAYED' : null, totalSpans: 2, expectedWatermark: 2, ingestedWatermark: options.traceStatus === 202 ? 1 : 2, spans: [
       { spanId: 'span-root', parentSpanId: null, spanKind: 'execution', spanName: 'Order recovery', status: 'running', startedAt: '2026-08-03T10:00:00Z', endedAt: null, durationMs: null, costMicros: 0, hasDetails: false },
-      { spanId: 'span-node', parentSpanId: 'span-root', spanKind: 'node', spanName: 'Remote charge', status: 'waiting', startedAt: '2026-08-03T10:00:01Z', endedAt: null, durationMs: null, nodeExecutionId: 'node-execution-2', costMicros: 0, hasDetails: true },
+      { spanId: 'span-node', parentSpanId: 'span-root', spanKind: 'node', spanName: 'Code charge', status: 'waiting', startedAt: '2026-08-03T10:00:01Z', endedAt: null, durationMs: null, nodeExecutionId: 'node-execution-2', costMicros: 0, hasDetails: true },
     ] })
     if (path.endsWith('/side-effect-confirmations')) return response({ accepted: true, replayed: false })
-    if (path === '/api/v1/approvals') return response({ items: [{ id: 'approval-1', executionId: 'execution-1', workflowId: 'workflow-1', workflowName: 'Order recovery', nodeId: 'remote-charge', title: 'Approve charge', description: null, status: 'pending', claimedBy: null, claimedByName: null, resumeStatus: 'pending', requestPayload: {}, deadlineAt: null, version: 1, createdAt: '2026-08-03T10:00:01Z' }], page: 1, pageSize: 100, total: 1 })
+    if (path === '/api/v1/approvals') return response({ items: [{ id: 'approval-1', executionId: 'execution-1', workflowId: 'workflow-1', workflowName: 'Order recovery', nodeId: 'approval-review', title: 'Approve charge', description: null, buttons: [{ id: 'approved', label: 'Approve' }], decision: null, status: 'pending', claimedBy: null, claimedByName: null, resumeStatus: 'pending', requestPayload: {}, deadlineAt: null, version: 1, createdAt: '2026-08-03T10:00:01Z' }], page: 1, pageSize: 100, total: 1 })
     return response({ code: 'NOT_FOUND', message: path, requestId: 'test' }, 404)
   }))
 }
@@ -73,7 +72,7 @@ describe('execution recovery workbench', () => {
     await i18n.changeLanguage('zh-CN')
   })
 
-  it('keeps recovery focused on waits, approvals, checkpoints, events and fork risk preview', async () => {
+  it('keeps recovery focused on approvals, checkpoints, events and fork risk preview', async () => {
     const requests: string[] = []
     installFetch({ onRequest: (path) => requests.push(path) })
     renderPage(['execution:view', 'execution:fork', 'execution:cancel', 'approval:view'])
@@ -82,11 +81,9 @@ describe('execution recovery workbench', () => {
     expect(heading).toHaveClass('min-w-0', 'flex-1', 'truncate')
     expect(heading.parentElement?.parentElement?.parentElement).toHaveClass('grid-cols-[2.25rem_minmax(0,1fr)]', 'md:flex')
     fireEvent.click(screen.getByRole('tab', { name: '恢复' }))
-    expect((await screen.findAllByText('Remote charge')).length).toBeGreaterThan(0)
+    expect((await screen.findAllByText('Code charge')).length).toBeGreaterThan(0)
     expect(await screen.findByText('Approve charge')).toBeInTheDocument()
     expect(screen.getByText('#2 node_completed')).toBeInTheDocument()
-    expect(screen.getByText('/gateway/v1/waits/wait-1/resume')).toBeInTheDocument()
-
     expect(screen.queryByRole('button', { name: /Source/ })).not.toBeInTheDocument()
     expect(screen.getByText('execution.waiting')).toBeInTheDocument()
 

@@ -27,7 +27,11 @@ describe('ExitNode', () => {
   it('renders main and error target ports with Chinese labels', async () => {
     await i18n.changeLanguage('zh-CN')
     renderExit({ editorKind: 'exit', key: 'exit', label: 'End', protected: false, parameters: { outputs: {}, errorOutputs: {} } })
-    expect(screen.getByTestId('exit-node-exit')).toBeInTheDocument()
+    const node = screen.getByTestId('exit-node-exit')
+    expect(node).toBeInTheDocument()
+    expect(node).toHaveStyle({ width: '240px' })
+    expect(node.querySelector('.studio-card')).toBeInTheDocument()
+    expect(screen.getByText('输出变量')).toBeInTheDocument()
     expect(screen.getByTestId('exit-port-main')).toBeInTheDocument()
     expect(screen.getByTestId('exit-port-error')).toBeInTheDocument()
     expect(screen.getByTestId('exit-port-label-main')).toHaveTextContent('输出')

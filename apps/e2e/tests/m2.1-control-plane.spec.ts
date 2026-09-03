@@ -388,14 +388,17 @@ async function configureCentralResourceGrants(page: Page) {
 }
 
 async function configureAndPublishWorkflow(page: Page) {
-  let latestDraftPayload: { definition: { nodes: Array<{ type: string; parameters: Record<string, unknown>; resourceReferences: Array<{ bindingRole?: string; resourceVersionId?: string }> }>; end: { outputs: Record<string, { value: { kind: string; selector?: { namespace: string; port?: string; path: string[] } } }> } } } | undefined
+  let latestDraftPayload: { definition: { nodes: Array<{ type: string; parameters: Record<string, unknown>; resourceReferences: Array<{ bindingRole?: string; resourceVersionId?: string }> }> } } | undefined
   page.on('request', (request) => {
     if (request.method() === 'PUT' && /\/workflows\/[^/]+\/draft$/.test(request.url())) latestDraftPayload = request.postDataJSON() as typeof latestDraftPayload
   })
   await page.getByRole('link', { name: /^工作流/ }).click()
   await page.getByRole('row', { name: /MCP Echo Workflow/ }).getByRole('link', { name: '打开画布' }).click()
   await expect(page.getByTestId('workflow-canvas')).toBeVisible()
-  await page.getByTestId('node-creator-trigger').click()
+  const initialEdge = page.locator('.react-flow__edge').first()
+  await initialEdge.click({ force: true })
+  await page.keyboard.press('Delete')
+  await expect(page.locator('.react-flow__edge')).toHaveCount(0)
   await expect(page.getByTestId('node-creator')).toBeVisible()
   await page.getByRole('textbox', { name: '搜索节点' }).fill('智能体')
   await page.getByTestId('palette-action-agent').click()
@@ -408,21 +411,17 @@ async function configureAndPublishWorkflow(page: Page) {
   await page.getByTestId('parameter-systemPrompt').getByRole('textbox').fill('Use the attached MCP tool to answer the question.')
   await page.getByTestId('node-details-view').getByRole('button', { name: /关闭|Close/ }).click()
 
-  await page.getByTestId('node-creator-trigger').click()
-  await page.getByTestId('palette-group-attachments').click()
-  await page.getByTestId('palette-binding-mcp_tool').click()
-  const toolNode = await selectedNode(page)
-  await page.getByTestId('attachment-resource').getByRole('combobox').click()
+  await agentNode.click()
+  await page.getByTestId('agent-inspector-mcp_tools').getByRole('combobox').click()
   await page.getByRole('option', { name: /^echo Echo MCP \/ echo$/ }).click()
   await page.getByTestId('node-details-view').getByRole('button', { name: /关闭|Close/ }).click()
 
   await page.getByRole('button', { name: /^(适应画布|Fit View)$/ }).click()
   await connectHandles(page, page.getByTestId('workflow-start').locator('.react-flow__handle.source[data-handleid="main"]'), agentNode.locator('.react-flow__handle.target[data-handleid="main"]'))
   await connectHandles(page, agentNode.locator('.react-flow__handle.source[data-handleid="main"]'), page.getByTestId('exit-node-exit').locator('.react-flow__handle.target[data-handleid="main"]'))
-  await connectHandles(page, toolNode.locator('.react-flow__handle.source[data-handleid="resource"]'), agentNode.locator('.react-flow__handle.target[data-handleid="binding:mcp_tools"]'))
-  await expect(page.locator('.react-flow__edge')).toHaveCount(3)
+  await expect(page.locator('.react-flow__edge')).toHaveCount(2)
   await page.getByTestId('workflow-start').click()
-  const startPanel = page.getByTestId('workflow-interface-panel')
+  const startPanel = page.getByTestId('start-panel')
   await expect(startPanel).toBeVisible()
   await startPanel.getByRole('button', { name: /添加字段|Add field/ }).first().click()
   let inputDialog = page.getByRole('dialog', { name: /添加字段|Add field/ })
@@ -465,7 +464,7 @@ async function configureAndPublishWorkflow(page: Page) {
   await endPanel.getByTestId('exit-mapping-answer').getByRole('textbox', { name: 'Value' }).click()
   picker = page.getByTestId('reference-picker')
   await picker.getByRole('button', { name: /输出|Outputs/ }).click()
-  const outputPath = ['agent', 'main', 'current', 'text']
+  const outputPath = ['main', 'current', 'text']
   for (const [index, label] of outputPath.entries()) {
     const row = picker.getByRole('button', { name: new RegExp(label, 'i') }).first()
     const toggle = row.locator('[data-tree-toggle]')
@@ -487,10 +486,11 @@ async function configureAndPublishWorkflow(page: Page) {
   expect(latestDraftPayload).toBeDefined()
   const payload = latestDraftPayload!
   const agent = payload.definition.nodes.find((node) => node.type === 'agent')
-  expect(agent?.parameters.userQuestion).toMatchObject({ kind: 'reference', selector: { namespace: 'inputs', path: ['question'] } })
-  expect(agent?.resourceReferences.filter((resource) => resource.bindingRole == null)).toHaveLength(1)
-  expect(agent?.resourceReferences.map((resource) => resource.bindingRole).filter(Boolean)).toEqual(['mcp_tools'])
-  expect(payload.definition.end.outputs.answer?.value).toMatchObject({ kind: 'reference', selector: { namespace: 'outputs', port: 'main', path: ['text'] } })
+  expect(agent?.parameters.userQuestion).toMatchObject({ kind: 'reference', selector: expect.objectContaining({ namespace: 'inputs', path: ['question'] }) })
+  expect(agent?.resourceReferences.filter((resource) => resource.bindingRole == null)).toHaveLength(0)
+  expect(agent?.resourceReferences.map((resource) => resource.bindingRole).filter(Boolean)).toEqual(['model', 'mcp_tools'])
+  const exit = payload.definition.nodes.find((node) => node.type === 'exit')
+  expect((exit?.parameters.outputs as Record<string, unknown>).answer).toMatchObject({ kind: 'reference', selector: { namespace: 'outputs', port: 'main', path: ['text'] } })
   await page.getByRole('link', { name: '返回', exact: true }).click()
   await expect(page.getByText('资源与授权校验通过')).toBeVisible()
   const versionResponsePromise = page.waitForResponse((response) => response.request().method() === 'POST' && /\/workflows\/[^/]+\/versions$/.test(response.url()))

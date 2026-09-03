@@ -119,16 +119,11 @@ impl AgentSessionIdentityV1 {
 
 /// The only lane implemented by P3-05.  Keeping this as a closed enum avoids
 /// silently mixing a future branch/tree implementation with the main lane.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentSessionLaneV1 {
+    #[default]
     Main,
-}
-
-impl Default for AgentSessionLaneV1 {
-    fn default() -> Self {
-        Self::Main
-    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]

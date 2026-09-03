@@ -356,9 +356,9 @@ P4 只有同时满足以下条件才算完成：
 - `mode` 为单选：两家平台在开放平台侧本身就是二选一，切换模式等于换一套配置字段；
 - 凭证管理（credentials 表）保留给 MCP、模型等场景，与渠道无关。
 
-### 15.1 渠道变更自动同步
+### 15.1 渠道变更随 Deployment 发布
 
-渠道是应用级配置而非 Workflow 版本内容：当 Application 已有活跃 Deployment 时，渠道的创建、修改、删除在保存后由 Control 自动调用 Runtime `triggers:sync` 内部端点，将最新 trigger 清单直接应用到当前活跃 bundle（幂等回执，scope `runtime.triggers.sync`），并推进 `published_runtime_config_revision`——无需用户重新发布 Deployment。无活跃 Deployment 时保持"待发布"，随首次部署生效；同步失败时降级回"待发布"而不阻塞保存。注意：Deployment 回滚会恢复 bundle 内冻结的旧 trigger 清单，回滚后重新保存渠道即可再次同步。
+渠道是应用级配置，但 Runtime 只执行 Deployment 中冻结的 trigger 清单。渠道创建、修改或删除后，Control 推进 `runtime_config_revision` 并将变更标记为待发布；创建下一版 Application Deployment 时，Publisher 冻结当前渠道清单并整体激活。Runtime 不提供绕过 Deployment 的 `triggers:sync` 入口。Deployment 回滚会同时恢复该版本冻结的 trigger 清单，因此 Workflow、渠道配置和运行时行为始终属于同一个可审计快照。
 
 ## 16. Stream Connector
 

@@ -124,9 +124,6 @@ pub enum AdmissionTargetV1 {
     QuotaPolicy {
         state: crate::RuntimeQuotaPolicyV1,
     },
-    ApprovalDecision {
-        state: crate::RuntimeApprovalDecisionV1,
-    },
     ApprovalAction {
         state: crate::RuntimeApprovalActionV1,
     },

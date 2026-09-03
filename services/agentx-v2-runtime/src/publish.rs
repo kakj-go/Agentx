@@ -501,37 +501,6 @@ async fn apply_admission_inner(
                     .bind(policy.tenant_id).bind(quota_dimension(*dimension)).bind(if policy.enabled{*limit}else{0}).bind(policy.policy_version).bind(request.command.event_id).execute(&mut *tx).await?;
             }
         }
-        AdmissionTargetV1::ApprovalDecision { state: decision } => {
-            let task = sqlx::query("SELECT execution_id,node_execution_id,status,version,decision_idempotency_key,request_payload_json FROM approval_tasks WHERE tenant_id=? AND id=? FOR UPDATE")
-                .bind(tenant_id).bind(decision.task_id).fetch_optional(&mut *tx).await?.ok_or(RuntimeError::NotFound)?;
-            if task.try_get::<u64, _>("version")? != decision.task_version {
-                return Err(RuntimeError::Conflict(
-                    RuntimePublishErrorCodeV1::HeadVersionConflict,
-                    "Approval Task Version changed".into(),
-                ));
-            }
-            if task.try_get::<String, _>("status")? != "pending" {
-                return Err(RuntimeError::Conflict(
-                    RuntimePublishErrorCodeV1::IdempotencyConflict,
-                    "Approval Task already has a terminal decision".into(),
-                ));
-            }
-            let approved =
-                decision.decision == agentx_runtime_contracts::ApprovalDecisionValueV1::Approved;
-            let execution_id: Uuid = task.try_get("execution_id")?;
-            let node_execution_id: Uuid = task.try_get("node_execution_id")?;
-            let decision_result = json!({"taskId":decision.task_id,"decision":decision.decision,"decidedBy":decision.decided_by,"reason":decision.reason,"input":task.try_get::<Option<Value>,_>("request_payload_json")?.unwrap_or(Value::Null)});
-            sqlx::query("UPDATE approval_tasks SET status=?,version=version+1,decision_idempotency_key=?,decision_receipt_json=?,decided_by=?,decision_reason=?,decided_at=UTC_TIMESTAMP(6),resume_status='pending' WHERE tenant_id=? AND id=? AND version=? AND status='pending'")
-                .bind(if approved{"approved"}else{"rejected"}).bind(&request.command.idempotency_key).bind(&decision_result).bind(decision.decided_by).bind(&decision.reason).bind(tenant_id).bind(decision.task_id).bind(decision.task_version).execute(&mut *tx).await?;
-            sqlx::query("INSERT INTO runtime_commands(id,tenant_id,command_type,aggregate_type,aggregate_id,idempotency_key,payload_json,status) VALUES(?,?,'resume_execution','execution',?,?,?,'pending')")
-                .bind(request.command.event_id).bind(tenant_id).bind(execution_id.to_string()).bind(format!("approval:{}:{}",decision.task_id,decision.task_version)).bind(json!({"nodeExecutionId":node_execution_id,"outputPort":if approved{"approved"}else{"rejected"},"payload":decision_result})).execute(&mut *tx).await?;
-            crate::event_export::enqueue_approval_event_from_task(
-                &mut tx,
-                tenant_id,
-                decision.task_id,
-            )
-            .await?;
-        }
         AdmissionTargetV1::ApprovalAction { state: action } => {
             apply_approval_action(
                 &mut tx,
@@ -605,7 +574,7 @@ async fn apply_approval_action(
 ) -> RuntimeResult<()> {
     use agentx_runtime_contracts::ApprovalActionValueV1;
 
-    let task = sqlx::query("SELECT execution_id,node_execution_id,status,claimed_by,deadline_at,version,request_payload_json FROM approval_tasks WHERE tenant_id=? AND id=? FOR UPDATE")
+    let task = sqlx::query("SELECT a.execution_id,a.node_execution_id,a.status,a.claimed_by,a.deadline_at,a.version,a.request_payload_json,a.buttons_json,e.status execution_status FROM approval_tasks a JOIN workflow_executions e ON e.tenant_id=a.tenant_id AND e.id=a.execution_id WHERE a.tenant_id=? AND a.id=? FOR UPDATE")
         .bind(tenant_id)
         .bind(action.task_id)
         .fetch_optional(&mut **tx)
@@ -621,24 +590,63 @@ async fn apply_approval_action(
     let claimed_by: Option<Uuid> = task.try_get("claimed_by")?;
     let execution_id: Uuid = task.try_get("execution_id")?;
     let node_execution_id: Uuid = task.try_get("node_execution_id")?;
-    let target_status = match action.action {
+    let execution_active = !matches!(
+        task.try_get::<String, _>("execution_status")?.as_str(),
+        "succeeded" | "failed" | "cancelled" | "timed_out"
+    );
+    let actor_is_candidate: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM approval_candidates WHERE tenant_id=? AND approval_task_id=? AND candidate_type='user' AND candidate_id=?)",
+    )
+    .bind(tenant_id)
+    .bind(action.task_id)
+    .bind(action.actor_id)
+    .fetch_one(&mut **tx)
+    .await?;
+    let target_status = match &action.action {
         ApprovalActionValueV1::Claim | ApprovalActionValueV1::Reassign => "claimed",
         ApprovalActionValueV1::Release => "pending",
-        ApprovalActionValueV1::Approve => "approved",
-        ApprovalActionValueV1::Reject => "rejected",
+        ApprovalActionValueV1::Decide { .. } => "decided",
         ApprovalActionValueV1::Cancel => "cancelled",
         ApprovalActionValueV1::Timeout => "timed_out",
     };
-    let valid = match action.action {
-        ApprovalActionValueV1::Claim => status == "pending",
+    let valid = match &action.action {
+        ApprovalActionValueV1::Claim => {
+            execution_active && actor_is_candidate && status == "pending"
+        }
         ApprovalActionValueV1::Release => {
-            status == "claimed" && claimed_by == Some(action.actor_id)
+            execution_active && status == "claimed" && claimed_by == Some(action.actor_id)
         }
         ApprovalActionValueV1::Reassign => {
-            matches!(status.as_str(), "pending" | "claimed") && action.target_user_id.is_some()
+            let target_is_candidate = if let Some(target_user_id) = action.target_user_id {
+                sqlx::query_scalar(
+                    "SELECT EXISTS(SELECT 1 FROM approval_candidates WHERE tenant_id=? AND approval_task_id=? AND candidate_type='user' AND candidate_id=?)",
+                )
+                .bind(tenant_id)
+                .bind(action.task_id)
+                .bind(target_user_id)
+                .fetch_one(&mut **tx)
+                .await?
+            } else {
+                false
+            };
+            execution_active
+                && matches!(status.as_str(), "pending" | "claimed")
+                && target_is_candidate
         }
-        ApprovalActionValueV1::Approve | ApprovalActionValueV1::Reject => {
-            status == "claimed" && claimed_by == Some(action.actor_id)
+        ApprovalActionValueV1::Decide { decision_id } => {
+            let button_exists = task
+                .try_get::<Value, _>("buttons_json")?
+                .as_array()
+                .is_some_and(|buttons| {
+                    buttons.iter().any(|button| {
+                        button.get("id").and_then(Value::as_str) == Some(decision_id.as_str())
+                    })
+                });
+            execution_active
+                && actor_is_candidate
+                && status == "claimed"
+                && claimed_by == Some(action.actor_id)
+                && button_exists
         }
         ApprovalActionValueV1::Cancel => matches!(status.as_str(), "pending" | "claimed"),
         ApprovalActionValueV1::Timeout => {
@@ -654,7 +662,7 @@ async fn apply_approval_action(
             "Approval action does not match the current Runtime Task state".into(),
         ));
     }
-    let next_claimed_by = match action.action {
+    let next_claimed_by = match &action.action {
         ApprovalActionValueV1::Claim => Some(action.actor_id),
         ApprovalActionValueV1::Reassign => action.target_user_id,
         ApprovalActionValueV1::Release => None,
@@ -664,7 +672,11 @@ async fn apply_approval_action(
         .try_get::<Option<Value>, _>("request_payload_json")?
         .unwrap_or(Value::Null);
     let decision = approval_action_result(action, &original_input);
-    let changed = sqlx::query("UPDATE approval_tasks SET status=?,claimed_by=?,claimed_at=IF(?='claimed',UTC_TIMESTAMP(6),NULL),version=version+1,decision_idempotency_key=IF(? IN ('approved','rejected'),?,decision_idempotency_key),decision_receipt_json=IF(? IN ('approved','rejected'),?,decision_receipt_json),decided_by=IF(? IN ('approved','rejected'),?,decided_by),decided_at=IF(? IN ('approved','rejected'),UTC_TIMESTAMP(6),decided_at),resume_status=IF(? IN ('approved','rejected'),'pending',resume_status) WHERE tenant_id=? AND id=? AND version=?")
+    let decision_id = match &action.action {
+        ApprovalActionValueV1::Decide { decision_id } => Some(decision_id.as_str()),
+        _ => None,
+    };
+    let changed = sqlx::query("UPDATE approval_tasks SET status=?,claimed_by=?,claimed_at=IF(?='claimed',UTC_TIMESTAMP(6),claimed_at),version=version+1,decision_idempotency_key=IF(?='decided',?,decision_idempotency_key),decision_receipt_json=IF(?='decided',?,decision_receipt_json),decision_id=IF(?='decided',?,decision_id),decided_by=IF(?='decided',?,decided_by),decision_reason=IF(?='decided',?,decision_reason),decided_at=IF(?='decided',UTC_TIMESTAMP(6),decided_at),resume_status=IF(?='decided','pending',resume_status) WHERE tenant_id=? AND id=? AND version=?")
         .bind(target_status)
         .bind(next_claimed_by)
         .bind(target_status)
@@ -673,7 +685,11 @@ async fn apply_approval_action(
         .bind(target_status)
         .bind(&decision)
         .bind(target_status)
+        .bind(decision_id)
+        .bind(target_status)
         .bind(action.actor_id)
+        .bind(target_status)
+        .bind(action.input.as_ref().and_then(|input| input.get("reason")).and_then(Value::as_str))
         .bind(target_status)
         .bind(target_status)
         .bind(tenant_id)
@@ -687,10 +703,7 @@ async fn apply_approval_action(
             "Approval Task changed while applying the action".into(),
         ));
     }
-    if matches!(
-        action.action,
-        ApprovalActionValueV1::Approve | ApprovalActionValueV1::Reject
-    ) {
+    if matches!(&action.action, ApprovalActionValueV1::Decide { .. }) {
         sqlx::query("INSERT INTO runtime_commands(id,tenant_id,command_type,aggregate_type,aggregate_id,idempotency_key,payload_json,status) VALUES(?,?,'resume_execution','execution',?,?,?,'pending')")
             .bind(command_id)
             .bind(tenant_id)
@@ -698,7 +711,10 @@ async fn apply_approval_action(
             .bind(format!("approval:{}:{}", action.task_id, action.task_version))
             .bind(json!({
                 "nodeExecutionId": node_execution_id,
-                "outputPort": if action.action == ApprovalActionValueV1::Approve { "approved" } else { "rejected" },
+                "outputPort": match &action.action {
+                    ApprovalActionValueV1::Decide { decision_id } => format!("decision:{decision_id}"),
+                    _ => unreachable!("only Decide resumes an Approval"),
+                },
                 "payload": decision,
             }))
             .execute(&mut **tx)
@@ -712,11 +728,10 @@ fn approval_action_result(
     action: &agentx_runtime_contracts::RuntimeApprovalActionV1,
     original_input: &Value,
 ) -> Option<Value> {
-    use agentx_runtime_contracts::{ApprovalActionValueV1, ApprovalDecisionValueV1};
+    use agentx_runtime_contracts::ApprovalActionValueV1;
 
-    let decision = match action.action {
-        ApprovalActionValueV1::Approve => ApprovalDecisionValueV1::Approved,
-        ApprovalActionValueV1::Reject => ApprovalDecisionValueV1::Rejected,
+    let decision = match &action.action {
+        ApprovalActionValueV1::Decide { decision_id } => decision_id,
         _ => return None,
     };
     Some(json!({
@@ -784,85 +799,6 @@ pub async fn rollback_deployment(
     )
     .await
     .map(Json)
-}
-
-/// Channel/trigger-only sync onto the currently active bundle. Control calls
-/// this after webhook changes when the application already has an active
-/// Deployment, so channel edits take effect without a re-publish.
-pub async fn sync_triggers(
-    State(state): State<RuntimeState>,
-    headers: HeaderMap,
-    Json(request): Json<agentx_runtime_contracts::RuntimeTriggerSyncRequestV1>,
-) -> RuntimeResult<Json<PublishReceiptV1>> {
-    let claims = state
-        .trust
-        .delegation(&headers, request.tenant_id, "runtime.triggers.sync")?;
-    if !claims.tenant_wide && !claims.application_ids.contains(&request.application_id) {
-        return Err(RuntimeError::Unauthorized);
-    }
-    if let Some(receipt) = replay::<_, PublishReceiptV1>(
-        &state,
-        request.tenant_id,
-        "trigger_sync",
-        &request.idempotency_key,
-        &request,
-    )
-    .await?
-    {
-        return Ok(Json(receipt));
-    }
-    let mut tx = state.pool.begin().await?;
-    let active_bundle: Option<Uuid> =
-        sqlx::query_scalar("SELECT active_bundle_id FROM application_routes WHERE tenant_id=? AND application_id=? FOR UPDATE")
-            .bind(request.tenant_id)
-            .bind(request.application_id)
-            .fetch_optional(&mut *tx)
-            .await?;
-    if active_bundle != Some(request.bundle_id) {
-        return Err(RuntimeError::Conflict(
-            RuntimePublishErrorCodeV1::BundleReferenceConflict,
-            "Trigger sync targets a bundle that is not the active head".into(),
-        ));
-    }
-    // Sync only replaces schedule/webhook bindings; lifecycle bindings belong
-    // to Deployment activation and must survive a channel edit.
-    sqlx::query("UPDATE trigger_bindings SET status='disabled',next_poll_at=NULL,locked_by=NULL,locked_until=NULL,heartbeat_at=NULL WHERE tenant_id=? AND application_id=? AND status<>'disabled' AND trigger_kind IN ('schedule','poll')")
-        .bind(request.tenant_id)
-        .bind(request.application_id)
-        .execute(&mut *tx)
-        .await?;
-    apply_trigger_bindings(
-        &mut tx,
-        request.tenant_id,
-        request.application_id,
-        request.deployment_id,
-        request.bundle_id,
-        &request.triggers,
-    )
-    .await?;
-    sqlx::query("UPDATE application_routes SET runtime_config_revision=? WHERE tenant_id=? AND application_id=?")
-        .bind(request.runtime_config_revision)
-        .bind(request.tenant_id)
-        .bind(request.application_id)
-        .execute(&mut *tx)
-        .await?;
-    let receipt = accepted_receipt(request.bundle_id, None, None, false);
-    persist_receipt_tx(
-        &mut tx,
-        request.tenant_id,
-        "trigger_sync",
-        &request.idempotency_key,
-        &request,
-        Some(request.bundle_id),
-        Some(request.application_id),
-        Some(request.deployment_id),
-        "accepted",
-        None,
-        &receipt,
-    )
-    .await?;
-    tx.commit().await?;
-    Ok(Json(receipt))
 }
 
 async fn activate_with_receipt<T: Serialize>(
@@ -1069,7 +1005,7 @@ async fn replace_trigger_bindings(
     tx: &mut Transaction<'_, MySql>,
     manifest: &agentx_runtime_contracts::ActivationManifestV1,
     payload: &Value,
-    previous_bundle_id: Option<Uuid>,
+    _previous_bundle_id: Option<Uuid>,
 ) -> RuntimeResult<()> {
     let triggers: Vec<agentx_runtime_contracts::RuntimeTriggerSpecV1> = serde_json::from_value(
         payload
@@ -1085,16 +1021,15 @@ async fn replace_trigger_bindings(
     })?;
     sqlx::query("UPDATE trigger_bindings SET status='disabled',next_poll_at=NULL,locked_by=NULL,locked_until=NULL,heartbeat_at=NULL WHERE tenant_id=? AND application_id=? AND status<>'disabled'")
         .bind(manifest.tenant_id).bind(manifest.application_id).execute(&mut **tx).await?;
-    if let Some(previous_bundle_id) = previous_bundle_id.filter(|id| *id != manifest.bundle_id) {
-        schedule_lifecycle_deactivation(
-            tx,
-            manifest.tenant_id,
-            manifest.application_id,
-            previous_bundle_id,
-        )
-        .await?;
-    }
-    apply_trigger_bindings(tx, manifest.tenant_id, manifest.application_id, manifest.deployment_id, manifest.bundle_id, &triggers).await
+    apply_trigger_bindings(
+        tx,
+        manifest.tenant_id,
+        manifest.application_id,
+        manifest.deployment_id,
+        manifest.bundle_id,
+        &triggers,
+    )
+    .await
 }
 
 /// Disables the application's schedule/webhook bindings and re-creates them
@@ -1120,15 +1055,11 @@ async fn apply_trigger_bindings(
         let kind = match &trigger.configuration {
             agentx_runtime_contracts::RuntimeTriggerConfigurationV1::Webhook { .. } => "webhook",
             agentx_runtime_contracts::RuntimeTriggerConfigurationV1::Schedule { .. } => "schedule",
-            agentx_runtime_contracts::RuntimeTriggerConfigurationV1::Poll { .. } => "poll",
-            agentx_runtime_contracts::RuntimeTriggerConfigurationV1::Lifecycle { .. } => {
-                "lifecycle"
-            }
         };
         let active = trigger.enabled;
-        let next_poll_at = initial_trigger_due(tx, &trigger).await?;
+        let next_poll_at = initial_trigger_due(tx, trigger).await?;
         sqlx::query("INSERT INTO trigger_bindings(id,tenant_id,application_id,application_deployment_id,bundle_id,workflow_version_id,node_id,configuration_revision,configuration_hash,trigger_kind,configuration_json,status,next_poll_at,activated_at) SELECT ?,?,?,?,?,workflow_version_id,?,?,?,?,?,?,?,UTC_TIMESTAMP(6) FROM deployment_bundles WHERE tenant_id=? AND id=? ON DUPLICATE KEY UPDATE application_deployment_id=VALUES(application_deployment_id),bundle_id=VALUES(bundle_id),configuration_revision=VALUES(configuration_revision),cursor_value=IF(configuration_hash=VALUES(configuration_hash),cursor_value,NULL),next_poll_at=IF(VALUES(status)='active' AND configuration_hash=VALUES(configuration_hash),next_poll_at,VALUES(next_poll_at)),configuration_hash=VALUES(configuration_hash),configuration_json=VALUES(configuration_json),status=VALUES(status),locked_by=NULL,locked_until=NULL,heartbeat_at=NULL,activated_at=UTC_TIMESTAMP(6)")
-            .bind(trigger.trigger_id).bind(tenant_id).bind(application_id).bind(deployment_id).bind(bundle_id).bind(&trigger.node_id).bind(trigger.revision).bind(trigger.configuration_hash.as_str()).bind(kind).bind(serde_json::to_value(&trigger).map_err(|e|RuntimeError::Internal(e.into()))?).bind(if active {"active"} else {"disabled"}).bind(next_poll_at).bind(tenant_id).bind(bundle_id).execute(&mut **tx).await?;
+            .bind(trigger.trigger_id).bind(tenant_id).bind(application_id).bind(deployment_id).bind(bundle_id).bind(&trigger.node_id).bind(trigger.revision).bind(trigger.configuration_hash.as_str()).bind(kind).bind(serde_json::to_value(trigger).map_err(|e|RuntimeError::Internal(e.into()))?).bind(if active {"active"} else {"disabled"}).bind(next_poll_at).bind(tenant_id).bind(bundle_id).execute(&mut **tx).await?;
         if let agentx_runtime_contracts::RuntimeTriggerConfigurationV1::Webhook {
             public_id,
             secret,
@@ -1138,8 +1069,10 @@ async fn apply_trigger_bindings(
             fixed_inputs,
         } = &trigger.configuration
         {
-            let provider_type = serde_json::to_value(provider).map_err(|e| RuntimeError::Internal(e.into()))?;
-            let channel_mode = serde_json::to_value(mode).map_err(|e| RuntimeError::Internal(e.into()))?;
+            let provider_type =
+                serde_json::to_value(provider).map_err(|e| RuntimeError::Internal(e.into()))?;
+            let channel_mode =
+                serde_json::to_value(mode).map_err(|e| RuntimeError::Internal(e.into()))?;
             sqlx::query("INSERT INTO webhook_bindings(id,tenant_id,application_id,bundle_id,configuration_revision,configuration_hash,public_id,provider_type,channel_mode,input_mapping_json,fixed_inputs_json,secret_ref_json,status,activated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,UTC_TIMESTAMP(6)) ON DUPLICATE KEY UPDATE bundle_id=VALUES(bundle_id),configuration_revision=VALUES(configuration_revision),configuration_hash=VALUES(configuration_hash),provider_type=VALUES(provider_type),channel_mode=VALUES(channel_mode),input_mapping_json=VALUES(input_mapping_json),fixed_inputs_json=VALUES(fixed_inputs_json),secret_ref_json=VALUES(secret_ref_json),status=VALUES(status),activated_at=UTC_TIMESTAMP(6),locked_by=NULL,locked_until=NULL,heartbeat_at=NULL,connection_status=NULL")
                 .bind(trigger.trigger_id).bind(tenant_id).bind(application_id).bind(bundle_id).bind(trigger.revision).bind(trigger.configuration_hash.as_str()).bind(public_id.clone())
                 .bind(provider_type.as_str().unwrap_or("agentx"))
@@ -1174,27 +1107,8 @@ async fn initial_trigger_due(
             let next = crate::trigger::next_schedule(cron_expression, timezone, anchor)?;
             Ok(time::OffsetDateTime::from_unix_timestamp(next.timestamp()).ok())
         }
-        agentx_runtime_contracts::RuntimeTriggerConfigurationV1::Poll { .. }
-        | agentx_runtime_contracts::RuntimeTriggerConfigurationV1::Lifecycle { .. } => {
-            Ok(Some(now))
-        }
         agentx_runtime_contracts::RuntimeTriggerConfigurationV1::Webhook { .. } => Ok(None),
     }
-}
-
-async fn schedule_lifecycle_deactivation(
-    tx: &mut Transaction<'_, MySql>,
-    tenant_id: Uuid,
-    application_id: Uuid,
-    bundle_id: Uuid,
-) -> RuntimeResult<()> {
-    sqlx::query("UPDATE trigger_bindings SET status='active',next_poll_at=UTC_TIMESTAMP(6),last_error=NULL,locked_by=NULL,locked_until=NULL,heartbeat_at=NULL WHERE tenant_id=? AND application_id=? AND trigger_kind='lifecycle' AND JSON_UNQUOTE(JSON_EXTRACT(configuration_json,'$.configuration.operation'))='deactivate' AND bundle_id=?")
-        .bind(tenant_id)
-        .bind(application_id)
-        .bind(bundle_id)
-        .execute(&mut **tx)
-        .await?;
-    Ok(())
 }
 
 pub async fn disable_deployment(
@@ -1265,17 +1179,9 @@ async fn disable_deployment_inner(
     }
     sqlx::query("UPDATE application_routes SET status='disabled',admission_epoch=? WHERE tenant_id=? AND application_id=?").bind(request.admission_epoch).bind(request.tenant_id).bind(request.application_id).execute(&mut *tx).await?;
     sqlx::query("UPDATE deployment_bundles SET status='disabled',disabled_at=UTC_TIMESTAMP(6),retained_until=DATE_ADD(UTC_TIMESTAMP(6),INTERVAL 14 DAY) WHERE id=?").bind(bundle_id).execute(&mut *tx).await?;
-    schedule_lifecycle_deactivation(
-        &mut tx,
-        request.tenant_id,
-        request.application_id,
-        bundle_id,
-    )
-    .await?;
-    sqlx::query("UPDATE trigger_bindings SET status='disabled',next_poll_at=NULL,locked_by=NULL,locked_until=NULL,heartbeat_at=NULL WHERE tenant_id=? AND application_id=? AND NOT (trigger_kind='lifecycle' AND JSON_UNQUOTE(JSON_EXTRACT(configuration_json,'$.configuration.operation'))='deactivate' AND bundle_id=?)")
+    sqlx::query("UPDATE trigger_bindings SET status='disabled',next_poll_at=NULL,locked_by=NULL,locked_until=NULL,heartbeat_at=NULL WHERE tenant_id=? AND application_id=?")
         .bind(request.tenant_id)
         .bind(request.application_id)
-        .bind(bundle_id)
         .execute(&mut *tx)
         .await?;
     sqlx::query(
@@ -1569,35 +1475,22 @@ mod tests {
             &RuntimeApprovalActionV1 {
                 task_id,
                 task_version: 2,
-                action: ApprovalActionValueV1::Approve,
+                action: ApprovalActionValueV1::Decide {
+                    decision_id: "escalate".into(),
+                },
                 actor_id,
                 target_user_id: None,
                 input: Some(json!({"comment":"ship it"})),
             },
             &original_input,
         )
-        .expect("approve is a decision");
+        .expect("canvas button is a decision");
 
         assert_eq!(approved["taskId"], json!(task_id));
-        assert_eq!(approved["decision"], "approved");
+        assert_eq!(approved["decision"], "escalate");
         assert_eq!(approved["decidedBy"], json!(actor_id));
         assert_eq!(approved["reason"], "ship it");
         assert_eq!(approved["input"], original_input);
-
-        let rejected = approval_action_result(
-            &RuntimeApprovalActionV1 {
-                task_id,
-                task_version: 3,
-                action: ApprovalActionValueV1::Reject,
-                actor_id,
-                target_user_id: None,
-                input: None,
-            },
-            &json!({"request":"reject"}),
-        )
-        .expect("reject is a decision");
-        assert_eq!(rejected["decision"], "rejected");
-        assert!(rejected["reason"].is_null());
     }
 
     #[test]

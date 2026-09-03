@@ -46,7 +46,6 @@ def test_claim_lease_catalog_and_source_invariants() -> None:
         "runtime.event_sequencer",
         "runtime.trigger",
         "runtime.recovery",
-        "runtime.wait",
         "runtime.artifact",
         "runtime.quota_leader",
         "runtime.bundle_gc",

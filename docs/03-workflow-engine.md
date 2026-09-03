@@ -12,13 +12,15 @@
 - 手动运行保存每个节点的完整输入输出。
 - 发布版本固定节点类型及其版本。
 - Trigger Binding 把外部事件映射为 Start Inputs，并创建一次独立 Execution。
-- Wait、审批和外部事件可以挂起并恢复 Execution。
+- Approval、子流程和受控外部交互可以挂起并恢复 Execution；不再暴露独立 Wait 节点。
 
 这些是 Agentx 自己冻结的运行语义。Studio 可以采用 n8n 式拖拽、配置和调试交互，但不以 n8n Workflow JSON、表达式、npm 社区节点或插件协议作为兼容目标。
 
 ## 2. Workflow Definition
 
-当前运行定义为不兼容旧版本的 `WorkflowDefinition 7.0`。项目尚未发布，不保留旧版本双读或迁移；开发数据、Fixture、Schema 和编译测试一次性切换。完整契约见 [Workflow 5.0](12-workflow-5.md)。
+当前运行定义为不兼容旧版本的 `WorkflowDefinition 8.0`。项目尚未发布，不保留旧版本双读或迁移；开发数据、Fixture、Schema 和编译测试一次性切换。完整契约见 [Workflow Definition 8.0](12-workflow-5.md)。
+
+Definition 8.0的节点配置与运行语义以[plan5](plan5/README.md)为准。Registry、Compiler、Runtime、Control投影和Studio共同使用当前契约；最终环境验收证据记录在plan5实施计划中。
 
 Workflow Definition 包含：
 
@@ -26,7 +28,7 @@ Workflow Definition 包含：
 - Nodes（含多个 `exit` 结束节点：终止点表达为真实节点，`__end__` 仅保留为编译期虚拟锚点，画布不再渲染）
 - Connections
 - 唯一正式 Outputs Contract（字段契约存于 `end.outputs`/`end.error.outputs`，全局共享；每个 exit 节点在自己的 parameters 中维护 main/error 两组取值映射）
-- Settings
+- Settings（含 `end.completion` 完成模式：`first_return` 首个 exit 交付立即终态并取消其余激活；`all_complete` 等全部完成后按 exit 定义序把每个输出字段以数组返回）
 - 错误策略
 - 默认超时和重试策略
 - Execution Order
@@ -135,7 +137,7 @@ Structured Value 1.0 只能读取以下命名空间：
 - `item`：当前 Item。
 - `loop`：显式循环上下文。
 
-`execution` 由 Runtime 在 Execution 创建时固化为 `ExecutionContextSnapshotV1`，统一包含执行 ID/开始时间/父执行、Workflow 名称与版本及所属部门、触发来源、发起人及多角色分配、应用、调用和会话。节点求值时只附加当前节点 ID、Node Execution ID、run/item/loop iteration 序号；参数、Output Projection、Context Write、End、Wait/Suspend 必须从同一快照加载，禁止分别拼装字段。Composite 资源携带真实子 Workflow 快照，子执行继承父执行的发起人与调用语义，但将 Workflow 字段切换为固化的子 Workflow ID、名称、版本和所属部门。用户、角色、部门或名称后续变化只影响未来执行，历史执行保持原快照。
+`execution` 由 Runtime 在 Execution 创建时固化为 `ExecutionContextSnapshotV1`，统一包含执行 ID/开始时间/父执行、Workflow 名称与版本及所属部门、触发来源、发起人及多角色分配、应用、调用和会话。节点求值时只附加当前节点 ID、Node Execution ID、run/item/loop iteration 序号；参数、Output Projection、Context Write、Exit与Approval/Suspend必须从同一快照加载，禁止分别拼装字段。Composite资源携带真实子Workflow快照，子执行继承父执行的发起人与调用语义，但将Workflow字段切换为固化的子Workflow ID、名称、版本和所属部门。用户、角色、部门或名称后续变化只影响未来执行，历史执行保持原快照。
 
 角色分配只公开 `id/code/name/dataScope/scopeDepartment`，并派生 IDs、Codes、Names 数组。无人工触发不生成用户、部门和角色字段；名称仅用于展示，稳定判断使用 ID 或角色编码。这里不公开权限集合、Token、Credential、租户内部配置或 Workflow Service Identity。
 
@@ -149,7 +151,7 @@ Structured Value 1.0 只能读取以下命名空间：
 
 表达式解析错误属于节点配置错误，应明确区分于节点业务错误。
 
-Definition 不保存字符串占位符。所有可绑定值使用带 `kind` 的 `DynamicValue`：固定值为 `literal`，单变量为 `reference`，文本与变量混排为 `template.segments`，条件、比较、算术、函数、数组和对象使用 `expression.root` AST。`ValueSelector` 以稳定 Node ID、端口、run/item 选择和结构化路径定位来源；节点改名不改变引用。缺失值必须声明 `error`、`null`、`default` 或 `omit`，其中 `omit` 会真正删除字段而非写入 `null`。
+Definition 不保存界面中的 `{{显示名 · 字段}}` 文本。所有可绑定值统一保存为递归 `InputBinding`：`literal/reference/template/array/object`；IF/List过滤使用左右值同为 `InputBinding` 的 `ConditionSpec`。JSON5只用于Studio编辑，保存时转换为结构化Binding，不在Runtime执行表达式或JavaScript。`ValueSelector`以稳定Node ID、端口、run/item选择和结构化路径定位来源；节点改名不改变引用。缺失值只允许`error/null/omit`，其中`omit`会真正删除字段而非写入`null`。
 
 编译器拒绝旧占位符和未声明引用；运行时引用、投影、Context Write 或 End Schema 的确定性错误必须进入不可重试终态并 ACK Worker 消息。数据库和对象存储错误仍回滚并由 Recovery 重试，不能混入业务配置错误。
 
@@ -185,7 +187,10 @@ Execution Style：
 
 - builtin：平台内置实现
 - declarative_http：由声明式路由、请求和响应映射执行常规 REST 集成
-- remote_action：通过版本化 Node Action API 调用外部节点服务
+- suspend：挂起等待外部恢复（Approval 专用）
+- sub_workflow：调用不可变的已发布 Workflow Version
+
+`remote_action` 已整条废弃（plan5）：触发内部 Workflow 由 `sub_workflow` 承载，第三方节点生态位未来归 MCP。
 
 Sandbox Python、JavaScript、Shell 和 Agent 是运行适配或内置节点能力，不要求对外提供语言 SDK。UI Schema 还需要表达条件显示、Collection、Fixed Collection、Resource Locator、Resource Mapper 和动态选项；动态能力通过 load options、list search、resource mapping 和 credential test 等受控 API 提供，不能只依赖 JSON Schema。
 
@@ -270,44 +275,33 @@ Edge Delivery 是某个 source node activation 向目标 input 产生的一次�
 
 ## 9. 分支、Merge 和 Loop
 
-IF 和 Switch：
+IF：
 
-- 按条件向一个或多个输出端口发送 Items
-- 未命中端口产生 ClosedWithoutData
-- 支持逐 Item 判断和整批判断
+- `cases[]`按声明顺序求值，首个命中项路由到稳定`case:{id}`，均未命中走`else`
+- 每个Item独立判断；未选择的分支产生ClosedWithoutData，使下游Merge可以收敛
+- Switch节点已删除，多路条件由IF的ELIF分支承担
 
-Merge 支持：
+Merge只支持三种明确模式：
 
-- Wait All
-- Wait Any
 - Append
-- Merge By Position
-- Merge By Key
-- Cartesian Product
-- Select Input
+- Combine By Position
+- Combine By Key（inner/left/right/full及冲突策略）
 
 循环支持两类表达：
 
-- 普通图环：通过回边和 IF/Switch 等条件终止
-- Loop Over Items：提供批量拆分、逐批输出和 done 输出
+- 普通受控图环：通过回边和IF条件终止，仍受全局activationBudget保护
+- Loop Over Items容器：节点数组保持扁平，体内节点用`parentId`归属；用户选择数组input和每轮outputSelector，Runtime在同一Execution内注入`loop.item/index`并聚合结果
 
-循环保护支持：
+Loop容器禁止嵌套、跨边界连线和体内DAG环。入口由体内入度为0的节点推导，纯UI迭代开始chip和派生线不进入Definition。运行保护包括activationBudget、输入数组边界、并行上限、取消/恢复以及terminate/continue/remove单项失败策略；结果按原输入索引稳定聚合。
 
-- 最大迭代次数
-- 每批数量
-- 并行度
-- 终止条件
-- 每轮结果合并策略
-- 单项失败策略
-
-节点每次激活生成独立 Node Execution 和单调 runIndex。显式 Loop 节点可以额外记录 loopIterationIndex；普通图环不依赖特定 Loop 节点。
+节点每次激活生成独立Node Execution和单调runIndex。Loop容器的每个元素使用独立generation并记录loopIterationIndex，但不为每个元素创建独立Execution；普通图环不依赖特定Loop节点。
 
 Sub-workflow：
 
 - 调用固定的不可变 Workflow Version
 - 创建独立子 Execution，并记录 parentExecutionId 和 callerNodeExecutionId
-- 支持等待子 Execution 或异步触发
-- 输入遵循子 Workflow 声明的 Schema；同步调用返回子 Workflow 终止输出
+- 父节点等待子Execution终态，超时与取消按Composite生命周期传播
+- 显式inputs映射先在父上下文求值并按子Workflow输入Schema校验；子执行返回冻结版本的Exit输出
 - Context 使用 Overlay，只有子流程成功后才按字段 Merge Policy 提交
 - 父子 Execution 的状态、Trace、成本和取消传播规则必须明确，不把子节点直接展开为父 Execution 的 Node Execution
 
@@ -341,16 +335,13 @@ Redis Stream 只承载可重建的派发事实。Worker 的每个 capability 使
 
 ## 11. 错误和重试
 
-节点错误策略：
+节点错误策略（Definition 8.0 起"接线即失败分支"）：
 
-- Stop Workflow
-- Retry
-- Continue
-- Emit Error Item
-- Error Output
-- Trigger Error Workflow
+- 节点存在 `error` 出边：失败产生 Error Item 走该分支（编译器推导 `routes_error`，不再由 `settings.onError` 配置）
+- 节点无 `error` 出边：失败按完成模式终止执行
+- Error Item 到达 exit 的 error 端口：立即失败并取消其余激活（原 fail_fast/collect 收集窗口已删除）
 
-retryOnFail、maxTries、waitBetweenTries、alwaysOutputData、executeOnce 和 onError 都由 Workflow Engine 解释。Node Manifest 可以声明默认值和能力限制，但远程服务不能绕过平台状态机自行调度重试或错误分支。
+retryOnFail、maxTries、waitBetweenTries、alwaysOutputData 和 executeOnce 都由 Workflow Engine 解释。Node Manifest 可以声明默认值和能力限制，但任何服务不能绕过平台状态机自行调度重试或错误分支。
 
 Retry 配置：
 
@@ -402,7 +393,7 @@ Node API 至少分为 Action Execute、动态 Provider 和 Lifecycle 三组版�
 
 ## 14. 节点返回值与可观测边界
 
-运行时统一 Item、Port、Cardinality 和 Error Port 协议，Studio 则只公开 Manifest 中稳定、强类型的语义叶子字段。不得为了表面统一给所有节点增加万能 `result/payload` 对象；Model/Agent 共享 `AiResponse`，数据节点保持 Item 形态，HTTP、Code、Approval、Wait 等按领域输出。
+运行时统一Item、Port、Cardinality和Error Port协议，Studio只公开Manifest中稳定、强类型的语义叶子字段。不得为了表面统一给所有节点增加万能`result/payload`对象；Model/Agent共享`AiResponse`，List/Loop使用各自冻结的数组结果字段，Set/Merge保持Item语义，HTTP、Code与Approval按领域输出。
 
 Provider 原始响应、Agent Iteration 和 Tool Call 属于诊断数据，只能通过 Trace/Artifact 查询，不参与普通变量引用。节点成功结果在推进下游前按 IR 冻结的端口 Schema 校验，避免错误直到 End 才暴露。
 

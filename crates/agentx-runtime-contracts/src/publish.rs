@@ -76,23 +76,6 @@ pub struct RollbackDeploymentRequestV1 {
     pub manifest: ActivationManifestV1,
 }
 
-/// Channel/trigger-only sync onto the currently active bundle. Control sends
-/// this after webhook changes when an active Deployment already exists, so
-/// channel edits take effect without re-publishing the Deployment.
-#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct RuntimeTriggerSyncRequestV1 {
-    #[serde(deserialize_with = "crate::deserialize_v1")]
-    pub api_version: u32,
-    pub idempotency_key: String,
-    pub tenant_id: Uuid,
-    pub application_id: Uuid,
-    pub deployment_id: Uuid,
-    pub bundle_id: Uuid,
-    pub runtime_config_revision: u64,
-    pub triggers: Vec<crate::RuntimeTriggerSpecV1>,
-}
-
 #[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DisableDeploymentRequestV1 {

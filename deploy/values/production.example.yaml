@@ -107,9 +107,23 @@ global:
     egressGateway:
       allowedPublicPorts:
       - 443
+      allowedPrivateCidrs: []
+      blockedCidrs:
+      - 0.0.0.0/8
+      - 10.96.0.0/12
+      - 10.244.0.0/16
+      - 127.0.0.0/8
+      - 169.254.0.0/16
+      - 198.18.0.0/15
+      - 224.0.0.0/4
+      - 240.0.0.0/4
+      - ::1/128
+      - fe80::/10
+      - ff00::/8
       sandboxAccess:
         mode: privateLoadBalancer
         endpoint: https://egress.internal.example
+        port: 443
         tlsSecretName: agentx-egress-tls
         caSecretName: agentx-egress-ca
         sourceCidrs:

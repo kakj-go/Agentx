@@ -36,17 +36,11 @@ pub fn routes() -> Router<ControlApiState> {
             "/api/v1/approvals/{id}/candidates",
             get(list_approval_candidates),
         )
-        .route(
-            "/api/v1/approvals/{id}/{action}",
-            post(apply_approval_action),
-        )
         .route("/api/v1/approvals/{id}/claim", post(claim_approval))
         .route("/api/v1/approvals/{id}/release", post(release_approval))
         .route("/api/v1/approvals/{id}/reassign", post(reassign_approval))
-        .route("/api/v1/approvals/{id}/approve", post(approve_approval))
-        .route("/api/v1/approvals/{id}/reject", post(reject_approval))
+        .route("/api/v1/approvals/{id}/decide", post(decide_approval))
         .route("/api/v1/approvals/{id}/cancel", post(cancel_approval))
-        .route("/api/v1/approvals/{id}/timeout", post(timeout_approval))
         .route("/api/v1/evaluations", get(list_evaluations))
         .route(
             "/api/v1/evaluations/{id}/report",
@@ -134,7 +128,7 @@ async fn list_approvals(
     let page_size = query.page_size.unwrap_or(20).clamp(1, 100);
     let status = query.status.unwrap_or_default();
     let search = format!("%{}%", query.search.unwrap_or_default().trim());
-    let rows = sqlx::query("SELECT a.id,a.execution_id,a.workflow_id,CONVERT(COALESCE(w.name,BIN_TO_UUID(a.workflow_id)) USING utf8mb4) workflow_name,a.node_id,a.title,a.description,a.request_payload_json,a.status,a.resume_status,a.claimed_by,u.display_name claimed_by_name,a.deadline_at,a.version,a.created_at FROM approval_task_projection a LEFT JOIN workflows w ON w.tenant_id=a.tenant_id AND w.id=a.workflow_id LEFT JOIN users u ON u.tenant_id=a.tenant_id AND u.id=a.claimed_by WHERE a.tenant_id=? AND a.projection_generation=? AND a.projection_deleted=FALSE AND (?='' OR a.status=?) AND (?='%%' OR a.title LIKE ? OR w.name LIKE ?) ORDER BY a.created_at DESC,a.id DESC LIMIT ? OFFSET ?")
+    let rows = sqlx::query("SELECT a.id,a.execution_id,a.workflow_id,CONVERT(COALESCE(w.name,BIN_TO_UUID(a.workflow_id)) USING utf8mb4) workflow_name,a.node_id,a.title,a.description,a.request_payload_json,a.buttons_json,a.decision_json,a.status,a.resume_status,a.claimed_by,u.display_name claimed_by_name,a.deadline_at,a.version,a.created_at FROM approval_task_projection a LEFT JOIN workflows w ON w.tenant_id=a.tenant_id AND w.id=a.workflow_id LEFT JOIN users u ON u.tenant_id=a.tenant_id AND u.id=a.claimed_by WHERE a.tenant_id=? AND a.projection_generation=? AND a.projection_deleted=FALSE AND (?='' OR a.status=?) AND (?='%%' OR a.title LIKE ? OR w.name LIKE ?) ORDER BY a.created_at DESC,a.id DESC LIMIT ? OFFSET ?")
         .bind(actor.tenant_id).bind(view.generation).bind(&status).bind(&status).bind(&search).bind(&search).bind(&search)
         .bind(page_size).bind(u64::from((page - 1) * page_size)).fetch_all(&state.pool).await?;
     let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM approval_task_projection a LEFT JOIN workflows w ON w.tenant_id=a.tenant_id AND w.id=a.workflow_id WHERE a.tenant_id=? AND a.projection_generation=? AND a.projection_deleted=FALSE AND (?='' OR a.status=?) AND (?='%%' OR a.title LIKE ? OR w.name LIKE ?)")
@@ -166,7 +160,7 @@ async fn approval_row(
     id: Uuid,
     generation: u64,
 ) -> ApiResult<sqlx::mysql::MySqlRow> {
-    sqlx::query("SELECT a.id,a.execution_id,a.workflow_id,CONVERT(COALESCE(w.name,BIN_TO_UUID(a.workflow_id)) USING utf8mb4) workflow_name,a.node_id,a.title,a.description,a.request_payload_json,a.status,a.resume_status,a.claimed_by,u.display_name claimed_by_name,a.deadline_at,a.version,a.created_at FROM approval_task_projection a LEFT JOIN workflows w ON w.tenant_id=a.tenant_id AND w.id=a.workflow_id LEFT JOIN users u ON u.tenant_id=a.tenant_id AND u.id=a.claimed_by WHERE a.tenant_id=? AND a.id=? AND a.projection_generation=? AND a.projection_deleted=FALSE")
+    sqlx::query("SELECT a.id,a.execution_id,a.workflow_id,CONVERT(COALESCE(w.name,BIN_TO_UUID(a.workflow_id)) USING utf8mb4) workflow_name,a.node_id,a.title,a.description,a.request_payload_json,a.buttons_json,a.decision_json,a.status,a.resume_status,a.claimed_by,u.display_name claimed_by_name,a.deadline_at,a.version,a.created_at FROM approval_task_projection a LEFT JOIN workflows w ON w.tenant_id=a.tenant_id AND w.id=a.workflow_id LEFT JOIN users u ON u.tenant_id=a.tenant_id AND u.id=a.claimed_by WHERE a.tenant_id=? AND a.id=? AND a.projection_generation=? AND a.projection_deleted=FALSE")
         .bind(tenant_id).bind(id).bind(generation).fetch_optional(pool).await?.ok_or_else(||ApiError::not_found("Approval"))
 }
 
@@ -176,6 +170,7 @@ fn approval_json(row: sqlx::mysql::MySqlRow) -> ApiResult<Value> {
         "workflowId":row.try_get::<Uuid,_>("workflow_id")?,"workflowName":row.try_get::<String,_>("workflow_name")?,
         "nodeId":row.try_get::<String,_>("node_id")?,"title":row.try_get::<String,_>("title")?,
         "description":row.try_get::<Option<String>,_>("description")?,"requestPayload":row.try_get::<Option<Value>,_>("request_payload_json")?,
+        "buttons":row.try_get::<Value,_>("buttons_json")?,"decision":row.try_get::<Option<Value>,_>("decision_json")?,
         "status":row.try_get::<String,_>("status")?,"resumeStatus":row.try_get::<String,_>("resume_status")?,
         "claimedBy":row.try_get::<Option<Uuid>,_>("claimed_by")?,"claimedByName":row.try_get::<Option<String>,_>("claimed_by_name")?,
         "deadlineAt":row.try_get::<Option<OffsetDateTime>,_>("deadline_at")?,"version":row.try_get::<u64,_>("version")?,
@@ -221,19 +216,41 @@ async fn list_approval_candidates(
 struct ApprovalActionRequest {
     version: u64,
     target_user_id: Option<Uuid>,
-    input: Option<Value>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ApprovalDecideRequest {
+    version: u64,
+    decision_id: String,
+    reason: Option<String>,
+    idempotency_key: String,
+}
+
+struct ApprovalActionInvocation<'a> {
+    value: ApprovalActionValueV1,
+    name: &'a str,
+    input: ApprovalActionRequest,
+    action_input: Option<Value>,
+    requested_idempotency_key: Option<&'a str>,
 }
 
 async fn apply_approval_action(
-    State(state): State<ControlApiState>,
+    state: &ControlApiState,
     actor: Actor,
-    Path((id, action)): Path<(Uuid, String)>,
-    Json(input): Json<ApprovalActionRequest>,
+    id: Uuid,
+    invocation: ApprovalActionInvocation<'_>,
 ) -> ApiResult<Json<Value>> {
-    let action_value = parse_approval_action(&action)?;
+    let ApprovalActionInvocation {
+        value: action_value,
+        name: action_name,
+        input,
+        action_input,
+        requested_idempotency_key,
+    } = invocation;
     actor.require(
         if matches!(
-            action_value,
+            &action_value,
             ApprovalActionValueV1::Reassign
                 | ApprovalActionValueV1::Cancel
                 | ApprovalActionValueV1::Timeout
@@ -243,6 +260,43 @@ async fn apply_approval_action(
             "approval:act"
         },
     )?;
+    let target = AdmissionTargetV1::ApprovalAction {
+        state: RuntimeApprovalActionV1 {
+            task_id: id,
+            task_version: input.version,
+            action: action_value.clone(),
+            actor_id: actor.user_id,
+            target_user_id: input.target_user_id,
+            input: action_input.clone(),
+        },
+    };
+    let idempotency_key = requested_idempotency_key.map_or_else(
+        || {
+            format!(
+                "approval:{id}:{}:{action_name}:{}",
+                input.version, actor.user_id
+            )
+        },
+        |key| format!("approval:{id}:decide:{key}"),
+    );
+    let request_hash = content_hash(&target).map_err(ApiError::internal)?;
+    let command_id = deterministic_id(&idempotency_key);
+    let existing = sqlx::query("SELECT request_hash,response_json,from_status FROM approval_action_submissions WHERE tenant_id=? AND id=?")
+        .bind(actor.tenant_id)
+        .bind(command_id)
+        .fetch_optional(&state.pool)
+        .await?;
+    if let Some(existing) = &existing {
+        if existing.try_get::<String, _>("request_hash")? != request_hash.as_str() {
+            return Err(ApiError::conflict(
+                "APPROVAL_IDEMPOTENCY_CONFLICT",
+                "idempotencyKey was reused with a different Approval decision",
+            ));
+        }
+        if let Some(response) = existing.try_get::<Option<Value>, _>("response_json")? {
+            return Ok(Json(response));
+        }
+    }
     let view = projection(&state.pool).await?;
     let row = approval_row(&state.pool, actor.tenant_id, id, view.generation).await?;
     let projected_version: u64 = row.try_get("version")?;
@@ -257,55 +311,56 @@ async fn apply_approval_action(
         projected_claimed_by,
     )
     .await?;
-    if input.version != current_version {
+    if existing.is_none() && input.version != current_version {
         return Err(ApiError::conflict(
             "APPROVAL_STATE_CONFLICT",
             "Approval changed on the server",
         ));
     }
-    match action_value {
-        ApprovalActionValueV1::Claim => {
-            require_approval_candidate(&state.pool, &actor, id, view.generation).await?;
-        }
-        ApprovalActionValueV1::Release => {
-            if claimed_by != Some(actor.user_id) {
-                return Err(ApiError::forbidden(
-                    "Only the current claimant can release this Approval",
-                ));
+    if existing.is_none() {
+        match action_value {
+            ApprovalActionValueV1::Claim => {
+                require_approval_candidate(&state.pool, &actor, id, view.generation).await?;
             }
-        }
-        ApprovalActionValueV1::Approve | ApprovalActionValueV1::Reject => {
-            require_approval_candidate(&state.pool, &actor, id, view.generation).await?;
-            if claimed_by != Some(actor.user_id) {
-                return Err(ApiError::forbidden(
-                    "Only the current claimant can decide this Approval",
-                ));
+            ApprovalActionValueV1::Release => {
+                if claimed_by != Some(actor.user_id) {
+                    return Err(ApiError::forbidden(
+                        "Only the current claimant can release this Approval",
+                    ));
+                }
             }
+            ApprovalActionValueV1::Decide { .. } => {
+                require_approval_candidate(&state.pool, &actor, id, view.generation).await?;
+                if claimed_by != Some(actor.user_id) {
+                    return Err(ApiError::forbidden(
+                        "Only the current claimant can decide this Approval",
+                    ));
+                }
+            }
+            ApprovalActionValueV1::Reassign => {
+                let target = input.target_user_id.ok_or_else(|| {
+                    ApiError::bad_request("APPROVAL_TARGET_REQUIRED", "A target user is required")
+                })?;
+                require_candidate_user(&state.pool, actor.tenant_id, id, target, view.generation)
+                    .await?;
+            }
+            ApprovalActionValueV1::Cancel | ApprovalActionValueV1::Timeout => {}
         }
-        ApprovalActionValueV1::Reassign => {
-            let target = input.target_user_id.ok_or_else(|| {
-                ApiError::bad_request("APPROVAL_TARGET_REQUIRED", "A target user is required")
-            })?;
-            require_candidate_user(&state.pool, actor.tenant_id, id, target, view.generation)
-                .await?;
-        }
-        ApprovalActionValueV1::Cancel | ApprovalActionValueV1::Timeout => {}
     }
-    let target = AdmissionTargetV1::ApprovalAction {
-        state: RuntimeApprovalActionV1 {
-            task_id: id,
-            task_version: input.version,
-            action: action_value,
-            actor_id: actor.user_id,
-            target_user_id: input.target_user_id,
-            input: input.input.clone(),
-        },
+    let to_status = action_status(&action_value);
+    let next_claimed_by = match &action_value {
+        ApprovalActionValueV1::Claim => Some(actor.user_id),
+        ApprovalActionValueV1::Release => None,
+        ApprovalActionValueV1::Reassign => input.target_user_id,
+        _ => claimed_by,
     };
-    let idempotency_key = format!("approval:{id}:{}:{action}:{}", input.version, actor.user_id);
-    let request_hash = content_hash(&target).map_err(ApiError::internal)?;
-    let command_id = deterministic_id(&idempotency_key);
+    let from_status = if let Some(existing) = &existing {
+        existing.try_get::<String, _>("from_status")?
+    } else {
+        from_status
+    };
     sqlx::query("INSERT INTO approval_action_submissions(id,tenant_id,approval_task_id,actor_user_id,action_type,input_json,idempotency_key,request_hash,runtime_command_id,task_version,from_status,to_status) VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE id=id")
-        .bind(command_id).bind(actor.tenant_id).bind(id).bind(actor.user_id).bind(&action).bind(&input.input).bind(&idempotency_key).bind(request_hash.as_str()).bind(command_id).bind(input.version).bind(&from_status).bind(action_status(action_value)).execute(&state.pool).await?;
+        .bind(command_id).bind(actor.tenant_id).bind(id).bind(actor.user_id).bind(action_name).bind(&action_input).bind(&idempotency_key).bind(request_hash.as_str()).bind(command_id).bind(input.version).bind(&from_status).bind(&to_status).execute(&state.pool).await?;
     let command = RuntimeAdmissionCommandV1 {
         api_version: 1,
         command: CommandEnvelopeV1 {
@@ -326,17 +381,11 @@ async fn apply_approval_action(
         admission_epoch: input.version.max(1),
         target,
     };
-    let receipt = post_runtime_admission(&state, &command).await?;
+    let receipt = post_runtime_admission(state, &command).await?;
     let mut response = approval_json(row)?;
     if let Some(object) = response.as_object_mut() {
-        object.insert("status".into(), json!(action_status(action_value)));
+        object.insert("status".into(), json!(to_status));
         object.insert("version".into(), json!(input.version + 1));
-        let next_claimed_by = match action_value {
-            ApprovalActionValueV1::Claim => Some(actor.user_id),
-            ApprovalActionValueV1::Release => None,
-            ApprovalActionValueV1::Reassign => input.target_user_id,
-            _ => claimed_by,
-        };
         object.insert("claimedBy".into(), json!(next_claimed_by));
     }
     sqlx::query("UPDATE approval_action_submissions SET runtime_receipt_json=?,response_json=? WHERE tenant_id=? AND id=?")
@@ -383,7 +432,7 @@ async fn approval_action_state(
 }
 
 macro_rules! approval_action_handler {
-    ($name:ident, $action:literal) => {
+    ($name:ident, $action:ident, $action_name:literal) => {
         async fn $name(
             State(state): State<ControlApiState>,
             actor: Actor,
@@ -391,23 +440,70 @@ macro_rules! approval_action_handler {
             Json(input): Json<ApprovalActionRequest>,
         ) -> ApiResult<Json<Value>> {
             apply_approval_action(
-                State(state),
+                &state,
                 actor,
-                Path((id, $action.to_owned())),
-                Json(input),
+                id,
+                ApprovalActionInvocation {
+                    value: ApprovalActionValueV1::$action,
+                    name: $action_name,
+                    input,
+                    action_input: None,
+                    requested_idempotency_key: None,
+                },
             )
             .await
         }
     };
 }
 
-approval_action_handler!(claim_approval, "claim");
-approval_action_handler!(release_approval, "release");
-approval_action_handler!(reassign_approval, "reassign");
-approval_action_handler!(approve_approval, "approve");
-approval_action_handler!(reject_approval, "reject");
-approval_action_handler!(cancel_approval, "cancel");
-approval_action_handler!(timeout_approval, "timeout");
+approval_action_handler!(claim_approval, Claim, "claim");
+approval_action_handler!(release_approval, Release, "release");
+approval_action_handler!(reassign_approval, Reassign, "reassign");
+approval_action_handler!(cancel_approval, Cancel, "cancel");
+
+async fn decide_approval(
+    State(state): State<ControlApiState>,
+    actor: Actor,
+    Path(id): Path<Uuid>,
+    Json(input): Json<ApprovalDecideRequest>,
+) -> ApiResult<Json<Value>> {
+    if input.decision_id.is_empty()
+        || !input
+            .decision_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
+        return Err(ApiError::bad_request(
+            "INVALID_APPROVAL_DECISION",
+            "decisionId is invalid",
+        ));
+    }
+    let idempotency_key = input.idempotency_key.trim();
+    if idempotency_key.is_empty() || idempotency_key.len() > 200 {
+        return Err(ApiError::bad_request(
+            "INVALID_IDEMPOTENCY_KEY",
+            "idempotencyKey must contain between 1 and 200 characters",
+        ));
+    }
+    apply_approval_action(
+        &state,
+        actor,
+        id,
+        ApprovalActionInvocation {
+            value: ApprovalActionValueV1::Decide {
+                decision_id: input.decision_id,
+            },
+            name: "decide",
+            input: ApprovalActionRequest {
+                version: input.version,
+                target_user_id: None,
+            },
+            action_input: Some(json!({"reason":input.reason})),
+            requested_idempotency_key: Some(idempotency_key),
+        },
+    )
+    .await
+}
 
 async fn require_approval_candidate(
     pool: &MySqlPool,
@@ -436,29 +532,13 @@ async fn require_candidate_user(
     }
 }
 
-fn parse_approval_action(value: &str) -> ApiResult<ApprovalActionValueV1> {
+fn action_status(value: &ApprovalActionValueV1) -> String {
     match value {
-        "claim" => Ok(ApprovalActionValueV1::Claim),
-        "release" => Ok(ApprovalActionValueV1::Release),
-        "reassign" => Ok(ApprovalActionValueV1::Reassign),
-        "approve" => Ok(ApprovalActionValueV1::Approve),
-        "reject" => Ok(ApprovalActionValueV1::Reject),
-        "cancel" => Ok(ApprovalActionValueV1::Cancel),
-        "timeout" => Ok(ApprovalActionValueV1::Timeout),
-        _ => Err(ApiError::bad_request(
-            "INVALID_APPROVAL_ACTION",
-            "Approval action is invalid",
-        )),
-    }
-}
-fn action_status(value: ApprovalActionValueV1) -> &'static str {
-    match value {
-        ApprovalActionValueV1::Claim | ApprovalActionValueV1::Reassign => "claimed",
-        ApprovalActionValueV1::Release => "pending",
-        ApprovalActionValueV1::Approve => "approved",
-        ApprovalActionValueV1::Reject => "rejected",
-        ApprovalActionValueV1::Cancel => "cancelled",
-        ApprovalActionValueV1::Timeout => "timed_out",
+        ApprovalActionValueV1::Claim | ApprovalActionValueV1::Reassign => "claimed".into(),
+        ApprovalActionValueV1::Release => "pending".into(),
+        ApprovalActionValueV1::Decide { .. } => "decided".into(),
+        ApprovalActionValueV1::Cancel => "cancelled".into(),
+        ApprovalActionValueV1::Timeout => "timed_out".into(),
     }
 }
 

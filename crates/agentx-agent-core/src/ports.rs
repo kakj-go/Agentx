@@ -93,12 +93,14 @@ pub enum CoreEventV1 {
     },
     TurnEnded {
         turn: u32,
+        is_error: bool,
     },
     ModelIntent {
         operation_id: String,
     },
     ModelSettled {
         operation_id: String,
+        is_error: bool,
     },
     ToolIntent {
         operation_id: String,

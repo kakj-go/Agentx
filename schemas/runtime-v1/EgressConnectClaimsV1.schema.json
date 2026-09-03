@@ -1,10 +1,51 @@
 {
   "$defs": {
+    "EgressDestinationV1": {
+      "additionalProperties": false,
+      "properties": {
+        "ports": {
+          "items": {
+            "$ref": "#/$defs/EgressPortRangeV1"
+          },
+          "type": "array"
+        },
+        "target": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "target",
+        "ports"
+      ],
+      "type": "object"
+    },
     "EgressMode": {
       "enum": [
-        "public_https"
+        "tcp_proxy"
       ],
       "type": "string"
+    },
+    "EgressPortRangeV1": {
+      "additionalProperties": false,
+      "properties": {
+        "from": {
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "to": {
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "from",
+        "to"
+      ],
+      "type": "object"
     },
     "EgressRole": {
       "enum": [
@@ -21,6 +62,12 @@
   "properties": {
     "aud": {
       "type": "string"
+    },
+    "destinations": {
+      "items": {
+        "$ref": "#/$defs/EgressDestinationV1"
+      },
+      "type": "array"
     },
     "egressMode": {
       "$ref": "#/$defs/EgressMode"
@@ -47,6 +94,9 @@
       "format": "uuid",
       "type": "string"
     },
+    "policyHash": {
+      "type": "string"
+    },
     "requestId": {
       "format": "uuid",
       "type": [
@@ -56,15 +106,6 @@
     },
     "role": {
       "$ref": "#/$defs/EgressRole"
-    },
-    "targetHost": {
-      "type": "string"
-    },
-    "targetPort": {
-      "format": "uint16",
-      "maximum": 65535,
-      "minimum": 0,
-      "type": "integer"
     },
     "tenantId": {
       "format": "uuid",
@@ -77,8 +118,8 @@
     "role",
     "tenantId",
     "egressMode",
-    "targetHost",
-    "targetPort",
+    "destinations",
+    "policyHash",
     "iat",
     "exp",
     "jti"

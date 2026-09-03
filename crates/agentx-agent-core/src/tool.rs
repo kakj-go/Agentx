@@ -328,7 +328,7 @@ pub fn validate_workspace_path(path: &str) -> Result<(), String> {
             .is_some_and(|part| part.contains(':'))
         || path
             .split('/')
-            .any(|part| part == ".." || part.is_empty() && path != "")
+            .any(|part| part == ".." || part.is_empty() && !path.is_empty())
     {
         return Err("workspace path must be relative and cannot escape the workspace".into());
     }

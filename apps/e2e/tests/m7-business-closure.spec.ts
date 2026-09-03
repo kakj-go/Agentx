@@ -21,6 +21,7 @@ type Environment = { id: string; code: string }
 type Application = { id: string; name: string; slug: string; status: string; description?: string; visibility: string; version: number }
 type ApplicationDeployment = { id: string; status: string; publishErrorCode?: string | null; publishErrorMessage?: string | null }
 type Invocation = { id: string; executionId?: string; status: string }
+type Execution = { id: string; status: string; error?: unknown }
 type Approval = { id: string; executionId: string; workflowId: string; status: string }
 type Dataset = { id: string; revision: number }
 type DatasetVersion = { id: string }
@@ -73,6 +74,10 @@ async function approveExecution(page: Page, token: string, executionId: string) 
   await expect.poll(async () => {
     const result = await request<PageResponse<Approval>>(page, token, '/approvals?pageSize=100')
     approval = result.items.find((item) => item.executionId === executionId && item.status === 'pending')
+    if (!approval) {
+      const execution = await request<Execution>(page, token, `/executions/${executionId}`)
+      if (['failed', 'cancelled', 'timed_out'].includes(execution.status)) throw new Error(`Execution stopped before Approval: ${JSON.stringify(execution)}`)
+    }
     return approval?.id
   }, { timeout: 150_000, intervals: [500, 1_000, 2_000] }).toBeTruthy()
   await approveApproval(page, token, approval!)
@@ -87,7 +92,7 @@ async function approveApproval(page: Page, token: string, approval: Approval) {
   await expect.poll(async () => {
     const values = await request<PageResponse<Approval>>(page, token, '/approvals?pageSize=100')
     return values.items.find((item) => item.id === approval.id)?.status
-  }).toBe('approved')
+  }).toBe('decided')
 }
 
 async function approveInvocation(page: Page, approvalPage: Page, token: string, invocationId: string) {
@@ -134,7 +139,7 @@ async function findM6Workflow(page: Page, token: string) {
       const hasChatInputs = 'question' in properties && 'attachments' in properties
       const hasApproval = nodes.some((node) => node.type === 'approval')
       const hasModel = nodes.some((node) => node.resourceReferences?.some((reference) => reference.resourceType === 'model'))
-      return item.versionNumber === 1 && (item.schemaVersion ?? definition?.schemaVersion) === '7.0' && hasChatInputs && hasApproval && hasModel
+      return item.versionNumber === 1 && (item.schemaVersion ?? definition?.schemaVersion) === '8.0' && hasChatInputs && hasApproval && hasModel
     })
     if (version) return { workflow: candidate, version }
   }
@@ -151,7 +156,7 @@ async function verifyMissingDefaultMappingIsRejected(page: Page, token: string, 
   const saved = await request<{ revision: number }>(page, token, `/workflows/${workflow.id}/draft`, 'PUT', {
     expectedRevision: draft.revision,
     definition: {
-      schemaVersion: '6.0',
+      schemaVersion: '8.0',
       start: {
         inputs: {
           type: 'object',
@@ -161,14 +166,24 @@ async function verifyMissingDefaultMappingIsRejected(page: Page, token: string, 
         },
         contexts: {},
       },
-      nodes: [{ id: 'echo-input', key: 'echo_input', type: 'set', typeVersion: 1, name: 'Echo Input', disabled: false, parameters: { values: {}, keepOnlySet: false }, outputProjection: {}, contextWrites: [], resourceReferences: [], settings: {} }],
+      nodes: [
+        { id: 'echo-input', key: 'echo_input', type: 'set', typeVersion: 1, name: 'Echo Input', disabled: false, parameters: { values: { kind: 'object', fields: {} }, keepOnlySet: false }, contextWrites: [], resourceReferences: [], settings: {} },
+        {
+          id: 'exit', key: 'exit', type: 'exit', typeVersion: 1, name: 'End', disabled: false, protected: true,
+          parameters: {
+            outputs: { answer: { kind: 'reference', selector: { namespace: 'inputs', path: ['question'] }, missingPolicy: { kind: 'error' } } },
+            errorOutputs: {},
+          },
+          contextWrites: [], resourceReferences: [], settings: {},
+        },
+      ],
       connections: [
         { id: 'start-echo', sourceNodeId: '__start__', sourceHandle: 'main', targetNodeId: 'echo-input', targetHandle: 'main', order: 0 },
-        { id: 'echo-end', sourceNodeId: 'echo-input', sourceHandle: 'main', targetNodeId: '__end__', targetHandle: 'main', order: 0 },
+        { id: 'echo-end', sourceNodeId: 'echo-input', sourceHandle: 'main', targetNodeId: 'exit', targetHandle: 'main', order: 0 },
       ],
       end: {
         outputs: {
-          answer: { value: { kind: 'reference', selector: { namespace: 'inputs', path: ['question'] }, missingPolicy: { kind: 'error' } }, schema: { type: 'string' }, required: true, sensitive: false },
+          answer: { schema: { type: 'string' }, required: true, sensitive: false },
         },
       },
       settings: { executionOrder: 'deterministic' },
@@ -209,7 +224,7 @@ async function createFileEchoPlaygroundFixture(page: Page, token: string, enviro
   const saved = await request<{ revision: number }>(page, token, `/workflows/${workflow.id}/draft`, 'PUT', {
     expectedRevision: draft.revision,
     definition: {
-      schemaVersion: '6.0',
+      schemaVersion: '8.0',
       start: {
         inputs: {
           type: 'object',
@@ -232,15 +247,24 @@ async function createFileEchoPlaygroundFixture(page: Page, token: string, enviro
         },
         contexts: {},
       },
-      nodes: [{ id: 'echo-input', key: 'echo_input', type: 'set', typeVersion: 1, name: 'Echo Input', disabled: false, parameters: { values: {}, keepOnlySet: false }, outputProjection: {}, contextWrites: [], resourceReferences: [], settings: {} }],
+      nodes: [
+        { id: 'echo-input', key: 'echo_input', type: 'set', typeVersion: 1, name: 'Echo Input', disabled: false, parameters: { values: { kind: 'object', fields: {} }, keepOnlySet: false }, contextWrites: [], resourceReferences: [], settings: {} },
+        { id: 'exit', key: 'exit', type: 'exit', typeVersion: 1, name: 'End', disabled: false, protected: true, parameters: {
+          outputs: {
+            answer: { kind: 'reference', selector: { namespace: 'inputs', path: ['question'] }, missingPolicy: { kind: 'error' } },
+            answer_files: { kind: 'reference', selector: { namespace: 'inputs', path: ['files'] }, missingPolicy: { kind: 'error' } },
+          },
+          errorOutputs: {},
+        }, contextWrites: [], resourceReferences: [], settings: {} },
+      ],
       connections: [
         { id: 'start-echo', sourceNodeId: '__start__', sourceHandle: 'main', targetNodeId: 'echo-input', targetHandle: 'main', order: 0 },
-        { id: 'echo-end', sourceNodeId: 'echo-input', sourceHandle: 'main', targetNodeId: '__end__', targetHandle: 'main', order: 0 },
+        { id: 'echo-end', sourceNodeId: 'echo-input', sourceHandle: 'main', targetNodeId: 'exit', targetHandle: 'main', order: 0 },
       ],
       end: {
         outputs: {
-          answer: { value: { kind: 'reference', selector: { namespace: 'inputs', path: ['question'] }, missingPolicy: { kind: 'error' } }, schema: { type: 'string' }, required: true, sensitive: false },
-          answer_files: { value: { kind: 'reference', selector: { namespace: 'inputs', path: ['files'] }, missingPolicy: { kind: 'error' } }, schema: { type: 'array', 'x-agentx-artifact': true, 'x-agentx-artifact-array': true }, required: true, sensitive: false },
+          answer: { schema: { type: 'string' }, required: true, sensitive: false },
+          answer_files: { schema: { type: 'array', 'x-agentx-artifact': true, 'x-agentx-artifact-array': true }, required: true, sensitive: false },
         },
       },
       settings: { executionOrder: 'deterministic' },
@@ -301,10 +325,9 @@ test('M7 closes Application, Trigger, Evaluation, Approval and governance paths 
   await useRuntimePortForward(page)
   const token = await login(page)
   const suffix = Date.now()
-  const remoteNodeEndpoint = process.env.AGENTX_E2E_REMOTE_NODE_ENDPOINT ?? 'http://echo-node:8080'
   const { workflow, version } = await findM6Workflow(page, token)
   expect(workflow, 'M6 Studio must publish the Workflow used by M7').toBeTruthy()
-  expect(version, 'M6 Studio must publish a 5.0 chat-capable v1').toBeTruthy()
+  expect(version, 'M6 Studio must publish a Definition 8.0 chat-capable v1').toBeTruthy()
   const environments = await request<Environment[]>(page, token, '/environments')
   const environment = environments.find((item) => item.code === 'development')
   expect(environment).toBeTruthy()
@@ -322,31 +345,39 @@ test('M7 closes Application, Trigger, Evaluation, Approval and governance paths 
   const savedTriggerDraft = await request<{ revision: number }>(page, token, `/workflows/${triggerWorkflow.id}/draft`, 'PUT', {
     expectedRevision: triggerDraft.revision,
     definition: {
-      schemaVersion: '6.0',
+      schemaVersion: '8.0',
       start: {
         inputs: { type: 'object', properties: { source: { type: 'string' } }, additionalProperties: true },
         contexts: {},
       },
       nodes: [
-        { id: 'remote-action', key: 'remote_action', type: 'remote_action', typeVersion: 1, name: 'Remote Action', disabled: false, parameters: { endpoint: remoteNodeEndpoint, pollIntervalSeconds: 1, eventId: `m7-poll-${suffix}`, pollInput: { source: 'm7-poll' } }, outputProjection: {}, contextWrites: [], resourceReferences: [], settings: {} },
-        { id: 'set-result', key: 'set_result', type: 'set', typeVersion: 1, name: 'Set Result', disabled: false, parameters: { values: { triggered: true }, keepOnlySet: false }, outputProjection: {}, contextWrites: [], resourceReferences: [], settings: {} },
+        { id: 'trigger-set', key: 'trigger_set', type: 'set', typeVersion: 1, name: 'Trigger Set', disabled: false, parameters: { values: { kind: 'object', fields: { triggered: { kind: 'literal', value: true } } }, keepOnlySet: false }, contextWrites: [], resourceReferences: [], settings: {} },
+        { id: 'set-result', key: 'set_result', type: 'set', typeVersion: 1, name: 'Set Result', disabled: false, parameters: { values: { kind: 'object', fields: {} }, keepOnlySet: false }, contextWrites: [], resourceReferences: [], settings: {} },
+        {
+          id: 'exit', key: 'exit', type: 'exit', typeVersion: 1, name: 'End', disabled: false, protected: true,
+          parameters: {
+            outputs: { result: { kind: 'reference', selector: { namespace: 'outputs', sourceNodeId: 'set-result', port: 'main', run: { kind: 'current' }, item: { kind: 'current' }, path: [] }, missingPolicy: { kind: 'error' } } },
+            errorOutputs: {},
+          },
+          contextWrites: [], resourceReferences: [], settings: {},
+        },
       ],
       connections: [
-        { id: 'start-to-remote', sourceNodeId: '__start__', sourceHandle: 'main', targetNodeId: 'remote-action', targetHandle: 'main', order: 0 },
-        { id: 'remote-to-set', sourceNodeId: 'remote-action', sourceHandle: 'main', targetNodeId: 'set-result', targetHandle: 'main', order: 0 },
-        { id: 'set-to-end', sourceNodeId: 'set-result', sourceHandle: 'main', targetNodeId: '__end__', targetHandle: 'main', order: 0 },
+        { id: 'start-to-set', sourceNodeId: '__start__', sourceHandle: 'main', targetNodeId: 'trigger-set', targetHandle: 'main', order: 0 },
+        { id: 'set-to-set', sourceNodeId: 'trigger-set', sourceHandle: 'main', targetNodeId: 'set-result', targetHandle: 'main', order: 0 },
+        { id: 'set-to-end', sourceNodeId: 'set-result', sourceHandle: 'main', targetNodeId: 'exit', targetHandle: 'main', order: 0 },
       ],
       end: {
         outputs: {
-          result: { value: { kind: 'reference', selector: { namespace: 'outputs', sourceNodeId: 'set-result', port: 'main', run: { kind: 'current' }, item: { kind: 'current' }, path: [] }, missingPolicy: { kind: 'error' } }, schema: { type: 'object' }, required: true, sensitive: false },
+          result: { schema: { type: 'object' }, required: true, sensitive: false },
         },
       },
       settings: { executionOrder: 'deterministic' },
     },
     editorDocument: {
       ...triggerDraft.editorDocument,
-      nodeLayouts: [{ nodeId: 'remote-action', x: 80, y: 160 }, { nodeId: 'set-result', x: 360, y: 160 }],
-      edges: [{ edgeId: 'remote-to-set' }],
+      nodeLayouts: [{ nodeId: 'trigger-set', x: 80, y: 160 }, { nodeId: 'set-result', x: 360, y: 160 }],
+      edges: [{ edgeId: 'set-to-set' }],
     },
   })
   const triggerVersion = await request<WorkflowVersion>(page, token, `/workflows/${triggerWorkflow.id}/versions`, 'POST', { draftRevision: savedTriggerDraft.revision })
@@ -392,6 +423,13 @@ test('M7 closes Application, Trigger, Evaluation, Approval and governance paths 
     version: currentTriggerApplication.version,
   })
   expect(disabledTriggerApplication.status).toBe('disabled')
+  await expect.poll(async () => {
+    const response = await page.request.post(`${gatewayBase}/gateway/v1/applications/${triggerApplication.slug}/invocations`, {
+      data: { input: { source: 'disabled-application' } },
+      headers: { Authorization: `Bearer ${token}`, 'Idempotency-Key': `m7-disabled-${suffix}` },
+    })
+    return response.status()
+  }, { timeout: 30_000, intervals: [500, 1_000, 2_000] }).toBe(401)
   const triggerExecutions = await request<ExecutionPage>(page, token, triggerExecutionPath)
   const scheduleExecutions = triggerExecutions.items.filter((item) => item.triggerType === 'schedule')
   expect(scheduleExecutions.length).toBeGreaterThanOrEqual(2)
@@ -659,7 +697,7 @@ test('M7 closes Application, Trigger, Evaluation, Approval and governance paths 
   await approveInvocation(page, approvalPage, token, (await restoredResponse.json() as Invocation).id)
 
   const approvals = await request<PageResponse<Approval>>(page, token, '/approvals?pageSize=100')
-  const completedApproval = approvals.items.find((item) => item.executionId === completed.executionId && item.status === 'approved')
+  const completedApproval = approvals.items.find((item) => item.executionId === completed.executionId && item.status === 'decided')
   expect(completedApproval).toBeTruthy()
   const pages = [
     { key: 'playground', path: '/playground' },

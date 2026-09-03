@@ -335,7 +335,7 @@ async fn create_workflow(
         true,
     )
     .await?;
-    sqlx::query("INSERT INTO workflow_drafts(id,tenant_id,workflow_id,schema_version,revision,definition_json,editor_json,content_hash,editor_hash,updated_by) VALUES(?,?,?,'7.0',0,?,?,?,?,?)")
+    sqlx::query("INSERT INTO workflow_drafts(id,tenant_id,workflow_id,schema_version,revision,definition_json,editor_json,content_hash,editor_hash,updated_by) VALUES(?,?,?,'8.0',0,?,?,?,?,?)")
         .bind(draft_id).bind(actor.tenant_id).bind(workflow_id).bind(&definition).bind(&editor).bind(&definition_hash).bind(&editor_hash).bind(actor.user_id).execute(&mut *tx).await?;
     audit(
         &mut tx,
@@ -470,6 +470,22 @@ async fn save_draft(
         .map_err(|error| {
             ApiError::unprocessable("INVALID_WORKFLOW_DEFINITION", error.to_string())
         })?;
+    let dependencies =
+        load_composite_definitions(&state, actor.tenant_id, id, &parsed_definition).await?;
+    let registry = node_registry_with_composites(&dependencies)
+        .map_err(|error| ApiError::unprocessable("WORKFLOW_COMPILE_FAILED", error.to_string()))?;
+    let draft_issues = WorkflowCompiler::new(&registry)
+        .validate_draft(&parsed_definition, &CompileContext::default());
+    if !draft_issues.is_empty() {
+        let mut error = ApiError::unprocessable(
+            "INVALID_WORKFLOW_DRAFT",
+            "Draft contains an invalid reference or security-sensitive node configuration",
+        );
+        for issue in draft_issues {
+            error = error.with_field_error(issue.path, issue.code, issue.message);
+        }
+        return Err(error);
+    }
     let mut tx = state.pool.begin().await?;
     let row = sqlx::query(
         "SELECT id,revision FROM workflow_drafts WHERE tenant_id=? AND workflow_id=? FOR UPDATE",
@@ -490,9 +506,9 @@ async fn save_draft(
     let next = current
         .checked_add(1)
         .ok_or_else(|| ApiError::internal("draft revision exhausted"))?;
-    sqlx::query("UPDATE workflow_drafts SET revision=?,schema_version='7.0',definition_json=?,editor_json=?,content_hash=?,editor_hash=?,updated_by=? WHERE tenant_id=? AND workflow_id=? AND revision=?")
+    sqlx::query("UPDATE workflow_drafts SET revision=?,schema_version='8.0',definition_json=?,editor_json=?,content_hash=?,editor_hash=?,updated_by=? WHERE tenant_id=? AND workflow_id=? AND revision=?")
         .bind(next).bind(&definition).bind(&editor).bind(&definition_hash).bind(&editor_hash).bind(actor.user_id).bind(actor.tenant_id).bind(id).bind(current).execute(&mut *tx).await?;
-    sqlx::query("INSERT INTO workflow_draft_revisions(id,tenant_id,workflow_id,draft_id,revision,schema_version,definition_json,editor_json,content_hash,editor_hash,created_by) VALUES(?,?,?,?,?,'7.0',?,?,?,?,?)")
+    sqlx::query("INSERT INTO workflow_draft_revisions(id,tenant_id,workflow_id,draft_id,revision,schema_version,definition_json,editor_json,content_hash,editor_hash,created_by) VALUES(?,?,?,?,?,'8.0',?,?,?,?,?)")
         .bind(Uuid::now_v7()).bind(actor.tenant_id).bind(id).bind(draft_id).bind(next).bind(&definition).bind(&editor).bind(&definition_hash).bind(&editor_hash).bind(actor.user_id).execute(&mut *tx).await?;
     replace_draft_resources(&mut tx, actor.tenant_id, id, draft_id, &parsed_definition).await?;
     audit(
@@ -1461,7 +1477,7 @@ fn composite_dependency_ids(definition: &WorkflowDefinition) -> ApiResult<Vec<Uu
     definition
         .nodes
         .iter()
-        .filter(|node| node.node_type == "sub_workflow" || node.node_type.starts_with("workflow."))
+        .filter(|node| node.node_type == "sub_workflow")
         .map(|node| {
             node.parameters
                 .get("workflowVersionId")

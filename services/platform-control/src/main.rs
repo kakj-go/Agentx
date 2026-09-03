@@ -1596,7 +1596,7 @@ fn dependency_ids(definition: &WorkflowDefinition) -> Result<Vec<Uuid>> {
     definition
         .nodes
         .iter()
-        .filter(|node| node.node_type == "sub_workflow" || node.node_type.starts_with("workflow."))
+        .filter(|node| node.node_type == "sub_workflow")
         .map(|node| {
             node.parameters
                 .get("workflowVersionId")

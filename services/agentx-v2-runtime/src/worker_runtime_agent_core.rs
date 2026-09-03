@@ -3,16 +3,11 @@
 //! async Worker, Provider Runtime and durable Runtime schema.
 
 use std::collections::BTreeMap;
-use std::sync::{
-    Arc,
-    atomic::{AtomicU64, Ordering},
-};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::Arc;
 
 use agentx_agent_core::{
-    AgentCore, AgentCoreError, AgentMessageV1, AgentRunInputV1, AgentRunResultV1, BudgetDecision,
-    BudgetPort, ClockPort, CoreEventV1, EffectContextV1, EventPort, EventPortError, MessageRole,
-    ToolCallV1, ToolPort, ToolPortError,
+    AgentCore, AgentCoreError, AgentMessageV1, AgentRunInputV1, AgentRunResultV1, CoreEventV1,
+    EffectContextV1, EventPort, EventPortError, MessageRole, ToolCallV1, ToolPort, ToolPortError,
 };
 use agentx_runtime_contracts::{
     AGENT_CORE_CONTRACT_VERSION, AgentAttachmentRegistryV1, AgentAttachmentToolV1,
@@ -31,10 +26,9 @@ use super::agent_attachments::{
     load_external_contexts, read_skill_resource, successful_execution_payload,
     tool_result_from_execution,
 };
+use super::agent_budget::{BudgetCounters, WorkerBudget, WorkerClock};
 use super::agent_model::ProviderModelPort;
-use super::agent_state::{
-    DurableStatePort, effective_agent_budget, session_identity,
-};
+use super::agent_state::{DurableStatePort, effective_agent_budget, session_identity};
 use super::{ClaimedWorkerAttempt, RuntimeWorker, WorkerExecution};
 
 const CORE_ERROR_SANDBOX: &str = "AGENT_WORKSPACE_SANDBOX_RUNTIME_UNAVAILABLE";
@@ -95,7 +89,7 @@ pub(super) async fn execute(
         Ok(Some(value)) => value,
         Ok(None)
             if agent
-                .get("canvasAttachments")
+                .get("attachments")
                 .and_then(Value::as_array)
                 .is_some_and(Vec::is_empty) =>
         {
@@ -147,6 +141,10 @@ pub(super) async fn execute(
             "The exact Model binding is not present in the frozen Bundle",
             false,
         );
+    };
+    let model_context_window = match &binding.configuration {
+        RuntimeResourceConfigurationV1::Model { context_window, .. } => *context_window,
+        _ => unreachable!("binding was filtered to Model"),
     };
     let workspace_binding = if let Some(reference) = workspace_reference {
         let resource_id = reference
@@ -431,11 +429,7 @@ pub(super) async fn execute(
         prompt,
         steering_inputs: agent_messages(agent, "steeringInputs"),
         follow_up_inputs: agent_messages(agent, "followUpInputs"),
-        model_context_window: model
-            .get("contextWindow")
-            .or_else(|| model.get("context_window"))
-            .and_then(Value::as_u64)
-            .unwrap_or(128_000),
+        model_context_window,
     };
     let result = AgentCore::run(
         &input,
@@ -484,6 +478,17 @@ pub(super) async fn execute(
     }
 }
 
+/// Provider rate limiting is transient and operator-actionable (quota or
+/// upstream relay limits), so it gets its own code instead of generic
+/// AGENT_MODEL_ERROR.
+fn is_rate_limit_error(detail: &str) -> bool {
+    let haystack = detail.to_ascii_lowercase();
+    haystack.contains("http 429")
+        || haystack.contains("too many requests")
+        || haystack.contains("rate limit")
+        || haystack.contains("rate_limit")
+}
+
 async fn finish(
     worker: &RuntimeWorker,
     claim: &ClaimedWorkerAttempt,
@@ -494,6 +499,22 @@ async fn finish(
     events: &EventCollector,
 ) -> WorkerExecution {
     let reason = format!("{:?}", result.terminal_reason).to_lowercase();
+    // The terminal enum name alone ("modelerror") hides the provider detail.
+    // fail_operation retained the durable error on the terminal operation, so
+    // surface that instead and keep the short name only as a fallback.
+    let failure_detail =
+        result
+            .state
+            .operation
+            .as_ref()
+            .and_then(|operation| match &operation.phase {
+                agentx_agent_core::OperationPhaseV1::SettledFailure { error }
+                | agentx_agent_core::OperationPhaseV1::UnknownOutcome { reason: error } => {
+                    Some(error.clone())
+                }
+                _ => None,
+            });
+    let failure_message = failure_detail.unwrap_or_else(|| reason.clone());
     let status = if matches!(
         result.terminal_reason,
         agentx_agent_core::TerminalReasonV1::Completed
@@ -539,7 +560,13 @@ async fn finish(
             }
             agentx_agent_core::TerminalReasonV1::OutcomeUnknown => "AGENT_MODEL_OUTCOME_UNKNOWN",
             agentx_agent_core::TerminalReasonV1::ContextOverflow => "AGENT_CONTEXT_OVERFLOW",
-            agentx_agent_core::TerminalReasonV1::ModelError => "AGENT_MODEL_ERROR",
+            agentx_agent_core::TerminalReasonV1::ModelError => {
+                if is_rate_limit_error(&failure_message) {
+                    "AGENT_MODEL_RATE_LIMITED"
+                } else {
+                    "AGENT_MODEL_ERROR"
+                }
+            }
             agentx_agent_core::TerminalReasonV1::ToolError => "AGENT_TOOL_ERROR",
             agentx_agent_core::TerminalReasonV1::Completed => "AGENT_CORE_TERMINAL",
         };
@@ -551,7 +578,7 @@ async fn finish(
         }
         return WorkerExecution::failed(
             code,
-            reason,
+            failure_message,
             matches!(
                 &result.terminal_reason,
                 agentx_agent_core::TerminalReasonV1::OutcomeUnknown
@@ -661,24 +688,21 @@ fn value_string(value: &Value) -> String {
 }
 
 fn initial_prompt(claim: &ClaimedWorkerAttempt) -> String {
-    claim
+    let upstream = claim
         .inputs
         .get("main")
         .or_else(|| claim.inputs.values().next())
         .and_then(|items| items.first())
-        .map(|item| {
-            item.json
-                .as_str()
-                .map(str::to_owned)
-                .unwrap_or_else(|| item.json.to_string())
-        })
-        .or_else(|| {
-            claim
-                .node_parameters
-                .get("userQuestion")
-                .and_then(Value::as_str)
-                .map(str::to_owned)
-        })
+        .map(|item| &item.json);
+    select_initial_prompt(&claim.node_parameters, upstream)
+}
+
+fn select_initial_prompt(parameters: &Value, upstream: Option<&Value>) -> String {
+    parameters
+        .get("userQuestion")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .or_else(|| upstream.map(value_string))
         .unwrap_or_default()
 }
 
@@ -759,6 +783,7 @@ fn process_session_replay_policy(
 }
 
 impl<'a> AgentToolRouter<'a> {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         worker: &'a RuntimeWorker,
         claim: &'a ClaimedWorkerAttempt,
@@ -1879,126 +1904,39 @@ impl ToolPort for AgentToolRouter<'_> {
     }
 }
 
-struct WorkerClock;
-impl ClockPort for WorkerClock {
-    fn now_millis(&self) -> u64 {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|v| v.as_millis() as u64)
-            .unwrap_or_default()
+#[cfg(test)]
+mod rate_limit_tests {
+    use super::is_rate_limit_error;
+
+    #[test]
+    fn provider_rate_limit_markers_are_classified() {
+        assert!(is_rate_limit_error(
+            "HTTP 429 Too Many Requests: {\"error\":{\"message\":\"rate_limit_error\"}}"
+        ));
+        assert!(is_rate_limit_error("Rate limit exceeded, retry later"));
+        assert!(!is_rate_limit_error("invalid api key"));
+        assert!(!is_rate_limit_error("connection closed"));
     }
 }
 
-#[derive(Default)]
-pub(super) struct BudgetCounters {
-    pub(super) input_tokens: AtomicU64,
-    pub(super) output_tokens: AtomicU64,
-    pub(super) cost_micros: AtomicU64,
-}
+#[cfg(test)]
+mod prompt_tests {
+    use serde_json::json;
 
-struct WorkerBudget<'a> {
-    worker: &'a RuntimeWorker,
-    claim: &'a ClaimedWorkerAttempt,
-    budget: Value,
-    started: std::time::Instant,
-    deadline: time::OffsetDateTime,
-    counters: Arc<BudgetCounters>,
-}
-impl<'a> WorkerBudget<'a> {
-    fn new(
-        worker: &'a RuntimeWorker,
-        claim: &'a ClaimedWorkerAttempt,
-        budget: Value,
-        counters: Arc<BudgetCounters>,
-        deadline: time::OffsetDateTime,
-    ) -> Self {
-        Self {
-            worker,
-            claim,
-            budget,
-            started: std::time::Instant::now(),
-            deadline,
-            counters,
-        }
-    }
-}
-impl BudgetPort for WorkerBudget<'_> {
-    fn admit_turn(&mut self, turn: u32, projected_tokens: u64) -> BudgetDecision {
-        let cancelled = tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(async {
-                sqlx::query_scalar::<_, String>(
-                    "SELECT status FROM node_attempts WHERE tenant_id=? AND id=?",
-                )
-                .bind(self.claim.task.tenant_id)
-                .bind(self.claim.task.attempt_id)
-                .fetch_optional(&self.worker.pool)
-                .await
-                .ok()
-                .flatten()
-            })
-        });
-        // A completed attempt may re-enter this adapter only to reconcile
-        // already-settled effects after a crash at the settlement/state
-        // boundary. The ledger prevents the provider effect from running
-        // again. Every other non-running state has no valid lease to advance.
-        if cancelled
-            .as_deref()
-            .is_some_and(|status| status != "running" && status != "succeeded")
-        {
-            return BudgetDecision::Cancel;
-        }
-        if WorkerClock.now_millis()
-            >= self.deadline.unix_timestamp_nanos().max(0) as u64 / 1_000_000
-        {
-            return BudgetDecision::Cancel;
-        }
-        if self.started.elapsed().as_millis() as u64
-            > self
-                .budget
-                .get("maxDurationMs")
-                .and_then(Value::as_u64)
-                .unwrap_or(300_000)
-        {
-            return BudgetDecision::Exhausted;
-        }
-        let input_tokens = self.counters.input_tokens.load(Ordering::Relaxed);
-        let output_tokens = self.counters.output_tokens.load(Ordering::Relaxed);
-        let cost_micros = self.counters.cost_micros.load(Ordering::Relaxed);
-        if turn
-            > self
-                .budget
-                .get("maxIterations")
-                .and_then(Value::as_u64)
-                .unwrap_or(12) as u32
-            || turn
-                > self
-                    .budget
-                    .get("maxModelCalls")
-                    .and_then(Value::as_u64)
-                    .unwrap_or(12) as u32
-            || projected_tokens
-                .saturating_add(input_tokens)
-                .saturating_add(output_tokens)
-                > self
-                    .budget
-                    .get("maxTokens")
-                    .and_then(Value::as_u64)
-                    .unwrap_or(64_000)
-            || output_tokens
-                > self
-                    .budget
-                    .get("maxOutputTokens")
-                    .and_then(Value::as_u64)
-                    .unwrap_or(4_096)
-            || cost_micros
-                > self
-                    .budget
-                    .get("maxCostMicros")
-                    .and_then(Value::as_u64)
-                    .unwrap_or(1_000_000)
-        {
-            return BudgetDecision::Exhausted;
-        }
-        BudgetDecision::Continue
+    use super::select_initial_prompt;
+
+    #[test]
+    fn configured_user_question_is_authoritative_over_upstream_item() {
+        assert_eq!(
+            select_initial_prompt(
+                &json!({"userQuestion":"resolved question"}),
+                Some(&json!({"question":"upstream envelope"})),
+            ),
+            "resolved question"
+        );
+        assert_eq!(
+            select_initial_prompt(&json!({}), Some(&json!({"question":"fallback"}))),
+            r#"{"question":"fallback"}"#
+        );
     }
 }

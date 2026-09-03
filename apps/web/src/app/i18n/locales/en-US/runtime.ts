@@ -116,7 +116,6 @@ const translations = {
     "memory": "Memory read/write",
     "model": "Model calls",
     "rag": "Knowledge retrieval",
-    "remote_action": "Remote actions",
     "sandbox": "Sandbox execution",
     "skill": "Skill capabilities"
   },

@@ -226,7 +226,14 @@ pub(super) async fn workspace_tool(
     let maximum_ttl_seconds = profile_ttl(&profile_value);
     let profile: RuntimeResourceBindingV1 = serde_json::from_value(profile_value)
         .map_err(|_| bad_request("Workspace profile is invalid"))?;
-    let parameters = json!({"runner":"python","source":workspace_tool_script(&request.tool_name, &request.arguments, maximum_ttl_seconds)?,"arguments":[],"workspaceTool":request.tool_name,"egressMode":"none"});
+    let parameters = json!({
+        "runner":"python",
+        "inputs":{},
+        "source":workspace_tool_script(&request.tool_name, &request.arguments, maximum_ttl_seconds)?,
+        "outputSchema":{"type":"object"},
+        "networkPolicy":{"mode":"deny","destinations":[]},
+        "workspaceTool":request.tool_name
+    });
     let request_for_exec = SandboxExecuteRequestV1 {
         api_version: 1,
         tenant_id: request.tenant_id,

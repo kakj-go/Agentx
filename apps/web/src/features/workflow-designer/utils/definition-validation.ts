@@ -1,10 +1,11 @@
-import type { DefinitionConnection, DynamicValue, ResourceReference, StudioDocument } from "../model/types";
+import type { DefinitionConnection, ResourceReference, StudioDocument, InputBinding } from "../model/types";
 import { serializeStudio } from "../model/serializer";
 
 import type { StudioIssue } from "./configuration";
 
 export const REFERENCE_KEY_PATTERN = /^[a-z_][a-z0-9_]{0,127}$/;
 const NODE_TYPE_PATTERN = /^[a-z0-9_.-]{1,128}$/;
+const PUBLIC_NODE_TYPES = new Set(["set", "list", "if", "merge", "loop_over_items", "approval", "sub_workflow", "declarative_http", "model", "agent", "code", "exit"]);
 const START_NODE_ID = "__start__";
 const END_NODE_ID = "__end__";
 const EXIT_NODE_TYPE = "exit";
@@ -13,9 +14,8 @@ export function isReferenceKey(value: string) {
   return REFERENCE_KEY_PATTERN.test(value);
 }
 
-export function isDynamicValueEmpty(value: DynamicValue) {
+export function isInputBindingEmpty(value: InputBinding) {
   if (value.kind === "literal") return value.value == null || (typeof value.value === "string" && !value.value.trim());
-  if (value.kind === "template") return value.segments.every((segment) => segment.kind === "text" && !segment.text.trim());
   return false;
 }
 
@@ -35,13 +35,10 @@ export function definitionIssues(document: StudioDocument): StudioIssue[] {
   }
   validateOutputs(definition.end.outputs, "end.outputs", issues);
   validateOutputs(definition.end.error.outputs, "end.error.outputs", issues);
-  if (!Number.isInteger(definition.end.error.collectWindowMs) || definition.end.error.collectWindowMs < 100 || definition.end.error.collectWindowMs > 60_000) {
-    issues.push(workflowIssue("INVALID_ERROR_COLLECT_WINDOW", "end.error.collectWindowMs", "Error collection window must be between 100 and 60000 milliseconds."));
-  }
   const exitNodes = definition.nodes.filter((node) => node.type === EXIT_NODE_TYPE);
   if (!exitNodes.length) issues.push(workflowIssue("EXIT_REQUIRED", "nodes", "At least one end node is required."));
   for (const node of exitNodes) {
-    const parameters = node.parameters as { outputs?: Record<string, DynamicValue>; errorOutputs?: Record<string, DynamicValue> };
+    const parameters = node.parameters as { outputs?: Record<string, InputBinding>; errorOutputs?: Record<string, InputBinding> };
     validateExitMappings(node.id, parameters.outputs ?? {}, definition.end.outputs, "outputs", issues);
     validateExitMappings(node.id, parameters.errorOutputs ?? {}, definition.end.error.outputs, "errorOutputs", issues);
   }
@@ -59,21 +56,14 @@ export function definitionIssues(document: StudioDocument): StudioIssue[] {
     else if (keys.has(node.key)) issues.push(nodeIssue("DUPLICATE_NODE_KEY", "key", "Node key must be unique within the workflow."));
     keys.add(node.key);
 
-    if (node.type === "manual_trigger" || node.type === "remote_trigger") issues.push(nodeIssue("TRIGGER_NODE_REMOVED", "type", "Trigger nodes are not supported in Workflow Definition 7.0."));
+    if (node.type === "manual_trigger" || node.type === "remote_trigger") issues.push(nodeIssue("TRIGGER_NODE_REMOVED", "type", "Trigger nodes are not supported in Workflow Definition 8.0."));
+    else if (!PUBLIC_NODE_TYPES.has(node.type)) issues.push(nodeIssue("NODE_TYPE_NOT_PUBLIC", "type", "This type is not a public Workflow node."));
     if (!NODE_TYPE_PATTERN.test(node.type)) issues.push(nodeIssue("INVALID_NODE_TYPE", "type", "Node type may contain only lowercase letters, digits, dots, underscores, and hyphens."));
     if (!node.name.trim() || [...node.name].length > 160) issues.push(nodeIssue("INVALID_NODE_NAME", "name", "Node name must contain 1 to 160 characters."));
     if (!isUnsignedInteger(node.typeVersion, 32) || node.typeVersion === 0) issues.push(nodeIssue("UNSUPPORTED_NODE_VERSION", "typeVersion", "Node type version must be greater than zero."));
     const maxTries = node.settings.maxTries ?? 1;
     if (typeof maxTries !== "number" || !isUnsignedInteger(maxTries, 16) || maxTries === 0) issues.push(nodeIssue("INVALID_MAX_TRIES", "settings.maxTries", "Maximum attempts must be greater than zero."));
 
-    for (const [port, fields] of Object.entries(node.outputProjection)) {
-      if (!port.trim()) issues.push(nodeIssue("INVALID_PROJECTION_PORT", "outputProjection", "Projection output port is required."));
-      for (const [name, field] of Object.entries(fields)) {
-        const fieldPath = `outputProjection.${port}.${name}`;
-        if (!isReferenceKey(name)) issues.push(nodeIssue("INVALID_PROJECTION_FIELD_KEY", fieldPath, "Projection field names may contain only lowercase letters, digits, and underscores."));
-        if (!isObject(field.schema)) issues.push(nodeIssue("INVALID_PROJECTION_SCHEMA", `${fieldPath}.schema`, "Projection field schema must be an object."));
-      }
-    }
     if (isResourceNode(node.type)) {
       for (const reference of node.resourceReferences) {
         if (!referenceMatchesNode(node.type, reference)) issues.push(nodeIssue("INVALID_RESOURCE_REFERENCE", "resourceReferences", "Resource type or operation does not match the node type."));
@@ -82,15 +72,13 @@ export function definitionIssues(document: StudioDocument): StudioIssue[] {
     if (node.type === "agent") {
       const sessionMode = (node.parameters.sessionPolicy as { mode?: unknown } | undefined)?.mode;
       if (sessionMode !== "application_session" && sessionMode !== "invocation") issues.push(nodeIssue("AGENT_SESSION_POLICY_INVALID", "parameters.sessionPolicy", "Select application_session or invocation explicitly."));
-      const modelReferences = node.resourceReferences.filter((reference) => !reference.bindingId && !reference.bindingRole && reference.resourceType === "model");
-      const sandboxReferences = node.resourceReferences.filter((reference) => !reference.bindingId && !reference.bindingRole && reference.resourceType === "sandbox_profile");
+      const modelReferences = node.resourceReferences.filter((reference) => reference.bindingRole === "model" && reference.resourceType === "model");
+      const sandboxReferences = node.resourceReferences.filter((reference) => reference.bindingRole === "workspace_sandbox" && reference.resourceType === "sandbox_profile");
       const memoryReferences = node.resourceReferences.filter((reference) => reference.bindingRole === "long_term_memory");
       if (modelReferences.length !== 1) issues.push(nodeIssue("AGENT_MODEL_REQUIRED", "resourceReferences.model", "Agent requires exactly one internal Model reference."));
       if (sandboxReferences.length > 1 || memoryReferences.length > 1) issues.push(nodeIssue("AGENT_RESOURCE_SLOT_INVALID", "resourceReferences", "Agent accepts at most one Workspace Sandbox and one Long-term Memory attachment."));
       for (const reference of node.resourceReferences) {
-        const inspector = reference.resourceType === "model" || reference.resourceType === "sandbox_profile";
-        if (inspector && (reference.bindingId || reference.bindingRole || !reference.resourceVersionId)) issues.push(nodeIssue("AGENT_RESOURCE_SLOT_INVALID", "resourceReferences", "Inspector resources must use an exact version and must not have bindingId or bindingRole."));
-        if (!inspector && (!reference.bindingId || !reference.bindingRole)) issues.push(nodeIssue("AGENT_RESOURCE_SLOT_INVALID", "resourceReferences", "Canvas attachments require bindingId and bindingRole."));
+        if (!reference.bindingRole || !reference.resourceVersionId) issues.push(nodeIssue("AGENT_RESOURCE_SLOT_INVALID", "resourceReferences", "Every Agent resource must use a frozen bindingRole and exact resource version."));
       }
     }
   }
@@ -106,10 +94,10 @@ function validateOutputs(outputs: StudioDocument["end"]["outputs"], path: string
   }
 }
 
-function validateExitMappings(nodeId: string, mappings: Record<string, DynamicValue>, contract: StudioDocument["end"]["outputs"], group: string, issues: StudioIssue[]) {
+function validateExitMappings(nodeId: string, mappings: Record<string, InputBinding>, contract: StudioDocument["end"]["outputs"], group: string, issues: StudioIssue[]) {
   for (const [name, value] of Object.entries(mappings)) {
     if (!(name in contract)) issues.push({ code: "EXIT_MAPPING_KEY_UNKNOWN", nodeId, fieldPath: `parameters.${group}.${name}`, message: "End node mappings must reference fields declared in the global output contract." });
-    if (isDynamicValueEmpty(value)) issues.push({ code: "END_OUTPUT_EXPRESSION_REQUIRED", nodeId, fieldPath: `parameters.${group}.${name}`, message: "End output expressions are required." });
+    if (isInputBindingEmpty(value)) issues.push({ code: "END_OUTPUT_BINDING_REQUIRED", nodeId, fieldPath: `parameters.${group}.${name}`, message: "End output bindings are required." });
   }
   for (const [name, output] of Object.entries(contract)) {
     if (output.required && !(name in mappings)) issues.push({ code: "EXIT_REQUIRED_MAPPING_MISSING", nodeId, fieldPath: `parameters.${group}.${name}`, message: "Every end node must map each required output field." });
@@ -131,7 +119,7 @@ function validateConnections(connections: DefinitionConnection[], nodeIds: Set<s
     const sourceIsStart = connection.sourceNodeId === START_NODE_ID;
     const boundaryRef = connection.sourceNodeId === END_NODE_ID || connection.targetNodeId === END_NODE_ID || connection.targetNodeId === START_NODE_ID;
     if (boundaryRef) {
-      issues.push(workflowIssue("END_BOUNDARY_REMOVED", "connections", "Workflow Definition 7.0 replaced the __end__ boundary with end nodes; connect to an end node instead."));
+      issues.push(workflowIssue("END_BOUNDARY_REMOVED", "connections", "Workflow Definition 8.0 uses Exit nodes; connect to an Exit node instead."));
       continue;
     }
     if (sourceIsStart && connection.sourceHandle !== "main") issues.push(workflowIssue("INVALID_START_PORT", "connections", "Start only exposes the main output port."));
@@ -146,23 +134,20 @@ function validateConnections(connections: DefinitionConnection[], nodeIds: Set<s
 
 function referenceMatchesNode(nodeType: string, reference: ResourceReference) {
   if (nodeType === "model") return reference.resourceType === "model" && reference.operation === "use";
-  if (nodeType === "mcp_tool") return reference.resourceType === "mcp_tool" && reference.operation === "use";
-  if (nodeType === "skill") return reference.resourceType === "skill" && reference.operation === "use";
-  if (nodeType === "rag") return reference.resourceType === "rag" && (reference.operation === "read" || reference.operation === "write");
-  if (nodeType === "memory") return reference.resourceType === "memory" && (reference.operation === "read" || reference.operation === "write");
-  if (nodeType === "code") return (reference.resourceType === "sandbox_profile" || reference.resourceType === "credential") && reference.operation === "use";
+  if (nodeType === "code") return reference.resourceType === "sandbox_profile" && reference.operation === "use";
+  if (nodeType === "declarative_http") return reference.bindingRole === "credential" && reference.resourceType === "credential" && reference.operation === "use";
   if (nodeType !== "agent") return false;
-  if (!reference.bindingId && !reference.bindingRole && reference.resourceType === "model") return reference.operation === "use" && Boolean(reference.resourceVersionId);
-  if (!reference.bindingId && !reference.bindingRole && reference.resourceType === "sandbox_profile") return reference.operation === "use" && Boolean(reference.resourceVersionId);
+  if (reference.bindingRole === "model" && reference.resourceType === "model") return reference.operation === "use" && Boolean(reference.resourceVersionId);
+  if (reference.bindingRole === "workspace_sandbox" && reference.resourceType === "sandbox_profile") return reference.operation === "use" && Boolean(reference.resourceVersionId);
   const role = reference.bindingRole;
-  if (role === "mcp_tools") return Boolean(reference.bindingId) && reference.resourceType === "mcp_tool" && reference.operation === "use";
-  if (role === "skills") return Boolean(reference.bindingId) && reference.resourceType === "skill" && reference.operation === "use";
-  if (role === "knowledge") return Boolean(reference.bindingId) && reference.resourceType === "rag" && reference.operation === "read";
-  return role === "long_term_memory" && Boolean(reference.bindingId) && reference.resourceType === "memory" && (reference.operation === "read" || reference.operation === "write");
+  if (role === "mcp_tools") return reference.resourceType === "mcp_tool" && reference.operation === "use";
+  if (role === "skills") return reference.resourceType === "skill" && reference.operation === "use";
+  if (role === "knowledge") return reference.resourceType === "rag" && reference.operation === "read";
+  return role === "long_term_memory" && reference.resourceType === "memory" && (reference.operation === "read" || reference.operation === "write");
 }
 
 function isResourceNode(nodeType: string) {
-  return ["model", "mcp_tool", "skill", "rag", "memory", "agent", "code"].includes(nodeType);
+  return ["model", "agent", "code", "declarative_http"].includes(nodeType);
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {

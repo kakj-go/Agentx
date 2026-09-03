@@ -1343,11 +1343,52 @@
       },
       "EgressConnectClaimsV1": {
         "$defs": {
+          "EgressDestinationV1": {
+            "additionalProperties": false,
+            "properties": {
+              "ports": {
+                "items": {
+                  "$ref": "#/$defs/EgressPortRangeV1"
+                },
+                "type": "array"
+              },
+              "target": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "target",
+              "ports"
+            ],
+            "type": "object"
+          },
           "EgressMode": {
             "enum": [
-              "public_https"
+              "tcp_proxy"
             ],
             "type": "string"
+          },
+          "EgressPortRangeV1": {
+            "additionalProperties": false,
+            "properties": {
+              "from": {
+                "format": "uint16",
+                "maximum": 65535,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "to": {
+                "format": "uint16",
+                "maximum": 65535,
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "from",
+              "to"
+            ],
+            "type": "object"
           },
           "EgressRole": {
             "enum": [
@@ -1364,6 +1405,12 @@
         "properties": {
           "aud": {
             "type": "string"
+          },
+          "destinations": {
+            "items": {
+              "$ref": "#/$defs/EgressDestinationV1"
+            },
+            "type": "array"
           },
           "egressMode": {
             "$ref": "#/$defs/EgressMode"
@@ -1390,6 +1437,9 @@
             "format": "uuid",
             "type": "string"
           },
+          "policyHash": {
+            "type": "string"
+          },
           "requestId": {
             "format": "uuid",
             "type": [
@@ -1399,15 +1449,6 @@
           },
           "role": {
             "$ref": "#/$defs/EgressRole"
-          },
-          "targetHost": {
-            "type": "string"
-          },
-          "targetPort": {
-            "format": "uint16",
-            "maximum": 65535,
-            "minimum": 0,
-            "type": "integer"
           },
           "tenantId": {
             "format": "uuid",
@@ -1420,8 +1461,8 @@
           "role",
           "tenantId",
           "egressMode",
-          "targetHost",
-          "targetPort",
+          "destinations",
+          "policyHash",
           "iat",
           "exp",
           "jti"
@@ -1438,6 +1479,22 @@
               "observability"
             ],
             "type": "string"
+          },
+          "RuntimeApprovalButtonV1": {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "label"
+            ],
+            "type": "object"
           },
           "RuntimeApprovalCandidateKindV1": {
             "enum": [
@@ -1775,6 +1832,12 @@
               {
                 "additionalProperties": false,
                 "properties": {
+                  "buttons": {
+                    "items": {
+                      "$ref": "#/$defs/RuntimeApprovalButtonV1"
+                    },
+                    "type": "array"
+                  },
                   "candidates": {
                     "items": {
                       "$ref": "#/$defs/RuntimeApprovalCandidateV1"
@@ -1844,6 +1907,7 @@
                   "workflowId",
                   "nodeId",
                   "title",
+                  "buttons",
                   "status",
                   "resumeStatus",
                   "candidates"
@@ -2239,6 +2303,22 @@
       },
       "EventExportPageV1": {
         "$defs": {
+          "RuntimeApprovalButtonV1": {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "label"
+            ],
+            "type": "object"
+          },
           "RuntimeApprovalCandidateKindV1": {
             "enum": [
               "user",
@@ -2575,6 +2655,12 @@
               {
                 "additionalProperties": false,
                 "properties": {
+                  "buttons": {
+                    "items": {
+                      "$ref": "#/$defs/RuntimeApprovalButtonV1"
+                    },
+                    "type": "array"
+                  },
                   "candidates": {
                     "items": {
                       "$ref": "#/$defs/RuntimeApprovalCandidateV1"
@@ -2644,6 +2730,7 @@
                   "workflowId",
                   "nodeId",
                   "title",
+                  "buttons",
                   "status",
                   "resumeStatus",
                   "candidates"
@@ -4946,9 +5033,6 @@
           "CompiledAgentAttachmentV2": {
             "additionalProperties": false,
             "properties": {
-              "bindingId": {
-                "type": "string"
-              },
               "bindingRole": {
                 "type": "string"
               },
@@ -4968,7 +5052,6 @@
               }
             },
             "required": [
-              "bindingId",
               "bindingRole",
               "resourceType",
               "resourceId",
@@ -5007,7 +5090,7 @@
           "CompiledAgentNodeV2": {
             "additionalProperties": false,
             "properties": {
-              "canvasAttachments": {
+              "attachments": {
                 "default": [],
                 "items": {
                   "$ref": "#/$defs/CompiledAgentAttachmentV2"
@@ -5134,6 +5217,73 @@
             ],
             "type": "object"
           },
+          "CompiledExitV1": {
+            "additionalProperties": false,
+            "description": "Per-exit mapping of global contract fields to dynamic values.",
+            "properties": {
+              "errorOutputs": {
+                "additionalProperties": {
+                  "$ref": "#/$defs/InputBinding"
+                },
+                "default": {},
+                "type": "object"
+              },
+              "outputs": {
+                "additionalProperties": {
+                  "$ref": "#/$defs/InputBinding"
+                },
+                "default": {},
+                "type": "object"
+              },
+              "protected": {
+                "default": false,
+                "type": "boolean"
+              }
+            },
+            "type": "object"
+          },
+          "CompiledLoopBodyV1": {
+            "additionalProperties": false,
+            "description": "Container execution contract for `loop_over_items`: the machine fans each\ninput item into one activation round of the body sub-DAG (distinct\ngeneration per iteration) and aggregates the body sinks back into an\nordered array on the loop node's `main` output.",
+            "properties": {
+              "entries": {
+                "items": {
+                  "format": "uint",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              "errorMode": {
+                "description": "terminate | continue | remove",
+                "type": "string"
+              },
+              "outputSelector": {
+                "$ref": "#/$defs/ReferenceBinding"
+              },
+              "parallelism": {
+                "format": "uint32",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "sinks": {
+                "items": {
+                  "format": "uint",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "entries",
+              "sinks",
+              "outputSelector",
+              "parallelism",
+              "errorMode"
+            ],
+            "type": "object"
+          },
           "CompiledNodeV1": {
             "additionalProperties": false,
             "properties": {
@@ -5154,6 +5304,13 @@
                 "format": "uint",
                 "minimum": 0,
                 "type": "integer"
+              },
+              "container": {
+                "description": "Definition id of the container node this node lives in (loop body).",
+                "type": [
+                  "string",
+                  "null"
+                ]
               },
               "contextWrites": {
                 "items": {
@@ -5186,6 +5343,16 @@
               "key": {
                 "type": "string"
               },
+              "loopBody": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CompiledLoopBodyV1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "name": {
                 "type": "string"
               },
@@ -5206,7 +5373,7 @@
                 },
                 "type": "array"
               },
-              "outputProjection": true,
+              "parameterSchema": true,
               "parameters": true,
               "readiness": {
                 "$ref": "#/$defs/ReadinessPolicy"
@@ -5216,6 +5383,11 @@
                   "type": "string"
                 },
                 "type": "array"
+              },
+              "routesError": {
+                "default": false,
+                "description": "True when the node has at least one outgoing `error` edge: a failed\nattempt then emits an error item on that branch instead of failing the\nworkflow (\"wiring is the policy\").",
+                "type": "boolean"
               },
               "settings": {
                 "$ref": "#/$defs/NodeSettings"
@@ -5227,6 +5399,13 @@
                 "format": "uint32",
                 "minimum": 0,
                 "type": "integer"
+              },
+              "variadicOutputPorts": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
               }
             },
             "required": [
@@ -5237,7 +5416,7 @@
               "nodeType",
               "typeVersion",
               "parameters",
-              "outputProjection",
+              "parameterSchema",
               "contextWrites",
               "settings",
               "capability",
@@ -5272,6 +5451,10 @@
               "sourcePort": {
                 "type": "string"
               },
+              "targetExit": {
+                "description": "Exit node id this terminal connection delivers through.",
+                "type": "string"
+              },
               "targetPort": {
                 "type": "string"
               }
@@ -5281,6 +5464,7 @@
               "sourceNode",
               "sourcePort",
               "targetPort",
+              "targetExit",
               "branchOrder"
             ],
             "type": "object"
@@ -5325,6 +5509,22 @@
               "executionOrder": {
                 "$ref": "#/$defs/ExecutionOrder"
               },
+              "exitOrder": {
+                "default": [],
+                "description": "Enabled Exit ids in their original Definition order. Runtime result\nmaterialization must use this list instead of map-key ordering.",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "exits": {
+                "additionalProperties": {
+                  "$ref": "#/$defs/CompiledExitV1"
+                },
+                "default": {},
+                "description": "Exit nodes keyed by node id. Terminal materialization picks the exit\nthat actually received the delivery.",
+                "type": "object"
+              },
               "nodes": {
                 "items": {
                   "$ref": "#/$defs/CompiledNodeV1"
@@ -5345,8 +5545,12 @@
                 },
                 "type": "array"
               },
-              "startToEnd": {
-                "type": "boolean"
+              "startToExit": {
+                "description": "Exit node id when Start connects straight to an exit.",
+                "type": [
+                  "string",
+                  "null"
+                ]
               },
               "stronglyConnectedComponents": {
                 "items": {
@@ -5386,7 +5590,6 @@
               "nodes",
               "connections",
               "terminalConnections",
-              "startToEnd",
               "startNodes",
               "stronglyConnectedComponents",
               "subworkflowVersionIds"
@@ -5475,7 +5678,7 @@
                 "type": "string"
               },
               "value": {
-                "$ref": "#/$defs/DynamicValue"
+                "$ref": "#/$defs/InputBinding"
               }
             },
             "required": [
@@ -5593,96 +5796,6 @@
             ],
             "type": "object"
           },
-          "DynamicValue": {
-            "description": "A persisted dynamic value is always a tagged object.  It deliberately\nlives beside ordinary JSON rather than overloading strings, so business\npayloads cannot accidentally become expressions.",
-            "oneOf": [
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "kind": {
-                    "const": "literal",
-                    "type": "string"
-                  },
-                  "value": true
-                },
-                "required": [
-                  "kind",
-                  "value"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "coerce": {
-                    "anyOf": [
-                      {
-                        "$ref": "#/$defs/ValueCoercion"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
-                  },
-                  "kind": {
-                    "const": "reference",
-                    "type": "string"
-                  },
-                  "missingPolicy": {
-                    "$ref": "#/$defs/MissingValuePolicy",
-                    "default": {
-                      "kind": "error"
-                    }
-                  },
-                  "selector": {
-                    "$ref": "#/$defs/ValueSelector"
-                  }
-                },
-                "required": [
-                  "kind",
-                  "selector"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "kind": {
-                    "const": "template",
-                    "type": "string"
-                  },
-                  "segments": {
-                    "items": {
-                      "$ref": "#/$defs/TemplateSegment"
-                    },
-                    "type": "array"
-                  }
-                },
-                "required": [
-                  "kind",
-                  "segments"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "kind": {
-                    "const": "expression",
-                    "type": "string"
-                  },
-                  "root": {
-                    "$ref": "#/$defs/ExpressionNode"
-                  }
-                },
-                "required": [
-                  "kind",
-                  "root"
-                ],
-                "type": "object"
-              }
-            ]
-          },
           "Ed25519Signature": {
             "additionalProperties": false,
             "properties": {
@@ -5724,13 +5837,6 @@
               "cardinalities"
             ],
             "type": "object"
-          },
-          "EndErrorStrategy": {
-            "enum": [
-              "fail_fast",
-              "collect"
-            ],
-            "type": "string"
           },
           "ExecutionDepartmentSnapshotV1": {
             "additionalProperties": false,
@@ -5935,44 +6041,8 @@
             ],
             "type": "object"
           },
-          "ExpressionBinaryOperator": {
-            "enum": [
-              "eq",
-              "ne",
-              "gt",
-              "gte",
-              "lt",
-              "lte",
-              "add",
-              "subtract",
-              "multiply",
-              "divide",
-              "modulo",
-              "and",
-              "or",
-              "in"
-            ],
-            "type": "string"
-          },
-          "ExpressionFunction": {
-            "enum": [
-              "contains",
-              "double",
-              "duration",
-              "ends_with",
-              "int",
-              "matches",
-              "max",
-              "min",
-              "size",
-              "starts_with",
-              "string",
-              "timestamp",
-              "uint"
-            ],
-            "type": "string"
-          },
-          "ExpressionNode": {
+          "InputBinding": {
+            "description": "The only public value language accepted by Workflow Definition 8.0.\n\nInput bindings deliberately contain no calculation node. Arrays and objects\nare recursive so structured JSON may embed stable references and text\ntemplates without falling back to a second expression protocol.",
             "oneOf": [
               {
                 "additionalProperties": false,
@@ -6016,94 +6086,19 @@
                 "additionalProperties": false,
                 "properties": {
                   "kind": {
-                    "const": "unary",
+                    "const": "template",
                     "type": "string"
                   },
-                  "operand": {
-                    "$ref": "#/$defs/ExpressionNode"
-                  },
-                  "operator": {
-                    "$ref": "#/$defs/ExpressionUnaryOperator"
-                  }
-                },
-                "required": [
-                  "kind",
-                  "operator",
-                  "operand"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "kind": {
-                    "const": "binary",
-                    "type": "string"
-                  },
-                  "left": {
-                    "$ref": "#/$defs/ExpressionNode"
-                  },
-                  "operator": {
-                    "$ref": "#/$defs/ExpressionBinaryOperator"
-                  },
-                  "right": {
-                    "$ref": "#/$defs/ExpressionNode"
-                  }
-                },
-                "required": [
-                  "kind",
-                  "operator",
-                  "left",
-                  "right"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "condition": {
-                    "$ref": "#/$defs/ExpressionNode"
-                  },
-                  "else_value": {
-                    "$ref": "#/$defs/ExpressionNode"
-                  },
-                  "kind": {
-                    "const": "conditional",
-                    "type": "string"
-                  },
-                  "then_value": {
-                    "$ref": "#/$defs/ExpressionNode"
-                  }
-                },
-                "required": [
-                  "kind",
-                  "condition",
-                  "then_value",
-                  "else_value"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "arguments": {
+                  "segments": {
                     "items": {
-                      "$ref": "#/$defs/ExpressionNode"
+                      "$ref": "#/$defs/InputTemplateSegment"
                     },
                     "type": "array"
-                  },
-                  "function": {
-                    "$ref": "#/$defs/ExpressionFunction"
-                  },
-                  "kind": {
-                    "const": "call",
-                    "type": "string"
                   }
                 },
                 "required": [
                   "kind",
-                  "function",
-                  "arguments"
+                  "segments"
                 ],
                 "type": "object"
               },
@@ -6112,7 +6107,7 @@
                 "properties": {
                   "items": {
                     "items": {
-                      "$ref": "#/$defs/ExpressionNode"
+                      "$ref": "#/$defs/InputBinding"
                     },
                     "type": "array"
                   },
@@ -6132,7 +6127,7 @@
                 "properties": {
                   "fields": {
                     "additionalProperties": {
-                      "$ref": "#/$defs/ExpressionNode"
+                      "$ref": "#/$defs/InputBinding"
                     },
                     "type": "object"
                   },
@@ -6149,19 +6144,49 @@
               }
             ]
           },
-          "ExpressionUnaryOperator": {
-            "enum": [
-              "not",
-              "negate"
-            ],
-            "type": "string"
-          },
-          "LifecycleOperationV1": {
-            "enum": [
-              "activate",
-              "deactivate"
-            ],
-            "type": "string"
+          "InputTemplateSegment": {
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "text",
+                    "type": "string"
+                  },
+                  "text": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "text"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "reference",
+                    "type": "string"
+                  },
+                  "missingPolicy": {
+                    "$ref": "#/$defs/MissingValuePolicy",
+                    "default": {
+                      "kind": "error"
+                    }
+                  },
+                  "selector": {
+                    "$ref": "#/$defs/ValueSelector"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "selector"
+                ],
+                "type": "object"
+              }
+            ]
           },
           "MissingValuePolicy": {
             "oneOf": [
@@ -6195,23 +6220,6 @@
                 "additionalProperties": false,
                 "properties": {
                   "kind": {
-                    "const": "default",
-                    "type": "string"
-                  },
-                  "value": {
-                    "$ref": "#/$defs/DynamicValue"
-                  }
-                },
-                "required": [
-                  "kind",
-                  "value"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "kind": {
                     "const": "omit",
                     "type": "string"
                   }
@@ -6227,7 +6235,6 @@
             "enum": [
               "builtin",
               "declarative_http",
-              "remote_action",
               "agent",
               "model",
               "mcp_tool",
@@ -6235,14 +6242,6 @@
               "rag",
               "memory",
               "sandbox"
-            ],
-            "type": "string"
-          },
-          "NodeErrorPolicy": {
-            "enum": [
-              "stop_workflow",
-              "continue_regular_output",
-              "continue_error_output"
             ],
             "type": "string"
           },
@@ -6263,10 +6262,6 @@
                 "maximum": 65535,
                 "minimum": 0,
                 "type": "integer"
-              },
-              "onError": {
-                "$ref": "#/$defs/NodeErrorPolicy",
-                "default": "stop_workflow"
               },
               "retryOnFail": {
                 "default": false,
@@ -6313,6 +6308,34 @@
               "required"
             ],
             "type": "string"
+          },
+          "ReferenceBinding": {
+            "description": "Reference-only parameters such as List input and Loop input/output.",
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "reference",
+                    "type": "string"
+                  },
+                  "missingPolicy": {
+                    "$ref": "#/$defs/MissingValuePolicy",
+                    "default": {
+                      "kind": "error"
+                    }
+                  },
+                  "selector": {
+                    "$ref": "#/$defs/ValueSelector"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "selector"
+                ],
+                "type": "object"
+              }
+            ]
           },
           "ResourceOperation": {
             "enum": [
@@ -6787,6 +6810,11 @@
               {
                 "additionalProperties": false,
                 "properties": {
+                  "contextWindow": {
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
                   "credential": {
                     "anyOf": [
                       {
@@ -6819,6 +6847,7 @@
                   "provider",
                   "endpoint",
                   "model",
+                  "contextWindow",
                   "price"
                 ],
                 "type": "object"
@@ -7006,6 +7035,9 @@
                     "type": "array",
                     "uniqueItems": true
                   },
+                  "credentialType": {
+                    "type": "string"
+                  },
                   "kind": {
                     "const": "credential",
                     "type": "string"
@@ -7016,6 +7048,7 @@
                 },
                 "required": [
                   "kind",
+                  "credentialType",
                   "secret",
                   "allowedOperations"
                 ],
@@ -7184,9 +7217,27 @@
               {
                 "additionalProperties": false,
                 "properties": {
+                  "fixedInputs": {
+                    "default": {}
+                  },
+                  "inputMappings": {
+                    "default": [],
+                    "items": {
+                      "$ref": "#/$defs/WebhookInputMappingV1"
+                    },
+                    "type": "array"
+                  },
                   "kind": {
                     "const": "webhook",
                     "type": "string"
+                  },
+                  "mode": {
+                    "$ref": "#/$defs/WebhookChannelModeV1",
+                    "default": "callback"
+                  },
+                  "provider": {
+                    "$ref": "#/$defs/WebhookProviderV1",
+                    "default": "agentx"
                   },
                   "publicId": {
                     "type": "string"
@@ -7231,54 +7282,6 @@
                   "timezone",
                   "misfirePolicy",
                   "graceSeconds",
-                  "input"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "input": true,
-                  "intervalSeconds": {
-                    "format": "uint32",
-                    "minimum": 0,
-                    "type": "integer"
-                  },
-                  "kind": {
-                    "const": "poll",
-                    "type": "string"
-                  },
-                  "providerEndpoint": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "kind",
-                  "intervalSeconds",
-                  "providerEndpoint",
-                  "input"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "input": true,
-                  "kind": {
-                    "const": "lifecycle",
-                    "type": "string"
-                  },
-                  "operation": {
-                    "$ref": "#/$defs/LifecycleOperationV1"
-                  },
-                  "providerEndpoint": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "kind",
-                  "operation",
-                  "providerEndpoint",
                   "input"
                 ],
                 "type": "object"
@@ -7338,7 +7341,7 @@
           "SandboxEgressModeV1": {
             "enum": [
               "none",
-              "public_https"
+              "tcp_proxy"
             ],
             "type": "string"
           },
@@ -7368,56 +7371,6 @@
             "enum": [
               "runtime",
               "observability"
-            ],
-            "type": "string"
-          },
-          "TemplateSegment": {
-            "oneOf": [
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "kind": {
-                    "const": "text",
-                    "type": "string"
-                  },
-                  "text": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "kind",
-                  "text"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "kind": {
-                    "const": "reference",
-                    "type": "string"
-                  },
-                  "missingPolicy": {
-                    "$ref": "#/$defs/MissingValuePolicy",
-                    "default": {
-                      "kind": "error"
-                    }
-                  },
-                  "selector": {
-                    "$ref": "#/$defs/ValueSelector"
-                  }
-                },
-                "required": [
-                  "kind",
-                  "selector"
-                ],
-                "type": "object"
-              }
-            ]
-          },
-          "ValueCoercion": {
-            "enum": [
-              "string"
             ],
             "type": "string"
           },
@@ -7588,6 +7541,42 @@
             ],
             "type": "object"
           },
+          "WebhookChannelModeV1": {
+            "enum": [
+              "callback",
+              "stream"
+            ],
+            "type": "string"
+          },
+          "WebhookInputMappingV1": {
+            "additionalProperties": false,
+            "properties": {
+              "missingPolicy": {
+                "default": "error",
+                "type": "string"
+              },
+              "source": {
+                "type": "string"
+              },
+              "target": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "source",
+              "target"
+            ],
+            "type": "object"
+          },
+          "WebhookProviderV1": {
+            "enum": [
+              "agentx",
+              "dingtalk",
+              "wecom",
+              "feishu"
+            ],
+            "type": "string"
+          },
           "WorkerCompatibilityV1": {
             "additionalProperties": false,
             "properties": {
@@ -7636,15 +7625,25 @@
             ],
             "type": "object"
           },
+          "WorkflowCompletion": {
+            "description": "How the engine finalizes an execution whose branches reach exit nodes.\n\n- `FirstReturn` (default): the first delivery to reach an exit (main or\n  error port, symmetric) finalizes the execution immediately and cancels\n  every other in-flight activation.\n- `AllComplete`: the execution waits for quiescence; every reached exit is\n  evaluated against the shared `end.outputs` contract and each output field\n  is returned as an array with one element per reached exit (definition\n  order; unreached exits and unbound fields are omitted).",
+            "enum": [
+              "first_return",
+              "all_complete"
+            ],
+            "type": "string"
+          },
           "WorkflowEnd": {
             "additionalProperties": false,
             "properties": {
+              "completion": {
+                "$ref": "#/$defs/WorkflowCompletion",
+                "default": "first_return"
+              },
               "error": {
                 "$ref": "#/$defs/WorkflowErrorEnd",
                 "default": {
-                  "collectWindowMs": 5000,
-                  "outputs": {},
-                  "strategy": "fail_fast"
+                  "outputs": {}
                 }
               },
               "outputs": {
@@ -7660,29 +7659,19 @@
           "WorkflowErrorEnd": {
             "additionalProperties": false,
             "properties": {
-              "collectWindowMs": {
-                "default": 5000,
-                "format": "uint64",
-                "maximum": 60000,
-                "minimum": 100,
-                "type": "integer"
-              },
               "outputs": {
                 "additionalProperties": {
                   "$ref": "#/$defs/WorkflowOutput"
                 },
                 "default": {},
                 "type": "object"
-              },
-              "strategy": {
-                "$ref": "#/$defs/EndErrorStrategy",
-                "default": "fail_fast"
               }
             },
             "type": "object"
           },
           "WorkflowOutput": {
             "additionalProperties": false,
+            "description": "The global output contract shared by every exit node. Field values are\nmapped per exit in [`ExitParameters`], never here.",
             "properties": {
               "required": {
                 "default": false,
@@ -7694,14 +7683,8 @@
               "sensitive": {
                 "default": false,
                 "type": "boolean"
-              },
-              "value": {
-                "$ref": "#/$defs/DynamicValue"
               }
             },
-            "required": [
-              "value"
-            ],
             "type": "object"
           },
           "WorkflowStart": {
@@ -7980,111 +7963,24 @@
         "title": "ExecutionTraceV1",
         "type": "object"
       },
-      "ExecutionWaitPageV1": {
+      "GovernanceSnapshotPageV1": {
         "$defs": {
-          "ExecutionWaitV1": {
+          "RuntimeApprovalButtonV1": {
             "additionalProperties": false,
             "properties": {
-              "nodeExecutionId": {
-                "format": "uuid",
+              "id": {
                 "type": "string"
               },
-              "status": {
+              "label": {
                 "type": "string"
-              },
-              "timeoutAt": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "waitId": {
-                "format": "uuid",
-                "type": "string"
-              },
-              "waitKind": {
-                "type": "string"
-              },
-              "wakeAt": {
-                "type": [
-                  "string",
-                  "null"
-                ]
               }
             },
             "required": [
-              "waitId",
-              "nodeExecutionId",
-              "waitKind",
-              "status"
+              "id",
+              "label"
             ],
             "type": "object"
-          }
-        },
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "additionalProperties": false,
-        "properties": {
-          "apiVersion": {
-            "format": "uint32",
-            "minimum": 0,
-            "type": "integer"
           },
-          "items": {
-            "items": {
-              "$ref": "#/$defs/ExecutionWaitV1"
-            },
-            "type": "array"
-          }
-        },
-        "required": [
-          "apiVersion",
-          "items"
-        ],
-        "title": "ExecutionCollectionPageV1",
-        "type": "object"
-      },
-      "ExecutionWaitV1": {
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "additionalProperties": false,
-        "properties": {
-          "nodeExecutionId": {
-            "format": "uuid",
-            "type": "string"
-          },
-          "status": {
-            "type": "string"
-          },
-          "timeoutAt": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "waitId": {
-            "format": "uuid",
-            "type": "string"
-          },
-          "waitKind": {
-            "type": "string"
-          },
-          "wakeAt": {
-            "type": [
-              "string",
-              "null"
-            ]
-          }
-        },
-        "required": [
-          "waitId",
-          "nodeExecutionId",
-          "waitKind",
-          "status"
-        ],
-        "title": "ExecutionWaitV1",
-        "type": "object"
-      },
-      "GovernanceSnapshotPageV1": {
-        "$defs": {
           "RuntimeApprovalCandidateKindV1": {
             "enum": [
               "user",
@@ -8344,6 +8240,12 @@
               {
                 "additionalProperties": false,
                 "properties": {
+                  "buttons": {
+                    "items": {
+                      "$ref": "#/$defs/RuntimeApprovalButtonV1"
+                    },
+                    "type": "array"
+                  },
                   "candidates": {
                     "items": {
                       "$ref": "#/$defs/RuntimeApprovalCandidateV1"
@@ -8402,6 +8304,7 @@
                   "workflowId",
                   "nodeId",
                   "title",
+                  "buttons",
                   "status",
                   "resumeStatus",
                   "candidates"
@@ -9358,9 +9261,6 @@
           "CompiledAgentAttachmentV2": {
             "additionalProperties": false,
             "properties": {
-              "bindingId": {
-                "type": "string"
-              },
               "bindingRole": {
                 "type": "string"
               },
@@ -9380,7 +9280,6 @@
               }
             },
             "required": [
-              "bindingId",
               "bindingRole",
               "resourceType",
               "resourceId",
@@ -9419,7 +9318,7 @@
           "CompiledAgentNodeV2": {
             "additionalProperties": false,
             "properties": {
-              "canvasAttachments": {
+              "attachments": {
                 "default": [],
                 "items": {
                   "$ref": "#/$defs/CompiledAgentAttachmentV2"
@@ -9546,6 +9445,73 @@
             ],
             "type": "object"
           },
+          "CompiledExitV1": {
+            "additionalProperties": false,
+            "description": "Per-exit mapping of global contract fields to dynamic values.",
+            "properties": {
+              "errorOutputs": {
+                "additionalProperties": {
+                  "$ref": "#/$defs/InputBinding"
+                },
+                "default": {},
+                "type": "object"
+              },
+              "outputs": {
+                "additionalProperties": {
+                  "$ref": "#/$defs/InputBinding"
+                },
+                "default": {},
+                "type": "object"
+              },
+              "protected": {
+                "default": false,
+                "type": "boolean"
+              }
+            },
+            "type": "object"
+          },
+          "CompiledLoopBodyV1": {
+            "additionalProperties": false,
+            "description": "Container execution contract for `loop_over_items`: the machine fans each\ninput item into one activation round of the body sub-DAG (distinct\ngeneration per iteration) and aggregates the body sinks back into an\nordered array on the loop node's `main` output.",
+            "properties": {
+              "entries": {
+                "items": {
+                  "format": "uint",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              "errorMode": {
+                "description": "terminate | continue | remove",
+                "type": "string"
+              },
+              "outputSelector": {
+                "$ref": "#/$defs/ReferenceBinding"
+              },
+              "parallelism": {
+                "format": "uint32",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "sinks": {
+                "items": {
+                  "format": "uint",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "entries",
+              "sinks",
+              "outputSelector",
+              "parallelism",
+              "errorMode"
+            ],
+            "type": "object"
+          },
           "CompiledNodeV1": {
             "additionalProperties": false,
             "properties": {
@@ -9566,6 +9532,13 @@
                 "format": "uint",
                 "minimum": 0,
                 "type": "integer"
+              },
+              "container": {
+                "description": "Definition id of the container node this node lives in (loop body).",
+                "type": [
+                  "string",
+                  "null"
+                ]
               },
               "contextWrites": {
                 "items": {
@@ -9598,6 +9571,16 @@
               "key": {
                 "type": "string"
               },
+              "loopBody": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CompiledLoopBodyV1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "name": {
                 "type": "string"
               },
@@ -9618,7 +9601,7 @@
                 },
                 "type": "array"
               },
-              "outputProjection": true,
+              "parameterSchema": true,
               "parameters": true,
               "readiness": {
                 "$ref": "#/$defs/ReadinessPolicy"
@@ -9628,6 +9611,11 @@
                   "type": "string"
                 },
                 "type": "array"
+              },
+              "routesError": {
+                "default": false,
+                "description": "True when the node has at least one outgoing `error` edge: a failed\nattempt then emits an error item on that branch instead of failing the\nworkflow (\"wiring is the policy\").",
+                "type": "boolean"
               },
               "settings": {
                 "$ref": "#/$defs/NodeSettings"
@@ -9639,6 +9627,13 @@
                 "format": "uint32",
                 "minimum": 0,
                 "type": "integer"
+              },
+              "variadicOutputPorts": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
               }
             },
             "required": [
@@ -9649,7 +9644,7 @@
               "nodeType",
               "typeVersion",
               "parameters",
-              "outputProjection",
+              "parameterSchema",
               "contextWrites",
               "settings",
               "capability",
@@ -9684,6 +9679,10 @@
               "sourcePort": {
                 "type": "string"
               },
+              "targetExit": {
+                "description": "Exit node id this terminal connection delivers through.",
+                "type": "string"
+              },
               "targetPort": {
                 "type": "string"
               }
@@ -9693,6 +9692,7 @@
               "sourceNode",
               "sourcePort",
               "targetPort",
+              "targetExit",
               "branchOrder"
             ],
             "type": "object"
@@ -9737,6 +9737,22 @@
               "executionOrder": {
                 "$ref": "#/$defs/ExecutionOrder"
               },
+              "exitOrder": {
+                "default": [],
+                "description": "Enabled Exit ids in their original Definition order. Runtime result\nmaterialization must use this list instead of map-key ordering.",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "exits": {
+                "additionalProperties": {
+                  "$ref": "#/$defs/CompiledExitV1"
+                },
+                "default": {},
+                "description": "Exit nodes keyed by node id. Terminal materialization picks the exit\nthat actually received the delivery.",
+                "type": "object"
+              },
               "nodes": {
                 "items": {
                   "$ref": "#/$defs/CompiledNodeV1"
@@ -9757,8 +9773,12 @@
                 },
                 "type": "array"
               },
-              "startToEnd": {
-                "type": "boolean"
+              "startToExit": {
+                "description": "Exit node id when Start connects straight to an exit.",
+                "type": [
+                  "string",
+                  "null"
+                ]
               },
               "stronglyConnectedComponents": {
                 "items": {
@@ -9798,7 +9818,6 @@
               "nodes",
               "connections",
               "terminalConnections",
-              "startToEnd",
               "startNodes",
               "stronglyConnectedComponents",
               "subworkflowVersionIds"
@@ -9887,7 +9906,7 @@
                 "type": "string"
               },
               "value": {
-                "$ref": "#/$defs/DynamicValue"
+                "$ref": "#/$defs/InputBinding"
               }
             },
             "required": [
@@ -10005,96 +10024,6 @@
             ],
             "type": "object"
           },
-          "DynamicValue": {
-            "description": "A persisted dynamic value is always a tagged object.  It deliberately\nlives beside ordinary JSON rather than overloading strings, so business\npayloads cannot accidentally become expressions.",
-            "oneOf": [
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "kind": {
-                    "const": "literal",
-                    "type": "string"
-                  },
-                  "value": true
-                },
-                "required": [
-                  "kind",
-                  "value"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "coerce": {
-                    "anyOf": [
-                      {
-                        "$ref": "#/$defs/ValueCoercion"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
-                  },
-                  "kind": {
-                    "const": "reference",
-                    "type": "string"
-                  },
-                  "missingPolicy": {
-                    "$ref": "#/$defs/MissingValuePolicy",
-                    "default": {
-                      "kind": "error"
-                    }
-                  },
-                  "selector": {
-                    "$ref": "#/$defs/ValueSelector"
-                  }
-                },
-                "required": [
-                  "kind",
-                  "selector"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "kind": {
-                    "const": "template",
-                    "type": "string"
-                  },
-                  "segments": {
-                    "items": {
-                      "$ref": "#/$defs/TemplateSegment"
-                    },
-                    "type": "array"
-                  }
-                },
-                "required": [
-                  "kind",
-                  "segments"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "kind": {
-                    "const": "expression",
-                    "type": "string"
-                  },
-                  "root": {
-                    "$ref": "#/$defs/ExpressionNode"
-                  }
-                },
-                "required": [
-                  "kind",
-                  "root"
-                ],
-                "type": "object"
-              }
-            ]
-          },
           "Ed25519Signature": {
             "additionalProperties": false,
             "properties": {
@@ -10136,13 +10065,6 @@
               "cardinalities"
             ],
             "type": "object"
-          },
-          "EndErrorStrategy": {
-            "enum": [
-              "fail_fast",
-              "collect"
-            ],
-            "type": "string"
           },
           "ExecutionDepartmentSnapshotV1": {
             "additionalProperties": false,
@@ -10367,44 +10289,8 @@
             ],
             "type": "object"
           },
-          "ExpressionBinaryOperator": {
-            "enum": [
-              "eq",
-              "ne",
-              "gt",
-              "gte",
-              "lt",
-              "lte",
-              "add",
-              "subtract",
-              "multiply",
-              "divide",
-              "modulo",
-              "and",
-              "or",
-              "in"
-            ],
-            "type": "string"
-          },
-          "ExpressionFunction": {
-            "enum": [
-              "contains",
-              "double",
-              "duration",
-              "ends_with",
-              "int",
-              "matches",
-              "max",
-              "min",
-              "size",
-              "starts_with",
-              "string",
-              "timestamp",
-              "uint"
-            ],
-            "type": "string"
-          },
-          "ExpressionNode": {
+          "InputBinding": {
+            "description": "The only public value language accepted by Workflow Definition 8.0.\n\nInput bindings deliberately contain no calculation node. Arrays and objects\nare recursive so structured JSON may embed stable references and text\ntemplates without falling back to a second expression protocol.",
             "oneOf": [
               {
                 "additionalProperties": false,
@@ -10448,94 +10334,19 @@
                 "additionalProperties": false,
                 "properties": {
                   "kind": {
-                    "const": "unary",
+                    "const": "template",
                     "type": "string"
                   },
-                  "operand": {
-                    "$ref": "#/$defs/ExpressionNode"
-                  },
-                  "operator": {
-                    "$ref": "#/$defs/ExpressionUnaryOperator"
-                  }
-                },
-                "required": [
-                  "kind",
-                  "operator",
-                  "operand"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "kind": {
-                    "const": "binary",
-                    "type": "string"
-                  },
-                  "left": {
-                    "$ref": "#/$defs/ExpressionNode"
-                  },
-                  "operator": {
-                    "$ref": "#/$defs/ExpressionBinaryOperator"
-                  },
-                  "right": {
-                    "$ref": "#/$defs/ExpressionNode"
-                  }
-                },
-                "required": [
-                  "kind",
-                  "operator",
-                  "left",
-                  "right"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "condition": {
-                    "$ref": "#/$defs/ExpressionNode"
-                  },
-                  "else_value": {
-                    "$ref": "#/$defs/ExpressionNode"
-                  },
-                  "kind": {
-                    "const": "conditional",
-                    "type": "string"
-                  },
-                  "then_value": {
-                    "$ref": "#/$defs/ExpressionNode"
-                  }
-                },
-                "required": [
-                  "kind",
-                  "condition",
-                  "then_value",
-                  "else_value"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "arguments": {
+                  "segments": {
                     "items": {
-                      "$ref": "#/$defs/ExpressionNode"
+                      "$ref": "#/$defs/InputTemplateSegment"
                     },
                     "type": "array"
-                  },
-                  "function": {
-                    "$ref": "#/$defs/ExpressionFunction"
-                  },
-                  "kind": {
-                    "const": "call",
-                    "type": "string"
                   }
                 },
                 "required": [
                   "kind",
-                  "function",
-                  "arguments"
+                  "segments"
                 ],
                 "type": "object"
               },
@@ -10544,7 +10355,7 @@
                 "properties": {
                   "items": {
                     "items": {
-                      "$ref": "#/$defs/ExpressionNode"
+                      "$ref": "#/$defs/InputBinding"
                     },
                     "type": "array"
                   },
@@ -10564,7 +10375,7 @@
                 "properties": {
                   "fields": {
                     "additionalProperties": {
-                      "$ref": "#/$defs/ExpressionNode"
+                      "$ref": "#/$defs/InputBinding"
                     },
                     "type": "object"
                   },
@@ -10581,19 +10392,49 @@
               }
             ]
           },
-          "ExpressionUnaryOperator": {
-            "enum": [
-              "not",
-              "negate"
-            ],
-            "type": "string"
-          },
-          "LifecycleOperationV1": {
-            "enum": [
-              "activate",
-              "deactivate"
-            ],
-            "type": "string"
+          "InputTemplateSegment": {
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "text",
+                    "type": "string"
+                  },
+                  "text": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "text"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "reference",
+                    "type": "string"
+                  },
+                  "missingPolicy": {
+                    "$ref": "#/$defs/MissingValuePolicy",
+                    "default": {
+                      "kind": "error"
+                    }
+                  },
+                  "selector": {
+                    "$ref": "#/$defs/ValueSelector"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "selector"
+                ],
+                "type": "object"
+              }
+            ]
           },
           "MissingValuePolicy": {
             "oneOf": [
@@ -10627,23 +10468,6 @@
                 "additionalProperties": false,
                 "properties": {
                   "kind": {
-                    "const": "default",
-                    "type": "string"
-                  },
-                  "value": {
-                    "$ref": "#/$defs/DynamicValue"
-                  }
-                },
-                "required": [
-                  "kind",
-                  "value"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "kind": {
                     "const": "omit",
                     "type": "string"
                   }
@@ -10659,7 +10483,6 @@
             "enum": [
               "builtin",
               "declarative_http",
-              "remote_action",
               "agent",
               "model",
               "mcp_tool",
@@ -10667,14 +10490,6 @@
               "rag",
               "memory",
               "sandbox"
-            ],
-            "type": "string"
-          },
-          "NodeErrorPolicy": {
-            "enum": [
-              "stop_workflow",
-              "continue_regular_output",
-              "continue_error_output"
             ],
             "type": "string"
           },
@@ -10695,10 +10510,6 @@
                 "maximum": 65535,
                 "minimum": 0,
                 "type": "integer"
-              },
-              "onError": {
-                "$ref": "#/$defs/NodeErrorPolicy",
-                "default": "stop_workflow"
               },
               "retryOnFail": {
                 "default": false,
@@ -10745,6 +10556,34 @@
               "required"
             ],
             "type": "string"
+          },
+          "ReferenceBinding": {
+            "description": "Reference-only parameters such as List input and Loop input/output.",
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "reference",
+                    "type": "string"
+                  },
+                  "missingPolicy": {
+                    "$ref": "#/$defs/MissingValuePolicy",
+                    "default": {
+                      "kind": "error"
+                    }
+                  },
+                  "selector": {
+                    "$ref": "#/$defs/ValueSelector"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "selector"
+                ],
+                "type": "object"
+              }
+            ]
           },
           "ResourceOperation": {
             "enum": [
@@ -11219,6 +11058,11 @@
               {
                 "additionalProperties": false,
                 "properties": {
+                  "contextWindow": {
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
                   "credential": {
                     "anyOf": [
                       {
@@ -11251,6 +11095,7 @@
                   "provider",
                   "endpoint",
                   "model",
+                  "contextWindow",
                   "price"
                 ],
                 "type": "object"
@@ -11438,6 +11283,9 @@
                     "type": "array",
                     "uniqueItems": true
                   },
+                  "credentialType": {
+                    "type": "string"
+                  },
                   "kind": {
                     "const": "credential",
                     "type": "string"
@@ -11448,6 +11296,7 @@
                 },
                 "required": [
                   "kind",
+                  "credentialType",
                   "secret",
                   "allowedOperations"
                 ],
@@ -11616,9 +11465,27 @@
               {
                 "additionalProperties": false,
                 "properties": {
+                  "fixedInputs": {
+                    "default": {}
+                  },
+                  "inputMappings": {
+                    "default": [],
+                    "items": {
+                      "$ref": "#/$defs/WebhookInputMappingV1"
+                    },
+                    "type": "array"
+                  },
                   "kind": {
                     "const": "webhook",
                     "type": "string"
+                  },
+                  "mode": {
+                    "$ref": "#/$defs/WebhookChannelModeV1",
+                    "default": "callback"
+                  },
+                  "provider": {
+                    "$ref": "#/$defs/WebhookProviderV1",
+                    "default": "agentx"
                   },
                   "publicId": {
                     "type": "string"
@@ -11663,54 +11530,6 @@
                   "timezone",
                   "misfirePolicy",
                   "graceSeconds",
-                  "input"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "input": true,
-                  "intervalSeconds": {
-                    "format": "uint32",
-                    "minimum": 0,
-                    "type": "integer"
-                  },
-                  "kind": {
-                    "const": "poll",
-                    "type": "string"
-                  },
-                  "providerEndpoint": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "kind",
-                  "intervalSeconds",
-                  "providerEndpoint",
-                  "input"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "input": true,
-                  "kind": {
-                    "const": "lifecycle",
-                    "type": "string"
-                  },
-                  "operation": {
-                    "$ref": "#/$defs/LifecycleOperationV1"
-                  },
-                  "providerEndpoint": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "kind",
-                  "operation",
-                  "providerEndpoint",
                   "input"
                 ],
                 "type": "object"
@@ -11770,7 +11589,7 @@
           "SandboxEgressModeV1": {
             "enum": [
               "none",
-              "public_https"
+              "tcp_proxy"
             ],
             "type": "string"
           },
@@ -11800,56 +11619,6 @@
             "enum": [
               "runtime",
               "observability"
-            ],
-            "type": "string"
-          },
-          "TemplateSegment": {
-            "oneOf": [
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "kind": {
-                    "const": "text",
-                    "type": "string"
-                  },
-                  "text": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "kind",
-                  "text"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "kind": {
-                    "const": "reference",
-                    "type": "string"
-                  },
-                  "missingPolicy": {
-                    "$ref": "#/$defs/MissingValuePolicy",
-                    "default": {
-                      "kind": "error"
-                    }
-                  },
-                  "selector": {
-                    "$ref": "#/$defs/ValueSelector"
-                  }
-                },
-                "required": [
-                  "kind",
-                  "selector"
-                ],
-                "type": "object"
-              }
-            ]
-          },
-          "ValueCoercion": {
-            "enum": [
-              "string"
             ],
             "type": "string"
           },
@@ -12020,6 +11789,42 @@
             ],
             "type": "object"
           },
+          "WebhookChannelModeV1": {
+            "enum": [
+              "callback",
+              "stream"
+            ],
+            "type": "string"
+          },
+          "WebhookInputMappingV1": {
+            "additionalProperties": false,
+            "properties": {
+              "missingPolicy": {
+                "default": "error",
+                "type": "string"
+              },
+              "source": {
+                "type": "string"
+              },
+              "target": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "source",
+              "target"
+            ],
+            "type": "object"
+          },
+          "WebhookProviderV1": {
+            "enum": [
+              "agentx",
+              "dingtalk",
+              "wecom",
+              "feishu"
+            ],
+            "type": "string"
+          },
           "WorkerCompatibilityV1": {
             "additionalProperties": false,
             "properties": {
@@ -12068,15 +11873,25 @@
             ],
             "type": "object"
           },
+          "WorkflowCompletion": {
+            "description": "How the engine finalizes an execution whose branches reach exit nodes.\n\n- `FirstReturn` (default): the first delivery to reach an exit (main or\n  error port, symmetric) finalizes the execution immediately and cancels\n  every other in-flight activation.\n- `AllComplete`: the execution waits for quiescence; every reached exit is\n  evaluated against the shared `end.outputs` contract and each output field\n  is returned as an array with one element per reached exit (definition\n  order; unreached exits and unbound fields are omitted).",
+            "enum": [
+              "first_return",
+              "all_complete"
+            ],
+            "type": "string"
+          },
           "WorkflowEnd": {
             "additionalProperties": false,
             "properties": {
+              "completion": {
+                "$ref": "#/$defs/WorkflowCompletion",
+                "default": "first_return"
+              },
               "error": {
                 "$ref": "#/$defs/WorkflowErrorEnd",
                 "default": {
-                  "collectWindowMs": 5000,
-                  "outputs": {},
-                  "strategy": "fail_fast"
+                  "outputs": {}
                 }
               },
               "outputs": {
@@ -12092,29 +11907,19 @@
           "WorkflowErrorEnd": {
             "additionalProperties": false,
             "properties": {
-              "collectWindowMs": {
-                "default": 5000,
-                "format": "uint64",
-                "maximum": 60000,
-                "minimum": 100,
-                "type": "integer"
-              },
               "outputs": {
                 "additionalProperties": {
                   "$ref": "#/$defs/WorkflowOutput"
                 },
                 "default": {},
                 "type": "object"
-              },
-              "strategy": {
-                "$ref": "#/$defs/EndErrorStrategy",
-                "default": "fail_fast"
               }
             },
             "type": "object"
           },
           "WorkflowOutput": {
             "additionalProperties": false,
+            "description": "The global output contract shared by every exit node. Field values are\nmapped per exit in [`ExitParameters`], never here.",
             "properties": {
               "required": {
                 "default": false,
@@ -12126,14 +11931,8 @@
               "sensitive": {
                 "default": false,
                 "type": "boolean"
-              },
-              "value": {
-                "$ref": "#/$defs/DynamicValue"
               }
             },
-            "required": [
-              "value"
-            ],
             "type": "object"
           },
           "WorkflowStart": {
@@ -12437,9 +12236,6 @@
           "CompiledAgentAttachmentV2": {
             "additionalProperties": false,
             "properties": {
-              "bindingId": {
-                "type": "string"
-              },
               "bindingRole": {
                 "type": "string"
               },
@@ -12459,7 +12255,6 @@
               }
             },
             "required": [
-              "bindingId",
               "bindingRole",
               "resourceType",
               "resourceId",
@@ -12498,7 +12293,7 @@
           "CompiledAgentNodeV2": {
             "additionalProperties": false,
             "properties": {
-              "canvasAttachments": {
+              "attachments": {
                 "default": [],
                 "items": {
                   "$ref": "#/$defs/CompiledAgentAttachmentV2"
@@ -12625,6 +12420,73 @@
             ],
             "type": "object"
           },
+          "CompiledExitV1": {
+            "additionalProperties": false,
+            "description": "Per-exit mapping of global contract fields to dynamic values.",
+            "properties": {
+              "errorOutputs": {
+                "additionalProperties": {
+                  "$ref": "#/$defs/InputBinding"
+                },
+                "default": {},
+                "type": "object"
+              },
+              "outputs": {
+                "additionalProperties": {
+                  "$ref": "#/$defs/InputBinding"
+                },
+                "default": {},
+                "type": "object"
+              },
+              "protected": {
+                "default": false,
+                "type": "boolean"
+              }
+            },
+            "type": "object"
+          },
+          "CompiledLoopBodyV1": {
+            "additionalProperties": false,
+            "description": "Container execution contract for `loop_over_items`: the machine fans each\ninput item into one activation round of the body sub-DAG (distinct\ngeneration per iteration) and aggregates the body sinks back into an\nordered array on the loop node's `main` output.",
+            "properties": {
+              "entries": {
+                "items": {
+                  "format": "uint",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              "errorMode": {
+                "description": "terminate | continue | remove",
+                "type": "string"
+              },
+              "outputSelector": {
+                "$ref": "#/$defs/ReferenceBinding"
+              },
+              "parallelism": {
+                "format": "uint32",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "sinks": {
+                "items": {
+                  "format": "uint",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "entries",
+              "sinks",
+              "outputSelector",
+              "parallelism",
+              "errorMode"
+            ],
+            "type": "object"
+          },
           "CompiledNodeV1": {
             "additionalProperties": false,
             "properties": {
@@ -12645,6 +12507,13 @@
                 "format": "uint",
                 "minimum": 0,
                 "type": "integer"
+              },
+              "container": {
+                "description": "Definition id of the container node this node lives in (loop body).",
+                "type": [
+                  "string",
+                  "null"
+                ]
               },
               "contextWrites": {
                 "items": {
@@ -12677,6 +12546,16 @@
               "key": {
                 "type": "string"
               },
+              "loopBody": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CompiledLoopBodyV1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "name": {
                 "type": "string"
               },
@@ -12697,7 +12576,7 @@
                 },
                 "type": "array"
               },
-              "outputProjection": true,
+              "parameterSchema": true,
               "parameters": true,
               "readiness": {
                 "$ref": "#/$defs/ReadinessPolicy"
@@ -12707,6 +12586,11 @@
                   "type": "string"
                 },
                 "type": "array"
+              },
+              "routesError": {
+                "default": false,
+                "description": "True when the node has at least one outgoing `error` edge: a failed\nattempt then emits an error item on that branch instead of failing the\nworkflow (\"wiring is the policy\").",
+                "type": "boolean"
               },
               "settings": {
                 "$ref": "#/$defs/NodeSettings"
@@ -12718,6 +12602,13 @@
                 "format": "uint32",
                 "minimum": 0,
                 "type": "integer"
+              },
+              "variadicOutputPorts": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
               }
             },
             "required": [
@@ -12728,7 +12619,7 @@
               "nodeType",
               "typeVersion",
               "parameters",
-              "outputProjection",
+              "parameterSchema",
               "contextWrites",
               "settings",
               "capability",
@@ -12763,6 +12654,10 @@
               "sourcePort": {
                 "type": "string"
               },
+              "targetExit": {
+                "description": "Exit node id this terminal connection delivers through.",
+                "type": "string"
+              },
               "targetPort": {
                 "type": "string"
               }
@@ -12772,6 +12667,7 @@
               "sourceNode",
               "sourcePort",
               "targetPort",
+              "targetExit",
               "branchOrder"
             ],
             "type": "object"
@@ -12816,6 +12712,22 @@
               "executionOrder": {
                 "$ref": "#/$defs/ExecutionOrder"
               },
+              "exitOrder": {
+                "default": [],
+                "description": "Enabled Exit ids in their original Definition order. Runtime result\nmaterialization must use this list instead of map-key ordering.",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "exits": {
+                "additionalProperties": {
+                  "$ref": "#/$defs/CompiledExitV1"
+                },
+                "default": {},
+                "description": "Exit nodes keyed by node id. Terminal materialization picks the exit\nthat actually received the delivery.",
+                "type": "object"
+              },
               "nodes": {
                 "items": {
                   "$ref": "#/$defs/CompiledNodeV1"
@@ -12836,8 +12748,12 @@
                 },
                 "type": "array"
               },
-              "startToEnd": {
-                "type": "boolean"
+              "startToExit": {
+                "description": "Exit node id when Start connects straight to an exit.",
+                "type": [
+                  "string",
+                  "null"
+                ]
               },
               "stronglyConnectedComponents": {
                 "items": {
@@ -12877,7 +12793,6 @@
               "nodes",
               "connections",
               "terminalConnections",
-              "startToEnd",
               "startNodes",
               "stronglyConnectedComponents",
               "subworkflowVersionIds"
@@ -12966,7 +12881,7 @@
                 "type": "string"
               },
               "value": {
-                "$ref": "#/$defs/DynamicValue"
+                "$ref": "#/$defs/InputBinding"
               }
             },
             "required": [
@@ -13084,96 +12999,6 @@
             ],
             "type": "object"
           },
-          "DynamicValue": {
-            "description": "A persisted dynamic value is always a tagged object.  It deliberately\nlives beside ordinary JSON rather than overloading strings, so business\npayloads cannot accidentally become expressions.",
-            "oneOf": [
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "kind": {
-                    "const": "literal",
-                    "type": "string"
-                  },
-                  "value": true
-                },
-                "required": [
-                  "kind",
-                  "value"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "coerce": {
-                    "anyOf": [
-                      {
-                        "$ref": "#/$defs/ValueCoercion"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
-                  },
-                  "kind": {
-                    "const": "reference",
-                    "type": "string"
-                  },
-                  "missingPolicy": {
-                    "$ref": "#/$defs/MissingValuePolicy",
-                    "default": {
-                      "kind": "error"
-                    }
-                  },
-                  "selector": {
-                    "$ref": "#/$defs/ValueSelector"
-                  }
-                },
-                "required": [
-                  "kind",
-                  "selector"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "kind": {
-                    "const": "template",
-                    "type": "string"
-                  },
-                  "segments": {
-                    "items": {
-                      "$ref": "#/$defs/TemplateSegment"
-                    },
-                    "type": "array"
-                  }
-                },
-                "required": [
-                  "kind",
-                  "segments"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "kind": {
-                    "const": "expression",
-                    "type": "string"
-                  },
-                  "root": {
-                    "$ref": "#/$defs/ExpressionNode"
-                  }
-                },
-                "required": [
-                  "kind",
-                  "root"
-                ],
-                "type": "object"
-              }
-            ]
-          },
           "Ed25519Signature": {
             "additionalProperties": false,
             "properties": {
@@ -13215,13 +13040,6 @@
               "cardinalities"
             ],
             "type": "object"
-          },
-          "EndErrorStrategy": {
-            "enum": [
-              "fail_fast",
-              "collect"
-            ],
-            "type": "string"
           },
           "ExecutionDepartmentSnapshotV1": {
             "additionalProperties": false,
@@ -13384,44 +13202,8 @@
             ],
             "type": "object"
           },
-          "ExpressionBinaryOperator": {
-            "enum": [
-              "eq",
-              "ne",
-              "gt",
-              "gte",
-              "lt",
-              "lte",
-              "add",
-              "subtract",
-              "multiply",
-              "divide",
-              "modulo",
-              "and",
-              "or",
-              "in"
-            ],
-            "type": "string"
-          },
-          "ExpressionFunction": {
-            "enum": [
-              "contains",
-              "double",
-              "duration",
-              "ends_with",
-              "int",
-              "matches",
-              "max",
-              "min",
-              "size",
-              "starts_with",
-              "string",
-              "timestamp",
-              "uint"
-            ],
-            "type": "string"
-          },
-          "ExpressionNode": {
+          "InputBinding": {
+            "description": "The only public value language accepted by Workflow Definition 8.0.\n\nInput bindings deliberately contain no calculation node. Arrays and objects\nare recursive so structured JSON may embed stable references and text\ntemplates without falling back to a second expression protocol.",
             "oneOf": [
               {
                 "additionalProperties": false,
@@ -13465,94 +13247,19 @@
                 "additionalProperties": false,
                 "properties": {
                   "kind": {
-                    "const": "unary",
+                    "const": "template",
                     "type": "string"
                   },
-                  "operand": {
-                    "$ref": "#/$defs/ExpressionNode"
-                  },
-                  "operator": {
-                    "$ref": "#/$defs/ExpressionUnaryOperator"
-                  }
-                },
-                "required": [
-                  "kind",
-                  "operator",
-                  "operand"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "kind": {
-                    "const": "binary",
-                    "type": "string"
-                  },
-                  "left": {
-                    "$ref": "#/$defs/ExpressionNode"
-                  },
-                  "operator": {
-                    "$ref": "#/$defs/ExpressionBinaryOperator"
-                  },
-                  "right": {
-                    "$ref": "#/$defs/ExpressionNode"
-                  }
-                },
-                "required": [
-                  "kind",
-                  "operator",
-                  "left",
-                  "right"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "condition": {
-                    "$ref": "#/$defs/ExpressionNode"
-                  },
-                  "else_value": {
-                    "$ref": "#/$defs/ExpressionNode"
-                  },
-                  "kind": {
-                    "const": "conditional",
-                    "type": "string"
-                  },
-                  "then_value": {
-                    "$ref": "#/$defs/ExpressionNode"
-                  }
-                },
-                "required": [
-                  "kind",
-                  "condition",
-                  "then_value",
-                  "else_value"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "arguments": {
+                  "segments": {
                     "items": {
-                      "$ref": "#/$defs/ExpressionNode"
+                      "$ref": "#/$defs/InputTemplateSegment"
                     },
                     "type": "array"
-                  },
-                  "function": {
-                    "$ref": "#/$defs/ExpressionFunction"
-                  },
-                  "kind": {
-                    "const": "call",
-                    "type": "string"
                   }
                 },
                 "required": [
                   "kind",
-                  "function",
-                  "arguments"
+                  "segments"
                 ],
                 "type": "object"
               },
@@ -13561,7 +13268,7 @@
                 "properties": {
                   "items": {
                     "items": {
-                      "$ref": "#/$defs/ExpressionNode"
+                      "$ref": "#/$defs/InputBinding"
                     },
                     "type": "array"
                   },
@@ -13581,7 +13288,7 @@
                 "properties": {
                   "fields": {
                     "additionalProperties": {
-                      "$ref": "#/$defs/ExpressionNode"
+                      "$ref": "#/$defs/InputBinding"
                     },
                     "type": "object"
                   },
@@ -13598,12 +13305,49 @@
               }
             ]
           },
-          "ExpressionUnaryOperator": {
-            "enum": [
-              "not",
-              "negate"
-            ],
-            "type": "string"
+          "InputTemplateSegment": {
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "text",
+                    "type": "string"
+                  },
+                  "text": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "text"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "reference",
+                    "type": "string"
+                  },
+                  "missingPolicy": {
+                    "$ref": "#/$defs/MissingValuePolicy",
+                    "default": {
+                      "kind": "error"
+                    }
+                  },
+                  "selector": {
+                    "$ref": "#/$defs/ValueSelector"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "selector"
+                ],
+                "type": "object"
+              }
+            ]
           },
           "MissingValuePolicy": {
             "oneOf": [
@@ -13637,23 +13381,6 @@
                 "additionalProperties": false,
                 "properties": {
                   "kind": {
-                    "const": "default",
-                    "type": "string"
-                  },
-                  "value": {
-                    "$ref": "#/$defs/DynamicValue"
-                  }
-                },
-                "required": [
-                  "kind",
-                  "value"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "kind": {
                     "const": "omit",
                     "type": "string"
                   }
@@ -13669,7 +13396,6 @@
             "enum": [
               "builtin",
               "declarative_http",
-              "remote_action",
               "agent",
               "model",
               "mcp_tool",
@@ -13677,14 +13403,6 @@
               "rag",
               "memory",
               "sandbox"
-            ],
-            "type": "string"
-          },
-          "NodeErrorPolicy": {
-            "enum": [
-              "stop_workflow",
-              "continue_regular_output",
-              "continue_error_output"
             ],
             "type": "string"
           },
@@ -13705,10 +13423,6 @@
                 "maximum": 65535,
                 "minimum": 0,
                 "type": "integer"
-              },
-              "onError": {
-                "$ref": "#/$defs/NodeErrorPolicy",
-                "default": "stop_workflow"
               },
               "retryOnFail": {
                 "default": false,
@@ -13764,6 +13478,34 @@
               "required"
             ],
             "type": "string"
+          },
+          "ReferenceBinding": {
+            "description": "Reference-only parameters such as List input and Loop input/output.",
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "reference",
+                    "type": "string"
+                  },
+                  "missingPolicy": {
+                    "$ref": "#/$defs/MissingValuePolicy",
+                    "default": {
+                      "kind": "error"
+                    }
+                  },
+                  "selector": {
+                    "$ref": "#/$defs/ValueSelector"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "selector"
+                ],
+                "type": "object"
+              }
+            ]
           },
           "ResourceOperation": {
             "enum": [
@@ -14470,6 +14212,11 @@
               {
                 "additionalProperties": false,
                 "properties": {
+                  "contextWindow": {
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
                   "credential": {
                     "anyOf": [
                       {
@@ -14502,6 +14249,7 @@
                   "provider",
                   "endpoint",
                   "model",
+                  "contextWindow",
                   "price"
                 ],
                 "type": "object"
@@ -14689,6 +14437,9 @@
                     "type": "array",
                     "uniqueItems": true
                   },
+                  "credentialType": {
+                    "type": "string"
+                  },
                   "kind": {
                     "const": "credential",
                     "type": "string"
@@ -14699,6 +14450,7 @@
                 },
                 "required": [
                   "kind",
+                  "credentialType",
                   "secret",
                   "allowedOperations"
                 ],
@@ -15081,7 +14833,7 @@
           "SandboxEgressModeV1": {
             "enum": [
               "none",
-              "public_https"
+              "tcp_proxy"
             ],
             "type": "string"
           },
@@ -15112,56 +14864,6 @@
             "enum": [
               "runtime",
               "observability"
-            ],
-            "type": "string"
-          },
-          "TemplateSegment": {
-            "oneOf": [
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "kind": {
-                    "const": "text",
-                    "type": "string"
-                  },
-                  "text": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "kind",
-                  "text"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "kind": {
-                    "const": "reference",
-                    "type": "string"
-                  },
-                  "missingPolicy": {
-                    "$ref": "#/$defs/MissingValuePolicy",
-                    "default": {
-                      "kind": "error"
-                    }
-                  },
-                  "selector": {
-                    "$ref": "#/$defs/ValueSelector"
-                  }
-                },
-                "required": [
-                  "kind",
-                  "selector"
-                ],
-                "type": "object"
-              }
-            ]
-          },
-          "ValueCoercion": {
-            "enum": [
-              "string"
             ],
             "type": "string"
           },
@@ -15387,15 +15089,25 @@
             ],
             "type": "object"
           },
+          "WorkflowCompletion": {
+            "description": "How the engine finalizes an execution whose branches reach exit nodes.\n\n- `FirstReturn` (default): the first delivery to reach an exit (main or\n  error port, symmetric) finalizes the execution immediately and cancels\n  every other in-flight activation.\n- `AllComplete`: the execution waits for quiescence; every reached exit is\n  evaluated against the shared `end.outputs` contract and each output field\n  is returned as an array with one element per reached exit (definition\n  order; unreached exits and unbound fields are omitted).",
+            "enum": [
+              "first_return",
+              "all_complete"
+            ],
+            "type": "string"
+          },
           "WorkflowEnd": {
             "additionalProperties": false,
             "properties": {
+              "completion": {
+                "$ref": "#/$defs/WorkflowCompletion",
+                "default": "first_return"
+              },
               "error": {
                 "$ref": "#/$defs/WorkflowErrorEnd",
                 "default": {
-                  "collectWindowMs": 5000,
-                  "outputs": {},
-                  "strategy": "fail_fast"
+                  "outputs": {}
                 }
               },
               "outputs": {
@@ -15411,29 +15123,19 @@
           "WorkflowErrorEnd": {
             "additionalProperties": false,
             "properties": {
-              "collectWindowMs": {
-                "default": 5000,
-                "format": "uint64",
-                "maximum": 60000,
-                "minimum": 100,
-                "type": "integer"
-              },
               "outputs": {
                 "additionalProperties": {
                   "$ref": "#/$defs/WorkflowOutput"
                 },
                 "default": {},
                 "type": "object"
-              },
-              "strategy": {
-                "$ref": "#/$defs/EndErrorStrategy",
-                "default": "fail_fast"
               }
             },
             "type": "object"
           },
           "WorkflowOutput": {
             "additionalProperties": false,
+            "description": "The global output contract shared by every exit node. Field values are\nmapped per exit in [`ExitParameters`], never here.",
             "properties": {
               "required": {
                 "default": false,
@@ -15445,14 +15147,8 @@
               "sensitive": {
                 "default": false,
                 "type": "boolean"
-              },
-              "value": {
-                "$ref": "#/$defs/DynamicValue"
               }
             },
-            "required": [
-              "value"
-            ],
             "type": "object"
           },
           "WorkflowStart": {
@@ -16086,6 +15782,11 @@
               {
                 "additionalProperties": false,
                 "properties": {
+                  "contextWindow": {
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
                   "credential": {
                     "anyOf": [
                       {
@@ -16118,6 +15819,7 @@
                   "provider",
                   "endpoint",
                   "model",
+                  "contextWindow",
                   "price"
                 ],
                 "type": "object"
@@ -16305,6 +16007,9 @@
                     "type": "array",
                     "uniqueItems": true
                   },
+                  "credentialType": {
+                    "type": "string"
+                  },
                   "kind": {
                     "const": "credential",
                     "type": "string"
@@ -16315,6 +16020,7 @@
                 },
                 "required": [
                   "kind",
+                  "credentialType",
                   "secret",
                   "allowedOperations"
                 ],
@@ -16448,7 +16154,7 @@
           "SandboxEgressModeV1": {
             "enum": [
               "none",
-              "public_https"
+              "tcp_proxy"
             ],
             "type": "string"
           },
@@ -17432,23 +17138,6 @@
                 "additionalProperties": false,
                 "properties": {
                   "kind": {
-                    "const": "approval_decision",
-                    "type": "string"
-                  },
-                  "state": {
-                    "$ref": "#/$defs/RuntimeApprovalDecisionV1"
-                  }
-                },
-                "required": [
-                  "kind",
-                  "state"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "kind": {
                     "const": "approval_action",
                     "type": "string"
                   },
@@ -17570,23 +17259,39 @@
             "type": "object"
           },
           "ApprovalActionValueV1": {
-            "enum": [
-              "claim",
-              "release",
-              "reassign",
-              "approve",
-              "reject",
-              "cancel",
-              "timeout"
-            ],
-            "type": "string"
-          },
-          "ApprovalDecisionValueV1": {
-            "enum": [
-              "approved",
-              "rejected"
-            ],
-            "type": "string"
+            "oneOf": [
+              {
+                "enum": [
+                  "claim",
+                  "release",
+                  "reassign",
+                  "cancel",
+                  "timeout"
+                ],
+                "type": "string"
+              },
+              {
+                "additionalProperties": false,
+                "description": "A canvas-defined approval button: resumes the workflow on the\n`decision:<id>` output port and persists the button id as the decision.",
+                "properties": {
+                  "decide": {
+                    "properties": {
+                      "decision_id": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "decision_id"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "decide"
+                ],
+                "type": "object"
+              }
+            ]
           },
           "CommandEnvelopeV1": {
             "additionalProperties": false,
@@ -17749,40 +17454,6 @@
               "taskVersion",
               "action",
               "actorId"
-            ],
-            "type": "object"
-          },
-          "RuntimeApprovalDecisionV1": {
-            "additionalProperties": false,
-            "properties": {
-              "decidedBy": {
-                "format": "uuid",
-                "type": "string"
-              },
-              "decision": {
-                "$ref": "#/$defs/ApprovalDecisionValueV1"
-              },
-              "reason": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "taskId": {
-                "format": "uuid",
-                "type": "string"
-              },
-              "taskVersion": {
-                "format": "uint64",
-                "minimum": 0,
-                "type": "integer"
-              }
-            },
-            "required": [
-              "taskId",
-              "taskVersion",
-              "decision",
-              "decidedBy"
             ],
             "type": "object"
           },
@@ -18844,6 +18515,22 @@
       },
       "RuntimeIntegrationEventEnvelopeV1": {
         "$defs": {
+          "RuntimeApprovalButtonV1": {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "label"
+            ],
+            "type": "object"
+          },
           "RuntimeApprovalCandidateKindV1": {
             "enum": [
               "user",
@@ -19180,6 +18867,12 @@
               {
                 "additionalProperties": false,
                 "properties": {
+                  "buttons": {
+                    "items": {
+                      "$ref": "#/$defs/RuntimeApprovalButtonV1"
+                    },
+                    "type": "array"
+                  },
                   "candidates": {
                     "items": {
                       "$ref": "#/$defs/RuntimeApprovalCandidateV1"
@@ -19249,6 +18942,7 @@
                   "workflowId",
                   "nodeId",
                   "title",
+                  "buttons",
                   "status",
                   "resumeStatus",
                   "candidates"
@@ -20134,6 +19828,11 @@
               {
                 "additionalProperties": false,
                 "properties": {
+                  "contextWindow": {
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
                   "credential": {
                     "anyOf": [
                       {
@@ -20166,6 +19865,7 @@
                   "provider",
                   "endpoint",
                   "model",
+                  "contextWindow",
                   "price"
                 ],
                 "type": "object"
@@ -20353,6 +20053,9 @@
                     "type": "array",
                     "uniqueItems": true
                   },
+                  "credentialType": {
+                    "type": "string"
+                  },
                   "kind": {
                     "const": "credential",
                     "type": "string"
@@ -20363,6 +20066,7 @@
                 },
                 "required": [
                   "kind",
+                  "credentialType",
                   "secret",
                   "allowedOperations"
                 ],
@@ -20496,7 +20200,7 @@
           "SandboxEgressModeV1": {
             "enum": [
               "none",
-              "public_https"
+              "tcp_proxy"
             ],
             "type": "string"
           },
@@ -20967,6 +20671,11 @@
               {
                 "additionalProperties": false,
                 "properties": {
+                  "contextWindow": {
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
                   "credential": {
                     "anyOf": [
                       {
@@ -20999,6 +20708,7 @@
                   "provider",
                   "endpoint",
                   "model",
+                  "contextWindow",
                   "price"
                 ],
                 "type": "object"
@@ -21186,6 +20896,9 @@
                     "type": "array",
                     "uniqueItems": true
                   },
+                  "credentialType": {
+                    "type": "string"
+                  },
                   "kind": {
                     "const": "credential",
                     "type": "string"
@@ -21196,6 +20909,7 @@
                 },
                 "required": [
                   "kind",
+                  "credentialType",
                   "secret",
                   "allowedOperations"
                 ],
@@ -21378,7 +21092,7 @@
           "SandboxEgressModeV1": {
             "enum": [
               "none",
-              "public_https"
+              "tcp_proxy"
             ],
             "type": "string"
           },
@@ -21604,21 +21318,32 @@
       },
       "RuntimeTriggerSpecV1": {
         "$defs": {
-          "LifecycleOperationV1": {
-            "enum": [
-              "activate",
-              "deactivate"
-            ],
-            "type": "string"
-          },
           "RuntimeTriggerConfigurationV1": {
             "oneOf": [
               {
                 "additionalProperties": false,
                 "properties": {
+                  "fixedInputs": {
+                    "default": {}
+                  },
+                  "inputMappings": {
+                    "default": [],
+                    "items": {
+                      "$ref": "#/$defs/WebhookInputMappingV1"
+                    },
+                    "type": "array"
+                  },
                   "kind": {
                     "const": "webhook",
                     "type": "string"
+                  },
+                  "mode": {
+                    "$ref": "#/$defs/WebhookChannelModeV1",
+                    "default": "callback"
+                  },
+                  "provider": {
+                    "$ref": "#/$defs/WebhookProviderV1",
+                    "default": "agentx"
                   },
                   "publicId": {
                     "type": "string"
@@ -21666,54 +21391,6 @@
                   "input"
                 ],
                 "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "input": true,
-                  "intervalSeconds": {
-                    "format": "uint32",
-                    "minimum": 0,
-                    "type": "integer"
-                  },
-                  "kind": {
-                    "const": "poll",
-                    "type": "string"
-                  },
-                  "providerEndpoint": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "kind",
-                  "intervalSeconds",
-                  "providerEndpoint",
-                  "input"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "input": true,
-                  "kind": {
-                    "const": "lifecycle",
-                    "type": "string"
-                  },
-                  "operation": {
-                    "$ref": "#/$defs/LifecycleOperationV1"
-                  },
-                  "providerEndpoint": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "kind",
-                  "operation",
-                  "providerEndpoint",
-                  "input"
-                ],
-                "type": "object"
               }
             ]
           },
@@ -21749,6 +21426,42 @@
               "version"
             ],
             "type": "object"
+          },
+          "WebhookChannelModeV1": {
+            "enum": [
+              "callback",
+              "stream"
+            ],
+            "type": "string"
+          },
+          "WebhookInputMappingV1": {
+            "additionalProperties": false,
+            "properties": {
+              "missingPolicy": {
+                "default": "error",
+                "type": "string"
+              },
+              "source": {
+                "type": "string"
+              },
+              "target": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "source",
+              "target"
+            ],
+            "type": "object"
+          },
+          "WebhookProviderV1": {
+            "enum": [
+              "agentx",
+              "dingtalk",
+              "wecom",
+              "feishu"
+            ],
+            "type": "string"
           }
         },
         "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -22245,9 +21958,6 @@
           "CompiledAgentAttachmentV2": {
             "additionalProperties": false,
             "properties": {
-              "bindingId": {
-                "type": "string"
-              },
               "bindingRole": {
                 "type": "string"
               },
@@ -22267,7 +21977,6 @@
               }
             },
             "required": [
-              "bindingId",
               "bindingRole",
               "resourceType",
               "resourceId",
@@ -22306,7 +22015,7 @@
           "CompiledAgentNodeV2": {
             "additionalProperties": false,
             "properties": {
-              "canvasAttachments": {
+              "attachments": {
                 "default": [],
                 "items": {
                   "$ref": "#/$defs/CompiledAgentAttachmentV2"
@@ -22433,6 +22142,73 @@
             ],
             "type": "object"
           },
+          "CompiledExitV1": {
+            "additionalProperties": false,
+            "description": "Per-exit mapping of global contract fields to dynamic values.",
+            "properties": {
+              "errorOutputs": {
+                "additionalProperties": {
+                  "$ref": "#/$defs/InputBinding"
+                },
+                "default": {},
+                "type": "object"
+              },
+              "outputs": {
+                "additionalProperties": {
+                  "$ref": "#/$defs/InputBinding"
+                },
+                "default": {},
+                "type": "object"
+              },
+              "protected": {
+                "default": false,
+                "type": "boolean"
+              }
+            },
+            "type": "object"
+          },
+          "CompiledLoopBodyV1": {
+            "additionalProperties": false,
+            "description": "Container execution contract for `loop_over_items`: the machine fans each\ninput item into one activation round of the body sub-DAG (distinct\ngeneration per iteration) and aggregates the body sinks back into an\nordered array on the loop node's `main` output.",
+            "properties": {
+              "entries": {
+                "items": {
+                  "format": "uint",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              "errorMode": {
+                "description": "terminate | continue | remove",
+                "type": "string"
+              },
+              "outputSelector": {
+                "$ref": "#/$defs/ReferenceBinding"
+              },
+              "parallelism": {
+                "format": "uint32",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "sinks": {
+                "items": {
+                  "format": "uint",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "entries",
+              "sinks",
+              "outputSelector",
+              "parallelism",
+              "errorMode"
+            ],
+            "type": "object"
+          },
           "CompiledNodeV1": {
             "additionalProperties": false,
             "properties": {
@@ -22453,6 +22229,13 @@
                 "format": "uint",
                 "minimum": 0,
                 "type": "integer"
+              },
+              "container": {
+                "description": "Definition id of the container node this node lives in (loop body).",
+                "type": [
+                  "string",
+                  "null"
+                ]
               },
               "contextWrites": {
                 "items": {
@@ -22485,6 +22268,16 @@
               "key": {
                 "type": "string"
               },
+              "loopBody": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CompiledLoopBodyV1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "name": {
                 "type": "string"
               },
@@ -22505,7 +22298,7 @@
                 },
                 "type": "array"
               },
-              "outputProjection": true,
+              "parameterSchema": true,
               "parameters": true,
               "readiness": {
                 "$ref": "#/$defs/ReadinessPolicy"
@@ -22515,6 +22308,11 @@
                   "type": "string"
                 },
                 "type": "array"
+              },
+              "routesError": {
+                "default": false,
+                "description": "True when the node has at least one outgoing `error` edge: a failed\nattempt then emits an error item on that branch instead of failing the\nworkflow (\"wiring is the policy\").",
+                "type": "boolean"
               },
               "settings": {
                 "$ref": "#/$defs/NodeSettings"
@@ -22526,6 +22324,13 @@
                 "format": "uint32",
                 "minimum": 0,
                 "type": "integer"
+              },
+              "variadicOutputPorts": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
               }
             },
             "required": [
@@ -22536,7 +22341,7 @@
               "nodeType",
               "typeVersion",
               "parameters",
-              "outputProjection",
+              "parameterSchema",
               "contextWrites",
               "settings",
               "capability",
@@ -22571,6 +22376,10 @@
               "sourcePort": {
                 "type": "string"
               },
+              "targetExit": {
+                "description": "Exit node id this terminal connection delivers through.",
+                "type": "string"
+              },
               "targetPort": {
                 "type": "string"
               }
@@ -22580,6 +22389,7 @@
               "sourceNode",
               "sourcePort",
               "targetPort",
+              "targetExit",
               "branchOrder"
             ],
             "type": "object"
@@ -22624,6 +22434,22 @@
               "executionOrder": {
                 "$ref": "#/$defs/ExecutionOrder"
               },
+              "exitOrder": {
+                "default": [],
+                "description": "Enabled Exit ids in their original Definition order. Runtime result\nmaterialization must use this list instead of map-key ordering.",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "exits": {
+                "additionalProperties": {
+                  "$ref": "#/$defs/CompiledExitV1"
+                },
+                "default": {},
+                "description": "Exit nodes keyed by node id. Terminal materialization picks the exit\nthat actually received the delivery.",
+                "type": "object"
+              },
               "nodes": {
                 "items": {
                   "$ref": "#/$defs/CompiledNodeV1"
@@ -22644,8 +22470,12 @@
                 },
                 "type": "array"
               },
-              "startToEnd": {
-                "type": "boolean"
+              "startToExit": {
+                "description": "Exit node id when Start connects straight to an exit.",
+                "type": [
+                  "string",
+                  "null"
+                ]
               },
               "stronglyConnectedComponents": {
                 "items": {
@@ -22685,7 +22515,6 @@
               "nodes",
               "connections",
               "terminalConnections",
-              "startToEnd",
               "startNodes",
               "stronglyConnectedComponents",
               "subworkflowVersionIds"
@@ -22774,7 +22603,7 @@
                 "type": "string"
               },
               "value": {
-                "$ref": "#/$defs/DynamicValue"
+                "$ref": "#/$defs/InputBinding"
               }
             },
             "required": [
@@ -22892,96 +22721,6 @@
             ],
             "type": "object"
           },
-          "DynamicValue": {
-            "description": "A persisted dynamic value is always a tagged object.  It deliberately\nlives beside ordinary JSON rather than overloading strings, so business\npayloads cannot accidentally become expressions.",
-            "oneOf": [
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "kind": {
-                    "const": "literal",
-                    "type": "string"
-                  },
-                  "value": true
-                },
-                "required": [
-                  "kind",
-                  "value"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "coerce": {
-                    "anyOf": [
-                      {
-                        "$ref": "#/$defs/ValueCoercion"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
-                  },
-                  "kind": {
-                    "const": "reference",
-                    "type": "string"
-                  },
-                  "missingPolicy": {
-                    "$ref": "#/$defs/MissingValuePolicy",
-                    "default": {
-                      "kind": "error"
-                    }
-                  },
-                  "selector": {
-                    "$ref": "#/$defs/ValueSelector"
-                  }
-                },
-                "required": [
-                  "kind",
-                  "selector"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "kind": {
-                    "const": "template",
-                    "type": "string"
-                  },
-                  "segments": {
-                    "items": {
-                      "$ref": "#/$defs/TemplateSegment"
-                    },
-                    "type": "array"
-                  }
-                },
-                "required": [
-                  "kind",
-                  "segments"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "kind": {
-                    "const": "expression",
-                    "type": "string"
-                  },
-                  "root": {
-                    "$ref": "#/$defs/ExpressionNode"
-                  }
-                },
-                "required": [
-                  "kind",
-                  "root"
-                ],
-                "type": "object"
-              }
-            ]
-          },
           "Ed25519Signature": {
             "additionalProperties": false,
             "properties": {
@@ -23023,13 +22762,6 @@
               "cardinalities"
             ],
             "type": "object"
-          },
-          "EndErrorStrategy": {
-            "enum": [
-              "fail_fast",
-              "collect"
-            ],
-            "type": "string"
           },
           "ExecutionDepartmentSnapshotV1": {
             "additionalProperties": false,
@@ -23192,44 +22924,8 @@
             ],
             "type": "object"
           },
-          "ExpressionBinaryOperator": {
-            "enum": [
-              "eq",
-              "ne",
-              "gt",
-              "gte",
-              "lt",
-              "lte",
-              "add",
-              "subtract",
-              "multiply",
-              "divide",
-              "modulo",
-              "and",
-              "or",
-              "in"
-            ],
-            "type": "string"
-          },
-          "ExpressionFunction": {
-            "enum": [
-              "contains",
-              "double",
-              "duration",
-              "ends_with",
-              "int",
-              "matches",
-              "max",
-              "min",
-              "size",
-              "starts_with",
-              "string",
-              "timestamp",
-              "uint"
-            ],
-            "type": "string"
-          },
-          "ExpressionNode": {
+          "InputBinding": {
+            "description": "The only public value language accepted by Workflow Definition 8.0.\n\nInput bindings deliberately contain no calculation node. Arrays and objects\nare recursive so structured JSON may embed stable references and text\ntemplates without falling back to a second expression protocol.",
             "oneOf": [
               {
                 "additionalProperties": false,
@@ -23273,94 +22969,19 @@
                 "additionalProperties": false,
                 "properties": {
                   "kind": {
-                    "const": "unary",
+                    "const": "template",
                     "type": "string"
                   },
-                  "operand": {
-                    "$ref": "#/$defs/ExpressionNode"
-                  },
-                  "operator": {
-                    "$ref": "#/$defs/ExpressionUnaryOperator"
-                  }
-                },
-                "required": [
-                  "kind",
-                  "operator",
-                  "operand"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "kind": {
-                    "const": "binary",
-                    "type": "string"
-                  },
-                  "left": {
-                    "$ref": "#/$defs/ExpressionNode"
-                  },
-                  "operator": {
-                    "$ref": "#/$defs/ExpressionBinaryOperator"
-                  },
-                  "right": {
-                    "$ref": "#/$defs/ExpressionNode"
-                  }
-                },
-                "required": [
-                  "kind",
-                  "operator",
-                  "left",
-                  "right"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "condition": {
-                    "$ref": "#/$defs/ExpressionNode"
-                  },
-                  "else_value": {
-                    "$ref": "#/$defs/ExpressionNode"
-                  },
-                  "kind": {
-                    "const": "conditional",
-                    "type": "string"
-                  },
-                  "then_value": {
-                    "$ref": "#/$defs/ExpressionNode"
-                  }
-                },
-                "required": [
-                  "kind",
-                  "condition",
-                  "then_value",
-                  "else_value"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "arguments": {
+                  "segments": {
                     "items": {
-                      "$ref": "#/$defs/ExpressionNode"
+                      "$ref": "#/$defs/InputTemplateSegment"
                     },
                     "type": "array"
-                  },
-                  "function": {
-                    "$ref": "#/$defs/ExpressionFunction"
-                  },
-                  "kind": {
-                    "const": "call",
-                    "type": "string"
                   }
                 },
                 "required": [
                   "kind",
-                  "function",
-                  "arguments"
+                  "segments"
                 ],
                 "type": "object"
               },
@@ -23369,7 +22990,7 @@
                 "properties": {
                   "items": {
                     "items": {
-                      "$ref": "#/$defs/ExpressionNode"
+                      "$ref": "#/$defs/InputBinding"
                     },
                     "type": "array"
                   },
@@ -23389,7 +23010,7 @@
                 "properties": {
                   "fields": {
                     "additionalProperties": {
-                      "$ref": "#/$defs/ExpressionNode"
+                      "$ref": "#/$defs/InputBinding"
                     },
                     "type": "object"
                   },
@@ -23406,12 +23027,49 @@
               }
             ]
           },
-          "ExpressionUnaryOperator": {
-            "enum": [
-              "not",
-              "negate"
-            ],
-            "type": "string"
+          "InputTemplateSegment": {
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "text",
+                    "type": "string"
+                  },
+                  "text": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "text"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "reference",
+                    "type": "string"
+                  },
+                  "missingPolicy": {
+                    "$ref": "#/$defs/MissingValuePolicy",
+                    "default": {
+                      "kind": "error"
+                    }
+                  },
+                  "selector": {
+                    "$ref": "#/$defs/ValueSelector"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "selector"
+                ],
+                "type": "object"
+              }
+            ]
           },
           "MissingValuePolicy": {
             "oneOf": [
@@ -23445,23 +23103,6 @@
                 "additionalProperties": false,
                 "properties": {
                   "kind": {
-                    "const": "default",
-                    "type": "string"
-                  },
-                  "value": {
-                    "$ref": "#/$defs/DynamicValue"
-                  }
-                },
-                "required": [
-                  "kind",
-                  "value"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "kind": {
                     "const": "omit",
                     "type": "string"
                   }
@@ -23477,7 +23118,6 @@
             "enum": [
               "builtin",
               "declarative_http",
-              "remote_action",
               "agent",
               "model",
               "mcp_tool",
@@ -23485,14 +23125,6 @@
               "rag",
               "memory",
               "sandbox"
-            ],
-            "type": "string"
-          },
-          "NodeErrorPolicy": {
-            "enum": [
-              "stop_workflow",
-              "continue_regular_output",
-              "continue_error_output"
             ],
             "type": "string"
           },
@@ -23513,10 +23145,6 @@
                 "maximum": 65535,
                 "minimum": 0,
                 "type": "integer"
-              },
-              "onError": {
-                "$ref": "#/$defs/NodeErrorPolicy",
-                "default": "stop_workflow"
               },
               "retryOnFail": {
                 "default": false,
@@ -23572,6 +23200,34 @@
               "required"
             ],
             "type": "string"
+          },
+          "ReferenceBinding": {
+            "description": "Reference-only parameters such as List input and Loop input/output.",
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "reference",
+                    "type": "string"
+                  },
+                  "missingPolicy": {
+                    "$ref": "#/$defs/MissingValuePolicy",
+                    "default": {
+                      "kind": "error"
+                    }
+                  },
+                  "selector": {
+                    "$ref": "#/$defs/ValueSelector"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "selector"
+                ],
+                "type": "object"
+              }
+            ]
           },
           "ResourceOperation": {
             "enum": [
@@ -24278,6 +23934,11 @@
               {
                 "additionalProperties": false,
                 "properties": {
+                  "contextWindow": {
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
                   "credential": {
                     "anyOf": [
                       {
@@ -24310,6 +23971,7 @@
                   "provider",
                   "endpoint",
                   "model",
+                  "contextWindow",
                   "price"
                 ],
                 "type": "object"
@@ -24497,6 +24159,9 @@
                     "type": "array",
                     "uniqueItems": true
                   },
+                  "credentialType": {
+                    "type": "string"
+                  },
                   "kind": {
                     "const": "credential",
                     "type": "string"
@@ -24507,6 +24172,7 @@
                 },
                 "required": [
                   "kind",
+                  "credentialType",
                   "secret",
                   "allowedOperations"
                 ],
@@ -24869,7 +24535,7 @@
           "SandboxEgressModeV1": {
             "enum": [
               "none",
-              "public_https"
+              "tcp_proxy"
             ],
             "type": "string"
           },
@@ -24900,56 +24566,6 @@
             "enum": [
               "runtime",
               "observability"
-            ],
-            "type": "string"
-          },
-          "TemplateSegment": {
-            "oneOf": [
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "kind": {
-                    "const": "text",
-                    "type": "string"
-                  },
-                  "text": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "kind",
-                  "text"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "kind": {
-                    "const": "reference",
-                    "type": "string"
-                  },
-                  "missingPolicy": {
-                    "$ref": "#/$defs/MissingValuePolicy",
-                    "default": {
-                      "kind": "error"
-                    }
-                  },
-                  "selector": {
-                    "$ref": "#/$defs/ValueSelector"
-                  }
-                },
-                "required": [
-                  "kind",
-                  "selector"
-                ],
-                "type": "object"
-              }
-            ]
-          },
-          "ValueCoercion": {
-            "enum": [
-              "string"
             ],
             "type": "string"
           },
@@ -25175,15 +24791,25 @@
             ],
             "type": "object"
           },
+          "WorkflowCompletion": {
+            "description": "How the engine finalizes an execution whose branches reach exit nodes.\n\n- `FirstReturn` (default): the first delivery to reach an exit (main or\n  error port, symmetric) finalizes the execution immediately and cancels\n  every other in-flight activation.\n- `AllComplete`: the execution waits for quiescence; every reached exit is\n  evaluated against the shared `end.outputs` contract and each output field\n  is returned as an array with one element per reached exit (definition\n  order; unreached exits and unbound fields are omitted).",
+            "enum": [
+              "first_return",
+              "all_complete"
+            ],
+            "type": "string"
+          },
           "WorkflowEnd": {
             "additionalProperties": false,
             "properties": {
+              "completion": {
+                "$ref": "#/$defs/WorkflowCompletion",
+                "default": "first_return"
+              },
               "error": {
                 "$ref": "#/$defs/WorkflowErrorEnd",
                 "default": {
-                  "collectWindowMs": 5000,
-                  "outputs": {},
-                  "strategy": "fail_fast"
+                  "outputs": {}
                 }
               },
               "outputs": {
@@ -25199,29 +24825,19 @@
           "WorkflowErrorEnd": {
             "additionalProperties": false,
             "properties": {
-              "collectWindowMs": {
-                "default": 5000,
-                "format": "uint64",
-                "maximum": 60000,
-                "minimum": 100,
-                "type": "integer"
-              },
               "outputs": {
                 "additionalProperties": {
                   "$ref": "#/$defs/WorkflowOutput"
                 },
                 "default": {},
                 "type": "object"
-              },
-              "strategy": {
-                "$ref": "#/$defs/EndErrorStrategy",
-                "default": "fail_fast"
               }
             },
             "type": "object"
           },
           "WorkflowOutput": {
             "additionalProperties": false,
+            "description": "The global output contract shared by every exit node. Field values are\nmapped per exit in [`ExitParameters`], never here.",
             "properties": {
               "required": {
                 "default": false,
@@ -25233,14 +24849,8 @@
               "sensitive": {
                 "default": false,
                 "type": "boolean"
-              },
-              "value": {
-                "$ref": "#/$defs/DynamicValue"
               }
             },
-            "required": [
-              "value"
-            ],
             "type": "object"
           },
           "WorkflowStart": {
@@ -27165,7 +26775,6 @@
             "enum": [
               "builtin",
               "declarative_http",
-              "remote_action",
               "agent",
               "model",
               "mcp_tool",
@@ -28365,41 +27974,6 @@
           }
         ],
         "summary": "Get Execution Runtime Details"
-      }
-    },
-    "/internal/runtime/v1/query/executions/{id}/waits": {
-      "get": {
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ExecutionWaitPageV1"
-                }
-              }
-            },
-            "description": "Applied"
-          }
-        },
-        "security": [
-          {
-            "serviceJwt": [
-              "runtime.query.execution"
-            ]
-          }
-        ],
-        "summary": "List Execution Waits"
       }
     },
     "/internal/runtime/v1/query/executions:search": {

@@ -37,6 +37,8 @@ def test_backend_builder_copies_every_workspace_member_root() -> None:
 
 def test_chart_schemas_are_identical() -> None:
     canonical = json.loads(Path("deploy/values/values.schema.json").read_text(encoding="utf-8"))
+    worker_capabilities = canonical["$defs"]["workerService"]["properties"]["capability"]["enum"]
+    assert "remote_action" not in worker_capabilities
     for target in TARGETS:
         schema = json.loads(Path(f"deploy/helm/agentx-{target}/values.schema.json").read_text(encoding="utf-8"))
         assert schema == canonical
@@ -47,6 +49,7 @@ def test_chart_schemas_are_identical() -> None:
 def test_all_charts_lint_and_render(values_name: str) -> None:
     rendered = "\n".join(render(f"deploy/values/{values_name}", target) for target in TARGETS)
     documents = [document for document in yaml.safe_load_all(rendered) if isinstance(document, dict)]
+    values = yaml.safe_load(Path(f"deploy/values/{values_name}").read_text(encoding="utf-8"))
     for document in documents:
         pod_spec = document.get("spec", {})
         if document.get("kind") in {"Deployment", "StatefulSet", "DaemonSet", "Job"}:
@@ -71,13 +74,9 @@ def test_all_charts_lint_and_render(values_name: str) -> None:
     sandbox_manager = next(
         document
         for document in documents
-        if document.get("kind") == "Deployment"
-        and document.get("metadata", {}).get("name") == "sandbox-manager"
+        if document.get("kind") == "Deployment" and document.get("metadata", {}).get("name") == "sandbox-manager"
     )
-    sandbox_env = {
-        item["name"]
-        for item in sandbox_manager["spec"]["template"]["spec"]["containers"][0]["env"]
-    }
+    sandbox_env = {item["name"] for item in sandbox_manager["spec"]["template"]["spec"]["containers"][0]["env"]}
     assert {
         "AGENTX_RUNTIME_S3_ENDPOINT",
         "AGENTX_RUNTIME_S3_BUCKET",
@@ -88,6 +87,18 @@ def test_all_charts_lint_and_render(values_name: str) -> None:
         document.get("kind") == "NetworkPolicy"
         and document.get("metadata", {}).get("name") == "sandbox-manager-object-storage-egress"
         for document in documents
+    )
+    gateway_ingress = next(
+        document
+        for document in documents
+        if document.get("kind") == "NetworkPolicy"
+        and document.get("metadata", {}).get("name") == "agentx-egress-gateway-ingress"
+    )
+    sandbox_rule = next(
+        rule for rule in gateway_ingress["spec"]["ingress"] if any(port.get("port") == 3129 for port in rule["ports"])
+    )
+    assert {source["ipBlock"]["cidr"] for source in sandbox_rule["from"]} == set(
+        values["global"]["network"]["egressGateway"]["sandboxAccess"]["sourceCidrs"]
     )
 
 

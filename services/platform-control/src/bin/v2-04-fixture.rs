@@ -1,6 +1,12 @@
-use std::{collections::BTreeSet, env};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    env,
+};
 
-use agentx_bundle_builder::{WorkPackageBuildSource, build_work_package, compile_workflow_version};
+use agentx_bundle_builder::{
+    WorkPackageBuildSource, build_work_package, compile_workflow_version,
+    compile_workflow_version_with_dependencies,
+};
 use agentx_control_infrastructure::{
     ControlInfrastructureSettings, connect_control_mysql, control_object_store,
 };
@@ -53,8 +59,6 @@ const MEMORY_VERSION: &str = "018f0000-0000-7000-8000-000000000428";
 const SKILL: &str = "018f0000-0000-7000-8000-000000000429";
 const SKILL_VERSION: &str = "018f0000-0000-7000-8000-00000000042a";
 const SANDBOX_PROFILE: &str = "018f0000-0000-7000-8000-00000000042b";
-const WAIT_WORKFLOW: &str = "018f0000-0000-7000-8000-000000000431";
-const WAIT_IDENTITY: &str = "018f0000-0000-7000-8000-000000000432";
 const APPROVAL_WORKFLOW: &str = "018f0000-0000-7000-8000-000000000433";
 const APPROVAL_IDENTITY: &str = "018f0000-0000-7000-8000-000000000434";
 const EVALUATION_PACKAGE: &str = "018f0000-0000-7000-8000-000000000441";
@@ -88,7 +92,7 @@ async fn main() -> Result<()> {
             success_id,
             cancellation_id,
             &grandchild_definition()?,
-            &suspension_definition("wait")?,
+            &suspension_definition()?,
         )
         .await?;
         println!(
@@ -144,19 +148,21 @@ async fn main() -> Result<()> {
         )
         .await?;
 
-    let child_definition = child_definition()?;
-    compile_workflow_version(&child_definition, child_version)
-        .context("V2-04 child Workflow does not compile")?;
     let grandchild_definition = grandchild_definition()?;
-    compile_workflow_version(&grandchild_definition, id(GRANDCHILD_VERSION)?)
+    let grandchild_version = id(GRANDCHILD_VERSION)?;
+    compile_workflow_version(&grandchild_definition, grandchild_version)
         .context("V2-04 grandchild Workflow does not compile")?;
+    let child_definition = child_definition()?;
+    compile_workflow_version_with_dependencies(
+        &child_definition,
+        child_version,
+        &BTreeMap::from([(grandchild_version, grandchild_definition.clone())]),
+    )
+    .context("V2-04 child Workflow does not compile")?;
     let definition = full_definition()?;
     compile_workflow_version(&definition, workflow_version)
         .context("V2-04 full Workflow does not compile")?;
-    let wait_definition = suspension_definition("wait")?;
-    compile_workflow_version(&wait_definition, id(WAIT_WORKFLOW)?)
-        .context("V2-04 Wait Debug Workflow does not compile")?;
-    let approval_definition = suspension_definition("approval")?;
+    let approval_definition = suspension_definition()?;
     compile_workflow_version(&approval_definition, id(APPROVAL_WORKFLOW)?)
         .context("V2-04 Approval Debug Workflow does not compile")?;
     let resources = resource_fixtures(
@@ -168,18 +174,19 @@ async fn main() -> Result<()> {
     )?;
     seed_fixture_secrets(tenant).await?;
 
+    let admission_epoch = fixture_admission_epoch();
     let mut tx = pool.begin().await?;
     seed_workflows(
         &mut tx,
         &definition,
         &child_definition,
         &grandchild_definition,
-        &wait_definition,
         &approval_definition,
+        admission_epoch,
     )
     .await?;
     seed_resources(&mut tx, &resources).await?;
-    seed_runtime_identity_admission(&mut tx).await?;
+    seed_runtime_identity_admission(&mut tx, admission_epoch).await?;
     tx.commit().await?;
 
     println!(
@@ -195,15 +202,14 @@ async fn main() -> Result<()> {
             "serviceIdentityId":IDENTITY,
             "childWorkflowVersionId":CHILD_VERSION,
             "grandchildWorkflowVersionId":GRANDCHILD_VERSION,
-            "waitWorkflowId":WAIT_WORKFLOW,
             "approvalWorkflowId":APPROVAL_WORKFLOW,
             "skillObjectId":id(SKILL_VERSION)?,
             "resources":{
-                "model":MODEL,
+                "model":id(MODEL)?,
                 "mcp":MCP,
                 "rag":RAG,
-                "memory":MEMORY,
-                "skill":SKILL,
+                "memory":id(MEMORY)?,
+                "skill":id(SKILL)?,
                 "sandboxProfile":SANDBOX_PROFILE
             }
         }))?
@@ -475,15 +481,27 @@ fn id(value: &str) -> Result<Uuid> {
             return Ok(fixture_id(&format!("{seed}:{policy}"), "workflow-version"));
         }
     }
-    // Skill entrypoint objects are immutable runtime objects.  Scope them to
-    // the fixture seed so separate E2E fixtures never attempt to resurrect a
-    // previously collected object with a different upload identity.
-    if value == SKILL_VERSION {
+    // Model, Memory, and Skill snapshots vary by fixture scenario. Scope both
+    // resource identity and immutable version so exact grants are never
+    // rewritten underneath an earlier published Workflow Version.
+    if matches!(
+        value,
+        MODEL | MEMORY | SKILL | MODEL_VERSION | MEMORY_VERSION | SKILL_VERSION
+    ) {
         let seed = env::var("AGENTX_V2_FIXTURE_ID_SEED").unwrap_or_default();
         if !seed.is_empty() {
             let policy = env::var("AGENTX_V2_FIXTURE_SESSION_POLICY")
                 .unwrap_or_else(|_| "invocation".into());
-            return Ok(fixture_id(&format!("{seed}:{policy}"), "skill-version"));
+            let purpose = match value {
+                MODEL => "model",
+                MEMORY => "memory",
+                SKILL => "skill",
+                MODEL_VERSION => "model-version",
+                MEMORY_VERSION => "memory-version",
+                SKILL_VERSION => "skill-version",
+                _ => unreachable!(),
+            };
+            return Ok(fixture_id(&format!("{seed}:{policy}"), purpose));
         }
     }
     let value = override_name
@@ -522,7 +540,6 @@ async fn seed_fixture_secrets(tenant: Uuid) -> Result<()> {
 }
 
 fn reference(
-    binding_id: &str,
     binding_role: Option<&str>,
     resource_type: &str,
     resource_id: &str,
@@ -530,7 +547,6 @@ fn reference(
     operation: &str,
 ) -> Value {
     let mut value = json!({
-        "bindingId":binding_id,
         "resourceType":resource_type,
         "resourceId":resource_id,
         "resourceVersionId":resource_version_id,
@@ -544,6 +560,7 @@ fn reference(
 
 fn inspector_reference(resource_type: &str, resource_id: &str, resource_version_id: &str) -> Value {
     json!({
+        "bindingRole":resource_type,
         "resourceType":resource_type,
         "resourceId":resource_id,
         "resourceVersionId":resource_version_id,
@@ -564,6 +581,28 @@ fn full_definition() -> Result<WorkflowDefinition> {
     let system_prompt = env::var("AGENTX_V2_FIXTURE_SYSTEM_PROMPT").unwrap_or_else(|_| {
         "P3_ATTACHMENT_MATRIX: use an attached tool once, then return the result.".into()
     });
+    let user_question = env::var("AGENTX_V2_FIXTURE_USER_QUESTION")
+        .map(|text| json!({"kind":"template","segments":[{"kind":"text","text":text}]}))
+        .unwrap_or_else(|_| {
+            json!({
+                "kind":"template",
+                "segments":[{
+                    "kind":"reference",
+                    "selector":{
+                        "namespace":"inputs",
+                        "run":{"kind":"current"},
+                        "item":{"kind":"current"},
+                        "path":["message"]
+                    },
+                    "missingPolicy":{"kind":"error"}
+                }]
+            })
+        });
+    let max_total_tokens = env::var("AGENTX_V2_FIXTURE_MAX_TOTAL_TOKENS")
+        .ok()
+        .map(|value| value.parse::<u64>().context("invalid max total tokens"))
+        .transpose()?
+        .unwrap_or(2_000);
     let memory_operation =
         env::var("AGENTX_V2_FIXTURE_MEMORY_OPERATION").unwrap_or_else(|_| "read".into());
     anyhow::ensure!(
@@ -571,28 +610,30 @@ fn full_definition() -> Result<WorkflowDefinition> {
         "AGENTX_V2_FIXTURE_MEMORY_OPERATION must be read, write or manage"
     );
     let skill_version = id(SKILL_VERSION)?.to_string();
-    let mut parameters = json!({
-        "systemPrompt":system_prompt,"userQuestion":"agentx-p3-04-attachment",
+    let model_version = id(MODEL_VERSION)?.to_string();
+    let memory_version = id(MEMORY_VERSION)?.to_string();
+    let skill_id = id(SKILL)?.to_string();
+    let model_id = id(MODEL)?.to_string();
+    let memory_id = id(MEMORY)?.to_string();
+    let parameters = json!({
+        "systemPrompt":{"kind":"template","segments":[{"kind":"text","text":system_prompt}]},"userQuestion":user_question,
         "sessionPolicy":{"mode":session_policy},"maxIterations":4,"maxModelCalls":4,
-        "maxToolCalls":4,"maxTotalTokens":2000,"maxOutputTokens":512,"maxCostMicros":10000,
+        "maxToolCalls":4,"maxTotalTokens":max_total_tokens,"maxOutputTokens":512,"maxCostMicros":10000,
         "maxDurationMs":60000,"limitAction":"fail"
     });
-    if let Ok(threshold) = env::var("AGENTX_V2_FIXTURE_COMPACTION_THRESHOLD") {
-        parameters["compaction"] = json!({"thresholdTokens": threshold.parse::<u64>().context("invalid compaction threshold")?, "retainedMessages": 1});
-    }
     let nodes = vec![json!({
         "id":"agent","key":"agent","type":"agent","typeVersion":2,"name":"Agent",
-        "parameters":parameters,"outputProjection":{},"contextWrites":[],"resourceReferences":[
-            inspector_reference("model",MODEL,MODEL_VERSION),
-            reference("agent-tool",Some("mcp_tools"),"mcp_tool",MCP,MCP_VERSION,"use"),
-            reference("agent-rag",Some("knowledge"),"rag",RAG,RAG_VERSION,"read"),
-            reference("agent-memory",Some("long_term_memory"),"memory",MEMORY,MEMORY_VERSION,&memory_operation),
-            reference("agent-skill",Some("skills"),"skill",SKILL,&skill_version,"use")
+        "parameters":parameters,"contextWrites":[],"resourceReferences":[
+            inspector_reference("model",&model_id,&model_version),
+            reference(Some("mcp_tools"),"mcp_tool",MCP,MCP_VERSION,"use"),
+            reference(Some("knowledge"),"rag",RAG,RAG_VERSION,"read"),
+            reference(Some("long_term_memory"),"memory",&memory_id,&memory_version,&memory_operation),
+            reference(Some("skills"),"skill",&skill_id,&skill_version,"use")
         ]
     })];
     let nodes = [nodes, vec![json!({
         "id":"exit","key":"exit","type":"exit","typeVersion":1,"name":"End","disabled":false,"protected":true,
-        "parameters":{"outputs":{},"errorOutputs":{}},"outputProjection":{},"contextWrites":[],
+        "parameters":{"outputs":{},"errorOutputs":{}},"contextWrites":[],
         "resourceReferences":[],"settings":{}
     })]].concat();
     let connections = vec![
@@ -600,7 +641,7 @@ fn full_definition() -> Result<WorkflowDefinition> {
         json!({"id":"agent-end","sourceNodeId":"agent","sourceHandle":"main","targetNodeId":"exit","targetHandle":"main","order":0}),
     ];
     serde_json::from_value(json!({
-        "schemaVersion":"7.0",
+        "schemaVersion":"8.0",
         "start":{"inputs":{"type":"object","properties":{"message":{"type":"string"}},"required":["message"],"additionalProperties":false},"contexts":{}},
         "nodes":nodes,
         "connections":connections,
@@ -612,9 +653,9 @@ fn full_definition() -> Result<WorkflowDefinition> {
 
 fn child_definition() -> Result<WorkflowDefinition> {
     serde_json::from_value(json!({
-        "schemaVersion":"7.0",
+        "schemaVersion":"8.0",
         "start":{"inputs":{"type":"object","additionalProperties":true},"contexts":{}},
-        "nodes":[{"id":"grandchild","key":"grandchild","type":"sub_workflow","typeVersion":1,"name":"Fixed Grandchild","parameters":{"workflowVersionId":GRANDCHILD_VERSION},"outputProjection":{},"contextWrites":[],"resourceReferences":[]},{"id":"exit","key":"exit","type":"exit","typeVersion":1,"name":"End","disabled":false,"protected":true,"parameters":{"outputs":{},"errorOutputs":{}},"outputProjection":{},"contextWrites":[],"resourceReferences":[],"settings":{}}],
+        "nodes":[{"id":"grandchild","key":"grandchild","type":"sub_workflow","typeVersion":1,"name":"Fixed Grandchild","parameters":{"workflowVersionId":GRANDCHILD_VERSION,"inputs":{"kind":"object","fields":{}}},"contextWrites":[],"resourceReferences":[]},{"id":"exit","key":"exit","type":"exit","typeVersion":1,"name":"End","disabled":false,"protected":true,"parameters":{"outputs":{},"errorOutputs":{}} ,"contextWrites":[],"resourceReferences":[],"settings":{}}],
         "connections":[
             {"id":"child-start","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"grandchild","targetHandle":"main","order":0},
             {"id":"child-end","sourceNodeId":"grandchild","sourceHandle":"main","targetNodeId":"exit","targetHandle":"main","order":0}
@@ -627,9 +668,9 @@ fn child_definition() -> Result<WorkflowDefinition> {
 
 fn grandchild_definition() -> Result<WorkflowDefinition> {
     serde_json::from_value(json!({
-        "schemaVersion":"7.0",
+        "schemaVersion":"8.0",
         "start":{"inputs":{"type":"object","additionalProperties":true},"contexts":{}},
-        "nodes":[{"id":"grandchild-pass","key":"grandchild_pass","type":"no_op","typeVersion":1,"name":"Grandchild Pass","parameters":{},"outputProjection":{},"contextWrites":[],"resourceReferences":[]},{"id":"exit","key":"exit","type":"exit","typeVersion":1,"name":"End","disabled":false,"protected":true,"parameters":{"outputs":{},"errorOutputs":{}},"outputProjection":{},"contextWrites":[],"resourceReferences":[],"settings":{}}],
+        "nodes":[{"id":"grandchild-pass","key":"grandchild_pass","type":"set","typeVersion":1,"name":"Grandchild Pass","parameters":{},"contextWrites":[],"resourceReferences":[]},{"id":"exit","key":"exit","type":"exit","typeVersion":1,"name":"End","disabled":false,"protected":true,"parameters":{"outputs":{},"errorOutputs":{}},"contextWrites":[],"resourceReferences":[],"settings":{}}],
         "connections":[
             {"id":"grandchild-start","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"grandchild-pass","targetHandle":"main","order":0},
             {"id":"grandchild-end","sourceNodeId":"grandchild-pass","sourceHandle":"main","targetNodeId":"exit","targetHandle":"main","order":0}
@@ -640,28 +681,23 @@ fn grandchild_definition() -> Result<WorkflowDefinition> {
     .map_err(Into::into)
 }
 
-fn suspension_definition(node_type: &str) -> Result<WorkflowDefinition> {
-    let parameters = if node_type == "approval" {
-        json!({"title":"V2-04 Runtime approval","description":"Kubernetes E2E decision","candidateUserId":USER,"timeoutMs":300000})
-    } else {
-        json!({"kind":"webhook","authenticationMode":"signed","payloadSchema":{"type":"object"}})
-    };
-    let connections = if node_type == "approval" {
-        vec![
-            json!({"id":"start-suspend","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"suspend","targetHandle":"main","order":0}),
-            json!({"id":"approved-end","sourceNodeId":"suspend","sourceHandle":"approved","targetNodeId":"exit","targetHandle":"main","order":0}),
-            json!({"id":"rejected-end","sourceNodeId":"suspend","sourceHandle":"rejected","targetNodeId":"exit","targetHandle":"main","order":1}),
-        ]
-    } else {
-        vec![
-            json!({"id":"start-suspend","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"suspend","targetHandle":"main","order":0}),
-            json!({"id":"resumed-end","sourceNodeId":"suspend","sourceHandle":"resumed","targetNodeId":"exit","targetHandle":"main","order":0}),
-        ]
-    };
+fn suspension_definition() -> Result<WorkflowDefinition> {
+    let parameters = json!({
+        "title":{"kind":"template","segments":[{"kind":"text","text":"V2-04 Runtime approval"}]},
+        "description":{"kind":"template","segments":[{"kind":"text","text":"Kubernetes E2E decision"}]},
+        "candidateUserId":USER,
+        "timeoutMs":300000
+    });
+    let connections = vec![
+        json!({"id":"start-suspend","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"suspend","targetHandle":"main","order":0}),
+        json!({"id":"approved-end","sourceNodeId":"suspend","sourceHandle":"decision:approved","targetNodeId":"exit","targetHandle":"main","order":0}),
+        json!({"id":"rejected-end","sourceNodeId":"suspend","sourceHandle":"decision:rejected","targetNodeId":"exit","targetHandle":"main","order":1}),
+        json!({"id":"timed-out-end","sourceNodeId":"suspend","sourceHandle":"timed_out","targetNodeId":"exit","targetHandle":"main","order":2}),
+    ];
     serde_json::from_value(json!({
-        "schemaVersion":"7.0",
+        "schemaVersion":"8.0",
         "start":{"inputs":{"type":"object","additionalProperties":true},"contexts":{}},
-        "nodes":[{"id":"suspend","key":"suspend","type":node_type,"typeVersion":1,"name":"Suspend","parameters":parameters,"outputProjection":{},"contextWrites":[],"resourceReferences":[]},{"id":"exit","key":"exit","type":"exit","typeVersion":1,"name":"End","disabled":false,"protected":true,"parameters":{"outputs":{},"errorOutputs":{}},"outputProjection":{},"contextWrites":[],"resourceReferences":[],"settings":{}}],
+        "nodes":[{"id":"suspend","key":"suspend","type":"approval","typeVersion":1,"name":"Approval","parameters":parameters,"contextWrites":[],"resourceReferences":[]},{"id":"exit","key":"exit","type":"exit","typeVersion":1,"name":"End","disabled":false,"protected":true,"parameters":{"outputs":{},"errorOutputs":{}},"contextWrites":[],"resourceReferences":[],"settings":{}}],
         "connections":connections,
         "end":{"outputs":{}},
         "settings":{"activationBudget":20,"executionOrder":"deterministic"}
@@ -689,7 +725,13 @@ fn resource_fixtures(
     let rag = format!("http://lightrag.{dependencies_namespace}.svc:9621");
     let memory = format!("http://mem0.{dependencies_namespace}.svc:8000");
     let skill_version = id(SKILL_VERSION)?;
-    let mcp_schema_hash = agentx_runtime_contracts::content_hash(&json!({"type":"object"}))?;
+    let mcp_input_schema = json!({
+        "type":"object",
+        "properties":{"text":{"type":"string"}},
+        "required":["text"],
+        "additionalProperties":false
+    });
+    let mcp_schema_hash = agentx_runtime_contracts::content_hash(&mcp_input_schema)?;
     let skill_object = json!({
         "objectId":skill_version,
         "sourceKey":skill_source_key,
@@ -718,6 +760,15 @@ fn resource_fixtures(
         "manage" => "manage",
         _ => unreachable!(),
     };
+    let model_context_window = if let Ok(value) = env::var("AGENTX_V2_FIXTURE_COMPACTION_THRESHOLD")
+    {
+        let threshold = value
+            .parse::<u64>()
+            .context("invalid compaction threshold")?;
+        (threshold.saturating_mul(100).saturating_add(71) / 72).max(2)
+    } else {
+        128_000
+    };
     Ok(vec![
         resource(
             "agent",
@@ -729,6 +780,7 @@ fn resource_fixtures(
                 "providerType":"openai_compatible",
                 "endpoint":format!("{echo}/v1"),
                 "modelName":"echo-model",
+                "contextWindow":model_context_window,
                 "price":{"versionId":"fixture-v1","currency":"USD","inputPerMillion":"0","outputPerMillion":"0"},
                 "resourceVersion":1,
                 "vaultSecretRef":mcp_credential
@@ -756,7 +808,7 @@ fn resource_fixtures(
             MCP_CREDENTIAL,
             MCP_CREDENTIAL_VERSION,
             "use",
-            json!({"resourceVersion":1,"vaultSecretRef":mcp_credential}),
+            json!({"credentialType":"bearer","resourceVersion":1,"vaultSecretRef":mcp_credential}),
         )?,
         resource(
             "agent",
@@ -770,7 +822,7 @@ fn resource_fixtures(
                 "transport":mcp_transport,
                 "toolName":"echo",
                 "schemaHash":mcp_schema_hash,
-                "inputSchema":{"type":"object"},
+                "inputSchema":mcp_input_schema,
                 "sideEffect":"read_only",
                 "resourceVersion":1,
                 "vaultSecretRef":mcp_credential
@@ -782,7 +834,7 @@ fn resource_fixtures(
             RAG_CREDENTIAL,
             RAG_CREDENTIAL_VERSION,
             "use",
-            json!({"resourceVersion":1,"vaultSecretRef":rag_credential}),
+            json!({"credentialType":"bearer","resourceVersion":1,"vaultSecretRef":rag_credential}),
         )?,
         resource(
             "agent",
@@ -841,8 +893,8 @@ async fn seed_workflows(
     definition: &WorkflowDefinition,
     child_definition: &WorkflowDefinition,
     grandchild_definition: &WorkflowDefinition,
-    wait_definition: &WorkflowDefinition,
     approval_definition: &WorkflowDefinition,
+    admission_epoch: u64,
 ) -> Result<()> {
     let tenant = id(TENANT)?;
     let user = id(USER)?;
@@ -856,49 +908,38 @@ async fn seed_workflows(
     let environment = id(ENVIRONMENT)?;
     let deployment = workflow_deployment_id(version)?;
     let application = id(APPLICATION)?;
-    let admission_epoch = fixture_admission_epoch();
-    // Session-policy fixtures use distinct immutable Workflow Version IDs.
-    // The schema also enforces uniqueness on (workflow_id, version_number),
-    // so avoid colliding with the baseline version 1 seeded by the default
-    // fixture while keeping the numbers deterministic across retries.
-    let fixture_version_number = match env::var("AGENTX_V2_FIXTURE_SESSION_POLICY").as_deref() {
-        Ok("invocation") | Err(_) => 2_u64,
-        Ok("application_session") => 3_u64,
-        Ok(other) => anyhow::bail!(
-            "AGENTX_V2_FIXTURE_SESSION_POLICY must be invocation or application_session, got {other}"
-        ),
-    };
+    let fixture_version_number = sqlx::query_scalar::<_, u64>(
+        "SELECT CAST(COALESCE((SELECT version_number FROM workflow_versions WHERE tenant_id=? AND id=?),(SELECT COALESCE(MAX(version_number),0)+1 FROM workflow_versions WHERE tenant_id=? AND workflow_id=?)) AS UNSIGNED)",
+    )
+    .bind(tenant)
+    .bind(version)
+    .bind(tenant)
+    .bind(workflow)
+    .fetch_one(&mut **tx)
+    .await?;
     sqlx::query("INSERT INTO workflows(id,tenant_id,name,status,visibility,owner_user_id,owner_department_id) VALUES(?,?,'V2-04 Runtime Engine','active','private',?,?) ON DUPLICATE KEY UPDATE name=VALUES(name)")
         .bind(workflow).bind(tenant).bind(user).bind(department).execute(&mut **tx).await?;
     sqlx::query("INSERT INTO workflows(id,tenant_id,name,status,visibility,owner_user_id,owner_department_id) VALUES(?,?,'V2-04 Composite Child','active','private',?,?) ON DUPLICATE KEY UPDATE name=VALUES(name)")
         .bind(child_workflow).bind(tenant).bind(user).bind(department).execute(&mut **tx).await?;
     sqlx::query("INSERT INTO workflows(id,tenant_id,name,status,visibility,owner_user_id,owner_department_id) VALUES(?,?,'V2-04 Composite Grandchild','active','private',?,?) ON DUPLICATE KEY UPDATE name=VALUES(name)")
         .bind(grandchild_workflow).bind(tenant).bind(user).bind(department).execute(&mut **tx).await?;
-    for (workflow_id, name, identity_id, draft) in [
-        (
-            id(WAIT_WORKFLOW)?,
-            "V2-04 Wait Debug",
-            id(WAIT_IDENTITY)?,
-            wait_definition,
-        ),
-        (
-            id(APPROVAL_WORKFLOW)?,
-            "V2-04 Approval Debug",
-            id(APPROVAL_IDENTITY)?,
-            approval_definition,
-        ),
-    ] {
+    for (workflow_id, name, identity_id, draft) in [(
+        id(APPROVAL_WORKFLOW)?,
+        "V2-04 Approval Debug",
+        id(APPROVAL_IDENTITY)?,
+        approval_definition,
+    )] {
         sqlx::query("INSERT INTO workflows(id,tenant_id,name,status,visibility,owner_user_id,owner_department_id) VALUES(?,?,?,'active','private',?,?) ON DUPLICATE KEY UPDATE name=VALUES(name)")
             .bind(workflow_id).bind(tenant).bind(name).bind(user).bind(department).execute(&mut **tx).await?;
         sqlx::query("INSERT INTO workflow_service_identities(id,tenant_id,workflow_id,status,version) VALUES(?,?,?,'active',1) ON DUPLICATE KEY UPDATE status='active',version=1")
             .bind(identity_id).bind(tenant).bind(workflow_id).execute(&mut **tx).await?;
         let draft_value = serde_json::to_value(draft)?;
         let draft_hash = agentx_runtime_contracts::content_hash(draft)?;
-        sqlx::query("INSERT INTO workflow_drafts(id,tenant_id,workflow_id,schema_version,revision,definition_json,content_hash,updated_by) VALUES(?,?,?,'6.0',1,?,?,?) ON DUPLICATE KEY UPDATE revision=1,definition_json=VALUES(definition_json),content_hash=VALUES(content_hash),updated_by=VALUES(updated_by)")
+        sqlx::query("INSERT INTO workflow_drafts(id,tenant_id,workflow_id,schema_version,revision,definition_json,content_hash,updated_by) VALUES(?,?,?,'8.0',1,?,?,?) ON DUPLICATE KEY UPDATE revision=1,definition_json=VALUES(definition_json),content_hash=VALUES(content_hash),updated_by=VALUES(updated_by)")
             .bind(Uuid::now_v7()).bind(tenant).bind(workflow_id).bind(draft_value).bind(draft_hash.as_str()).bind(user).execute(&mut **tx).await?;
     }
-    sqlx::query("INSERT INTO workflow_service_identities(id,tenant_id,workflow_id,status,version) VALUES(?,?,?,'active',1) ON DUPLICATE KEY UPDATE status='active',version=1")
-        .bind(id(IDENTITY)?).bind(tenant).bind(workflow).execute(&mut **tx).await?;
+    sqlx::query("INSERT INTO workflow_service_identities(id,tenant_id,workflow_id,status,version) VALUES(?,?,?,'active',?) ON DUPLICATE KEY UPDATE status='active',version=VALUES(version)")
+        .bind(id(IDENTITY)?).bind(tenant).bind(workflow).bind(admission_epoch).execute(&mut **tx).await?;
     sqlx::query("INSERT INTO workflow_members(tenant_id,workflow_id,user_id,member_role,created_by) VALUES(?,?,?,'manager',?) ON DUPLICATE KEY UPDATE member_role='manager'")
         .bind(tenant).bind(workflow).bind(user).bind(user).execute(&mut **tx).await?;
     let workflow_grant = json!({
@@ -941,7 +982,7 @@ async fn seed_workflows(
         } else {
             1_u64
         };
-        sqlx::query("INSERT INTO workflow_versions(id,tenant_id,workflow_id,version_number,source_revision,schema_version,definition_json,content_hash,created_by) VALUES(?,?,?, ?,1,'6.0',?,?,?) ON DUPLICATE KEY UPDATE definition_json=VALUES(definition_json),content_hash=VALUES(content_hash),version_number=VALUES(version_number)")
+        sqlx::query("INSERT INTO workflow_versions(id,tenant_id,workflow_id,version_number,source_revision,schema_version,definition_json,content_hash,created_by) VALUES(?,?,?, ?,1,'8.0',?,?,?) ON DUPLICATE KEY UPDATE id=id")
             .bind(version_id).bind(tenant).bind(workflow_id).bind(version_number).bind(value).bind(hash).bind(user).execute(&mut **tx).await?;
     }
     let deployment_sequence = sqlx::query_scalar::<_, u64>(
@@ -1016,7 +1057,10 @@ async fn seed_resources(
     Ok(())
 }
 
-async fn seed_runtime_identity_admission(tx: &mut Transaction<'_, MySql>) -> Result<()> {
+async fn seed_runtime_identity_admission(
+    tx: &mut Transaction<'_, MySql>,
+    admission_epoch: u64,
+) -> Result<()> {
     let tenant = id(TENANT)?;
     let identity = id(IDENTITY)?;
     let workflow = id(WORKFLOW)?;
@@ -1024,7 +1068,6 @@ async fn seed_runtime_identity_admission(tx: &mut Transaction<'_, MySql>) -> Res
     // retaining the stable service identity.  Use a fresh monotonic epoch and
     // include it in outbox idempotency keys so Runtime accepts the new
     // authorization snapshot instead of treating it as a conflicting replay.
-    let admission_epoch = fixture_admission_epoch();
     let grants = sqlx::query("SELECT id,resource_type,resource_id,operation_key FROM resource_grants WHERE tenant_id=? AND subject_type='workflow_service_identity' AND subject_id=? ORDER BY id")
         .bind(tenant)
         .bind(identity)
@@ -1072,14 +1115,34 @@ async fn seed_runtime_identity_admission(tx: &mut Transaction<'_, MySql>) -> Res
 
 #[cfg(test)]
 mod tests {
+    use agentx_runtime::{CompileContext, NodeRegistry, WorkflowCompiler};
+
     use super::*;
 
     #[test]
     fn suspension_fixtures_follow_the_current_node_manifests() {
-        for (node_type, workflow_id) in [("wait", WAIT_WORKFLOW), ("approval", APPROVAL_WORKFLOW)] {
-            let definition = suspension_definition(node_type).unwrap();
-            compile_workflow_version(&definition, id(workflow_id).unwrap()).unwrap();
-        }
+        let definition = suspension_definition().unwrap();
+        compile_workflow_version(&definition, id(APPROVAL_WORKFLOW).unwrap()).unwrap();
+    }
+
+    #[test]
+    fn child_fixture_uses_the_fixed_grandchild_manifest() {
+        let grandchild = grandchild_definition().unwrap();
+        let grandchild_version = id(GRANDCHILD_VERSION).unwrap();
+        compile_workflow_version_with_dependencies(
+            &child_definition().unwrap(),
+            id(CHILD_VERSION).unwrap(),
+            &BTreeMap::from([(grandchild_version, grandchild)]),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn full_fixture_follows_the_current_agent_manifest() {
+        let definition = full_definition().unwrap();
+        let result = WorkflowCompiler::new(&NodeRegistry::m5_defaults())
+            .compile(&definition, &CompileContext::default());
+        assert!(result.is_ok(), "{:#?}", result.unwrap_err().issues);
     }
 
     #[test]
@@ -1131,6 +1194,12 @@ mod tests {
             .unwrap();
         assert_eq!(model.snapshot["providerType"], "openai_compatible");
         assert!(model.snapshot["price"]["currency"].is_string());
+        for credential in resources
+            .iter()
+            .filter(|resource| resource.resource_type == "credential")
+        {
+            assert_eq!(credential.snapshot["credentialType"], "bearer");
+        }
         let server = resources
             .iter()
             .find(|resource| resource.resource_type == "mcp_server")
@@ -1143,6 +1212,11 @@ mod tests {
             .unwrap();
         assert_eq!(tool.snapshot["serverId"], MCP_SERVER);
         assert_eq!(tool.snapshot["serverVersionId"], MCP_SERVER_VERSION);
+        assert_eq!(tool.snapshot["inputSchema"]["required"], json!(["text"]));
+        assert_eq!(
+            tool.snapshot["inputSchema"]["properties"]["text"]["type"],
+            "string"
+        );
         let skill = resources
             .iter()
             .find(|resource| resource.resource_type == "skill")

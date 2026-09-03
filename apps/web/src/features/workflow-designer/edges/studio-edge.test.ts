@@ -11,10 +11,9 @@ describe('studio edge routing', () => {
     expect(result.path).toContain('250')
   })
 
-  it('keeps binding and forward edges on Bezier paths', () => {
-    const binding = getStudioEdgePath({ sourceX: 120, sourceY: 220, sourcePosition: Position.Top, targetX: 200, targetY: 100, targetPosition: Position.Bottom }, true)
+  it('keeps forward edges on Bezier paths', () => {
     const forward = getStudioEdgePath({ sourceX: 120, sourceY: 100, sourcePosition: Position.Right, targetX: 320, targetY: 100, targetPosition: Position.Left })
-    expect(binding.path.startsWith('M')).toBe(true)
+    expect(forward.path.startsWith('M')).toBe(true)
     expect(forward.labelY).toBe(100)
   })
 })

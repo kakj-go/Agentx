@@ -13,16 +13,15 @@ pub use resource::{
     ResourceVersionSnapshot,
 };
 pub use workflow::{
-    BindingEdge, BindingLayout, BoundaryLayout, ContextDefinition, ContextMergePolicy,
-    ContextScope, ContextWrite, ContextWriteOperation, DebugPlan, DefinitionIssue, DynamicValue,
-    EditorAnnotation, EditorDocument, EditorEdge, EditorGroup, EditorViewport, EndErrorStrategy,
-    ExecutionOrder, ExecutionSource, ExitParameters, ExpressionBinaryOperator,
-    ExpressionFunction, ExpressionNode, ExpressionUnaryOperator, MissingValuePolicy,
-    NodeErrorPolicy, NodeLayout, NodeSettings, OutputProjectionField, TemplateSegment,
-    ValueCoercion, ValueNamespace, ValuePathSegment, ValueSelection, ValueSelector,
-    WORKFLOW_END_NODE_ID, WORKFLOW_EXIT_NODE_TYPE, WORKFLOW_START_NODE_ID, WorkflowBoundary,
-    WorkflowConnection, WorkflowDefinition, WorkflowEnd, WorkflowErrorEnd, WorkflowNode,
-    WorkflowOutput, WorkflowSettings, WorkflowStart, canonical_content_hash, validate_definition,
+    BoundaryLayout, ConditionOperator, ConditionSpec, ContextDefinition, ContextMergePolicy,
+    ContextScope, ContextWrite, ContextWriteOperation, DebugPlan, DefinitionIssue,
+    EditorAnnotation, EditorDocument, EditorEdge, EditorGroup, EditorViewport, ExecutionOrder,
+    ExecutionSource, ExitParameters, InputBinding, InputTemplateSegment, MissingValuePolicy,
+    NodeLayout, NodeSettings, ReferenceBinding, ValueNamespace, ValuePathSegment, ValueSelection,
+    ValueSelector, WORKFLOW_END_NODE_ID, WORKFLOW_EXIT_NODE_TYPE, WORKFLOW_SCHEMA_VERSION,
+    WORKFLOW_START_NODE_ID, WorkflowBoundary, WorkflowCompletion, WorkflowConnection,
+    WorkflowDefinition, WorkflowEnd, WorkflowErrorEnd, WorkflowNode, WorkflowOutput,
+    WorkflowSettings, WorkflowStart, canonical_content_hash, validate_definition,
     validate_editor_document,
 };
 

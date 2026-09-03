@@ -15,7 +15,7 @@ use agentx_runtime_contracts::{
     ExecutionCheckpointV1, ExecutionCollectionPageV1, ExecutionContextSnapshotV1,
     ExecutionDetailV1, ExecutionEventPageV1, ExecutionNodeV1, ExecutionRuntimeDetailsV1,
     ExecutionSearchPageV1, ExecutionSearchRequestV1, ExecutionSpecBundleV2, ExecutionTraceV1,
-    ExecutionWaitV1, GovernanceSnapshotPageV1, GovernanceSnapshotRequestV1, InvocationDetailV1,
+    GovernanceSnapshotPageV1, GovernanceSnapshotRequestV1, InvocationDetailV1,
     InvocationSearchPageV1, InvocationSearchRequestV1, ObservabilityAggregatePageV1,
     ObservabilityAggregateRequestV1, PrepareBundleRequestV1, PrepareWorkPackageRequestV1,
     ProcessSessionControlRequestV1, ProcessSessionControlResponseV1,
@@ -64,6 +64,17 @@ fn main() -> Result<()> {
             schema,
         )?;
     }
+    // Workflow definition / node manifest contracts live beside the runtime
+    // schemas; they are shared platform-wide rather than internal-only, so
+    // they are emitted as standalone files instead of OpenAPI components.
+    write_json(
+        &Path::new(&schema_directory).join("WorkflowDefinition.schema.json"),
+        &serde_json::to_value(schema_for!(agentx_domain::WorkflowDefinition))?,
+    )?;
+    write_json(
+        &Path::new(&schema_directory).join("NodeManifestVersion.schema.json"),
+        &serde_json::to_value(schema_for!(agentx_node_protocol::NodeManifestVersion))?,
+    )?;
     write_json(Path::new(&openapi_file), &internal_openapi(schemas.clone()))?;
     if let Some(path) = observability_openapi_file {
         if let Some(parent) = Path::new(&path).parent() {
@@ -144,13 +155,11 @@ fn contract_schemas() -> Result<Map<String, Value>> {
     insert::<InvocationSearchPageV1>(&mut schemas, "InvocationSearchPageV1")?;
     insert::<InvocationDetailV1>(&mut schemas, "InvocationDetailV1")?;
     insert::<ExecutionNodeV1>(&mut schemas, "ExecutionNodeV1")?;
-    insert::<ExecutionWaitV1>(&mut schemas, "ExecutionWaitV1")?;
     insert::<ExecutionCheckpointV1>(&mut schemas, "ExecutionCheckpointV1")?;
     insert::<ExecutionRuntimeDetailsV1>(&mut schemas, "ExecutionRuntimeDetailsV1")?;
     insert::<ExecutionArtifactV1>(&mut schemas, "ExecutionArtifactV1")?;
     insert::<ExecutionCollectionPageV1<ExecutionNodeV1>>(&mut schemas, "ExecutionNodePageV1")?;
     insert::<ExecutionEventPageV1>(&mut schemas, "ExecutionEventPageV1")?;
-    insert::<ExecutionCollectionPageV1<ExecutionWaitV1>>(&mut schemas, "ExecutionWaitPageV1")?;
     insert::<ExecutionCollectionPageV1<ExecutionCheckpointV1>>(
         &mut schemas,
         "ExecutionCheckpointPageV1",
@@ -250,7 +259,6 @@ fn internal_openapi(schemas: Map<String, Value>) -> Value {
             "/internal/runtime/v1/query/executions/{id}/nodes": get_with_id("List Execution Nodes", "ExecutionNodePageV1", "runtime.query.execution"),
             "/internal/runtime/v1/query/executions/{id}/nodes/{node_execution_id}": get_execution_node(),
             "/internal/runtime/v1/query/executions/{id}/events": get_execution_events(),
-            "/internal/runtime/v1/query/executions/{id}/waits": get_with_id("List Execution Waits", "ExecutionWaitPageV1", "runtime.query.execution"),
             "/internal/runtime/v1/query/executions/{id}/checkpoints": get_with_id("List Execution Checkpoints", "ExecutionCheckpointPageV1", "runtime.query.execution"),
             "/internal/runtime/v1/query/executions/{id}/runtime-details": get_with_id("Get Execution Runtime Details", "ExecutionRuntimeDetailsV1", "runtime.query.execution"),
             "/internal/runtime/v1/query/executions/{id}/artifacts/{artifact_id}": get_execution_artifact(),

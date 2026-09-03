@@ -57,12 +57,21 @@ pub fn ed25519_pair() -> Result<(String, String)> {
     ))
 }
 
-pub fn tls_pair() -> Result<(String, String)> {
-    let certificate = rcgen::generate_simple_self_signed(vec!["agentx-egress-gateway".into()])?;
+pub fn tls_pair(subject_alt_names: Vec<String>) -> Result<(String, String)> {
+    let certificate = rcgen::generate_simple_self_signed(subject_alt_names)?;
     Ok((certificate.key_pair.serialize_pem(), certificate.cert.pem()))
 }
 
 pub fn generate() -> Result<SigningMaterial> {
+    generate_with_egress_tls_names(vec!["agentx-egress-gateway".into()])
+}
+
+pub fn generate_with_egress_tls_names(
+    mut subject_alt_names: Vec<String>,
+) -> Result<SigningMaterial> {
+    subject_alt_names.push("agentx-egress-gateway".into());
+    subject_alt_names.sort();
+    subject_alt_names.dedup();
     let service = rsa_pair()?;
     let projector = rsa_pair()?;
     let bff = rsa_pair()?;
@@ -73,7 +82,7 @@ pub fn generate() -> Result<SigningMaterial> {
     let workflow_runtime = rsa_pair()?;
     let workflow_worker = rsa_pair()?;
     let sandbox = rsa_pair()?;
-    let tls = tls_pair()?;
+    let tls = tls_pair(subject_alt_names)?;
     Ok(SigningMaterial {
         service_private_key_pem: service.0,
         service_public_key_pem: service.1,

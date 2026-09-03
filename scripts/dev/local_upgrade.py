@@ -88,16 +88,31 @@ def kubectl(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--service", action="append", default=[], help="image service to rebuild (repeatable; default: all)")
+    parser.add_argument(
+        "--service", action="append", default=[], help="image service to rebuild (repeatable; default: all)"
+    )
     parser.add_argument("--values", type=Path, default=VALUES, help="values file (default: deploy/values/local.yaml)")
-    parser.add_argument("--target", default="all", choices=["all", "control", "runtime", "observability", "dependencies"], help="upgrade target")
+    parser.add_argument(
+        "--target",
+        default="all",
+        choices=["all", "control", "runtime", "observability", "dependencies"],
+        help="upgrade target",
+    )
     parser.add_argument("--skip-build", action="store_true", help="skip image build/import, only upgrade + restart")
-    parser.add_argument("--skip-restart", action="store_true", help="skip rollout restart of template-unchanged workloads")
-    parser.add_argument("--skip-ctl-build", action="store_true", help="skip rebuilding agentxctl (embedded charts stay as-is)")
+    parser.add_argument(
+        "--skip-restart", action="store_true", help="skip rollout restart of template-unchanged workloads"
+    )
+    parser.add_argument(
+        "--skip-ctl-build", action="store_true", help="skip rebuilding agentxctl (embedded charts stay as-is)"
+    )
     args = parser.parse_args()
 
     services = args.service or ALL_SERVICES
-    unknown = [service for service in services if service not in ALL_SERVICES and service not in ("agentx-bootstrap", "agentx-doctor", "echo-node", "echo-mcp")]
+    unknown = [
+        service
+        for service in services
+        if service not in ALL_SERVICES and service not in ("agentx-bootstrap", "agentx-doctor", "echo-node", "echo-mcp")
+    ]
     if unknown:
         raise SystemExit(f"unknown services: {', '.join(unknown)}")
 
@@ -135,6 +150,16 @@ def main() -> None:
                 continue
             namespace, name = deployment
             kubectl("rollout", "status", f"deployment/{name}", "-n", namespace, "--timeout=300s", check=False)
+
+    step(
+        "Verify ingress network-policy trust label (a missing agentx.io/ingress=allowed on the dependencies namespace makes every ingress request return 504)"
+    )
+    deps_namespace = kubectl(
+        "get", "namespace", "agentx-deps", "-o", r"jsonpath={.metadata.labels.agentx\.io/ingress}", check=False
+    )
+    if (deps_namespace.stdout or "").strip() != "allowed":
+        kubectl("label", "namespace", "agentx-deps", "agentx.io/ingress=allowed", "--overwrite")
+        print("    labeled agentx-deps (was missing)")
 
     step("Cluster health summary")
     for namespace in ("agentx-control", "agentx-runtime", "agentx-deps"):

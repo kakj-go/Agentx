@@ -11,5 +11,8 @@ spec:
         - namespaceSelector: { matchLabels: { agentx.io/plane: runtime } }
           podSelector: { matchLabels: { agentx.io/egress-client: managed } }
       ports: [{ protocol: TCP, port: 3128 }]
-    - from: [{ ipBlock: { cidr: 192.168.0.0/16 } }]
+    - from:
+        {{- range .Values.global.network.egressGateway.sandboxAccess.sourceCidrs }}
+        - ipBlock: { cidr: {{ . | quote }} }
+        {{- end }}
       ports: [{ protocol: TCP, port: 3129 }]

@@ -26,6 +26,7 @@ import {
   cancelExecution,
 } from "./api/studio-api";
 import { useExecutionEvents } from "./api/use-execution-events";
+import { useProviderOptions } from "./api/use-provider-options";
 import { useResourceOptions, type ResourceOptionRequest } from "./api/use-resource-options";
 import { WorkflowFlow, type WorkflowFlowHandle } from "./canvas/workflow-flow";
 import { deserializeDraft, serializeStudio } from "./model/serializer";
@@ -37,8 +38,8 @@ import {
   type CanvasPlacementRect,
 } from "./nodes/node-appearance";
 import { NodeInspector } from "./panels/node-inspector";
-import { ExitPanel } from "./panels/exit-panel";
-import { WorkflowInterfacePanel } from "./panels/workflow-interface-panel";
+import { ExitPanel } from "./panels/inspectors/exit-panel";
+import { StartPanel } from "./panels/inspectors/start-panel";
 import { NodePalette } from "./panels/node-palette";
 import { RuntimePanel } from "./panels/runtime-panel";
 import {
@@ -58,6 +59,7 @@ import { useStudioShortcuts } from "./utils/use-studio-shortcuts";
 import { configurationIssues } from "./utils/configuration";
 import { definitionIssues } from "./utils/definition-validation";
 import { includedActionNodeIds } from "./utils/debug-plan";
+import { iterationEndId } from "./utils/connections";
 
 type DebugMode = "full" | "single_node" | "to_node" | "from_node";
 type LocalRecovery = {
@@ -96,13 +98,26 @@ export function WorkflowCanvas() {
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [interfaceBoundary, setInterfaceBoundary] = useState<"start">();
   const [exitPanelId, setExitPanelId] = useState<string>();
-  const [creatorOpen, setCreatorOpen] = useState(false);
+  const [paletteCollapsed, setPaletteCollapsed] = useState(false);
   const [creatorSource, setCreatorSource] = useState<{
     nodeId: string;
     handleId: string;
-    mode: "output" | "binding";
+    manifestPortName?: string;
   }>();
   const flowRef = useRef<WorkflowFlowHandle>(null);
+  useEffect(() => {
+    if ((detailsOpen || interfaceBoundary || exitPanelId) && window.innerWidth < 1440) setPaletteCollapsed(true);
+  }, [detailsOpen, exitPanelId, interfaceBoundary]);
+  const openCreatorFromSource = useCallback(
+    (nodeId: string, handleId: string, manifestPortName?: string) => {
+      setCreatorSource({ nodeId, handleId, manifestPortName });
+      setPaletteCollapsed(false);
+      setInterfaceBoundary(undefined);
+      setExitPanelId(undefined);
+      setDetailsOpen(false);
+    },
+    [],
+  );
 
   const workflow = useQuery({
     queryKey: ["workflow", workflowId],
@@ -158,15 +173,23 @@ export function WorkflowCanvas() {
     () => (catalog.data ?? []).map((item) => item.manifest),
     [catalog.data],
   );
+  const subworkflowOptions = useProviderOptions(
+    manifests.find((manifest) => manifest.nodeType === "sub_workflow"),
+  );
   const manifestMap = useMemo(
-    () =>
-      new Map(
-        manifests.map((manifest) => [
+    () => {
+      const available = [
+        ...manifests,
+        ...(subworkflowOptions.workflowVersionId ?? []).flatMap((option) => option.manifest ? [option.manifest] : []),
+      ];
+      return new Map(
+        available.map((manifest) => [
           `${manifest.nodeType}@${manifest.version}`,
           manifest,
         ]),
-      ),
-    [manifests],
+      );
+    },
+    [manifests, subworkflowOptions.workflowVersionId],
   );
 
   const editor = useEditorStore(
@@ -181,8 +204,6 @@ export function WorkflowCanvas() {
       addConnectedAction: state.addConnectedAction,
       insertActionOnEdge: state.insertActionOnEdge,
       clearEdgeInsertRequest: state.clearEdgeInsertRequest,
-      addBinding: state.addBinding,
-      addConnectedBinding: state.addConnectedBinding,
       addExit: state.addExit,
       addAnnotation: state.addAnnotation,
       addGroup: state.addGroup,
@@ -233,6 +254,20 @@ export function WorkflowCanvas() {
     () => buildReferenceCatalog(referenceSource, manifestMap, selected?.id, (key, fallback) => key === "studio.executionReferences.root" ? executionReferenceRoot : t(key, fallback)),
     [executionReferenceRoot, manifestMap, referenceSource, selected?.id, t],
   );
+  const loopOutputCatalog = useMemo(
+    () => selected?.data.editorKind === "action" && selected.data.nodeType === "loop_over_items"
+      ? buildReferenceCatalog(referenceSource, manifestMap, iterationEndId(selected.id), (key, fallback) => key === "studio.executionReferences.root" ? executionReferenceRoot : t(key, fallback))
+      : undefined,
+    [executionReferenceRoot, manifestMap, referenceSource, selected, t],
+  );
+  const exitMainCatalog = useMemo(
+    () => exitPanelId ? buildReferenceCatalog(referenceSource, manifestMap, exitPanelId, (key, fallback) => key === "studio.executionReferences.root" ? executionReferenceRoot : t(key, fallback), "main") : undefined,
+    [executionReferenceRoot, exitPanelId, manifestMap, referenceSource, t],
+  );
+  const exitErrorCatalog = useMemo(
+    () => exitPanelId ? buildReferenceCatalog(referenceSource, manifestMap, exitPanelId, (key, fallback) => key === "studio.executionReferences.root" ? executionReferenceRoot : t(key, fallback), "error") : undefined,
+    [executionReferenceRoot, exitPanelId, manifestMap, referenceSource, t],
+  );
   const creatorSourceManifest = creatorSource
     ? (() => {
         const node = useEditorStore
@@ -243,12 +278,6 @@ export function WorkflowCanvas() {
           : undefined;
       })()
     : undefined;
-  const creatorBindingSlot =
-    creatorSource?.mode === "binding"
-      ? creatorSourceManifest?.bindingSlots.find(
-          (slot) => slot.placement === "canvas" && `binding:${slot.name}` === creatorSource.handleId,
-        )
-      : undefined;
   const runtime = useExecutionEvents(executionId);
   const revalidatePaste = useCallback(
     async (nodes: StudioDocument["nodes"], edges: StudioDocument["edges"]) => {
@@ -262,23 +291,6 @@ export function WorkflowCanvas() {
       const local = configurationIssues(candidate, manifestMap).filter(
         (issue) => issue.nodeId && pastedIds.has(issue.nodeId),
       );
-      if (!resources.loading) {
-        for (const node of nodes) {
-          if (node.data.editorKind !== "binding" || !node.data.resourceId)
-            continue;
-          const data = node.data;
-          const visible = resources.options[data.resourceType]?.some(
-            (option) => option.value === data.resourceId,
-          );
-          if (!visible)
-            local.push({
-              code: "PASTED_RESOURCE_UNAVAILABLE",
-              nodeId: node.id,
-              fieldPath: "resourceId",
-              message: t("studio.validation.issues.PASTED_RESOURCE_UNAVAILABLE"),
-            });
-        }
-      }
       if (local.length) return local.map((issue) => issue.message);
       const serialized = serializeStudio(candidate);
       const result = await validateDraft(
@@ -294,7 +306,7 @@ export function WorkflowCanvas() {
         )
         .map((issue) => issue.message);
     },
-    [manifestMap, resources.loading, resources.options, t, workflowId],
+    [manifestMap, t, workflowId],
   );
   useStudioShortcuts({
     workflowId,
@@ -309,8 +321,8 @@ export function WorkflowCanvas() {
     onOpenNode: () => setDetailsOpen(true),
     onEscape: () => {
       setDetailsOpen(false);
-      setCreatorOpen(false);
       setCreatorSource(undefined);
+      useEditorStore.getState().clearEdgeInsertRequest();
     },
   });
 
@@ -334,9 +346,9 @@ export function WorkflowCanvas() {
     setCreatorSource({
       nodeId: edge.source,
       handleId: edge.sourceHandle,
-      mode: "output",
     });
-    setCreatorOpen(true);
+    setPaletteCollapsed(false);
+    setInterfaceBoundary(undefined);
   }, [edgeInsertRequest]);
 
   useEffect(() => {
@@ -413,7 +425,25 @@ export function WorkflowCanvas() {
         error.detail.code === "DRAFT_REVISION_CONFLICT"
       )
         setConflictOpen(true);
-      else showToast(error.message);
+      else if (
+        error instanceof ApiClientError &&
+        error.detail.code === "INVALID_WORKFLOW_DRAFT"
+      ) {
+        const document = studioDocument(useEditorStore.getState());
+        setIssues(
+          (error.detail.fieldErrors ?? []).map((fieldError) => {
+            const match = /^nodes\[(\d+)]\.(.+)$/.exec(fieldError.field);
+            const node = match ? document.nodes[Number(match[1])] : undefined;
+            return {
+              code: fieldError.code,
+              message: fieldError.message,
+              nodeId: node?.id,
+              fieldPath: match?.[2] ?? fieldError.field,
+            };
+          }),
+        );
+        showToast(error.message);
+      } else showToast(error.message);
     },
   });
   const saveDocument = useCallback(
@@ -612,7 +642,6 @@ export function WorkflowCanvas() {
     label: manifest.displayName,
     key: uniqueNodeKey(manifest.nodeType),
     parameters: defaults(manifest),
-    outputProjection: {},
     contextWrites: [],
     resourceReferences: [],
     settings: {},
@@ -624,18 +653,18 @@ export function WorkflowCanvas() {
         node.data.editorKind === "action"
           ? manifestMap.get(`${node.data.nodeType}@${node.data.typeVersion}`)
           : undefined;
-      const metrics =
-        node.data.editorKind === "binding"
-          ? canvasNodeMetrics("default", { kind: "binding" })
-          : canvasNodeMetrics(canvasNodeRole(nodeManifest), {
-              inputs: nodeManifest?.inputPorts.length,
-              outputs: nodeManifest?.outputPorts.length,
-              bindings: nodeManifest?.bindingSlots.filter((slot) => slot.placement === "canvas").length,
-              richHeight: node.height ?? node.measured?.height,
-            });
+      const metrics = canvasNodeMetrics(canvasNodeRole(nodeManifest), {
+        richHeight: node.height ?? node.measured?.height,
+      });
+      // Container children carry parent-relative positions: resolve before occupancy checks.
+      const parentId =
+        node.data.editorKind === "action" ? node.data.parentId : undefined;
+      const parent = parentId
+        ? useEditorStore.getState().nodes.find((item) => item.id === parentId)
+        : undefined;
       return {
-        x: node.position.x,
-        y: node.position.y,
+        x: node.position.x + (parent?.position.x ?? 0),
+        y: node.position.y + (parent?.position.y ?? 0),
         width: node.width ?? node.measured?.width ?? metrics.width,
         height: node.height ?? node.measured?.height ?? metrics.height,
       };
@@ -666,14 +695,11 @@ export function WorkflowCanvas() {
   const addAction = (
     manifest: NodeManifest,
     position?: { x: number; y: number },
+    parentId?: string,
   ) => {
-    const metrics = canvasNodeMetrics(canvasNodeRole(manifest), {
-      inputs: manifest.inputPorts.length,
-      outputs: manifest.outputPorts.length,
-      bindings: manifest.bindingSlots.filter((slot) => slot.placement === "canvas").length,
-    });
+    const metrics = canvasNodeMetrics(canvasNodeRole(manifest));
     return editor.addAction(
-      actionData(manifest),
+      { ...actionData(manifest), parentId },
       position ?? defaultCanvasPosition(metrics),
     );
   };
@@ -681,8 +707,13 @@ export function WorkflowCanvas() {
     manifest: NodeManifest,
     position?: { x: number; y: number },
     targetHandle?: string,
+    parentId?: string,
   ) => {
     const state = useEditorStore.getState();
+    if (creatorSource?.nodeId.endsWith("::iteration-start")) {
+      const loopId = creatorSource.nodeId.slice(0, -"::iteration-start".length);
+      return addAction(manifest, position ?? { x: 180, y: 116 }, loopId);
+    }
     const insertion = state.edgeInsertRequest;
     if (insertion) {
       const sourceNode = state.nodes.find(
@@ -734,88 +765,35 @@ export function WorkflowCanvas() {
       editor.clearEdgeInsertRequest();
     }
     if (!creatorSource || !creatorSourceManifest)
-      return addAction(manifest, position);
+      return addAction(manifest, position, parentId);
     const sourceNode = state.nodes.find(
       (node) => node.id === creatorSource.nodeId,
     );
+    const sourceParentId = sourceNode?.data.editorKind === "action" ? sourceNode.data.parentId : undefined;
+    const nextParentId = parentId ?? sourceParentId;
     const sourcePort = creatorSourceManifest.outputPorts.find(
-      (port) => port.name === creatorSource.handleId,
+      (port) => port.name === (creatorSource.manifestPortName ?? creatorSource.handleId),
     );
     const targetPort = sourcePort
       ? (manifest.inputPorts.find(
           (port) => port.name === targetHandle && port.kind === sourcePort.kind,
         ) ?? manifest.inputPorts.find((port) => port.kind === sourcePort.kind))
       : undefined;
-    if (!sourceNode || !targetPort) return addAction(manifest, position);
-    const sourceMetrics = canvasNodeMetrics(
-      canvasNodeRole(creatorSourceManifest),
-      {
-        inputs: creatorSourceManifest.inputPorts.length,
-        outputs: creatorSourceManifest.outputPorts.length,
-        bindings: creatorSourceManifest.bindingSlots.filter((slot) => slot.placement === "canvas").length,
-        richHeight: sourceNode.height ?? sourceNode.measured?.height,
-      },
-    );
+    if (!sourceNode || !targetPort) return addAction(manifest, position, nextParentId);
+    const sourceMetrics = canvasNodeMetrics(canvasNodeRole(creatorSourceManifest), {
+      richHeight: sourceNode.height ?? sourceNode.measured?.height,
+    });
     return editor.addConnectedAction(
-      actionData(manifest),
+      { ...actionData(manifest), parentId: nextParentId },
       {
         nodeId: sourceNode.id,
         handleId: creatorSource.handleId,
         targetHandle: targetPort.name,
       },
       position ?? {
-        x: sourceNode.position.x + sourceMetrics.width + 160,
+        x: sourceNode.position.x + (sourceNode.width ?? sourceNode.measured?.width ?? sourceMetrics.width) + 160,
         y: sourceNode.position.y,
       },
-    );
-  };
-  const addBinding = (
-    resourceType: ResourceType,
-    role: string,
-    position?: { x: number; y: number },
-  ) =>
-    editor.addBinding(
-      {
-        editorKind: "binding",
-        bindingId: crypto.randomUUID(),
-        bindingRole: role,
-        resourceType,
-        operation:
-          resourceType === "rag" || resourceType === "memory" ? "read" : "use",
-        label: resourceType.replaceAll("_", " "),
-      },
-      position ??
-        defaultCanvasPosition(
-          canvasNodeMetrics("default", { kind: "binding" }),
-        ),
-    );
-  const addBindingFromCreator = (resourceType: ResourceType, role: string) => {
-    const data = {
-      editorKind: "binding" as const,
-      bindingId: crypto.randomUUID(),
-      bindingRole: role,
-      resourceType,
-      operation:
-        resourceType === "rag" || resourceType === "memory"
-          ? ("read" as const)
-          : ("use" as const),
-      label: resourceType.replaceAll("_", " "),
-    };
-    if (creatorSource?.mode !== "binding")
-      return editor.addBinding(
-        data,
-        defaultCanvasPosition(
-          canvasNodeMetrics("default", { kind: "binding" }),
-        ),
-      );
-    const target = useEditorStore
-      .getState()
-      .nodes.find((node) => node.id === creatorSource.nodeId);
-    if (!target) return editor.addBinding(data);
-    return editor.addConnectedBinding(
-      data,
-      { nodeId: target.id, handleId: creatorSource.handleId },
-      { x: target.position.x + 64, y: target.position.y + 190 },
     );
   };
   const loadServer = async () => {
@@ -878,7 +856,7 @@ export function WorkflowCanvas() {
       </div>
     );
   return (
-    <div className="flex h-full min-h-[calc(100vh-64px)] flex-col overflow-hidden">
+    <div className="flex h-dvh min-h-0 flex-col overflow-hidden">
       <StudioToolbar
         canRedo={canRedo}
         canUndo={canUndo}
@@ -908,7 +886,7 @@ export function WorkflowCanvas() {
       />
       <main className="relative flex min-h-0 flex-1">
         <NodePalette
-          bindingSlot={creatorBindingSlot}
+          collapsed={paletteCollapsed}
           manifests={manifests}
           onAddAction={(manifest, targetHandle) => {
             addActionFromCreator(manifest, undefined, targetHandle);
@@ -923,14 +901,18 @@ export function WorkflowCanvas() {
             );
             setCreatorSource(undefined);
           }}
-          onAddBinding={(type, role) => {
-            addBindingFromCreator(type, role);
-            setCreatorSource(undefined);
-            setInterfaceBoundary(undefined);
-            setDetailsOpen(true);
-          }}
           onAddExit={() => {
             const id = editor.addExit();
+            if (creatorSource && creatorSourceManifest) {
+              const sourcePort = creatorSourceManifest.outputPorts.find(
+                (port) => port.name === (creatorSource.manifestPortName ?? creatorSource.handleId),
+              );
+              if (sourcePort) {
+                const state = useEditorStore.getState();
+                const order = state.edges.filter((edge) => edge.source === creatorSource.nodeId && edge.sourceHandle === creatorSource.handleId && edge.data?.edgeKind === 'execution').length;
+                state.connect({ source: creatorSource.nodeId, sourceHandle: creatorSource.handleId, target: id, targetHandle: sourcePort.kind === 'error' ? 'error' : 'main' }, { edgeKind: 'execution', order, sourcePortKind: sourcePort.kind });
+              }
+            }
             setCreatorSource(undefined);
             setInterfaceBoundary(undefined);
             setExitPanelId(id);
@@ -940,20 +922,19 @@ export function WorkflowCanvas() {
             editor.addGroup(t("studio.group.default"));
             setCreatorSource(undefined);
           }}
-          onOpenChange={(open) => {
-            setCreatorOpen(open);
-            if (open) setInterfaceBoundary(undefined);
-            if (!open) {
+          onCollapsedChange={(collapsed) => {
+            setPaletteCollapsed(collapsed);
+            if (collapsed) {
               setCreatorSource(undefined);
               editor.clearEdgeInsertRequest();
             }
           }}
-          open={creatorOpen}
           sourceConnection={
-            creatorSourceManifest && creatorSource?.mode === "output"
+            creatorSourceManifest && creatorSource
               ? {
                   manifest: creatorSourceManifest,
                   handleId: creatorSource.handleId,
+                  manifestPortName: creatorSource.manifestPortName,
                 }
               : undefined
           }
@@ -962,20 +943,11 @@ export function WorkflowCanvas() {
           <WorkflowFlow
             ref={flowRef}
             manifests={manifestMap}
-            onDropAction={(manifest, position) => {
-              addActionFromCreator(manifest, position);
+            onQuickAdd={openCreatorFromSource}
+            onDropAction={(manifest, position, parentId) => {
+              addActionFromCreator(manifest, position, undefined, parentId);
               setCreatorSource(undefined);
-              setCreatorOpen(false);
               setDetailsOpen(true);
-            }}
-            onDropBinding={(type, role, position) => {
-              addBinding(type, role, position);
-              setDetailsOpen(true);
-            }}
-            onDropExit={(position) => {
-              const id = editor.addExit(position);
-              setExitPanelId(id);
-              setDetailsOpen(false);
             }}
             onBoundaryOpen={(boundary) => {
               setInterfaceBoundary(boundary);
@@ -1013,12 +985,8 @@ export function WorkflowCanvas() {
           />
         </div>
         <NodeInspector
-          compositeManifests={manifests.filter((item) => item.category === "workflows")}
           data={
-            selected?.data.editorKind === "action" ||
-            selected?.data.editorKind === "binding"
-              ? selected.data
-              : undefined
+            selected?.data.editorKind === "action" ? selected.data : undefined
           }
           executionId={executionId}
           fieldErrors={Object.fromEntries(
@@ -1032,7 +1000,14 @@ export function WorkflowCanvas() {
           nodeId={selected?.id}
           onChange={(patch) => {
             setLocatedIssue(undefined);
-            if (selected) editor.updateNode(selected.id, patch);
+            if (!selected || selected.data.editorKind !== "action") return;
+            const nextMode = patch.parameters?.mode;
+            const currentMode = selected.data.parameters.mode ?? "append";
+            if (selected.data.nodeType === "merge" && nextMode && nextMode !== currentMode) {
+              const hasInputs = useEditorStore.getState().edges.some((edge) => edge.target === selected.id);
+              if (hasInputs && !window.confirm(t("studio.panels.merge.modeChangeWarning"))) return;
+            }
+            editor.updateNode(selected.id, patch);
           }}
           onClose={() => setDetailsOpen(false)}
           onDelete={() => {
@@ -1052,15 +1027,17 @@ export function WorkflowCanvas() {
           onRun={() => void executeRun(undefined, {}, "single_node")}
           open={detailsOpen && !interfaceBoundary}
           referenceCatalog={referenceCatalog}
+          parameterCatalogs={loopOutputCatalog ? { outputSelector: loopOutputCatalog } : undefined}
           resources={resources.options}
           workflowId={workflowId}
         />
-        <WorkflowInterfacePanel
-          boundary={interfaceBoundary}
-          onClose={() => setInterfaceBoundary(undefined)}
-          onStartChange={editor.setStart}
-          start={referenceSource.start}
-        />
+        {interfaceBoundary && (
+          <StartPanel
+            onClose={() => setInterfaceBoundary(undefined)}
+            onStartChange={editor.setStart}
+            start={referenceSource.start}
+          />
+        )}
         {exitPanelId && selected?.data.editorKind === "exit" && selected.id === exitPanelId && (
           <ExitPanel
             end={referenceSource.end}
@@ -1069,7 +1046,8 @@ export function WorkflowCanvas() {
             onClose={() => setExitPanelId(undefined)}
             onEndChange={editor.setEnd}
             onExitUpdate={(id, patch) => editor.updateNode(id, patch)}
-            referenceCatalog={referenceCatalog}
+            errorReferenceCatalog={exitErrorCatalog}
+            referenceCatalog={exitMainCatalog}
           />
         )}
       </main>

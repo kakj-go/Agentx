@@ -92,16 +92,6 @@ CREATE TABLE runtime_projection_cursors (
     KEY idx_control_projection_claim (locked_until, projection_name)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
-ALTER TABLE approval_action_submissions
-    ADD COLUMN idempotency_key VARCHAR(192) NULL AFTER input_json,
-    ADD COLUMN request_hash CHAR(71) NULL AFTER idempotency_key,
-    ADD COLUMN runtime_command_id BINARY(16) NULL AFTER request_hash,
-    ADD COLUMN task_version BIGINT UNSIGNED NULL AFTER runtime_command_id,
-    ADD COLUMN response_json JSON NULL AFTER to_status,
-    ADD COLUMN runtime_receipt_json JSON NULL AFTER response_json,
-    ADD UNIQUE KEY uq_control_approval_idempotency (tenant_id, idempotency_key),
-    ADD UNIQUE KEY uq_control_approval_runtime_command (tenant_id, runtime_command_id);
-
 ALTER TABLE evaluation_runs
     ADD COLUMN work_package_id BINARY(16) NULL AFTER evaluation_profile_version_id,
     ADD COLUMN runtime_command_id BINARY(16) NULL AFTER work_package_id,

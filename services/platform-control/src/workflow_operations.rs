@@ -69,14 +69,6 @@ struct ImportRequest {
     description: Option<String>,
     visibility: String,
     package: Value,
-    #[serde(default)]
-    resource_bindings: BTreeMap<String, Binding>,
-}
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct Binding {
-    resource_id: Uuid,
-    resource_version_id: Option<Uuid>,
 }
 
 async fn export_workflow(
@@ -90,11 +82,11 @@ async fn export_workflow(
     let editor: Value = row
         .try_get::<Option<Value>, _>("editor_json")?
         .unwrap_or_else(|| json!({}));
-    let package_body = json!({"workflowDefinition":definition,"editorDocument":editor,"nodeLock":[],"subWorkflowReferences":[],"resourceBindingPlaceholders":[],"apiBinding":{}});
+    let package_body = json!({"workflowDefinition":definition,"editorDocument":editor,"nodeLock":[],"subWorkflowReferences":[],"apiBinding":{}});
     let hash = canonical_content_hash(&package_body).map_err(ApiError::internal)?;
     let signature = state.work_packages.sign_content_hash(&hash);
     Ok(Json(
-        json!({"manifest":{"packageSchemaVersion":"1.0","workflowSchemaVersion":"7.0","name":row.try_get::<String,_>("name")?,"contentHash":hash,"signatureAlgorithm":"ed25519","signingKeyId":state.work_packages.signing_key_id(),"signature":signature},"workflowDefinition":definition,"editorDocument":editor,"nodeLock":[],"subWorkflowReferences":[],"resourceBindingPlaceholders":[],"apiBinding":{}}),
+        json!({"manifest":{"packageSchemaVersion":"1.0","workflowSchemaVersion":agentx_domain::WORKFLOW_SCHEMA_VERSION,"name":row.try_get::<String,_>("name")?,"contentHash":hash,"signatureAlgorithm":"ed25519","signingKeyId":state.work_packages.signing_key_id(),"signature":signature},"workflowDefinition":definition,"editorDocument":editor,"nodeLock":[],"subWorkflowReferences":[],"apiBinding":{}}),
     ))
 }
 
@@ -113,14 +105,14 @@ async fn import_workflow(
         || manifest
             .get("workflowSchemaVersion")
             .and_then(Value::as_str)
-            != Some("7.0")
+            != Some(agentx_domain::WORKFLOW_SCHEMA_VERSION)
     {
         return Err(ApiError::unprocessable(
             "WORKFLOW_PACKAGE_VERSION_UNSUPPORTED",
-            "Only Workflow Package 1.0 / Definition 7.0 is supported",
+            "Only Workflow Package 1.0 / Definition 8.0 is supported",
         ));
     }
-    let mut definition = input
+    let definition = input
         .package
         .get("workflowDefinition")
         .cloned()
@@ -135,7 +127,7 @@ async fn import_workflow(
         .get("editorDocument")
         .cloned()
         .unwrap_or_else(|| json!({}));
-    let body = json!({"workflowDefinition":&definition,"editorDocument":&editor,"nodeLock":input.package.get("nodeLock").cloned().unwrap_or_else(||json!([])),"subWorkflowReferences":input.package.get("subWorkflowReferences").cloned().unwrap_or_else(||json!([])),"resourceBindingPlaceholders":input.package.get("resourceBindingPlaceholders").cloned().unwrap_or_else(||json!([])),"apiBinding":input.package.get("apiBinding").cloned().unwrap_or_else(||json!({}))});
+    let body = json!({"workflowDefinition":&definition,"editorDocument":&editor,"nodeLock":input.package.get("nodeLock").cloned().unwrap_or_else(||json!([])),"subWorkflowReferences":input.package.get("subWorkflowReferences").cloned().unwrap_or_else(||json!([])),"apiBinding":input.package.get("apiBinding").cloned().unwrap_or_else(||json!({}))});
     let hash = canonical_content_hash(&body).map_err(ApiError::internal)?;
     let expected = manifest
         .get("contentHash")
@@ -155,7 +147,6 @@ async fn import_workflow(
             "Workflow Package hash or signature is invalid",
         ));
     }
-    apply_bindings(&mut definition, &input.resource_bindings);
     let definition: WorkflowDefinition = serde_json::from_value(definition)
         .map_err(|e| ApiError::unprocessable("INVALID_WORKFLOW_DEFINITION", e.to_string()))?;
     let editor_doc: EditorDocument = serde_json::from_value(editor.clone())
@@ -191,7 +182,7 @@ async fn import_workflow(
         true,
     )
     .await?;
-    sqlx::query("INSERT INTO workflow_drafts(id,tenant_id,workflow_id,schema_version,revision,definition_json,editor_json,content_hash,editor_hash,updated_by) VALUES(?,?,?,'6.0',0,?,?,?,?,?)").bind(draft).bind(actor.tenant_id).bind(workflow).bind(definition).bind(editor).bind(&definition_hash).bind(editor_hash).bind(actor.user_id).execute(&mut *tx).await?;
+    sqlx::query("INSERT INTO workflow_drafts(id,tenant_id,workflow_id,schema_version,revision,definition_json,editor_json,content_hash,editor_hash,updated_by) VALUES(?,?,?,'8.0',0,?,?,?,?,?)").bind(draft).bind(actor.tenant_id).bind(workflow).bind(definition).bind(editor).bind(&definition_hash).bind(editor_hash).bind(actor.user_id).execute(&mut *tx).await?;
     tx.commit().await?;
     Ok((
         StatusCode::CREATED,
@@ -409,32 +400,6 @@ fn runtime_debug_mode(mode: &str) -> ApiResult<agentx_runtime_contracts::Partial
     }
 }
 
-fn apply_bindings(value: &mut Value, bindings: &BTreeMap<String, Binding>) {
-    match value {
-        Value::Object(map) => {
-            if let Some(binding) = map
-                .get("bindingId")
-                .and_then(Value::as_str)
-                .and_then(|id| bindings.get(id))
-            {
-                map.insert("resourceId".into(), json!(binding.resource_id));
-                map.insert(
-                    "resourceVersionId".into(),
-                    json!(binding.resource_version_id),
-                );
-            }
-            for child in map.values_mut() {
-                apply_bindings(child, bindings);
-            }
-        }
-        Value::Array(items) => {
-            for item in items {
-                apply_bindings(item, bindings)
-            }
-        }
-        _ => {}
-    }
-}
 fn validate_visibility(value: &str) -> ApiResult<()> {
     if !matches!(value, "private" | "department" | "company") {
         return Err(ApiError::bad_request(
@@ -448,23 +413,6 @@ fn validate_visibility(value: &str) -> ApiResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn applies_resource_bindings() {
-        let id = Uuid::now_v7();
-        let mut value = json!({"bindingId":"model"});
-        apply_bindings(
-            &mut value,
-            &BTreeMap::from([(
-                "model".into(),
-                Binding {
-                    resource_id: id,
-                    resource_version_id: None,
-                },
-            )]),
-        );
-        assert_eq!(value["resourceId"], json!(id));
-    }
-
     #[test]
     fn public_debug_modes_map_to_runtime_modes() {
         use agentx_runtime_contracts::PartialExecutionModeV1;

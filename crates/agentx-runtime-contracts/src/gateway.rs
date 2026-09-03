@@ -39,13 +39,6 @@ pub enum ScheduleMisfirePolicyV1 {
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub enum LifecycleOperationV1 {
-    Activate,
-    Deactivate,
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
 pub enum WebhookProviderV1 {
     Agentx,
     Dingtalk,
@@ -150,16 +143,6 @@ pub enum RuntimeTriggerConfigurationV1 {
         timezone: String,
         misfire_policy: ScheduleMisfirePolicyV1,
         grace_seconds: u32,
-        input: Value,
-    },
-    Poll {
-        interval_seconds: u32,
-        provider_endpoint: String,
-        input: Value,
-    },
-    Lifecycle {
-        operation: LifecycleOperationV1,
-        provider_endpoint: String,
         input: Value,
     },
 }
@@ -415,14 +398,6 @@ pub struct ArtifactUploadResponseV1 {
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct WaitResumeRequestV1 {
-    pub output_port: Option<String>,
-    #[serde(default)]
-    pub payload: Value,
-}
-
-#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CommandAcceptedV1 {
     pub accepted: bool,
     pub replayed: bool,
@@ -442,10 +417,18 @@ mod tests {
     #[test]
     fn webhook_trigger_configuration_defaults_mode_to_callback() {
         let legacy = serde_json::json!({"kind":"webhook","publicId":"pub","secret":{"mount":"secret","path":"tenants/t/webhooks/w","key":"value","version":1}});
-        let RuntimeTriggerConfigurationV1::Webhook { mode, .. } = serde_json::from_value(legacy).unwrap() else { panic!("expected webhook variant") };
+        let RuntimeTriggerConfigurationV1::Webhook { mode, .. } =
+            serde_json::from_value(legacy).unwrap()
+        else {
+            panic!("expected webhook variant")
+        };
         assert_eq!(mode, WebhookChannelModeV1::Callback);
         let stream = serde_json::json!({"kind":"webhook","publicId":"pub","secret":{"mount":"secret","path":"tenants/t/webhooks/w","key":"value","version":1},"mode":"stream"});
-        let RuntimeTriggerConfigurationV1::Webhook { mode, .. } = serde_json::from_value(stream).unwrap() else { panic!("expected webhook variant") };
+        let RuntimeTriggerConfigurationV1::Webhook { mode, .. } =
+            serde_json::from_value(stream).unwrap()
+        else {
+            panic!("expected webhook variant")
+        };
         assert_eq!(mode, WebhookChannelModeV1::Stream);
     }
 
@@ -459,7 +442,8 @@ mod tests {
             "conversation":{"id":"chat","name":null,"conversationType":"group"},
             "sender":{"id":"user"},
             "message":{"text":"hello"}
-        })).unwrap();
+        }))
+        .unwrap();
         assert!(context.session_webhook.is_none());
         assert!(context.session_webhook_expires_at.is_none());
     }

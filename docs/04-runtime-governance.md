@@ -275,9 +275,9 @@ SSE、取消和重试边界：
 
 安全基线：
 
-- Sandbox Profile 的强类型网络上限固定为 `{"defaultAction":"deny","egressMode":"none|public_https"}`；旧数据和缺失字段归一为 `none`。
-- Code 节点默认 `egressMode=none`。只有节点和其绑定的 Sandbox Profile 同时开启 `public_https` 才能联网，创建不可变 Workflow Version 时校验并固化到 Bundle；节点不能提升 Profile 的能力。
-- `public_https` 只允许 DNS 和 `agentx-egress-gateway` 的 Sandbox TLS 代理入口。Manager 通过 execd `envs` 注入短期 `HTTPS_PROXY`，可选私有 CA 通过临时文件注入；Token、CA 和 Credential 不进入命令、日志或 Artifact。
+- Sandbox Profile 的强类型网络上限固定为 `{"defaultAction":"deny","egressMode":"none|tcp_proxy"}`。旧枚举不读取、不转换；环境按当前DDL重建。
+- Code 节点使用 `networkPolicy.mode=deny|allowlist` 和最多32个目标的域名/IP/CIDR及端口段。只有节点白名单与绑定的 Sandbox Profile `tcp_proxy` 上限同时允许时才能联网；节点不能提升Profile能力。
+- OpenSandbox NetworkPolicy只允许DNS和`agentx-egress-gateway`。Manager注入短期`HTTP_PROXY/HTTPS_PROXY/AGENTX_TCP_PROXY_URL`；Gateway逐次校验签名Token中的目标、端口、策略hash和DNS结果。显式白名单可以访问管理员允许的企业私网，但回环、链路本地、Metadata、Kubernetes API、Pod/Service网段、`.svc/.cluster.local`和Agentx内部服务永久拒绝。Token、CA和Credential不进入Definition、命令、Trace、日志或Artifact。
 - 固定 OpenSandbox Lifecycle Spec 的网络规则只支持 FQDN，不支持端口字段；Agentx 不发送供应商未定义的 `port/ports`。端口收敛由 Gateway 专用 Service/NodePort/私有 LB 仅映射 Profile Endpoint 到容器 `3129` 实现，生产代理域名/IP 禁止复用其他服务。
 - Gateway 对每个 CONNECT 重新解析并固定已验证的公共地址，永久拒绝私网、集群地址、Kubernetes API、Metadata、回环和链路本地地址。代码不能绕过代理直连公网。
 - Runtime CONNECT Token 单次使用且最长 60 秒；Sandbox wildcard Token 不超过 Sandbox TTL，并默认限制为单 Token 4 个并发 Tunnel、32 次连接和累计 1 小时。四个签发身份的 KID 必须匹配各自角色前缀，轮换期间只允许当前/上一把公钥短暂重叠。

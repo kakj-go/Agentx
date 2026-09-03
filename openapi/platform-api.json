@@ -445,6 +445,25 @@
       },
       "ApprovalResponse": {
         "properties": {
+          "buttons": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "label": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "label"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
           "claimedBy": {
             "format": "uuid",
             "type": [
@@ -466,6 +485,12 @@
             "format": "date-time",
             "type": [
               "string",
+              "null"
+            ]
+          },
+          "decision": {
+            "type": [
+              "object",
               "null"
             ]
           },
@@ -519,7 +544,8 @@
           "status",
           "resumeStatus",
           "version",
-          "createdAt"
+          "createdAt",
+          "buttons"
         ],
         "type": "object"
       },
@@ -1509,35 +1535,52 @@
       },
       "CreateWebhookRequest": {
         "properties": {
-          "providerType": {
-            "enum": ["dingtalk", "wecom", "feishu", "agentx"],
-            "type": "string"
+          "channelConfig": {
+            "additionalProperties": {},
+            "type": [
+              "object",
+              "null"
+            ]
           },
           "channelMode": {
             "type": "string"
-          },
-          "channelConfig": {
-            "additionalProperties": {},
-            "type": ["object", "null"]
-          },
-          "inputMappings": {
-            "items": {
-              "additionalProperties": false,
-              "properties": {
-                "source": {"type": "string"},
-                "target": {"type": "string"},
-                "missingPolicy": {"type": "string"}
-              },
-              "required": ["source", "target"],
-              "type": "object"
-            },
-            "type": "array"
           },
           "fixedInputs": {
             "additionalProperties": {},
             "type": "object"
           },
+          "inputMappings": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "missingPolicy": {
+                  "type": "string"
+                },
+                "source": {
+                  "type": "string"
+                },
+                "target": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "source",
+                "target"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
           "name": {
+            "type": "string"
+          },
+          "providerType": {
+            "enum": [
+              "dingtalk",
+              "wecom",
+              "feishu",
+              "agentx"
+            ],
             "type": "string"
           }
         },
@@ -1920,8 +1963,23 @@
         "type": "object"
       },
       "DecideApprovalRequest": {
+        "additionalProperties": false,
         "properties": {
-          "input": {},
+          "decisionId": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "idempotencyKey": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "version": {
             "format": "int64",
             "minimum": 0,
@@ -1929,7 +1987,9 @@
           }
         },
         "required": [
-          "version"
+          "version",
+          "decisionId",
+          "idempotencyKey"
         ],
         "type": "object"
       },
@@ -3185,15 +3245,6 @@
           "package": {
             "$ref": "#/components/schemas/WorkflowPackage"
           },
-          "resourceBindings": {
-            "additionalProperties": {
-              "$ref": "#/components/schemas/ResourceBindingTarget"
-            },
-            "propertyNames": {
-              "type": "string"
-            },
-            "type": "object"
-          },
           "visibility": {
             "type": "string"
           }
@@ -4339,6 +4390,7 @@
           "label": {
             "type": "string"
           },
+          "manifest": {},
           "value": {
             "type": "string"
           }
@@ -4821,59 +4873,6 @@
           "resourceId",
           "grantedCount",
           "alreadyGrantedCount"
-        ],
-        "type": "object"
-      },
-      "ResourceBindingPlaceholder": {
-        "properties": {
-          "bindingRole": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "id": {
-            "type": "string"
-          },
-          "nodeId": {
-            "type": "string"
-          },
-          "operation": {
-            "type": "string"
-          },
-          "referenceIndex": {
-            "minimum": 0,
-            "type": "integer"
-          },
-          "resourceType": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "nodeId",
-          "referenceIndex",
-          "resourceType",
-          "operation"
-        ],
-        "type": "object"
-      },
-      "ResourceBindingTarget": {
-        "properties": {
-          "resourceId": {
-            "format": "uuid",
-            "type": "string"
-          },
-          "resourceVersionId": {
-            "format": "uuid",
-            "type": [
-              "string",
-              "null"
-            ]
-          }
-        },
-        "required": [
-          "resourceId"
         ],
         "type": "object"
       },
@@ -7351,35 +7350,52 @@
       },
       "UpdateWebhookRequest": {
         "properties": {
-          "providerType": {
-            "enum": ["dingtalk", "wecom", "feishu", "agentx"],
-            "type": "string"
+          "channelConfig": {
+            "additionalProperties": {},
+            "type": [
+              "object",
+              "null"
+            ]
           },
           "channelMode": {
             "type": "string"
-          },
-          "channelConfig": {
-            "additionalProperties": {},
-            "type": ["object", "null"]
-          },
-          "inputMappings": {
-            "items": {
-              "additionalProperties": false,
-              "properties": {
-                "source": {"type": "string"},
-                "target": {"type": "string"},
-                "missingPolicy": {"type": "string"}
-              },
-              "required": ["source", "target"],
-              "type": "object"
-            },
-            "type": "array"
           },
           "fixedInputs": {
             "additionalProperties": {},
             "type": "object"
           },
+          "inputMappings": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "missingPolicy": {
+                  "type": "string"
+                },
+                "source": {
+                  "type": "string"
+                },
+                "target": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "source",
+                "target"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
           "name": {
+            "type": "string"
+          },
+          "providerType": {
+            "enum": [
+              "dingtalk",
+              "wecom",
+              "feishu",
+              "agentx"
+            ],
             "type": "string"
           },
           "status": {
@@ -7596,145 +7612,57 @@
         ],
         "type": "object"
       },
-      "WaitListResponse": {
-        "properties": {
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/WaitResponse"
-            },
-            "type": "array"
-          }
-        },
-        "required": [
-          "items"
-        ],
-        "type": "object"
-      },
-      "WaitResponse": {
-        "properties": {
-          "authenticationMode": {
-            "type": "string"
-          },
-          "executionId": {
-            "format": "uuid",
-            "type": "string"
-          },
-          "id": {
-            "format": "uuid",
-            "type": "string"
-          },
-          "nodeExecutionId": {
-            "format": "uuid",
-            "type": "string"
-          },
-          "resumeUrl": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "status": {
-            "type": "string"
-          },
-          "timeoutAt": {
-            "format": "date-time",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "waitKind": {
-            "type": "string"
-          },
-          "wakeAt": {
-            "format": "date-time",
-            "type": [
-              "string",
-              "null"
-            ]
-          }
-        },
-        "required": [
-          "id",
-          "executionId",
-          "nodeExecutionId",
-          "waitKind",
-          "status",
-          "authenticationMode"
-        ],
-        "type": "object"
-      },
       "WebhookProviderTemplate": {
         "properties": {
-          "provider": {
-            "type": "string"
-          },
-          "mode": {
-            "type": "string"
-          },
           "fields": {
             "items": {
               "properties": {
-                "key": {"type": "string"},
-                "sensitive": {"type": "boolean"},
-                "required": {"type": "boolean"}
+                "key": {
+                  "type": "string"
+                },
+                "required": {
+                  "type": "boolean"
+                },
+                "sensitive": {
+                  "type": "boolean"
+                }
               },
-              "required": ["key", "sensitive", "required"],
+              "required": [
+                "key",
+                "sensitive",
+                "required"
+              ],
               "type": "object"
             },
             "type": "array"
           },
           "mappingSources": {
             "description": "Raw payload paths (raw.<dotted.path>) this provider's messages carry beyond the standardized Trigger Context fields, offered as mapping source suggestions.",
-            "items": {"type": "string"},
+            "items": {
+              "type": "string"
+            },
             "type": "array"
+          },
+          "mode": {
+            "type": "string"
+          },
+          "provider": {
+            "type": "string"
           }
         },
-        "required": ["provider", "mode", "fields"],
+        "required": [
+          "provider",
+          "mode",
+          "fields"
+        ],
         "type": "object"
       },
       "WebhookResponse": {
         "properties": {
-          "id": {
-            "format": "uuid",
-            "type": "string"
-          },
-          "name": {
-            "type": "string"
-          },
-          "providerType": {
-            "type": "string"
-          },
           "channelMode": {
             "type": "string"
           },
           "configFields": {
-            "additionalProperties": {},
-            "type": "object"
-          },
-          "connectionStatus": {
-            "type": ["string", "null"]
-          },
-          "connectionError": {
-            "type": ["string", "null"]
-          },
-          "lastConnectedAt": {
-            "type": ["string", "null"]
-          },
-          "inputMappings": {
-            "items": {
-              "additionalProperties": false,
-              "properties": {
-                "source": {"type": "string"},
-                "target": {"type": "string"},
-                "missingPolicy": {"type": "string"}
-              },
-              "required": ["source", "target"],
-              "type": "object"
-            },
-            "type": "array"
-          },
-          "fixedInputs": {
             "additionalProperties": {},
             "type": "object"
           },
@@ -7743,11 +7671,65 @@
             "minimum": 0,
             "type": "integer"
           },
+          "connectionError": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "connectionStatus": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "fixedInputs": {
+            "additionalProperties": {},
+            "type": "object"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "inputMappings": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "missingPolicy": {
+                  "type": "string"
+                },
+                "source": {
+                  "type": "string"
+                },
+                "target": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "source",
+                "target"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "lastConnectedAt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "mappingCount": {
-            "type": "integer",
-            "minimum": 0
+            "minimum": 0,
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
           },
           "path": {
+            "type": "string"
+          },
+          "providerType": {
             "type": "string"
           },
           "publicId": {
@@ -7860,12 +7842,6 @@
             },
             "type": "array"
           },
-          "resourceBindingPlaceholders": {
-            "items": {
-              "$ref": "#/components/schemas/ResourceBindingPlaceholder"
-            },
-            "type": "array"
-          },
           "subWorkflowReferences": {
             "items": {
               "format": "uuid",
@@ -7881,7 +7857,6 @@
           "editorDocument",
           "nodeLock",
           "subWorkflowReferences",
-          "resourceBindingPlaceholders",
           "apiBinding"
         ],
         "type": "object"
@@ -9026,29 +9001,6 @@
         ]
       }
     },
-    "/api/v1/webhook-provider-templates": {
-      "get": {
-        "operationId": "list_webhook_provider_templates",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/WebhookProviderTemplate"
-                  },
-                  "type": "array"
-                }
-              }
-            },
-            "description": ""
-          }
-        },
-        "tags": [
-          "applications"
-        ]
-      }
-    },
     "/api/v1/approvals": {
       "get": {
         "operationId": "list_approvals",
@@ -9070,25 +9022,6 @@
     "/api/v1/approvals/{id}/actions": {
       "get": {
         "operationId": "list_approval_actions",
-        "responses": {},
-        "tags": [
-          "operations"
-        ]
-      }
-    },
-    "/api/v1/approvals/{id}/approve": {
-      "post": {
-        "operationId": "approve",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/DecideApprovalRequest"
-              }
-            }
-          },
-          "required": true
-        },
         "responses": {},
         "tags": [
           "operations"
@@ -9142,6 +9075,25 @@
         ]
       }
     },
+    "/api/v1/approvals/{id}/decide": {
+      "post": {
+        "operationId": "decide_approval",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DecideApprovalRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {},
+        "tags": [
+          "operations"
+        ]
+      }
+    },
     "/api/v1/approvals/{id}/reassign": {
       "post": {
         "operationId": "reassign_approval",
@@ -9161,47 +9113,9 @@
         ]
       }
     },
-    "/api/v1/approvals/{id}/reject": {
-      "post": {
-        "operationId": "reject",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/DecideApprovalRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {},
-        "tags": [
-          "operations"
-        ]
-      }
-    },
     "/api/v1/approvals/{id}/release": {
       "post": {
         "operationId": "release_approval",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/VersionActionRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {},
-        "tags": [
-          "operations"
-        ]
-      }
-    },
-    "/api/v1/approvals/{id}/timeout": {
-      "post": {
-        "operationId": "timeout_approval",
         "requestBody": {
           "content": {
             "application/json": {
@@ -9751,59 +9665,6 @@
         ]
       }
     },
-    "/api/v1/departments/{id}/resource-authorizations": {
-      "post": {
-        "operationId": "authorize_department_resource",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": { "format": "uuid", "type": "string" }
-          }
-        ],
-        "requestBody": {
-          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ResourceAuthorizationInput" } } },
-          "required": true
-        },
-        "responses": {},
-        "tags": ["resource_access"]
-      }
-    },
-    "/api/v1/departments/{id}/resource-grant-requests": {
-      "post": {
-        "operationId": "create_department_resource_grant_request",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": { "format": "uuid", "type": "string" }
-          }
-        ],
-        "requestBody": {
-          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateResourceGrantRequest" } } },
-          "required": true
-        },
-        "responses": {},
-        "tags": ["resource_access"]
-      }
-    },
-    "/api/v1/departments/{id}/resource-options": {
-      "get": {
-        "operationId": "list_department_resource_options",
-        "parameters": [
-          { "in": "path", "name": "id", "required": true, "schema": { "format": "uuid", "type": "string" } },
-          { "in": "query", "name": "resourceType", "required": true, "schema": { "type": "string" } },
-          { "in": "query", "name": "operation", "required": false, "schema": { "type": "string" } },
-          { "in": "query", "name": "search", "required": false, "schema": { "type": "string" } },
-          { "in": "query", "name": "page", "required": false, "schema": { "format": "int32", "minimum": 1, "type": "integer" } },
-          { "in": "query", "name": "pageSize", "required": false, "schema": { "format": "int32", "minimum": 1, "type": "integer" } }
-        ],
-        "responses": {},
-        "tags": ["resource_access"]
-      }
-    },
     "/api/v1/departments/search": {
       "get": {
         "operationId": "search_departments",
@@ -9920,6 +9781,130 @@
         "responses": {},
         "tags": [
           "iam"
+        ]
+      }
+    },
+    "/api/v1/departments/{id}/resource-authorizations": {
+      "post": {
+        "operationId": "authorize_department_resource",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResourceAuthorizationInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {},
+        "tags": [
+          "resource_access"
+        ]
+      }
+    },
+    "/api/v1/departments/{id}/resource-grant-requests": {
+      "post": {
+        "operationId": "create_department_resource_grant_request",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateResourceGrantRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {},
+        "tags": [
+          "resource_access"
+        ]
+      }
+    },
+    "/api/v1/departments/{id}/resource-options": {
+      "get": {
+        "operationId": "list_department_resource_options",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "resourceType",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "operation",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "pageSize",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {},
+        "tags": [
+          "resource_access"
         ]
       }
     },
@@ -10609,26 +10594,6 @@
         },
         "tags": [
           "operations"
-        ]
-      }
-    },
-    "/api/v1/executions/{id}/waits": {
-      "get": {
-        "operationId": "list_waits",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/WaitListResponse"
-                }
-              }
-            },
-            "description": ""
-          }
-        },
-        "tags": [
-          "runtime_operations"
         ]
       }
     },
@@ -12706,6 +12671,29 @@
         "responses": {},
         "tags": [
           "iam"
+        ]
+      }
+    },
+    "/api/v1/webhook-provider-templates": {
+      "get": {
+        "operationId": "list_webhook_provider_templates",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/WebhookProviderTemplate"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "tags": [
+          "applications"
         ]
       }
     },

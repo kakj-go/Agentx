@@ -75,5 +75,5 @@ test('deployed Application exposes API key guide and keeps channel endpoint hidd
 
   await page.getByRole('tab', { name: '渠道对接' }).click()
   await expect(page.getByRole('button', { name: 'Webhook 接入文档' })).toHaveCount(0)
-  await expect(page.getByText('尚未配置渠道')).toBeVisible()
+  await expect(page.getByText('暂无渠道，请新增一个平台渠道。')).toBeVisible()
 })

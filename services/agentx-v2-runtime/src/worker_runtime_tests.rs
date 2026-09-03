@@ -1,14 +1,16 @@
 use super::output::effective_agent_budget;
 use super::{
-    WorkerExecution, declarative_http_request, mcp_arguments, mcp_tool_binding,
+    WorkerExecution, apply_http_credential, declarative_http_request, mcp_tool_binding,
     openai_chat_completions_endpoint, openai_execution_output, provider_secret_header,
-    provider_usage_detail, runtime_call_fingerprint, runtime_call_is_replayable,
-    runtime_call_side_effect, sandbox_execution_output, system_prompt,
+    provider_usage_detail, redact_secret_bytes, runtime_call_fingerprint,
+    runtime_call_is_replayable, runtime_call_side_effect, sandbox_execution_output,
+    secret_fragments, system_prompt,
 };
 use agentx_runtime_contracts::{
     ContentHash, RuntimeResourceBindingV1, RuntimeResourceConfigurationV1, RuntimeResourceKindV1,
     WorkerResultStatusV1,
 };
+use reqwest::header::HeaderMap;
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 use uuid::Uuid;
@@ -71,23 +73,126 @@ fn mcp_server_closure_never_shadows_the_executable_tool_binding() {
 }
 
 #[test]
-fn standalone_mcp_uses_resolved_arguments_instead_of_node_input() {
-    assert_eq!(
-        mcp_arguments(&json!({"arguments":{"city":"杭州","days":2}})),
-        json!({"city":"杭州","days":2})
-    );
-    assert_eq!(mcp_arguments(&json!({})), json!({}));
-}
-
-#[test]
 fn declarative_http_parameters_build_the_actual_request() {
     assert_eq!(
         declarative_http_request(
-            &json!({"method":"PATCH","headers":{"x-agentx":"contract"},"body":{"enabled":true}}),
+            &json!({"method":"PATCH","url":"https://example.test/tickets","query":[{"name":"page","value":2}],"headers":[{"name":"x-agentx","value":"contract"}],"body":{"enabled":true}}),
             Some(json!({"ignored":"input"})),
-        ),
-        json!({"method":"PATCH","headers":{"x-agentx":"contract"},"body":{"enabled":true}})
+        ).unwrap(),
+        ("https://example.test/tickets?page=2".into(), json!({"method":"PATCH","headers":{"x-agentx":"contract"},"body":{"enabled":true},"apiKeyPlacement":null}))
     );
+}
+
+#[test]
+fn http_credentials_inject_only_the_declared_header_or_query_fields() {
+    let mut bearer_endpoint = "https://example.test/items".to_owned();
+    let mut bearer_headers = HeaderMap::new();
+    apply_http_credential(
+        &mut bearer_endpoint,
+        &mut bearer_headers,
+        "bearer",
+        b"bearer-secret",
+        None,
+    )
+    .unwrap();
+    assert_eq!(bearer_endpoint, "https://example.test/items");
+    assert_eq!(
+        bearer_headers["authorization"].to_str().unwrap(),
+        "Bearer bearer-secret"
+    );
+
+    let mut basic_endpoint = "https://example.test/items".to_owned();
+    let mut basic_headers = HeaderMap::new();
+    apply_http_credential(
+        &mut basic_endpoint,
+        &mut basic_headers,
+        "basic",
+        br#"{"username":"agentx-user","password":"basic-secret"}"#,
+        None,
+    )
+    .unwrap();
+    assert_eq!(basic_endpoint, "https://example.test/items");
+    assert_eq!(
+        basic_headers["authorization"].to_str().unwrap(),
+        "Basic YWdlbnR4LXVzZXI6YmFzaWMtc2VjcmV0"
+    );
+
+    let mut header_endpoint = "https://example.test/items".to_owned();
+    let mut header_headers = HeaderMap::new();
+    apply_http_credential(
+        &mut header_endpoint,
+        &mut header_headers,
+        "api_key",
+        b"header-secret",
+        Some(&json!({"in":"header","name":"x-api-key"})),
+    )
+    .unwrap();
+    assert_eq!(header_endpoint, "https://example.test/items");
+    assert_eq!(header_headers["x-api-key"], "header-secret");
+
+    let mut endpoint = "https://example.test/items".to_owned();
+    let mut headers = HeaderMap::new();
+    apply_http_credential(
+        &mut endpoint,
+        &mut headers,
+        "api_key",
+        b"secret-value",
+        Some(&json!({"in":"query","name":"token"})),
+    )
+    .unwrap();
+    assert_eq!(endpoint, "https://example.test/items?token=secret-value");
+    assert!(headers.is_empty());
+
+    let mut custom_endpoint = "https://example.test/items?existing=1".to_owned();
+    let mut custom_headers = HeaderMap::new();
+    apply_http_credential(
+        &mut custom_endpoint,
+        &mut custom_headers,
+        "custom_json",
+        br#"{"headers":{"x-custom-auth":"header-value"},"query":{"custom_token":"query-value"}}"#,
+        None,
+    )
+    .unwrap();
+    assert_eq!(
+        custom_endpoint,
+        "https://example.test/items?existing=1&custom_token=query-value"
+    );
+    assert_eq!(custom_headers["x-custom-auth"], "header-value");
+
+    let invalid = apply_http_credential(
+        &mut endpoint,
+        &mut headers,
+        "custom_json",
+        br#"{"headers":"not-an-object"}"#,
+        None,
+    )
+    .unwrap_err();
+    assert_eq!(invalid, "Custom HTTP credential headers must be an object");
+
+    let unknown = apply_http_credential(
+        &mut endpoint,
+        &mut headers,
+        "custom_json",
+        br#"{"headers":{},"body":{"forbidden":true}}"#,
+        None,
+    )
+    .unwrap_err();
+    assert_eq!(
+        unknown,
+        "Custom HTTP credential only accepts headers and query"
+    );
+}
+
+#[test]
+fn http_responses_redact_raw_and_structured_credential_values() {
+    let secrets = secret_fragments(br#"{"username":"agentx-user","password":"top-secret"}"#);
+    let redacted = redact_secret_bytes(
+        br#"prefix top-secret {"password":"top-secret"} suffix"#,
+        &secrets,
+    );
+    let text = String::from_utf8(redacted).unwrap();
+    assert!(!text.contains("top-secret"));
+    assert!(text.contains("[REDACTED]"));
 }
 
 #[test]
@@ -98,18 +203,6 @@ fn current_agent_manifest_budget_fields_override_defaults() {
         ),
         json!({"maxIterations":3,"maxModelCalls":12,"maxToolCalls":32,"maxTokens":1000,"maxOutputTokens":4096,"maxCostMicros":1000,"maxDurationMs":300000,"limitAction":"error_output"})
     );
-}
-
-#[test]
-fn stop_and_error_is_a_failed_worker_result_with_frozen_parameters() {
-    let result = super::builtin::execute_single(
-        "stop_and_error",
-        &json!({"code":"EXPECTED_STOP","message":"expected message"}),
-        json!({"ignored":true}),
-    );
-    assert_eq!(result.status, WorkerResultStatusV1::Failed);
-    assert_eq!(result.error_code.as_deref(), Some("EXPECTED_STOP"));
-    assert_eq!(result.error_message.as_deref(), Some("expected message"));
 }
 
 #[test]
@@ -225,13 +318,31 @@ fn mcp_replay_uses_the_frozen_side_effect_annotation() {
 
 #[test]
 fn sandbox_manager_envelope_is_not_exposed_as_node_output() {
-    let execution = sandbox_execution_output(WorkerExecution::succeeded(
-        json!({"apiVersion":1,"leaseId":"018f0000-0000-7000-8000-000000000001","sandboxId":"sandbox-v2","replayed":true,"output":{"stdout":"agentx-v2-04","exitCode":0}}),
-    ));
+    let execution = sandbox_execution_output(
+        WorkerExecution::succeeded(
+            json!({"apiVersion":1,"leaseId":"018f0000-0000-7000-8000-000000000001","sandboxId":"sandbox-v2","replayed":true,"output":{"stdout":"agentx-v2-04","stderr":"","exitCode":0,"structuredOutput":{"ok":true},"files":[],"partial":false}}),
+        ),
+        &json!({"outputSchema":{"type":"object","required":["ok"],"properties":{"ok":{"type":"boolean"}}}}),
+    );
     assert_eq!(execution.status, WorkerResultStatusV1::Succeeded);
     assert_eq!(
         execution.outputs["main"][0].json,
-        json!({"stdout":"agentx-v2-04","stderr":"","exitCode":0,"structuredOutput":null,"files":[],"partial":false})
+        json!({"stdout":"agentx-v2-04","stderr":"","exitCode":0,"structuredOutput":{"ok":true},"files":[],"partial":false})
+    );
+}
+
+#[test]
+fn code_rejects_non_object_structured_results() {
+    let execution = sandbox_execution_output(
+        WorkerExecution::succeeded(
+            json!({"output":{"stdout":"","stderr":"","exitCode":0,"structuredOutput":"text","files":[],"partial":false}}),
+        ),
+        &json!({"outputSchema":{"type":"object"}}),
+    );
+    assert_eq!(execution.status, WorkerResultStatusV1::Failed);
+    assert_eq!(
+        execution.error_code.as_deref(),
+        Some("CODE_OUTPUT_OBJECT_REQUIRED")
     );
 }
 
@@ -285,9 +396,12 @@ fn provider_authorization_secret_adds_bearer_only_when_needed() {
 
 #[test]
 fn openai_tool_call_is_normalized_for_the_agent_loop() {
-    let execution = openai_execution_output(WorkerExecution::succeeded(
-        json!({"choices":[{"message":{"role":"assistant","tool_calls":[{"id":"call-1","type":"function","function":{"name":"echo","arguments":"{\"text\":\"hello\"}"}}]}}],"usage":{"prompt_tokens":11,"completion_tokens":7,"total_tokens":18}}),
-    ));
+    let execution = openai_execution_output(
+        WorkerExecution::succeeded(
+            json!({"choices":[{"message":{"role":"assistant","tool_calls":[{"id":"call-1","type":"function","function":{"name":"echo","arguments":"{\"text\":\"hello\"}"}}]}}],"usage":{"prompt_tokens":11,"completion_tokens":7,"total_tokens":18}}),
+        ),
+        &json!({"responseMode":"text"}),
+    );
     assert_eq!(
         execution.outputs["main"][0].json,
         json!({"toolCall":{"text":"hello"},"usage":{"inputTokens":11,"outputTokens":7,"totalTokens":18,"costMicros":0}})
@@ -296,9 +410,12 @@ fn openai_tool_call_is_normalized_for_the_agent_loop() {
 
 #[test]
 fn openai_model_output_matches_the_manifest_contract() {
-    let execution = openai_execution_output(WorkerExecution::succeeded(
-        json!({"choices":[{"message":{"role":"assistant","content":"complete"}}],"usage":{"prompt_tokens":5,"completion_tokens":3,"total_tokens":8}}),
-    ));
+    let execution = openai_execution_output(
+        WorkerExecution::succeeded(
+            json!({"choices":[{"message":{"role":"assistant","content":"complete"}}],"usage":{"prompt_tokens":5,"completion_tokens":3,"total_tokens":8}}),
+        ),
+        &json!({"responseMode":"text"}),
+    );
     assert_eq!(
         execution.outputs["main"][0].json,
         json!({"text":"complete","reasoningContent":null,"structuredOutput":null,"citations":[],"files":[],"usage":{"inputTokens":5,"outputTokens":3,"totalTokens":8,"costMicros":0},"finishReason":null,"partial":false})
@@ -320,12 +437,11 @@ fn provider_usage_detail_accepts_raw_and_normalized_token_names() {
 }
 
 #[test]
-fn every_registered_manifest_parameter_has_an_explicit_runtime_consumer() {
+fn every_studio_manifest_parameter_has_an_explicit_runtime_consumer() {
     let runtime_consumers: BTreeMap<&str, &[&str]> = BTreeMap::from([
         ("set", &["values", "keepOnlySet"][..]),
-        ("error_handler", &["mode"]),
-        ("if", &["condition"]),
-        ("switch", &["rules", "sendToAllMatches"]),
+        ("if", &["cases"]),
+        ("list", &["input", "filter", "sort", "takeN"]),
         (
             "merge",
             &[
@@ -336,17 +452,9 @@ fn every_registered_manifest_parameter_has_an_explicit_runtime_consumer() {
                 "conflictStrategy",
             ],
         ),
-        ("loop_over_items", &[]),
         (
-            "wait",
-            &[
-                "kind",
-                "durationMs",
-                "resumeAt",
-                "timeoutAt",
-                "payloadSchema",
-                "authenticationMode",
-            ],
+            "loop_over_items",
+            &["input", "outputSelector", "errorMode", "parallelism"],
         ),
         (
             "approval",
@@ -354,18 +462,26 @@ fn every_registered_manifest_parameter_has_an_explicit_runtime_consumer() {
                 "title",
                 "description",
                 "candidateUserId",
+                "buttons",
                 "timeoutMs",
-                "timeoutAt",
             ],
         ),
-        ("sub_workflow", &["workflowVersionId"]),
-        ("declarative_http", &["method", "url", "headers", "body"]),
-        ("remote_action", &["endpoint"]),
-        ("model", &["prompt", "userQuestion"]),
-        ("mcp_tool", &["arguments"]),
-        ("skill", &["resourceId"]),
-        ("rag", &["operation", "input"]),
-        ("memory", &["operation", "input"]),
+        ("sub_workflow", &["workflowVersionId", "inputs"]),
+        (
+            "declarative_http",
+            &[
+                "method",
+                "url",
+                "query",
+                "headers",
+                "body",
+                "apiKeyPlacement",
+            ],
+        ),
+        (
+            "model",
+            &["prompt", "userQuestion", "responseMode", "structuredSchema"],
+        ),
         (
             "agent",
             &[
@@ -382,41 +498,20 @@ fn every_registered_manifest_parameter_has_an_explicit_runtime_consumer() {
                 "limitAction",
             ],
         ),
-        ("code", &["runner", "source", "arguments", "networkPolicy"]),
-        ("filter", &["condition"]),
-        ("limit", &["maxItems", "keep"]),
-        ("sort", &["fields"]),
-        ("remove_duplicates", &["fields", "keep"]),
-        ("split_out", &["field"]),
-        ("aggregate", &["groupBy", "operations"]),
-        ("rename_fields", &["mappings", "missingField"]),
-        ("json_transform", &["operation", "field", "outputField"]),
-        ("no_op", &[]),
-        ("stop_and_error", &["code", "message"]),
         (
-            "item_generator",
-            &["items", "start", "end", "step", "field"],
-        ),
-        (
-            "date_time",
+            "code",
             &[
-                "operation",
-                "field",
-                "outputField",
-                "format",
-                "amount",
-                "unit",
-                "compareTo",
+                "runner",
+                "inputs",
+                "source",
+                "outputExample",
+                "networkPolicy",
             ],
         ),
-        ("base64", &["operation", "field", "outputField"]),
-        ("hash", &["algorithm", "encoding", "field", "outputField"]),
-        ("compare_datasets", &["keyFields"]),
-        ("structured_validator", &["schema", "mode"]),
     ]);
     let registry = agentx_runtime::NodeRegistry::m5_defaults();
-    assert_eq!(registry.manifests().count(), runtime_consumers.len());
-    for manifest in registry.manifests() {
+    assert_eq!(registry.studio_manifests().count(), runtime_consumers.len());
+    for manifest in registry.studio_manifests() {
         let declared = manifest.parameter_schema["properties"]
             .as_object()
             .map(|properties| properties.keys().map(String::as_str).collect())

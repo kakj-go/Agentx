@@ -3,8 +3,8 @@
 use std::sync::Arc;
 
 use agentx_agent_core::{
-    AgentMessageV1, AgentSessionStateV1, CompactionSnapshotV1, MessageRole,
-    StatePort, StatePortError,
+    AgentMessageV1, AgentSessionStateV1, CompactionSnapshotV1, MessageRole, StatePort,
+    StatePortError,
 };
 use object_store::{ObjectStore, path::Path as ObjectPath};
 use serde_json::{Value, json};
@@ -32,6 +32,7 @@ pub(super) struct DurableStatePort {
     deadline_at_millis: u64,
 }
 impl DurableStatePort {
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn new(
         pool: Pool<MySql>,
         objects: Arc<dyn ObjectStore>,

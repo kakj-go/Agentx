@@ -42,18 +42,6 @@ ALTER TABLE projection_receipts
     ADD COLUMN outcome ENUM('applied','ignored_old_version','replayed') NOT NULL AFTER event_cursor,
     ADD UNIQUE KEY uq_projection_cursor (projector_name,event_cursor);
 
-ALTER TABLE approval_task_projection
-    ADD COLUMN projection_generation BIGINT UNSIGNED NOT NULL DEFAULT 1 AFTER version,
-    ADD COLUMN source_event_id BINARY(16) NULL AFTER projection_generation,
-    ADD COLUMN source_event_cursor BIGINT UNSIGNED NOT NULL DEFAULT 0 AFTER source_event_id,
-    ADD COLUMN projection_deleted BOOLEAN NOT NULL DEFAULT FALSE AFTER source_event_cursor,
-    ADD COLUMN decision_json JSON NULL AFTER projection_deleted,
-    ADD KEY idx_control_approval_generation (tenant_id,projection_generation,status,created_at);
-
-ALTER TABLE approval_candidate_projection
-    ADD COLUMN projection_generation BIGINT UNSIGNED NOT NULL DEFAULT 1 AFTER candidate_id,
-    ADD KEY idx_control_approval_candidate_generation (tenant_id,projection_generation,approval_task_id);
-
 ALTER TABLE evaluation_runs
     ADD COLUMN projection_generation BIGINT UNSIGNED NOT NULL DEFAULT 1 AFTER intent_version,
     ADD COLUMN source_event_id BINARY(16) NULL AFTER projection_generation,

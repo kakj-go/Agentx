@@ -33,34 +33,30 @@ const translations = {
   },
   "palette": {
     "search": "搜索节点",
-    "actionNodes": "执行节点",
-    "attachments": "AI 附件",
+    "title": "添加节点",
+    "collapse": "收起节点面板",
+    "expand": "展开节点面板",
     "note": "便签",
     "group": "分组",
     "exit": "结束节点",
-    "exitGroup": "结束",
-    "ai": "AI",
     "back": "返回节点列表",
     "chooseInput": "选择 {{node}} 的输入端口",
-    "dragHint": "点击添加，或拖到画布",
     "categories": {
-      "triggers": "触发器",
-      "flow": "流程控制",
-      "ai": "AI 与智能体",
-      "data": "数据与记忆",
-      "integrations": "动作与集成",
-      "code": "代码与沙箱",
-      "other": "其他节点"
+      "start": "起始",
+      "ai": "AI",
+      "logic": "逻辑",
+      "transform": "转换",
+      "integrate": "集成",
+      "output": "输出"
     }
   },
   "inspector": {
     "title": "节点检查器",
     "noSelection": "请选择节点",
+    "unsupportedNodePanel": "节点 {{nodeType}} 没有注册专用配置面板。",
     "name": "名称",
     "key": "引用键",
     "disabled": "禁用",
-    "attachment": "附件",
-    "resource": "资源",
     "required": "必填",
     "multiple": "多选",
     "optional": "可选",
@@ -69,7 +65,6 @@ const translations = {
     "errorPolicy": "错误处理策略",
     "errorStop": "停止工作流",
     "errorOutput": "发送到错误输出",
-    "outputProjection": "输出映射",
     "nativeOutputs": "原生输出字段",
     "addProjection": "添加自定义输出",
     "contextWrites": "全局变量写入",
@@ -80,6 +75,7 @@ const translations = {
     "bindings": "资源绑定",
     "advancedConfiguration": "高级配置",
     "advancedDescription": "限制和执行行为",
+    "basics": "基本设置",
     "toggleAdvanced": "展开或收起高级配置",
     "agentCore": "智能体内核",
     "agentCoreDescription": "模型与工作区隔离属于智能体内部能力。",
@@ -91,10 +87,11 @@ const translations = {
     "clearResource": "清除资源",
     "enable": "启用节点",
     "disable": "禁用节点",
-    "noExpression": "未配置表达式",
     "editProjection": "编辑自定义输出",
     "projectionDialogDescription": "配置自定义输出字段后保存",
     "outputPort": "输出端口",
+    "omitWhenMissing": "缺失时忽略该字段",
+    "omitWhenMissingHint": "系统触发等场景没有该值时，不让节点失败。",
     "workflowVersion": "工作流版本",
     "editContextWrite": "编辑全局变量写入",
     "selectContext": "选择全局变量",
@@ -122,6 +119,141 @@ const translations = {
     ,"confirmAuthorize": "确认授权"
     ,"confirmRequest": "提交申请"
   },
+  "panels": {
+    "model": {
+      "model": "模型",
+      "modelDescription": "选择已授权的模型资源，模型能力决定输出与用量。",
+      "prompt": "提示词",
+      "output": "输出",
+      "variableHint": "输入 / 或 {{ 唤起变量插入浮层；系统提示词设定角色，用户问题承载本次输入。",
+      "initializeSchema": "创建对象结构"
+    },
+    "agent": {
+      "task": "任务",
+      "budget": "预算",
+      "budgetHint": "集中限制迭代、调用、Token、成本和时长。",
+      "budgetCollapsed": "使用默认预算",
+      "iterationSummary": "最多 {{count}} 轮",
+      "toolSummary": "{{count}} 次工具",
+      "durationSummary": "{{count}} 秒"
+    },
+    "if": {
+      "branches": "分支",
+      "elseHint": "不满足以上任何条件时走此分支。",
+      "notes": "说明",
+      "notesHint": "每个分支在节点右侧生成独立连接点；条件按变量类型提供操作符。"
+    },
+    "loop": {
+      "input": "输入",
+      "stepInput": "1. 选择数组",
+      "stepBody": "2. 配置循环体",
+      "stepOutput": "3. 选择每轮输出",
+      "inputHint": "从工作流输入或上游输出中选择要迭代的数组。",
+      "bodyHint": "把节点拖入循环框，或点击画布中的“迭代开始”添加第一个步骤。",
+      "outputHint": "选择循环体末端节点的一个输出，系统按输入顺序聚合。",
+      "execution": "执行",
+      "builtins": "内置变量",
+      "builtinsHint": "容器内节点可引用当前元素、完整循环数组与序号（从 0 开始）。",
+      "errorModes": {
+        "terminate": {
+          "label": "终止整个迭代",
+          "description": "任意一项失败即停止循环并进入错误分支。"
+        },
+        "continue": {
+          "label": "失败项输出 null",
+          "description": "失败项以空结果继续，不中断其他数据项。"
+        },
+        "remove": {
+          "label": "剔除失败项",
+          "description": "失败项从结果中剔除，其余数据项继续执行。"
+        }
+      }
+    },
+    "merge": {
+      "mode": "合并模式",
+      "modeDescriptions": {
+        "append": "按到达顺序汇合所有输入的条目",
+        "combine_by_position": "两路输入按下标一一配对",
+        "combine_by_key": "按指定字段连接（内 / 左 / 右 / 全）"
+      },
+      "examples": {
+        "append": "[A, B] + [C]  →  [A, B, C]",
+        "combine_by_position": "[{name:'A'}] + [{score:90}]  →  [{name:'A',score:90}]",
+        "combine_by_key": "左侧.id = 右侧.id，按 inner / left / right / full 连接"
+      },
+      "inputs": "输入",
+      "inputsHint": "节点左侧提供多个输入连接点，每个分支各接一条；聚合要求各分支输出同构。",
+      "appendInputsHint": "使用“输入”端口接入任意多条分支，所有条目按稳定端口顺序追加。",
+      "pairInputsHint": "只连接“左侧数据”和“右侧数据”两路输入。",
+      "leftField": "左侧匹配字段",
+      "rightField": "右侧匹配字段",
+      "modeChangeWarning": "切换合并模式会删除当前输入连线，是否继续？"
+    },
+    "approval": {
+      "content": "审批内容",
+      "contentDescription": "等待人工决策时展示的标题、说明与审批人。",
+      "branches": "分支",
+      "branchesHint": "每个按钮对应节点右侧一个决策分支连接点。",
+      "timeout": "超时",
+      "timeoutHint": "超时后从超时分支继续，输出 decision = timed_out。"
+    },
+    "code": {
+      "environment": "运行环境",
+      "environmentDescription": "运行器与网络策略决定沙箱行为。",
+      "inputs": "输入变量",
+      "source": "代码",
+      "output": "输出",
+      "networkPolicy": "网络策略",
+      "networkDeny": "禁止出站网络",
+      "networkDenyHint": "沙箱只能访问运行所需的Agentx内部入口。",
+      "networkAllowlist": "允许目标白名单",
+      "networkAllowlistHint": "所有连接必须通过Agentx TCP代理并匹配目标和端口。",
+      "addDestination": "添加目标",
+      "destination": "域名、IP或CIDR",
+      "ports": "端口或端口段",
+      "proxyExample": "查看代理使用示例",
+      "copyExample": "复制示例",
+      "outputExample": "返回 JSON 示例",
+      "outputExampleDescription": "填写一份代码实际返回对象的 JSON 示例，系统将据此推导可引用字段。",
+      "outputExampleHint": "后续节点既可以直接引用完整返回对象，也可以引用对象中的任意属性；null 与空数组保持动态类型。",
+      "outputObjectRequired": "返回示例必须是JSON对象",
+      "diagnostics": "诊断字段"
+    },
+    "set": {
+      "values": "赋值",
+      "valuesDescription": "逐行设置字段值，可引用上游变量。",
+      "options": "选项"
+    },
+    "list": {
+      "input": "输入",
+      "inputHint": "从工作流输入或上游输出中选择待处理数组。",
+      "filter": "过滤",
+      "sort": "排序",
+      "limit": "限量",
+      "nullsFirst": "空值在前",
+      "nullsLast": "空值在后",
+      "ascending": "升序 ↑",
+      "descending": "降序 ↓",
+      "sortAdvanced": "空值顺序"
+    },
+    "http": {
+      "request": "请求",
+      "query": "查询参数",
+      "headers": "请求头",
+      "body": "请求体",
+      "authentication": "认证",
+      "timeout": "超时",
+      "timeoutSeconds": "超时（秒）",
+      "output": "输出"
+    },
+    "subworkflow": {
+      "target": "目标工作流",
+      "targetDescription": "选择一个已发布的工作流版本，执行期间不可变。",
+      "inputs": "输入映射",
+      "output": "输出",
+      "outputHint": "子流程结束节点的输出即本节点输出；子执行超时将取消并恢复父执行。"
+    }
+  },
   "ports": {
     "flow": "流程",
     "error": "错误",
@@ -145,6 +277,20 @@ const translations = {
     "collapse": "折叠分组",
     "delete": "解除分组",
     "members": "{{count}} 个节点"
+  },
+  "container": {
+    "parallelChip": "并行 ×{{count}}",
+    "errorMode": {
+      "terminate": "失败即终止",
+      "continue": "失败轮输出 null",
+      "remove": "剔除失败轮"
+    },
+    "builtinVars": "内置变量：item（当前元素）· items（全部数据）· index（序号）",
+    "iterationStart": "迭代开始",
+    "iterationEnd": "迭代结束",
+    "resize": "调整循环容器大小",
+    "emptyHint": "拖入节点，或从迭代开始添加第一个步骤",
+    "addFirstNode": "添加循环体节点"
   },
   "runtime": {
     "title": "执行",
@@ -261,19 +407,16 @@ const translations = {
     "locate": "定位到字段",
     "issueFallback": "配置不符合要求（{{code}}）。",
     "issues": {
-      "ATTACHMENT_RESOURCE_REQUIRED": "请选择此 AI 附件使用的资源。",
       "UNKNOWN_NODE_VERSION": "节点版本 {{nodeTypeVersion}} 在节点目录中不可用。",
       "UNSUPPORTED_UI_CONTROL": "字段“{{field}}”使用了不支持的控件“{{control}}”。",
       "REQUIRED_PARAMETER_MISSING": "字段“{{field}}”为必填项。",
       "RESOURCE_REQUIRED": "请选择 {{resourceType}} 资源。",
-      "AI_BINDING_REQUIRED": "请连接必需的 {{slot}} 附件。",
+      "AI_BINDING_REQUIRED": "请在节点面板中选择必需的 {{slot}} 附件。",
       "ERROR_POLICY_MISMATCH": "错误连线要求使用“发送到错误输出”策略。",
-      "PASTED_RESOURCE_UNAVAILABLE": "粘贴内容引用了当前工作流不可见的资源。",
       "CROSS_WORKFLOW_PASTE_REJECTED": "无法粘贴这组节点，请修正其中的配置问题。",
       "INVALID_WORKFLOW_DEFINITION": "工作流定义无效。",
       "INVALID_EDITOR_DOCUMENT": "画布编辑数据无效。",
-      "INVALID_EXPRESSION": "表达式无效。",
-      "END_OUTPUT_EXPRESSION_REQUIRED": "结束节点的输出表达式不能为空。",
+      "END_OUTPUT_BINDING_REQUIRED": "结束节点的输出绑定不能为空。",
       "INVALID_END_OUTPUT_KEY": "结束节点的输出名称只能包含小写字母、数字和下划线。",
       "INVALID_ACTIVATION_BUDGET": "节点激活预算必须大于 0。",
       "INVALID_CONTEXT_KEY": "全局变量名称只能包含小写字母、数字和下划线。",
@@ -308,6 +451,8 @@ const translations = {
       "UNSUPPORTED_NODE_VERSION": "节点版本不受支持。",
       "DANGLING_CONNECTION": "连线引用了不存在的节点。",
       "CYCLE_NOT_ALLOWED": "当前连线会形成不允许的循环。"
+,
+      "CONTAINER_EDGE_CROSSES_BOUNDARY": "当前连线跨越了循环容器边界：容器内外节点不能直接相连，循环体内入口请从“迭代开始”芯片连线。"
     }
   },
   "toasts": {
@@ -349,24 +494,88 @@ const translations = {
   "exit": {
     "title": "结束节点",
     "description": "输出契约全局共享，本节点配置各自的取值映射",
-    "summary": "输出 / 错误",
+    "summary": "输出变量",
     "protected": "初始结束节点不可删除",
-    "paletteLabel": "结束节点",
-    "paletteMeta": "工作流的终止出口，可添加多个",
+    "sharedBanner": "输出表全局共享：在任一结束节点修改后对所有结束节点生效",
     "contractDescription": "全局输出字段契约，所有结束节点共享",
     "errorContractDescription": "全局错误输出字段契约，所有结束节点共享",
     "contractDialogDescription": "输出字段定义对所有结束节点生效",
     "contractRenameHint": "重命名字段会同步更新所有结束节点的映射",
+    "completion": "完成模式",
+    "completionDescription": "所有结束节点共享，决定工作流何时返回",
+    "completionModes": {
+      "first_return": "第一次返回即结束",
+      "all_complete": "等待全部完成"
+    },
+    "completionModeDescriptions": {
+      "first_return": "任一结束节点返回结果时立即结束工作流（默认）",
+      "all_complete": "等待所有结束节点完成后按数组返回结果"
+    },
     "successMappings": "本节点输出映射",
     "errorMappings": "本节点错误映射",
     "mappingDescription": "字段来自全局契约，为本节点选择各自的取值来源",
     "errorMappingDescription": "错误字段来自全局契约，为本节点选择各自的取值来源",
     "emptyContract": "请先在上方定义输出字段"
   },
+  "conditionBuilder": {
+    "if": "IF",
+    "elseIf": "ELSE IF",
+    "conditions": "条件",
+    "logicalOp": "逻辑运算",
+    "and": "且",
+    "or": "或",
+    "addCondition": "添加条件",
+    "removeCondition": "删除条件",
+    "addBranch": "添加分支",
+    "removeBranch": "删除分支",
+    "leftValue": "左值",
+    "rightValue": "右值",
+    "operator": "操作符",
+    "branch": "分支",
+    "defaultBranchName": "分支 {{index}}",
+    "renameBranch": "重命名分支"
+  },
+  "buttonsEditor": {
+    "buttonLabel": "按钮文本",
+    "addButton": "添加按钮",
+    "removeButton": "删除按钮"
+  },
+  "card": {
+    "setFields": "设置 {{count}} 个字段",
+    "mergeMode": "模式：{{mode}}",
+    "mergeModes": {
+      "append": "追加",
+      "combine_by_position": "按位置合并",
+      "combine_by_key": "按键合并"
+    },
+    "modelMode": "输出：{{mode}}",
+    "modelModes": {
+      "text": "文本",
+      "json_schema": "结构化 JSON"
+    },
+    "listRules": "筛选 {{filters}} 条 · 排序 {{sorts}} 条",
+    "takeN": "取前 {{count}} 条",
+    "maxIterations": "最多 {{count}} 轮",
+    "outputs": "输出",
+    "version": "版本 {{value}}",
+    "addAttachment": "+ 附件",
+    "ifTag": "IF",
+    "elifTag": "ELIF",
+    "elseTag": "ELSE",
+    "elseFallback": "其他全部",
+    "and": "且",
+    "or": "或",
+    "conditionN": "条件 {{index}}",
+    "buttonTag": "按钮",
+    "timeoutRow": "超时",
+    "timeoutHours": "{{hours}} 小时",
+    "approveDefault": "通过",
+    "rejectDefault": "拒绝"
+  },
   "boundary": {
     "start": "开始",
     "end": "结束",
-    "startSummary": "输入 / 全局变量",
+    "startSummary": "工作流入口",
     "endSummary": "输出 / 错误",
     "input": "输入",
     "output": "输出",
@@ -385,6 +594,7 @@ const translations = {
     "currentRawOutput": "当前节点原始输出",
     "sensitiveDisabled": "敏感值不能在此处插入",
     "typeMismatch": "需要 {{expected}}，实际为 {{actual}}",
+    "runtimeConversion": "实际为 {{actual}}，运行时转换为 {{expected}}；转换失败将报错",
     "convertToString": "自动转为文本",
     "recommended": "推荐",
     "select": "选择引用",
@@ -481,11 +691,12 @@ const translations = {
     "errorOutputs": "错误输出",
     "errorOutputsDescription": "可选的失败终态",
     "errorStrategy": "错误策略",
-    "collectWindow": "收集窗口（毫秒）",
     "errorFields": "错误字段",
     "outputName": "输出名称",
     "fieldDialogDescription": "配置字段后保存",
-    "contextDialogDescription": "配置共享全局变量后保存"
+    "contextDialogDescription": "配置共享全局变量后保存",
+    "systemVariables": "系统变量",
+    "systemVariablesDescription": "运行时只读信息，可通过变量选择器引用"
   },
   "schema": {
     "field": "字段",
@@ -525,6 +736,7 @@ const translations = {
     "seconds": "秒",
     "minutes": "分钟",
     "hours": "小时",
+    "days": "天",
     "tokens": "Token"
   },
   "mergePolicies": {

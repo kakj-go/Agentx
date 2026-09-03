@@ -851,7 +851,7 @@ async fn collect_socket(
     let mut wrapper = Vec::new();
     let mut collected = Vec::new();
     let mut committed_offset = offset;
-    match tokio::time::timeout(Duration::from_millis(wait), async {
+    if let Ok(result) = tokio::time::timeout(Duration::from_millis(wait), async {
         while let Some(message) = socket.next().await {
             match message.map_err(|_| RuntimeError::Unavailable)? {
                 Message::Binary(data) if !data.is_empty() => {
@@ -905,8 +905,7 @@ async fn collect_socket(
         }
         Ok::<(), RuntimeError>(())
     }).await {
-        Ok(result) => result?,
-        Err(_) => {}
+        result?;
     }
     sqlx::query("UPDATE sandbox_process_sessions SET provider_output_offset=GREATEST(provider_output_offset,?),lease_expires_at=DATE_ADD(UTC_TIMESTAMP(6),INTERVAL ? SECOND) WHERE process_session_id=?")
         .bind(committed_offset).bind(LEASE_SECONDS).bind(process_session_id).execute(&state.pool).await?;

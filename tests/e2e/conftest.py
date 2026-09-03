@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import os
 import socket
+import socketserver
+import threading
 import time
 import uuid
 from collections.abc import Iterator
 from datetime import UTC, datetime
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import httpx
@@ -227,6 +230,61 @@ def _free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
         listener.bind(("127.0.0.1", 0))
         return int(listener.getsockname()[1])
+
+
+class _CodeEgressHttpHandler(BaseHTTPRequestHandler):
+    def do_GET(self) -> None:
+        body = b'{"kind":"http","status":"ok"}'
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, _format: str, *_args: object) -> None:
+        return
+
+
+class _CodeEgressTcpHandler(socketserver.BaseRequestHandler):
+    def handle(self) -> None:
+        payload = self.request.recv(4096).strip()
+        self.request.sendall(b"tcp:" + payload + b"\n")
+
+
+class _ThreadedTcpFixture(socketserver.ThreadingTCPServer):
+    allow_reuse_address = True
+    daemon_threads = True
+
+
+@pytest.fixture(scope="session")
+def code_egress_fixtures() -> Iterator[dict[str, str]]:
+    http_server = ThreadingHTTPServer(
+        ("0.0.0.0", 0),  # noqa: S104 -- Docker Desktop must reach the host fixture.
+        _CodeEgressHttpHandler,
+    )
+    tcp_server = _ThreadedTcpFixture(
+        ("0.0.0.0", 0),  # noqa: S104 -- Docker Desktop must reach the host fixture.
+        _CodeEgressTcpHandler,
+    )
+    threads = [
+        threading.Thread(target=http_server.serve_forever, daemon=True),
+        threading.Thread(target=tcp_server.serve_forever, daemon=True),
+    ]
+    for thread in threads:
+        thread.start()
+    try:
+        yield {
+            "host": "host.docker.internal",
+            "http_port": str(http_server.server_port),
+            "tcp_port": str(tcp_server.server_address[1]),
+        }
+    finally:
+        http_server.shutdown()
+        tcp_server.shutdown()
+        http_server.server_close()
+        tcp_server.server_close()
+        for thread in threads:
+            thread.join(timeout=5)
 
 
 def _wait_http(process: ManagedProcess, url: str) -> None:

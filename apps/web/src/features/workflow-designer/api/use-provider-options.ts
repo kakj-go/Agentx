@@ -3,7 +3,7 @@ import { useQueries } from '@tanstack/react-query'
 import { apiRequest } from '../../../shared/api/client'
 import type { NodeManifest, ResourceOption } from '../model/types'
 
-type ProviderResponse = { items: Array<{ value: string; label: string; description?: string | null }> }
+type ProviderResponse = { items: Array<{ value: string; label: string; description?: string | null; manifest?: NodeManifest }> }
 
 export function useProviderOptions(manifest?: NodeManifest) {
   const fields = Object.entries(manifest?.uiSchema.fields ?? {}).filter((entry) => entry[1].control === 'provider_options' && entry[1].provider)
@@ -14,7 +14,7 @@ export function useProviderOptions(manifest?: NodeManifest) {
       enabled: Boolean(manifest && ui.provider),
       staleTime: 30_000,
       retry: false,
-      select: (response: ProviderResponse): ResourceOption[] => response.items.map((item) => ({ value: item.value, label: item.label })),
+      select: (response: ProviderResponse): ResourceOption[] => response.items.map((item) => ({ value: item.value, label: item.label, detail: item.description ?? undefined, manifest: item.manifest })),
     })),
   })
   return Object.fromEntries(fields.map(([field], index) => [field, queries[index]?.data ?? []])) as Record<string, ResourceOption[]>

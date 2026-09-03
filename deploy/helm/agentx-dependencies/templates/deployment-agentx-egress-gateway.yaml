@@ -19,7 +19,8 @@ spec:
           imagePullPolicy: {{ .Values.global.images.pullPolicy }}
           env:
             - { name: AGENTX_EGRESS_ALLOWED_PUBLIC_PORTS, value: {{ join "," .Values.global.network.egressGateway.allowedPublicPorts | quote }} }
-            - { name: AGENTX_EGRESS_BLOCKED_CIDRS, value: "10.0.0.0/8,100.64.0.0/10,127.0.0.0/8,169.254.0.0/16,172.16.0.0/12,192.168.0.0/16,198.18.0.0/15,::1/128,fc00::/7,fe80::/10" }
+            - { name: AGENTX_EGRESS_ALLOWED_PRIVATE_CIDRS, value: {{ join "," (.Values.global.network.egressGateway.allowedPrivateCidrs | default list) | quote }} }
+            - { name: AGENTX_EGRESS_BLOCKED_CIDRS, value: {{ join "," .Values.global.network.egressGateway.blockedCidrs | quote }} }
             - { name: AGENTX_EGRESS_ALLOW_DOCKER_DESKTOP_DNS, value: {{ ne .Values.global.environment "production" | quote }} }
             - { name: AGENTX_EGRESS_MAX_SANDBOX_TUNNELS, value: "64" }
             - { name: AGENTX_EGRESS_SANDBOX_TOKEN_MAX_CONCURRENT_TUNNELS, value: "4" }

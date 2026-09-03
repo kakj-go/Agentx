@@ -128,7 +128,6 @@ pub(crate) async fn build_version_snapshots(
                 queue.push_back((
                     node_id.clone(),
                     ResourceReference {
-                        binding_id: None,
                         binding_role: None,
                         resource_type: parse_resource_type(row.try_get("resource_type")?)?,
                         resource_id: row.try_get("resource_id")?,
@@ -182,7 +181,6 @@ pub(crate) async fn build_version_snapshots(
             queue.push_back((
                 node_id.clone(),
                 ResourceReference {
-                    binding_id: None,
                     binding_role: None,
                     resource_type: ResourceType::SandboxProfile,
                     resource_id: profile_id,
@@ -240,33 +238,32 @@ fn validate_sandbox_egress(
     {
         let requested = node
             .parameters
-            .get("egressMode")
-            .or_else(|| node.parameters.pointer("/networkPolicy/egressMode"))
+            .pointer("/networkPolicy/mode")
             .and_then(Value::as_str)
-            .unwrap_or("none");
-        if !matches!(requested, "none" | "public_https") {
+            .unwrap_or("deny");
+        if !matches!(requested, "deny" | "allowlist") {
             return Err(ApiError::unprocessable(
                 "INVALID_SANDBOX_EGRESS_MODE",
                 format!(
-                    "Code node {} egressMode must be none or public_https",
+                    "Code node {} network mode must be deny or allowlist",
                     node.id
                 ),
             ));
         }
-        if requested != "public_https" {
+        if requested != "allowlist" {
             continue;
         }
         let allowed = snapshots.iter().any(|snapshot| {
             snapshot.node_id == node.id
                 && snapshot.reference.resource_type == ResourceType::SandboxProfile
                 && snapshot.snapshot.pointer("/networkPolicy/egressMode")
-                    == Some(&Value::String("public_https".to_owned()))
+                    == Some(&Value::String("tcp_proxy".to_owned()))
         });
         if !allowed {
             return Err(ApiError::unprocessable(
                 "SANDBOX_EGRESS_EXCEEDS_PROFILE",
                 format!(
-                    "Code node {} requests public HTTPS but its Sandbox Profile does not allow it",
+                    "Code node {} requests TCP proxy access but its Sandbox Profile does not allow it",
                     node.id
                 ),
             ));
@@ -294,7 +291,6 @@ pub(crate) async fn insert_version_snapshots(
 
 fn generated_reference(resource_type: ResourceType, resource_id: Uuid) -> ResourceReference {
     ResourceReference {
-        binding_id: None,
         binding_role: None,
         resource_type,
         resource_id,
@@ -789,5 +785,5 @@ fn prefixed_hash(value: String) -> String {
 }
 
 fn is_composite_node(node_type: &str) -> bool {
-    node_type == "sub_workflow" || node_type.starts_with("workflow.")
+    node_type == "sub_workflow"
 }

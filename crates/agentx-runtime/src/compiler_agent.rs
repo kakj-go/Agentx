@@ -1,5 +1,5 @@
 use agentx_domain::{ResourceReference, ResourceType, WorkflowNode};
-use agentx_node_protocol::{BindingSlotPlacement, NodeManifestVersion};
+use agentx_node_protocol::NodeManifestVersion;
 use agentx_runtime_contracts::{
     AgentSessionPolicyModeV2, CompiledAgentAttachmentV2, CompiledAgentNodeV2,
     CompiledAgentResourceReferenceV2, CoreToolReplayPolicyV2, DerivedCoreToolV2,
@@ -28,15 +28,7 @@ pub(super) fn validate_binding_slots(
             .iter()
             .filter(|reference| {
                 reference.resource_type == slot.resource_type
-                    && match slot.placement {
-                        BindingSlotPlacement::Inspector => {
-                            reference.binding_id.is_none() && reference.binding_role.is_none()
-                        }
-                        BindingSlotPlacement::Canvas => {
-                            reference.binding_id.is_some()
-                                && reference.binding_role.as_deref() == Some(slot.name.as_str())
-                        }
-                    }
+                    && reference.binding_role.as_deref() == Some(slot.name.as_str())
             })
             .count();
         if slot.required && count == 0 {
@@ -54,25 +46,16 @@ pub(super) fn validate_binding_slots(
             });
         }
     }
-    let derives_core_tools = node.resource_references.iter().any(|candidate| {
-        candidate.resource_type == ResourceType::SandboxProfile
-            && candidate.binding_id.is_none()
-            && candidate.binding_role.is_none()
-    });
+    let derives_core_tools = node
+        .resource_references
+        .iter()
+        .any(|candidate| candidate.binding_role.as_deref() == Some("workspace_sandbox"));
     for (reference_index, reference) in node.resource_references.iter().enumerate() {
         let slot = manifest.binding_slots.iter().find(|slot| {
             slot.resource_type == reference.resource_type
-                && match slot.placement {
-                    BindingSlotPlacement::Inspector => {
-                        reference.binding_id.is_none() && reference.binding_role.is_none()
-                    }
-                    BindingSlotPlacement::Canvas => {
-                        reference.binding_id.is_some()
-                            && reference.binding_role.as_deref() == Some(slot.name.as_str())
-                    }
-                }
+                && reference.binding_role.as_deref() == Some(slot.name.as_str())
         });
-        let Some(slot) = slot else {
+        let Some(_slot) = slot else {
             issues.push(CompileIssue {
                 code: "INVALID_BINDING_SLOT".into(),
                 path: format!("nodes[{definition_index}].resourceReferences[{reference_index}]"),
@@ -81,8 +64,7 @@ pub(super) fn validate_binding_slots(
             });
             continue;
         };
-        if slot.placement == BindingSlotPlacement::Canvas && reference.resource_version_id.is_none()
-        {
+        if reference.resource_version_id.is_none() {
             issues.push(CompileIssue {
                 code: "RESOURCE_VERSION_REQUIRED".into(),
                 path: format!(
@@ -128,35 +110,28 @@ pub(super) fn compile_agent_node(
     let model = node
         .resource_references
         .iter()
-        .find(|reference| {
-            reference.resource_type == ResourceType::Model
-                && reference.binding_id.is_none()
-                && reference.binding_role.is_none()
-        })
+        .find(|reference| reference.binding_role.as_deref() == Some("model"))
         .map(|reference| compiled_inspector_reference(reference, "model"))
         .expect("Agent model validated");
     let workspace_sandbox = node
         .resource_references
         .iter()
-        .find(|reference| {
-            reference.resource_type == ResourceType::SandboxProfile
-                && reference.binding_id.is_none()
-                && reference.binding_role.is_none()
-        })
+        .find(|reference| reference.binding_role.as_deref() == Some("workspace_sandbox"))
         .map(|reference| compiled_inspector_reference(reference, "workspace_sandbox"));
-    let mut canvas_attachments = node
+    let mut attachments = node
         .resource_references
         .iter()
-        .filter(|reference| reference.binding_id.is_some())
+        .filter(|reference| {
+            !matches!(
+                reference.binding_role.as_deref(),
+                Some("model" | "workspace_sandbox")
+            )
+        })
         .map(|reference| CompiledAgentAttachmentV2 {
-            binding_id: reference
-                .binding_id
-                .clone()
-                .expect("Canvas binding validated"),
             binding_role: reference
                 .binding_role
                 .clone()
-                .expect("Canvas binding role validated"),
+                .expect("Attachment role validated"),
             resource_type: reference.resource_type,
             resource_id: reference.resource_id,
             resource_version_id: reference
@@ -165,12 +140,8 @@ pub(super) fn compile_agent_node(
             operation: reference.operation,
         })
         .collect::<Vec<_>>();
-    canvas_attachments.sort_by(|left, right| {
-        (&left.binding_role, &left.binding_id, left.resource_id).cmp(&(
-            &right.binding_role,
-            &right.binding_id,
-            right.resource_id,
-        ))
+    attachments.sort_by(|left, right| {
+        (&left.binding_role, left.resource_id).cmp(&(&right.binding_role, right.resource_id))
     });
     let core_tools = workspace_sandbox
         .as_ref()
@@ -195,7 +166,7 @@ pub(super) fn compile_agent_node(
         session_policy,
         model,
         workspace_sandbox,
-        canvas_attachments,
+        attachments,
         core_tools,
     })
 }

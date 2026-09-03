@@ -184,23 +184,6 @@
           "additionalProperties": false,
           "properties": {
             "kind": {
-              "const": "approval_decision",
-              "type": "string"
-            },
-            "state": {
-              "$ref": "#/$defs/RuntimeApprovalDecisionV1"
-            }
-          },
-          "required": [
-            "kind",
-            "state"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "kind": {
               "const": "approval_action",
               "type": "string"
             },
@@ -322,23 +305,39 @@
       "type": "object"
     },
     "ApprovalActionValueV1": {
-      "enum": [
-        "claim",
-        "release",
-        "reassign",
-        "approve",
-        "reject",
-        "cancel",
-        "timeout"
-      ],
-      "type": "string"
-    },
-    "ApprovalDecisionValueV1": {
-      "enum": [
-        "approved",
-        "rejected"
-      ],
-      "type": "string"
+      "oneOf": [
+        {
+          "enum": [
+            "claim",
+            "release",
+            "reassign",
+            "cancel",
+            "timeout"
+          ],
+          "type": "string"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A canvas-defined approval button: resumes the workflow on the\n`decision:<id>` output port and persists the button id as the decision.",
+          "properties": {
+            "decide": {
+              "properties": {
+                "decision_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "decision_id"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "decide"
+          ],
+          "type": "object"
+        }
+      ]
     },
     "CommandEnvelopeV1": {
       "additionalProperties": false,
@@ -501,40 +500,6 @@
         "taskVersion",
         "action",
         "actorId"
-      ],
-      "type": "object"
-    },
-    "RuntimeApprovalDecisionV1": {
-      "additionalProperties": false,
-      "properties": {
-        "decidedBy": {
-          "format": "uuid",
-          "type": "string"
-        },
-        "decision": {
-          "$ref": "#/$defs/ApprovalDecisionValueV1"
-        },
-        "reason": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "taskId": {
-          "format": "uuid",
-          "type": "string"
-        },
-        "taskVersion": {
-          "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
-        }
-      },
-      "required": [
-        "taskId",
-        "taskVersion",
-        "decision",
-        "decidedBy"
       ],
       "type": "object"
     },

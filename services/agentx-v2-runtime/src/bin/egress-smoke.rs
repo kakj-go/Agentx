@@ -59,7 +59,7 @@ async fn main() -> Result<()> {
         json!({
             "status":"passed",
             "mode":if stability_only { "stability-only" } else { "functional-matrix" },
-            "matrix":if stability_only { Vec::<&str>::new() } else { vec!["model","mcp-streamable-http","mcp-sse","memory","rag","http-request","remote-action","poll","lifecycle"] },
+            "matrix":if stability_only { Vec::<&str>::new() } else { vec!["model","mcp-streamable-http","mcp-sse","memory","rag","http-request"] },
             "negative":if stability_only { Vec::<&str>::new() } else { vec!["private-ip","metadata"] },
             "concurrency":concurrency,
             "rounds":rounds,
@@ -120,9 +120,6 @@ async fn run_matrix(
         ("memory-search", "/memory/search", json!({"query":"health"})),
         ("memory-write", "/memory/memories", json!({"messages":[]})),
         ("http-request", "/http", json!({"input":"health"})),
-        ("remote-action", "/remote", json!({"input":"health"})),
-        ("poll", "/poll", json!({"cursor":null})),
-        ("lifecycle", "/lifecycle", json!({"operation":"activate"})),
     ];
     for (name, path, payload) in cases {
         let response = client

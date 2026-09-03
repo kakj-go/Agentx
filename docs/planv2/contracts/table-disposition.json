@@ -711,16 +711,16 @@
   },
   {
     "current_table": "execution_resume_tokens",
-    "decision": "runtime",
+    "decision": "delete",
     "control_replacement": null,
-    "runtime_replacement": "runtime.execution_resume_tokens",
-    "authoritative_writer": "runtime",
+    "runtime_replacement": null,
+    "authoritative_writer": "none after replacement",
     "allowed_readers": [
-      "runtime"
+      "none"
     ],
-    "cross_plane_contract": "none; same-plane access only",
-    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
-    "owning_task": "V2R-001..015"
+    "cross_plane_contract": "none; callers removed by plan5",
+    "retention_and_delete_rule": "Deleted by plan5; Approval owns the remaining suspension lifecycle and no history is migrated.",
+    "owning_task": "plan5-M2"
   },
   {
     "current_table": "execution_snapshots",
@@ -1665,16 +1665,16 @@
   },
   {
     "current_table": "wait_subscriptions",
-    "decision": "runtime",
+    "decision": "delete",
     "control_replacement": null,
-    "runtime_replacement": "runtime.wait_subscriptions",
-    "authoritative_writer": "runtime",
+    "runtime_replacement": null,
+    "authoritative_writer": "none after replacement",
     "allowed_readers": [
-      "runtime"
+      "none"
     ],
-    "cross_plane_contract": "none; same-plane access only",
-    "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
-    "owning_task": "V2R-001..015"
+    "cross_plane_contract": "none; callers removed by plan5",
+    "retention_and_delete_rule": "Deleted by plan5; no standalone Wait node or history is retained.",
+    "owning_task": "plan5-M2"
   },
   {
     "current_table": "worker_capabilities",

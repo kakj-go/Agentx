@@ -24,9 +24,9 @@ AGENTX_OPENSANDBOX_API_KEY=<与 OpenSandbox Server 一致的密钥>
 
 Server 只应监听 Agentx 可达的受控接口并由 Windows 防火墙限制来源。本机直接验证可绑定 `127.0.0.1`，但该地址通常不能供 Kubernetes Pod 访问。
 
-Sandbox Profile 和 Code 节点的网络能力均为 `none|public_https`，默认 `none`。只有两者同时开启时，Manager 才通过 execd 注入短期 `HTTPS_PROXY/https_proxy` 指向 `agentx-egress-gateway` 的 3129 TLS 入口；OpenSandbox NetworkPolicy 仍只允许 DNS 和该代理地址，不允许 Sandbox 直连公网或集群内部服务。私有 CA 写入 Sandbox 临时目录并设置 `SSL_CERT_FILE`，不会进入命令、日志或 Artifact。
+Sandbox Profile的网络上限为`none|tcp_proxy`，Code节点使用`deny|allowlist`目标与端口段。只有Profile允许TCP代理且节点显式列出目标时，Manager才通过execd注入短期`HTTP_PROXY/HTTPS_PROXY/AGENTX_TCP_PROXY_URL`指向`agentx-egress-gateway`的3129入口；OpenSandbox NetworkPolicy仍只允许DNS和该代理地址，不允许Sandbox直连目标。Token携带节点白名单与策略hash，Gateway为每次CONNECT重新校验目标、端口和DNS解析结果。私有CA写入Sandbox临时目录并设置`SSL_CERT_FILE`，不会进入命令、Trace、日志或Artifact。
 
-固定的 OpenSandbox Lifecycle Spec `0.1.0` 中 `NetworkRule` 只有 `action` 和 FQDN `target`，明确不支持端口字段。Agentx 因此不伪造 `port/ports`：Sandbox 规则只允许 Gateway 的专用域名，Kubernetes Service/NodePort/私有 LB 只把 Profile Endpoint 的单一监听端口映射到容器 `3129`，生产私有 LB 还必须使用来源 CIDR 和受支持的内部 LB Annotation。该专用域名/IP 不得复用来暴露其他服务；本地 NodePort 只作为开发验收边界，不能视为生产端口级隔离。
+固定的 OpenSandbox Lifecycle Spec `0.1.0` 中 `NetworkRule` 只有 `action` 和 FQDN `target`，明确不支持端口字段。Agentx 因此不伪造 `port/ports`：Sandbox 规则只允许 Gateway 的专用域名，Kubernetes Service/私有 LB 只把 Profile Endpoint 的单一监听端口映射到容器 `3129`，生产私有 LB 还必须使用来源 CIDR 和受支持的内部 LB Annotation。该专用域名/IP 不得复用来暴露其他服务。Docker Desktop 本地环境使用其 LoadBalancer 端口转发暴露 `host.docker.internal:3129`；NodePort 无法从默认 OpenSandbox Docker bridge 稳定访问，不再作为本地基线。
 
 本地约定使用 `18080`，避免与 Agentx Web 的 `8080` 冲突。Docker Runtime 不支持 Lifecycle `secureAccess=true`，因此本地 Overlay 必须显式关闭；该开关不允许沿用到生产 Kubernetes ingress，生产默认值保持 `true`。Docker Runtime 还可能返回 Pod 不可达且不带 scheme 的直接 execd Endpoint，因此 Agentx 默认请求 Server Proxy，并要求返回 URL 与 Lifecycle Server 同 Origin、路径精确匹配 `/v1/sandboxes/{sandboxId}/proxy/44772/`。
 
@@ -45,7 +45,7 @@ pytest Runtime/Product E2E执行以下顺序：
 1. 探测或启动 OpenSandbox Server，验证 `/health` 和 API Key。
 2. 记录测试前 Sandbox 清单，并拒绝复用未知 Sandbox。
 3. 创建临时 `agentx-e2e` Namespace 并运行 Code/Agent 场景。
-4. 验证命令、文件、Artifact、资源超限、默认断网、双开关公共 HTTPS、内部地址/代理绕过拒绝、超时和取消。
+4. 验证命令、文件、Artifact、资源超限、默认断网、节点白名单与Profile上限、HTTP和原始TCP、显式私网允许、永久阻断地址及代理绕过拒绝、超时和取消。
 5. 幂等销毁本次 Sandbox，断言无残留，再删除 Namespace。
 
 运行入口：

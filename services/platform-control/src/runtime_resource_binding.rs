@@ -108,6 +108,10 @@ fn from_parts(
                 provider: required_json_string(&snapshot, "providerType")?,
                 endpoint: required_json_string(&snapshot, "endpoint")?,
                 model: required_json_string(&snapshot, "modelName")?,
+                context_window: snapshot
+                    .get("contextWindow")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(128_000),
                 price: RuntimeModelPriceV1 {
                     version_id: required_json_scalar_string(
                         snapshot.pointer("/price/versionId"),
@@ -224,6 +228,7 @@ fn from_parts(
         "credential" => (
             RuntimeResourceKindV1::Credential,
             RuntimeResourceConfigurationV1::Credential {
+                credential_type: required_json_string(&snapshot, "credentialType")?,
                 secret: required_vault_reference(&snapshot)?,
                 allowed_operations: BTreeSet::from(["use".into()]),
             },
@@ -245,7 +250,7 @@ fn from_parts(
                     .unwrap_or("none")
                 {
                     "none" => SandboxEgressModeV1::None,
-                    "public_https" => SandboxEgressModeV1::PublicHttps,
+                    "tcp_proxy" => SandboxEgressModeV1::TcpProxy,
                     other => anyhow::bail!("unsupported Sandbox egress mode {other}"),
                 },
                 maximum_ttl_seconds: required_json_u32(&snapshot, "timeoutSeconds")?,
@@ -505,6 +510,7 @@ mod tests {
             "providerType":"openai_compatible",
             "endpoint":"https://provider.test/v1",
             "modelName":"fixture",
+            "contextWindow":4096,
             "price":{
                 "versionId":Uuid::nil(),
                 "currency":"USD",
@@ -523,8 +529,9 @@ mod tests {
         assert_eq!(binding.resource_kind, RuntimeResourceKindV1::Model);
         assert!(matches!(
             binding.configuration,
-            RuntimeResourceConfigurationV1::Model { price, .. }
-                if price.currency == "USD"
+            RuntimeResourceConfigurationV1::Model { context_window, price, .. }
+                if context_window == 4096
+                    && price.currency == "USD"
                     && price.input_per_million == "5.00000000"
                     && price.output_per_million == "30.00000000"
         ));

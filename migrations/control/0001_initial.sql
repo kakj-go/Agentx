@@ -111,12 +111,20 @@ CREATE TABLE approval_action_submissions (
     tenant_id BINARY(16) NOT NULL,
     approval_task_id BINARY(16) NOT NULL,
     actor_user_id BINARY(16) NOT NULL,
-    action_type ENUM('claim', 'release', 'reassign', 'approve', 'reject', 'cancel', 'timeout') NOT NULL,
+    action_type ENUM('claim', 'release', 'reassign', 'decide', 'cancel') NOT NULL,
     input_json JSON NULL,
-    from_status VARCHAR(32) NOT NULL,
-    to_status VARCHAR(32) NOT NULL,
+    idempotency_key VARCHAR(192) NOT NULL,
+    request_hash CHAR(71) NOT NULL,
+    runtime_command_id BINARY(16) NOT NULL,
+    task_version BIGINT UNSIGNED NOT NULL,
+    from_status ENUM('pending','claimed','decided','timed_out','cancelled') NOT NULL,
+    to_status ENUM('pending','claimed','decided','timed_out','cancelled') NOT NULL,
+    response_json JSON NULL,
+    runtime_receipt_json JSON NULL,
     created_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
     PRIMARY KEY (id),
+    UNIQUE KEY uq_control_approval_idempotency (tenant_id, idempotency_key),
+    UNIQUE KEY uq_control_approval_runtime_command (tenant_id, runtime_command_id),
     KEY idx_approval_actions_task (tenant_id, approval_task_id, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
@@ -125,8 +133,10 @@ CREATE TABLE approval_candidate_projection (
     approval_task_id BINARY(16) NOT NULL,
     candidate_type ENUM('user', 'role', 'department') NOT NULL,
     candidate_id BINARY(16) NOT NULL,
+    projection_generation BIGINT UNSIGNED NOT NULL DEFAULT 1,
     created_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-    PRIMARY KEY (tenant_id, approval_task_id, candidate_type, candidate_id)
+    PRIMARY KEY (tenant_id, approval_task_id, candidate_type, candidate_id),
+    KEY idx_control_approval_candidate_generation (tenant_id,projection_generation,approval_task_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 CREATE TABLE approval_task_projection (
@@ -138,16 +148,23 @@ CREATE TABLE approval_task_projection (
     title VARCHAR(255) NOT NULL,
     description VARCHAR(2000) NULL,
     request_payload_json JSON NULL,
-    status ENUM('pending', 'claimed', 'approved', 'rejected', 'cancelled', 'timed_out') NOT NULL DEFAULT 'pending',
+    buttons_json JSON NOT NULL,
+    status ENUM('pending', 'claimed', 'decided', 'cancelled', 'timed_out') NOT NULL DEFAULT 'pending',
     claimed_by BINARY(16) NULL,
     claimed_at TIMESTAMP(6) NULL,
     resume_status ENUM('not_requested', 'pending', 'succeeded', 'blocked_runtime', 'failed') NOT NULL DEFAULT 'not_requested',
     deadline_at TIMESTAMP(6) NULL,
     version BIGINT UNSIGNED NOT NULL DEFAULT 1,
+    projection_generation BIGINT UNSIGNED NOT NULL DEFAULT 1,
+    source_event_id BINARY(16) NULL,
+    source_event_cursor BIGINT UNSIGNED NOT NULL DEFAULT 0,
+    projection_deleted BOOLEAN NOT NULL DEFAULT FALSE,
+    decision_json JSON NULL,
     created_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
     updated_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
     PRIMARY KEY (id),
-    KEY idx_approval_tasks_inbox (tenant_id, status, deadline_at, created_at)
+    KEY idx_approval_tasks_inbox (tenant_id, status, deadline_at, created_at),
+    KEY idx_control_approval_generation (tenant_id,projection_generation,status,created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 CREATE TABLE artifact_references (
@@ -714,7 +731,7 @@ CREATE TABLE node_definition_versions (
     protocol_version VARCHAR(32) NOT NULL,
     manifest_json JSON NOT NULL,
     manifest_hash VARCHAR(96) NOT NULL,
-    capability ENUM('builtin', 'declarative_http', 'remote_action') NOT NULL,
+    capability ENUM('builtin', 'declarative_http', 'agent', 'model', 'mcp_tool', 'skill', 'rag', 'memory', 'sandbox') NOT NULL,
     execution_style ENUM('action', 'trigger', 'suspend', 'sub_workflow') NOT NULL,
     side_effect_level ENUM('none', 'idempotent', 'reversible', 'irreversible') NOT NULL DEFAULT 'none',
     resume_policy JSON NULL,
@@ -728,7 +745,7 @@ CREATE TABLE node_definitions (
     tenant_id BINARY(16) NULL,
     node_type VARCHAR(128) NOT NULL,
     display_name VARCHAR(160) NOT NULL,
-    source_type ENUM('platform', 'remote') NOT NULL,
+    source_type ENUM('registry') NOT NULL,
     status ENUM('active', 'disabled') NOT NULL DEFAULT 'active',
     created_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
     updated_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),

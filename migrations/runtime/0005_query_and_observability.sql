@@ -131,8 +131,6 @@ ALTER TABLE node_attempts
 ALTER TABLE runtime_calls
     ADD KEY idx_runtime_query_call (tenant_id,execution_id,node_execution_id,started_at,id);
 
-ALTER TABLE wait_subscriptions
-    ADD KEY idx_runtime_query_wait (tenant_id,execution_id,created_at,id);
 
 ALTER TABLE checkpoints
     ADD KEY idx_runtime_query_checkpoint (tenant_id,execution_id,sequence_number,id);
@@ -156,11 +154,6 @@ ALTER TABLE trace_outbox
     ADD COLUMN heartbeat_at TIMESTAMP(6) NULL AFTER locked_until,
     ADD COLUMN streamed_at TIMESTAMP(6) NULL AFTER last_error,
     ADD UNIQUE KEY uq_trace_execution_sequence (tenant_id,execution_id,execution_sequence);
-
-ALTER TABLE approval_tasks
-    ADD COLUMN last_event_cursor BIGINT UNSIGNED NOT NULL DEFAULT 0 AFTER version,
-    ADD COLUMN projection_deleted BOOLEAN NOT NULL DEFAULT FALSE AFTER last_event_cursor,
-    ADD KEY idx_runtime_approval_snapshot (tenant_id,last_event_cursor,id);
 
 ALTER TABLE evaluation_runs
     ADD COLUMN last_event_cursor BIGINT UNSIGNED NOT NULL DEFAULT 0 AFTER version,

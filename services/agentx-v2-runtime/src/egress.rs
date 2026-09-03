@@ -2,7 +2,8 @@ use std::{collections::BTreeMap, env, fmt, sync::Arc, time::Duration};
 
 use agentx_runtime_contracts::{
     EGRESS_RUNTIME_TOKEN_TTL_SECONDS, EGRESS_TOKEN_AUDIENCE, EGRESS_TOKEN_ISSUER,
-    EgressConnectClaimsV1, EgressMode, EgressRole, issue_egress_connect_token, now_unix,
+    EgressConnectClaimsV1, EgressDestinationV1, EgressMode, EgressPortRangeV1, EgressRole,
+    content_hash, issue_egress_connect_token, now_unix,
 };
 use anyhow::{Context, Result, bail};
 use reqwest::{
@@ -19,6 +20,16 @@ use uuid::Uuid;
 
 const MAX_PROVIDER_REDIRECTS: usize = 5;
 const MAX_PROVIDER_CONNECT_ATTEMPTS: usize = 3;
+
+fn exact_destination(host: &str, port: u16) -> Vec<EgressDestinationV1> {
+    vec![EgressDestinationV1 {
+        target: host.to_owned(),
+        ports: vec![EgressPortRangeV1 {
+            from: port,
+            to: port,
+        }],
+    }]
+}
 
 #[derive(Clone, Copy, Debug)]
 pub struct EgressRequestContext {
@@ -294,6 +305,23 @@ impl ProviderHttpClient {
         }
     }
 
+    pub(crate) fn for_internal_provider(role: EgressRole) -> Result<Self> {
+        let direct = provider_builder()?
+            .connect_timeout(Duration::from_secs(5))
+            .redirect(reqwest::redirect::Policy::none())
+            .build()?;
+        Ok(Self {
+            role,
+            proxy_url: "http://127.0.0.1:1"
+                .parse()
+                .expect("fixed internal placeholder"),
+            key_id: Arc::from("internal-only"),
+            private_key_pem: Arc::new(Vec::new()),
+            direct,
+            legacy_sse_sessions: Arc::new(Mutex::new(BTreeMap::new())),
+        })
+    }
+
     pub fn get(
         &self,
         endpoint: &str,
@@ -354,6 +382,7 @@ impl ProviderHttpClient {
         let port = url
             .port_or_known_default()
             .context("provider port is required")?;
+        let destinations = exact_destination(&host, port);
         let now = now_unix();
         let claims = EgressConnectClaimsV1 {
             iss: EGRESS_TOKEN_ISSUER.into(),
@@ -362,9 +391,9 @@ impl ProviderHttpClient {
             tenant_id: context.tenant_id,
             execution_id: context.execution_id,
             request_id: context.request_id,
-            egress_mode: EgressMode::PublicHttps,
-            target_host: host,
-            target_port: port,
+            egress_mode: EgressMode::TcpProxy,
+            policy_hash: content_hash(&destinations)?,
+            destinations,
             iat: now,
             exp: now + EGRESS_RUNTIME_TOKEN_TTL_SECONDS,
             jti: Uuid::now_v7(),
@@ -400,6 +429,7 @@ impl ProviderHttpClient {
         let port = url
             .port_or_known_default()
             .context("websocket endpoint port is required")?;
+        let destinations = exact_destination(&host, port);
         let now = now_unix();
         let claims = EgressConnectClaimsV1 {
             iss: EGRESS_TOKEN_ISSUER.into(),
@@ -408,9 +438,9 @@ impl ProviderHttpClient {
             tenant_id: context.tenant_id,
             execution_id: context.execution_id,
             request_id: context.request_id,
-            egress_mode: EgressMode::PublicHttps,
-            target_host: host.clone(),
-            target_port: port,
+            egress_mode: EgressMode::TcpProxy,
+            policy_hash: content_hash(&destinations)?,
+            destinations,
             iat: now,
             exp: now + EGRESS_RUNTIME_TOKEN_TTL_SECONDS,
             jti: Uuid::now_v7(),
@@ -439,10 +469,13 @@ impl ProviderHttpClient {
                 bail!("egress proxy closed the tunnel during CONNECT")
             }
             buffer.extend_from_slice(&chunk[..read]);
-            let header_end = buffer
-                .windows(4)
-                .position(|window| window == b"\r\n\r\n")
-                .context("egress proxy CONNECT response is malformed")?;
+            let Some(header_end) = buffer.windows(4).position(|window| window == b"\r\n\r\n")
+            else {
+                if buffer.len() > 8 * 1024 {
+                    bail!("egress proxy CONNECT response is too large")
+                }
+                continue;
+            };
             let head = String::from_utf8_lossy(&buffer[..header_end]).to_string();
             let status = head.lines().next().unwrap_or_default();
             if !status.contains(" 200 ") {

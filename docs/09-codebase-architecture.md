@@ -70,9 +70,9 @@ V1 `platform-api`、`trigger-gateway`、`workflow-coordinator`、`trace-writer`�
 ### 纯领域与协议
 
 - `agentx-domain`：纯领域对象和值类型，不依赖 Axum、SQLx、Redis 或 ClickHouse。
-- `agentx-runtime`：Workflow Item、图、表达式、编译 IR 和状态机算法；不依赖具体存储。
+- `agentx-runtime`：Workflow Item、图、表达式、内置节点Registry、有效契约、编译IR和状态机算法；不依赖具体存储。Registry是Studio内置节点及其版本/hash的权威来源，Catalog中的数据库Manifest只能是匹配该来源的不可变快照。
 - `agentx-node-protocol`：版本化 Node Manifest、Action/Lifecycle、Item/Lineage、Artifact、Credential Handle 和错误 DTO。
-- `agentx-runtime-contracts`：跨面 Bundle、Work Package、Command/Event、Internal API、IR、Worker Protocol 和 JWT DTO；使用严格版本与未知字段拒绝。
+- `agentx-runtime-contracts`：跨面 Bundle、Work Package、Command/Event、Internal API、Definition/Manifest、IR、Worker Protocol 和 JWT DTO；使用严格版本与未知字段拒绝，并由同一生成管线写入 `schemas/runtime-v1` 与OpenAPI调用类型。
 - `agentx-api-types`：公共 HTTP DTO，不包含数据库 Row。
 
 ### 应用与基础设施
@@ -126,6 +126,6 @@ GET  :9092/metrics
 
 ## 6. 文件组织与门禁
 
-服务按 Auth/IAM、Workflow、Resource、Application、Evaluation、Governance、Runtime Engine、Query 和 Provider 等领域拆分模块。任何前端或后端生产源文件不得超过 2000 行；生成文件和 Migration 必须进入明确允许列表。
+服务按 Auth/IAM、Workflow、Resource、Application、Evaluation、Governance、Runtime Engine、Query 和 Provider 等领域拆分模块。Workflow Compiler引用校验、Control Webhook以及Agent Runtime的Budget/State/Model/Trace均按该职责拆分。任何前端或后端生产源文件不得超过 2000 行；生成文件和 Migration 必须进入明确允许列表。
 
 当前完成事实和数据访问图见 [当前架构、服务与数据访问图](13-architecture-service-data-map.md)，本地收口证据见 [V2-08A 验收](planv2/evidence/v2-08.md)。生产容量、安全与恢复认证仍属于 V2-08B。

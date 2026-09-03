@@ -62,8 +62,6 @@ impl ResourceOperation {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ResourceReference {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub binding_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub binding_role: Option<String>,
     pub resource_type: ResourceType,
     pub resource_id: Uuid,

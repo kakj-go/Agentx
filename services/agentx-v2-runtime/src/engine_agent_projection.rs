@@ -55,7 +55,7 @@ pub(super) fn inject_agent_runtime_parameters(
             "sessionPolicy": entry.configuration.session_policy,
             "model": entry.configuration.model,
             "workspaceSandbox": entry.configuration.workspace_sandbox,
-            "canvasAttachments": entry.configuration.canvas_attachments,
+            "attachments": entry.configuration.attachments,
             "coreTools": entry.configuration.core_tools,
             "attachmentRegistry": entry.attachment_registry,
             "definitionHash": agent_bundle.definition_hash,
@@ -88,7 +88,7 @@ mod tests {
                 "resourceVersionId":Uuid::from_u128(1),
                 "operation":"use"
             },
-            "canvasAttachments":[],
+            "attachments":[],
             "coreTools":[]
         }))
         .unwrap()

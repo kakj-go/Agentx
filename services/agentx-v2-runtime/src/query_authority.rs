@@ -2,8 +2,8 @@ use agentx_runtime_contracts::{
     ContentHash, DelegationClaimsV1, ExecutionCheckpointV1, ExecutionCollectionPageV1,
     ExecutionDetailV1, ExecutionEventPageV1, ExecutionEventV1, ExecutionNodeV1,
     ExecutionRuntimeDetailsV1, ExecutionSearchPageV1, ExecutionSearchRequestV1, ExecutionSummaryV1,
-    ExecutionWaitV1, InvocationDetailV1, InvocationSearchPageV1, InvocationSearchRequestV1,
-    InvocationSummaryV1, NodeAttemptV1, RuntimeCallDetailV1, content_hash,
+    InvocationDetailV1, InvocationSearchPageV1, InvocationSearchRequestV1, InvocationSummaryV1,
+    NodeAttemptV1, RuntimeCallDetailV1, content_hash,
 };
 use axum::{
     Json,
@@ -301,34 +301,6 @@ pub async fn get_execution_events(
 pub struct ExecutionEventsQuery {
     after: Option<u64>,
     limit: Option<u32>,
-}
-
-pub async fn get_execution_waits(
-    State(state): State<RuntimeState>,
-    headers: HeaderMap,
-    Path(id): Path<Uuid>,
-) -> RuntimeResult<Json<ExecutionCollectionPageV1<ExecutionWaitV1>>> {
-    let claims = authorize_execution(&state, &headers, id, "execution_waits").await?;
-    let rows = sqlx::query("SELECT id,node_execution_id,wait_kind,status,wake_at,timeout_at FROM wait_subscriptions WHERE tenant_id=? AND execution_id=? ORDER BY created_at,id")
-        .bind(claims.tenant_id).bind(id).fetch_all(&state.pool).await?;
-    let items = rows
-        .into_iter()
-        .map(|row| -> RuntimeResult<_> {
-            Ok(ExecutionWaitV1 {
-                wait_id: row.try_get("id")?,
-                node_execution_id: row.try_get("node_execution_id")?,
-                wait_kind: row.try_get("wait_kind")?,
-                status: row.try_get("status")?,
-                wake_at: row.try_get("wake_at")?,
-                timeout_at: row.try_get("timeout_at")?,
-            })
-        })
-        .collect::<RuntimeResult<Vec<_>>>()?;
-    complete_query_receipt(&state, claims.jti, "OK").await?;
-    Ok(Json(ExecutionCollectionPageV1 {
-        api_version: 1,
-        items,
-    }))
 }
 
 pub async fn get_execution_checkpoints(

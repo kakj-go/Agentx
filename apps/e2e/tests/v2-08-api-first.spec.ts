@@ -67,22 +67,25 @@ test('V2-08 API-first empty-domain closure creates product facts without SQL fix
   })
   const draft = await request<Draft>(page, token, `/workflows/${workflow.id}/draft`)
   const definition = {
-    schemaVersion: '6.0',
+    schemaVersion: '8.0',
     start: { inputs: { type: 'object', properties: { message: { type: 'string' } }, required: ['message'], additionalProperties: true }, contexts: {} },
-    nodes: Array.from({ length: 4 }, (_, index) => ({
-      id: `step-${index + 1}`, key: `step_${index + 1}`, type: 'set', typeVersion: 1,
-      name: `Step ${index + 1}`, disabled: false,
-      parameters: { values: { message: index === 0 ? reference('inputs', ['message']) : reference('outputs', ['message'], `step-${index}`) }, keepOnlySet: true },
-      outputProjection: {}, contextWrites: [], resourceReferences: [], settings: {},
-    })),
+    nodes: [
+      ...Array.from({ length: 4 }, (_, index) => ({
+        id: `step-${index + 1}`, key: `step_${index + 1}`, type: 'set', typeVersion: 1,
+        name: `Step ${index + 1}`, disabled: false,
+        parameters: { values: { kind: 'object', fields: { message: index === 0 ? reference('inputs', ['message']) : reference('outputs', ['message'], `step-${index}`) } }, keepOnlySet: true },
+        contextWrites: [], resourceReferences: [], settings: {},
+      })),
+      { id: 'exit', key: 'exit', type: 'exit', typeVersion: 1, name: 'End', disabled: false, protected: true, parameters: { outputs: { message: reference('outputs', ['message'], 'step-4') }, errorOutputs: {} }, contextWrites: [], resourceReferences: [], settings: {} },
+    ],
     connections: [
       { id: 'start-step-1', sourceNodeId: '__start__', sourceHandle: 'main', targetNodeId: 'step-1', targetHandle: 'main', order: 0 },
       { id: 'step-1-step-2', sourceNodeId: 'step-1', sourceHandle: 'main', targetNodeId: 'step-2', targetHandle: 'main', order: 0 },
       { id: 'step-2-step-3', sourceNodeId: 'step-2', sourceHandle: 'main', targetNodeId: 'step-3', targetHandle: 'main', order: 0 },
       { id: 'step-3-step-4', sourceNodeId: 'step-3', sourceHandle: 'main', targetNodeId: 'step-4', targetHandle: 'main', order: 0 },
-      { id: 'step-4-end', sourceNodeId: 'step-4', sourceHandle: 'main', targetNodeId: '__end__', targetHandle: 'main', order: 0 },
+      { id: 'step-4-end', sourceNodeId: 'step-4', sourceHandle: 'main', targetNodeId: 'exit', targetHandle: 'main', order: 0 },
     ],
-    end: { outputs: { message: { value: reference('outputs', ['message'], 'step-4'), schema: { type: 'string' }, required: true, sensitive: false } } },
+    end: { outputs: { message: { schema: { type: 'string' }, required: true, sensitive: false } } },
     settings: { activationBudget: 8, executionOrder: 'deterministic' },
   }
   const saved = await request<{ revision: number }>(page, token, `/workflows/${workflow.id}/draft`, 'PUT', {

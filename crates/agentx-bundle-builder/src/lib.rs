@@ -211,7 +211,7 @@ fn build_agent_bundle(
                 sandbox.operation,
             );
         }
-        for attachment in &configuration.canvas_attachments {
+        for attachment in &configuration.attachments {
             add_reference(
                 attachment.resource_type,
                 attachment.resource_id,
@@ -305,29 +305,43 @@ pub fn node_registry_with_composites(
                 },
                 "inputs": {
                     "allOf": [definition.start.inputs],
-                    "x-agentx-dynamicValue": {
-                        "modes": ["literal", "reference"],
+                    "x-agentx-binding": {
+                        "acceptedKinds": ["literal", "reference", "template", "array", "object"],
                         "allowedNamespaces": ["inputs", "outputs", "contexts", "execution"],
                         "acceptedCardinality": ["single"],
-                        "missingPolicies": ["error", "null", "default", "omit"],
+                        "missingPolicies": ["error", "null", "omit"],
                         "recursive": true
                     }
                 }
             },
             "additionalProperties": false
         });
+        let all_complete =
+            definition.end.completion == agentx_domain::WorkflowCompletion::AllComplete;
         let required = definition
             .end
             .outputs
             .iter()
-            .filter(|(_, output)| output.required)
+            .filter(|(_, output)| all_complete || output.required)
             .map(|(name, _)| Value::String(name.clone()))
             .collect::<Vec<_>>();
         let properties = definition
             .end
             .outputs
             .iter()
-            .map(|(name, output)| (name.clone(), output.schema.clone()))
+            .map(|(name, output)| {
+                let schema = if all_complete {
+                    let item_schema = if output.required {
+                        output.schema.clone()
+                    } else {
+                        json!({"anyOf":[output.schema.clone(),{"type":"null"}]})
+                    };
+                    json!({"type":"array","items":item_schema})
+                } else {
+                    output.schema.clone()
+                };
+                (name.clone(), schema)
+            })
             .collect::<serde_json::Map<_, _>>();
         manifest.output_schema = json!({
             "type": "object",
@@ -355,14 +369,6 @@ pub fn build_bundle(
         return Err(BuildError::NonCanonicalObject);
     }
     let registry = node_registry_with_composites(&source.dependency_versions)?;
-    source.triggers.extend(workflow_runtime_triggers(
-        &registry,
-        &source.definition,
-        source.tenant_id,
-        source.application_id,
-        source.workflow_version_id,
-        source.sequence,
-    )?);
     source.triggers.sort_by_key(|trigger| trigger.trigger_id);
     if source
         .triggers
@@ -392,6 +398,7 @@ pub fn build_bundle(
                     .join(","),
             )
         })?;
+    validate_model_structured_support(&source.definition, &source.resources)?;
     let mut closure = Vec::new();
     let mut visiting = BTreeSet::from([source.workflow_version_id]);
     collect_dependencies(
@@ -418,12 +425,7 @@ pub fn build_bundle(
             source.workflow_version_id,
         ));
     }
-    let node_manifests = compiled
-        .nodes
-        .iter()
-        .filter_map(|node| registry.get(&node.node_type, node.type_version))
-        .map(|manifest| serde_json::to_value(manifest).expect("Node Manifest serializes"))
-        .collect::<Vec<_>>();
+    let node_manifests = frozen_node_manifests(&source.definition, &registry);
     let capabilities = compiled
         .nodes
         .iter()
@@ -519,6 +521,7 @@ pub fn build_work_package(
                     .join(","),
             )
         })?;
+    validate_model_structured_support(&source.definition, &source.resources)?;
     let mut closure = Vec::new();
     let mut visiting = BTreeSet::from([source.package_id]);
     collect_dependencies(
@@ -540,12 +543,7 @@ pub fn build_work_package(
             }
         }
     }
-    let node_manifests = compiled
-        .nodes
-        .iter()
-        .filter_map(|node| registry.get(&node.node_type, node.type_version))
-        .map(|manifest| serde_json::to_value(manifest).expect("Node Manifest serializes"))
-        .collect::<Vec<_>>();
+    let node_manifests = frozen_node_manifests(&source.definition, &registry);
     let mut capabilities = compiled
         .nodes
         .iter()
@@ -612,6 +610,60 @@ pub fn build_work_package(
     .map_err(BuildError::from)
 }
 
+fn validate_model_structured_support(
+    definition: &WorkflowDefinition,
+    resources: &[RuntimeResourceBindingV1],
+) -> Result<(), BuildError> {
+    for node in definition.nodes.iter().filter(|node| {
+        node.node_type == "model"
+            && node.parameters.get("responseMode").and_then(Value::as_str) == Some("json_schema")
+    }) {
+        let reference = node
+            .resource_references
+            .iter()
+            .find(|reference| reference.resource_type == agentx_domain::ResourceType::Model)
+            .ok_or_else(|| BuildError::Compilation("MODEL_RESOURCE_REQUIRED".into()))?;
+        let version = reference
+            .resource_version_id
+            .ok_or_else(|| BuildError::Compilation("MODEL_RESOURCE_VERSION_REQUIRED".into()))?;
+        let binding = resources
+            .iter()
+            .find(|binding| {
+                binding.resource_kind == agentx_runtime_contracts::RuntimeResourceKindV1::Model
+                    && binding.resource_id == reference.resource_id
+                    && binding.resource_version == version.to_string()
+            })
+            .ok_or_else(|| BuildError::Compilation("MODEL_RESOURCE_SNAPSHOT_MISSING".into()))?;
+        let supported = matches!(
+            &binding.configuration,
+            agentx_runtime_contracts::RuntimeResourceConfigurationV1::Model { provider, .. }
+                if provider == "openai_compatible"
+        );
+        if !supported {
+            return Err(BuildError::Compilation(
+                "MODEL_STRUCTURED_OUTPUT_UNSUPPORTED".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn frozen_node_manifests(definition: &WorkflowDefinition, registry: &NodeRegistry) -> Vec<Value> {
+    definition
+        .nodes
+        .iter()
+        .filter(|node| !node.disabled && node.node_type != agentx_domain::WORKFLOW_EXIT_NODE_TYPE)
+        .filter_map(|node| {
+            registry.resolve_definition_manifest(
+                &node.node_type,
+                node.type_version,
+                &node.parameters,
+            )
+        })
+        .map(|manifest| serde_json::to_value(manifest).expect("Node Manifest serializes"))
+        .collect()
+}
+
 fn build_model_evaluators(
     spec: &agentx_runtime_contracts::RuntimeWorkPackageSpecV1,
     registry: &NodeRegistry,
@@ -632,7 +684,7 @@ fn build_model_evaluators(
         })
         .map(|(evaluator_id, resource_id, prompt_object_id)| {
             let definition: WorkflowDefinition = serde_json::from_value(serde_json::json!({
-                "schemaVersion":"7.0",
+                "schemaVersion":"8.0",
                 "start":{"inputs":{},"contexts":{}},
                 "nodes":[{
                     "id":"evaluate",
@@ -640,8 +692,7 @@ fn build_model_evaluators(
                     "type":"model",
                     "typeVersion":1,
                     "name":"Model Evaluator",
-                    "parameters":{"prompt":"runtime_object"},
-                    "outputProjection":{"main":{"evaluation":{"value":{"kind":"reference","selector":{"namespace":"item","run":{"kind":"current"},"item":{"kind":"current"},"path":["structuredOutput"]},"missingPolicy":{"kind":"error"}},"schema":{"type":"object"},"sensitive":false}}},
+                    "parameters":{"prompt":{"kind":"template","segments":[{"kind":"text","text":"runtime_object"}]},"responseMode":"json_schema","structuredSchema":{"type":"object","additionalProperties":true}},
                     "contextWrites":[],
                     "resourceReferences":[{
                         "resourceType":"model",
@@ -650,7 +701,7 @@ fn build_model_evaluators(
                     }]
                 },{
                     "id":"__exit__","key":"__exit__","type":"exit","typeVersion":1,"name":"End",
-                    "parameters":{"outputs":{"evaluation":{"kind":"reference","selector":{"namespace":"outputs","sourceNodeId":"evaluate","port":"main","run":{"kind":"current"},"item":{"kind":"current"},"path":["evaluation"]},"missingPolicy":{"kind":"error"}}},"errorOutputs":{}}}
+                    "parameters":{"outputs":{"evaluation":{"kind":"reference","selector":{"namespace":"outputs","sourceNodeId":"evaluate","port":"main","run":{"kind":"current"},"item":{"kind":"current"},"path":["structuredOutput"]},"missingPolicy":{"kind":"error"}}},"errorOutputs":{}}}
                 ],
                 "connections":[
                     {"id":"start-evaluate","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"evaluate","targetHandle":"main","order":0},
@@ -696,170 +747,6 @@ fn build_model_evaluators(
             })
         })
         .collect()
-}
-
-fn workflow_runtime_triggers(
-    registry: &NodeRegistry,
-    definition: &WorkflowDefinition,
-    tenant_id: Uuid,
-    application_id: Uuid,
-    workflow_version_id: Uuid,
-    revision: u64,
-) -> Result<Vec<RuntimeTriggerSpecV1>, BuildError> {
-    use agentx_node_protocol::LifecycleOperation;
-    use agentx_runtime_contracts::{LifecycleOperationV1, RuntimeTriggerConfigurationV1};
-
-    let context = RuntimeTriggerContext {
-        tenant_id,
-        application_id,
-        workflow_version_id,
-        revision,
-    };
-    let mut triggers = Vec::new();
-    for node in definition.nodes.iter().filter(|node| !node.disabled) {
-        let Some(manifest) = registry.get(&node.node_type, node.type_version) else {
-            continue;
-        };
-        if manifest.lifecycle_operations.is_empty() {
-            continue;
-        }
-        let endpoint = node
-            .parameters
-            .get("endpoint")
-            .and_then(Value::as_str)
-            .filter(|value| !value.trim().is_empty())
-            .ok_or_else(|| {
-                BuildError::Compilation(format!("RUNTIME_TRIGGER_ENDPOINT_REQUIRED:{}", node.id))
-            })?
-            .trim_end_matches('/');
-        let protocol_input = |operation: &str| {
-            serde_json::json!({
-                "protocolVersion": agentx_node_protocol::NODE_PROTOCOL_VERSION,
-                "operation": operation,
-                "nodeType": node.node_type,
-                "nodeVersion": node.type_version,
-                "tenantId": tenant_id,
-                "workflowVersionId": workflow_version_id,
-                "configuration": node.parameters,
-            })
-        };
-        if manifest
-            .lifecycle_operations
-            .contains(&LifecycleOperation::Poll)
-        {
-            let interval_seconds = node
-                .parameters
-                .get("pollIntervalSeconds")
-                .and_then(Value::as_u64)
-                .unwrap_or(60)
-                .clamp(1, 86_400) as u32;
-            let configuration = RuntimeTriggerConfigurationV1::Poll {
-                interval_seconds,
-                provider_endpoint: format!("{endpoint}/agentx/node/v1/lifecycle/poll"),
-                input: protocol_input("poll"),
-            };
-            triggers.push(runtime_trigger(
-                &context,
-                &node.id,
-                &node.name,
-                "poll",
-                true,
-                configuration,
-            )?);
-        }
-        for (operation, operation_name) in [
-            (LifecycleOperation::Activate, "activate"),
-            (LifecycleOperation::Deactivate, "deactivate"),
-        ] {
-            if !manifest.lifecycle_operations.contains(&operation) {
-                continue;
-            }
-            let configuration = RuntimeTriggerConfigurationV1::Lifecycle {
-                operation: if operation == LifecycleOperation::Activate {
-                    LifecycleOperationV1::Activate
-                } else {
-                    LifecycleOperationV1::Deactivate
-                },
-                provider_endpoint: format!("{endpoint}/agentx/node/v1/lifecycle/{operation_name}"),
-                input: protocol_input(operation_name),
-            };
-            triggers.push(runtime_trigger(
-                &context,
-                &node.id,
-                &node.name,
-                &format!("lifecycle:{operation_name}"),
-                operation == LifecycleOperation::Activate,
-                configuration,
-            )?);
-        }
-    }
-    triggers.sort_by_key(|trigger| trigger.trigger_id);
-    Ok(triggers)
-}
-
-struct RuntimeTriggerContext {
-    tenant_id: Uuid,
-    application_id: Uuid,
-    workflow_version_id: Uuid,
-    revision: u64,
-}
-
-fn runtime_trigger(
-    context: &RuntimeTriggerContext,
-    node_id: &str,
-    trigger_name: &str,
-    kind: &str,
-    enabled: bool,
-    configuration: agentx_runtime_contracts::RuntimeTriggerConfigurationV1,
-) -> Result<RuntimeTriggerSpecV1, BuildError> {
-    let trigger_id = deterministic_trigger_id(
-        context.tenant_id,
-        context.application_id,
-        context.workflow_version_id,
-        node_id,
-        kind,
-        kind.starts_with("lifecycle:").then_some(context.revision),
-    );
-    let configuration_hash = agentx_runtime_contracts::content_hash(&configuration)?;
-    Ok(RuntimeTriggerSpecV1 {
-        schema_version: 1,
-        trigger_id,
-        trigger_name: trigger_name.to_owned(),
-        application_id: context.application_id,
-        node_id: format!("{node_id}:{kind}"),
-        revision: context.revision,
-        configuration_hash,
-        enabled,
-        configuration,
-    })
-}
-
-fn deterministic_trigger_id(
-    tenant_id: Uuid,
-    application_id: Uuid,
-    workflow_version_id: Uuid,
-    node_id: &str,
-    kind: &str,
-    revision: Option<u64>,
-) -> Uuid {
-    let mut digest = Sha256::new();
-    digest.update(b"agentx-runtime-trigger-v1\0");
-    digest.update(tenant_id.as_bytes());
-    digest.update(application_id.as_bytes());
-    digest.update(node_id.as_bytes());
-    digest.update([0]);
-    digest.update(kind.as_bytes());
-    if let Some(revision) = revision {
-        digest.update(workflow_version_id.as_bytes());
-        digest.update(revision.to_be_bytes());
-    }
-    let digest = digest.finalize();
-    let mut bytes = [0_u8; 16];
-    bytes.copy_from_slice(&digest[..16]);
-    // RFC 9562 UUIDv8 marks this as an application-defined deterministic ID.
-    bytes[6] = (bytes[6] & 0x0f) | 0x80;
-    bytes[8] = (bytes[8] & 0x3f) | 0x80;
-    Uuid::from_bytes(bytes)
 }
 
 fn collect_dependencies(
@@ -935,7 +822,7 @@ fn direct_dependency_ids(definition: &WorkflowDefinition) -> Result<Vec<Uuid>, B
     definition
         .nodes
         .iter()
-        .filter(|node| node.node_type == "sub_workflow" || node.node_type.starts_with("workflow."))
+        .filter(|node| node.node_type == "sub_workflow")
         .map(|node| {
             node.parameters
                 .get("workflowVersionId")
@@ -964,9 +851,9 @@ mod tests {
 
     fn definition() -> WorkflowDefinition {
         serde_json::from_value(json!({
-            "schemaVersion":"7.0",
+            "schemaVersion":"8.0",
             "start":{"inputs":{"type":"object","properties":{"message":{"type":"string"}},"required":["message"],"additionalProperties":false},"contexts":{}},
-            "nodes":[{"id":"pass","key":"pass","type":"no_op","typeVersion":1,"name":"Pass","parameters":{},"outputProjection":{},"contextWrites":[]},{"id":"__exit__","key":"__exit__","type":"exit","typeVersion":1,"name":"End","parameters":{"outputs":{"message":{"kind":"reference","selector":{"namespace":"outputs","sourceNodeId":"pass","port":"main","run":{"kind":"current"},"item":{"kind":"current"},"path":["message"]},"missingPolicy":{"kind":"error"}}},"errorOutputs":{}}}],
+            "nodes":[{"id":"pass","key":"pass","type":"set","typeVersion":1,"name":"Pass","parameters":{},"contextWrites":[]},{"id":"__exit__","key":"__exit__","type":"exit","typeVersion":1,"name":"End","parameters":{"outputs":{"message":{"kind":"reference","selector":{"namespace":"outputs","sourceNodeId":"pass","port":"main","run":{"kind":"current"},"item":{"kind":"current"},"path":["message"]},"missingPolicy":{"kind":"error"}}},"errorOutputs":{}}}],
             "connections":[
                 {"id":"start-pass","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"pass","targetHandle":"main","order":0},
                 {"id":"pass-end","sourceNodeId":"pass","sourceHandle":"main","targetNodeId":"__exit__","targetHandle":"main","order":0}
@@ -1032,6 +919,7 @@ mod tests {
 
     fn agent_definition(with_sandbox: bool, session_mode: &str) -> WorkflowDefinition {
         let mut references = vec![json!({
+            "bindingRole":"model",
             "resourceType":"model",
             "resourceId":"11111111-1111-4111-8111-111111111111",
             "resourceVersionId":"22222222-2222-4222-8222-222222222222",
@@ -1039,6 +927,7 @@ mod tests {
         })];
         if with_sandbox {
             references.push(json!({
+                "bindingRole":"workspace_sandbox",
                 "resourceType":"sandbox_profile",
                 "resourceId":"33333333-3333-4333-8333-333333333333",
                 "resourceVersionId":"44444444-4444-4444-8444-444444444444",
@@ -1046,12 +935,12 @@ mod tests {
             }));
         }
         serde_json::from_value(json!({
-            "schemaVersion":"7.0",
+            "schemaVersion":"8.0",
             "start":{"inputs":{"type":"object","properties":{}},"contexts":{}},
             "nodes":[{
                 "id":"agent","key":"agent","type":"agent","typeVersion":2,"name":"Agent",
                 "parameters":{"sessionPolicy":{"mode":session_mode}},
-                "resourceReferences":references,"outputProjection":{},"contextWrites":[]
+                "resourceReferences":references,"contextWrites":[]
             },{
                 "id":"__exit__","key":"__exit__","type":"exit","typeVersion":1,"name":"End","parameters":{"outputs":{},"errorOutputs":{}}
             }],
@@ -1061,7 +950,7 @@ mod tests {
             ],
             "end":{"outputs":{}}
         }))
-        .expect("Agent Definition 7.0 fixture")
+        .expect("Agent Definition 8.0 fixture")
     }
 
     fn agent_source(with_sandbox: bool, session_mode: &str) -> BundleBuildSource {
@@ -1069,6 +958,54 @@ mod tests {
         source.definition = agent_definition(with_sandbox, session_mode);
         source.supported_capabilities = BTreeSet::from(["agent".into()]);
         source.authorization.capabilities = BTreeSet::from(["agent".into()]);
+        source
+    }
+
+    fn structured_model_source(provider: &str) -> BundleBuildSource {
+        let resource_id = Uuid::from_u128(101);
+        let version_id = Uuid::from_u128(102);
+        let mut source = source();
+        source.definition.nodes[0].node_type = "model".into();
+        source.definition.nodes[0].parameters = json!({
+            "responseMode":"json_schema",
+            "structuredSchema":{"type":"object","required":["answer"],"properties":{"answer":{"type":"string"}},"additionalProperties":false}
+        });
+        source.definition.nodes[0].resource_references = vec![agentx_domain::ResourceReference {
+            binding_role: None,
+            resource_type: agentx_domain::ResourceType::Model,
+            resource_id,
+            resource_version_id: Some(version_id),
+            operation: agentx_domain::ResourceOperation::Use,
+        }];
+        source.definition.nodes[1].parameters = json!({"outputs":{},"errorOutputs":{}});
+        source.definition.end = Default::default();
+        source.supported_capabilities = BTreeSet::from(["model".into()]);
+        source.authorization.capabilities = BTreeSet::from(["model".into()]);
+        source.resources = vec![RuntimeResourceBindingV1 {
+            resource_kind: agentx_runtime_contracts::RuntimeResourceKindV1::Model,
+            resource_id,
+            resource_version: version_id.to_string(),
+            state_epoch: 1,
+            content_hash: agentx_runtime_contracts::ContentHash::parse(format!(
+                "sha256:{}",
+                "c".repeat(64)
+            ))
+            .unwrap(),
+            configuration: agentx_runtime_contracts::RuntimeResourceConfigurationV1::Model {
+                provider: provider.into(),
+                endpoint: "https://models.example/v1".into(),
+                model: "test-model".into(),
+                context_window: 128_000,
+                price: agentx_runtime_contracts::RuntimeModelPriceV1 {
+                    version_id: "price-1".into(),
+                    currency: "USD".into(),
+                    input_per_million: "1".into(),
+                    output_per_million: "2".into(),
+                },
+                credential: None,
+            },
+            object_ids: vec![],
+        }];
         source
     }
 
@@ -1198,6 +1135,26 @@ mod tests {
     }
 
     #[test]
+    fn structured_model_requires_a_provider_with_native_json_schema_support() {
+        let key = SigningKey::generate(&mut OsRng);
+        let unsupported = build_bundle(
+            structured_model_source("custom_http"),
+            "bundle-current",
+            &key,
+        );
+        assert!(matches!(
+            unsupported,
+            Err(BuildError::Compilation(ref code)) if code == "MODEL_STRUCTURED_OUTPUT_UNSUPPORTED"
+        ));
+        build_bundle(
+            structured_model_source("openai_compatible"),
+            "bundle-current",
+            &key,
+        )
+        .expect("openai-compatible model freezes native JSON Schema mode");
+    }
+
+    #[test]
     fn work_package_build_is_deterministic_and_uses_an_independent_key() {
         let bundle_key = SigningKey::generate(&mut OsRng);
         let work_package_key = SigningKey::generate(&mut OsRng);
@@ -1294,7 +1251,7 @@ mod tests {
     fn unsupported_runtime_capability_is_rejected_by_the_builder() {
         let mut source = source();
         source.definition.nodes[0].node_type = "declarative_http".into();
-        source.definition.nodes[0].parameters = json!({"url":"https://example.invalid"});
+        source.definition.nodes[0].parameters = json!({"url":{"kind":"template","segments":[{"kind":"text","text":"https://example.invalid"}]}});
         source.definition.nodes[1].parameters = json!({"outputs":{},"errorOutputs":{}});
         source.definition.end = Default::default();
         let result = build_bundle(source, "bundle-current", &SigningKey::generate(&mut OsRng));
@@ -1305,82 +1262,6 @@ mod tests {
             ),
             "{result:?}"
         );
-    }
-
-    #[test]
-    fn remote_action_produces_deterministic_poll_and_lifecycle_triggers() {
-        let mut source = source();
-        source.supported_capabilities.insert("remote_action".into());
-        source.definition.nodes[0].node_type = "remote_action".into();
-        source.definition.nodes[0].parameters = json!({
-            "endpoint":"http://echo-node:8080/",
-            "pollIntervalSeconds":7,
-            "eventId":"evt-7",
-            "pollInput":{"source":"poll"}
-        });
-        source.definition.nodes[1].parameters = json!({"outputs":{},"errorOutputs":{}});
-        source.definition.end = Default::default();
-        let key = SigningKey::generate(&mut OsRng);
-        let first = build_bundle(source.clone(), "bundle-current", &key).unwrap();
-        let second = build_bundle(source, "bundle-current", &key).unwrap();
-        assert_eq!(first.content_hash, second.content_hash);
-        assert_eq!(first.payload.triggers.len(), 3);
-        assert_eq!(
-            first
-                .payload
-                .triggers
-                .iter()
-                .map(|trigger| trigger.trigger_id)
-                .collect::<BTreeSet<_>>()
-                .len(),
-            3
-        );
-        let poll = first
-            .payload
-            .triggers
-            .iter()
-            .find(|trigger| {
-                matches!(
-                    trigger.configuration,
-                    agentx_runtime_contracts::RuntimeTriggerConfigurationV1::Poll { .. }
-                )
-            })
-            .unwrap();
-        match &poll.configuration {
-            agentx_runtime_contracts::RuntimeTriggerConfigurationV1::Poll {
-                interval_seconds,
-                provider_endpoint,
-                input,
-            } => {
-                assert_eq!(*interval_seconds, 7);
-                assert_eq!(
-                    provider_endpoint,
-                    "http://echo-node:8080/agentx/node/v1/lifecycle/poll"
-                );
-                assert_eq!(input["workflowVersionId"], Uuid::from_u128(6).to_string());
-            }
-            _ => unreachable!(),
-        }
-        let lifecycle_enabled = first
-            .payload
-            .triggers
-            .iter()
-            .filter_map(|trigger| match &trigger.configuration {
-                agentx_runtime_contracts::RuntimeTriggerConfigurationV1::Lifecycle {
-                    operation,
-                    ..
-                } => Some((*operation, trigger.enabled)),
-                _ => None,
-            })
-            .collect::<Vec<_>>();
-        assert!(lifecycle_enabled.contains(&(
-            agentx_runtime_contracts::LifecycleOperationV1::Activate,
-            true
-        )));
-        assert!(lifecycle_enabled.contains(&(
-            agentx_runtime_contracts::LifecycleOperationV1::Deactivate,
-            false
-        )));
     }
 
     #[test]
@@ -1421,7 +1302,7 @@ mod tests {
     fn immutable_composite_registry_pins_version_io_and_context_contracts() {
         let child_id = Uuid::from_u128(42);
         let child: WorkflowDefinition = serde_json::from_value(json!({
-            "schemaVersion":"7.0",
+            "schemaVersion":"8.0",
             "start":{
                 "inputs":{"type":"object","required":["question"],"properties":{"question":{"type":"string"}},"additionalProperties":false},
                 "contexts":{"counter":{"schema":{"type":"number"},"default":0,"mutable":true,"sensitive":false,"clientWritable":false,"scope":"execution_tree","mergePolicy":"increment"}}
@@ -1445,7 +1326,7 @@ mod tests {
             json!(["question"])
         );
         assert_eq!(
-            manifest.parameter_schema["properties"]["inputs"]["x-agentx-dynamicValue"]["allowedNamespaces"],
+            manifest.parameter_schema["properties"]["inputs"]["x-agentx-binding"]["allowedNamespaces"],
             json!(["inputs", "outputs", "contexts", "execution"])
         );
         assert_eq!(manifest.output_schema["required"], json!(["answer"]));
@@ -1455,15 +1336,15 @@ mod tests {
         );
 
         let parent: WorkflowDefinition = serde_json::from_value(json!({
-            "schemaVersion":"7.0",
+            "schemaVersion":"8.0",
             "start":{
                 "inputs":{"type":"object","required":["question"],"properties":{"question":{"type":"string"}},"additionalProperties":false},
                 "contexts":{"counter":{"schema":{"type":"number"},"default":0,"mutable":true,"sensitive":false,"clientWritable":false,"scope":"execution_tree","mergePolicy":"increment"}}
             },
             "nodes":[
-                {"id":"child","key":"child","type":node_type,"typeVersion":1,"name":"Child","parameters":{"workflowVersionId":child_id,"inputs":{"question":{"kind":"reference","selector":{"namespace":"inputs","run":{"kind":"current"},"item":{"kind":"current"},"path":["question"]},"missingPolicy":{"kind":"error"}}}},"outputProjection":{},"contextWrites":[],"resourceReferences":[]},
-                {"id":"summary","key":"summary","type":"set","typeVersion":1,"name":"Summary","parameters":{"values":{"answer":{"kind":"reference","selector":{"namespace":"outputs","sourceNodeId":"child","port":"main","run":{"kind":"current"},"item":{"kind":"current"},"path":["answer"]},"missingPolicy":{"kind":"error"}},"counter":{"kind":"reference","selector":{"namespace":"contexts","run":{"kind":"current"},"item":{"kind":"current"},"path":["counter"]},"missingPolicy":{"kind":"error"}}},"keepOnlySet":true},"outputProjection":{"main":{"answer_text":{"value":{"kind":"reference","selector":{"namespace":"item","run":{"kind":"current"},"item":{"kind":"current"},"path":["answer"]},"missingPolicy":{"kind":"error"}},"schema":{"type":"string"},"sensitive":false},"counter_value":{"value":{"kind":"reference","selector":{"namespace":"item","run":{"kind":"current"},"item":{"kind":"current"},"path":["counter"]},"missingPolicy":{"kind":"error"}},"schema":{"type":"number"},"sensitive":false}}},"contextWrites":[],"resourceReferences":[]},
-                {"id":"__exit__","key":"__exit__","type":"exit","typeVersion":1,"name":"End","parameters":{"outputs":{"answer":{"kind":"reference","selector":{"namespace":"outputs","sourceNodeId":"summary","port":"main","run":{"kind":"current"},"item":{"kind":"current"},"path":["answer_text"]},"missingPolicy":{"kind":"error"}},"counter":{"kind":"reference","selector":{"namespace":"outputs","sourceNodeId":"summary","port":"main","run":{"kind":"current"},"item":{"kind":"current"},"path":["counter_value"]},"missingPolicy":{"kind":"error"}}},"errorOutputs":{}}}
+                {"id":"child","key":"child","type":"sub_workflow","typeVersion":1,"name":"Child","parameters":{"workflowVersionId":child_id,"inputs":{"kind":"object","fields":{"question":{"kind":"reference","selector":{"namespace":"inputs","run":{"kind":"current"},"item":{"kind":"current"},"path":["question"]},"missingPolicy":{"kind":"error"}}}}},"contextWrites":[],"resourceReferences":[]},
+                {"id":"summary","key":"summary","type":"set","typeVersion":1,"name":"Summary","parameters":{"values":{"kind":"object","fields":{"answer":{"kind":"reference","selector":{"namespace":"outputs","sourceNodeId":"child","port":"main","run":{"kind":"current"},"item":{"kind":"current"},"path":["answer"]},"missingPolicy":{"kind":"error"}},"counter":{"kind":"reference","selector":{"namespace":"contexts","run":{"kind":"current"},"item":{"kind":"current"},"path":["counter"]},"missingPolicy":{"kind":"error"}}}},"keepOnlySet":true},"contextWrites":[],"resourceReferences":[]},
+                {"id":"__exit__","key":"__exit__","type":"exit","typeVersion":1,"name":"End","parameters":{"outputs":{"answer":{"kind":"reference","selector":{"namespace":"outputs","sourceNodeId":"summary","port":"main","run":{"kind":"current"},"item":{"kind":"current"},"path":["answer"]},"missingPolicy":{"kind":"error"}},"counter":{"kind":"reference","selector":{"namespace":"outputs","sourceNodeId":"summary","port":"main","run":{"kind":"current"},"item":{"kind":"current"},"path":["counter"]},"missingPolicy":{"kind":"error"}}},"errorOutputs":{}}}
             ],
             "connections":[
                 {"id":"start-child","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"child","targetHandle":"main","order":0},
@@ -1474,36 +1355,12 @@ mod tests {
             "settings":{}
         }))
         .unwrap();
-        compile_workflow_version_with_dependencies(&parent, Uuid::from_u128(43), &definitions)
-            .unwrap();
-    }
-
-    #[test]
-    fn immutable_composite_alias_rejects_missing_and_mismatched_versions() {
-        let child_id = Uuid::from_u128(44);
-        let node_type = format!("workflow.{}", child_id.simple());
-        let mut parent = composite_definition(&[child_id]);
-        parent.nodes[0].node_type = node_type;
-        parent.nodes[0].parameters["inputs"] = json!({"message":{"kind":"reference","selector":{"namespace":"inputs","run":{"kind":"current"},"item":{"kind":"current"},"path":["message"]},"missingPolicy":{"kind":"error"}}});
-
-        let missing = compile_workflow_version_with_dependencies(
-            &parent,
-            Uuid::from_u128(45),
-            &BTreeMap::new(),
-        )
-        .unwrap_err();
-        assert!(
-            matches!(missing, BuildError::Compilation(ref code) if code.contains("UNKNOWN_NODE_VERSION"))
-        );
-
-        let definitions = BTreeMap::from([(child_id, definition())]);
-        parent.nodes[0].parameters["workflowVersionId"] =
-            Value::String(Uuid::from_u128(46).to_string());
-        let mismatch =
-            compile_workflow_version_with_dependencies(&parent, Uuid::from_u128(45), &definitions)
-                .unwrap_err();
-        assert!(
-            matches!(mismatch, BuildError::Compilation(ref code) if code.contains("COMPOSITE_VERSION_MISMATCH"))
+        let compiled =
+            compile_workflow_version_with_dependencies(&parent, Uuid::from_u128(43), &definitions)
+                .unwrap();
+        assert_eq!(
+            compiled.nodes[0].effective_output_contract.port_schemas["main"]["required"],
+            json!(["answer"])
         );
     }
 
@@ -1519,8 +1376,7 @@ mod tests {
                     "type": "sub_workflow",
                     "typeVersion": 1,
                     "name": format!("Child {index}"),
-                    "parameters": {"workflowVersionId": child},
-                    "outputProjection": {},
+                    "parameters": {"workflowVersionId": child,"inputs":{"kind":"object","fields":{"message":{"kind":"literal","value":"hello"}}}},
                     "contextWrites": [],
                     "resourceReferences": []
                 })

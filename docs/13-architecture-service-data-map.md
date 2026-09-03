@@ -71,6 +71,8 @@ Runtime 不主动调用 Control。Runtime 当前状态只来自 Runtime MySQL；
 - V2 `runtime-gateway` 唯一实现 `/gateway/v1` 并生成 `openapi/trigger-gateway.json`。
 - Runtime Internal API 与 Observability Internal API 分别由 `openapi/runtime-internal-v1.json` 和 `openapi/observability-internal-v1.json` 冻结，不经公网 Ingress。
 - `agentx-runtime-contracts` 是跨面 Bundle、Work Package、Command/Event、Query、Worker Protocol 和 JWT DTO 的唯一共享入口。
+- Workflow Definition当前只接受8.0。Rust Registry拥有Studio内置节点Catalog；Start/Exit由设计器边界组件创建，MCP/Skill/RAG/Memory只作为Agent资源能力。数据库Manifest必须与Registry来源、版本及hash一致，子流程Manifest只从固定Workflow Version派生。
+- Application渠道修改只推进Control的runtime config revision；Runtime仅在下一版Application Deployment激活其冻结trigger清单。不存在绕过Deployment的即时trigger同步入口，回滚会一并恢复该版本的渠道快照。
 - Execution 查询由 Runtime Query Authority 按完整过滤条件创建 Cursor 快照；Control BFF 只计算不扩张的授权范围、转发查询并批量补充 Control 当前名称，禁止页后本地过滤或逐行名称查询。
 - `agentx-control-infrastructure` 与 `agentx-runtime-infrastructure` 分别拥有所属存储 Adapter；服务不能共享 Repository 绕过 Internal API。
 - `agentx-mysql-lease` 统一数据库时间、Owner、Lease、Heartbeat 和 Fencing；`agentx-boundary-check` 检查 Cargo、SQL、Env、Secret、NetworkPolicy、V1 残留和 2000 行限制。

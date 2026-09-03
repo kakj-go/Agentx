@@ -116,7 +116,6 @@ const translations = {
     "memory": "记忆读写",
     "model": "模型调用",
     "rag": "知识检索",
-    "remote_action": "远程动作",
     "sandbox": "沙箱执行",
     "skill": "技能能力"
   },

@@ -7,16 +7,16 @@ import type { CanvasNodeRole, NodeManifest, StudioNode } from '../model/types'
 import { useCanvasRenderStore } from '../store/canvas-render-store'
 import { ManifestNode } from './manifest-node'
 
-const roles: CanvasNodeRole[] = ['default', 'trigger', 'branch', 'flow', 'merge', 'loop', 'suspend', 'approval', 'sub_workflow', 'agent', 'code', 'error_handler']
+const roles: CanvasNodeRole[] = ['default', 'trigger', 'branch', 'flow', 'merge', 'loop', 'suspend', 'approval', 'sub_workflow', 'agent', 'code']
 
 const manifest = (role: CanvasNodeRole): NodeManifest => ({
   protocolVersion: '2.0', nodeType: role, version: role === 'agent' ? 2 : 1, displayName: role, description: `${role} node`, category: 'actions', keywords: [role], iconKey: 'box', executionStyle: 'action', capability: 'builtin', readiness: 'any',
-  inputPorts: [{ name: 'main', kind: 'main', required: false, variadic: false }], outputPorts: [{ name: 'error', kind: 'error', required: false, variadic: false }], bindingSlots: role === 'agent' ? [{ name: 'model', resourceType: 'model', placement: 'inspector', required: true, multiple: false }, { name: 'workspace_sandbox', resourceType: 'sandbox_profile', placement: 'inspector', required: false, multiple: false }, { name: 'mcp_tools', resourceType: 'mcp_tool', placement: 'canvas', required: false, multiple: false }] : [],
+  inputPorts: [{ name: 'main', kind: 'main', required: false, variadic: false }], outputPorts: [{ name: 'error', kind: 'error', required: false, variadic: false }], bindingSlots: role === 'agent' ? [{ name: 'model', resourceType: 'model', placement: 'inspector', required: true, multiple: false }, { name: 'workspace_sandbox', resourceType: 'sandbox_profile', placement: 'inspector', required: false, multiple: false }, { name: 'mcp_tools', resourceType: 'mcp_tool', placement: 'inspector', required: false, multiple: true }] : [],
   parameterSchema: {}, uiSchema: { canvas: { role } }, providers: [], credentials: [], retryPolicy: { retryable: false, maxAttempts: 1, initialBackoffMs: 0, maxBackoffMs: 0 }, sandboxRequired: false, supportsMock: true, sideEffectLevel: 'none',
 })
 
-const props = (role: CanvasNodeRole): NodeProps<StudioNode> => ({
-  id: `node-${role}`, type: 'manifest', data: { editorKind: 'action', nodeType: role, typeVersion: role === 'agent' ? 2 : 1, label: `${role} label`, parameters: {}, resourceReferences: [], settings: {}, disabled: false }, selected: false,
+const props = (role: CanvasNodeRole, data: Partial<Extract<StudioNode['data'], { editorKind: 'action' }>> = {}): NodeProps<StudioNode> => ({
+  id: `node-${role}`, type: 'manifest', data: { editorKind: 'action', nodeType: role, typeVersion: role === 'agent' ? 2 : 1, label: `${role} label`, parameters: {}, resourceReferences: [], settings: {}, disabled: false, ...data }, selected: false,
 } as unknown as NodeProps<StudioNode>)
 
 describe('ManifestNode roles', () => {
@@ -24,7 +24,177 @@ describe('ManifestNode roles', () => {
     const value = manifest(role)
     useCanvasRenderStore.setState({ manifests: new Map([[`${role}@${value.version}`, value]]), runtimeStatuses: new Map(), bindingSummaries: new Map(), occupiedHandlesByNodeId: new Map(), zoomTier: 'full' })
     render(<ReactFlowProvider><ManifestNode {...props(role)} /></ReactFlowProvider>)
-    expect(screen.getByTestId(`studio-node-node-${role}`)).toHaveAttribute('data-role', role)
+    const node = screen.getByTestId(`studio-node-node-${role}`)
+    expect(node).toHaveAttribute('data-role', role)
+    expect(node).toHaveStyle({ width: '240px' })
+    expect(node.querySelector('.studio-card')).toBeInTheDocument()
+    expect(node.querySelector('.studio-card-icon')).toBeInTheDocument()
+    expect(node.querySelector('.studio-card-title')).toHaveTextContent(`${role} label`)
+  })
+
+  it('renders the card body summaries and attachment badges for an agent', () => {
+    useCanvasRenderStore.setState({
+      manifests: new Map([['agent@2', manifest('agent')]]), runtimeStatuses: new Map([['node-agent', 'succeeded']]),
+      bindingSummaries: new Map([['node-agent', [
+        { role: 'mcp_tools', resourceType: 'mcp_tool', label: 'Weather tool' },
+        { role: 'mcp_tools', resourceType: 'mcp_tool', label: 'Calendar tool' },
+        { role: 'knowledge', resourceType: 'rag', label: 'SOP' },
+      ]]]),
+      occupiedHandlesByNodeId: new Map(),
+      zoomTier: 'full',
+    })
+    render(<ReactFlowProvider><ManifestNode {...props('agent', { parameters: { maxIterations: 8 }, resourceReferences: [{ bindingRole: 'model', resourceType: 'model', resourceId: 'gpt-4o', resourceVersionId: 'model-v1', operation: 'use' }] })} /></ReactFlowProvider>)
+    const node = screen.getByTestId('studio-node-node-agent')
+    expect(node.querySelector('.studio-card')).toHaveClass('studio-node-succeeded')
+    expect(node.querySelectorAll('.studio-card-row')).toHaveLength(2)
+    expect(node.querySelectorAll('.studio-card-row')[0]).toHaveTextContent('gpt-4o')
+    expect(node.querySelectorAll('.studio-card-row')[1]).toHaveTextContent(/最多 8 轮|Max 8 iterations/)
+    expect(node.querySelector('.studio-card-att')).toHaveTextContent(/MCP [Tt]ool ×2/)
+    expect(node.querySelector('.studio-card-att')).toHaveTextContent(/知识库|Knowledge/)
+    expect(node.querySelector('.studio-card-att-add')).toHaveTextContent(/\+ 附件|\+ Attachment/)
+    expect(node).toHaveStyle({ height: '104px' })
+  })
+
+  it('summarizes model, http, code, set, list, merge, and sub-workflow configuration', () => {
+    const cases: Array<{ nodeType: string; parameters: Record<string, unknown>; pattern: RegExp }> = [
+      { nodeType: 'model', parameters: { responseMode: 'json_schema' }, pattern: /结构化 JSON|Structured JSON/ },
+      { nodeType: 'declarative_http', parameters: { method: 'POST', url: { kind: 'template', segments: [{ kind: 'text', text: 'https://api.test/tickets' }] } }, pattern: /POST.*api\.test/ },
+      { nodeType: 'code', parameters: { runner: 'python' }, pattern: /Python/ },
+      { nodeType: 'set', parameters: { values: { kind: 'object', fields: { status: { kind: 'literal', value: 'ok' }, total: { kind: 'literal', value: 1 } } } }, pattern: /设置 2 个字段|Set 2 fields/ },
+      { nodeType: 'list', parameters: { filter: { conditions: [{ condition: true }] }, sort: [{ selector: 'score' }], takeN: 3 }, pattern: /筛选 1 条.*排序 1 条|1 filter.*1 sort/ },
+      { nodeType: 'merge', parameters: { mode: 'append' }, pattern: /追加|Append/ },
+      { nodeType: 'sub_workflow', parameters: { workflowVersionId: '9b2f1c4a-1111-4222-8333-444455556666' }, pattern: /9b2f1c4a/ },
+    ]
+    for (const { nodeType, parameters, pattern } of cases) {
+      const value = manifest('default')
+      value.nodeType = value.displayName = nodeType
+      useCanvasRenderStore.setState({ manifests: new Map([[`${nodeType}@1`, value]]), runtimeStatuses: new Map(), bindingSummaries: new Map(), occupiedHandlesByNodeId: new Map(), zoomTier: 'full' })
+      const { unmount } = render(<ReactFlowProvider><ManifestNode {...props('default', { nodeType, parameters })} /></ReactFlowProvider>)
+      expect(screen.getByTestId('studio-node-node-default').querySelector('.studio-card-body')).toHaveTextContent(pattern)
+      unmount()
+    }
+  })
+
+  it('renders if branch rows with per-case handles and skips the generic case/else ports', () => {
+    const value = manifest('branch')
+    value.nodeType = value.displayName = 'if'
+    value.outputPorts = [
+      { name: 'case', kind: 'main', required: false, variadic: true },
+      { name: 'else', kind: 'main', required: false, variadic: false },
+      { name: 'error', kind: 'error', required: false, variadic: false },
+    ]
+    useCanvasRenderStore.setState({ manifests: new Map([['if@1', value]]), runtimeStatuses: new Map(), bindingSummaries: new Map(), occupiedHandlesByNodeId: new Map(), zoomTier: 'full' })
+    render(<ReactFlowProvider><ManifestNode {...props('branch', {
+      nodeType: 'if',
+      parameters: { cases: [
+        { id: 'c1', name: 'high', conditions: [{ condition: 'amount >= 1000', label: '金额 ≥ 1000' }], logicalOp: 'and' },
+        { id: 'c2', name: 'mid', conditions: [{ condition: 'amount >= 500', label: '金额 ≥ 500' }, { condition: 'level = vip' }], logicalOp: 'or' },
+      ] },
+    })} /></ReactFlowProvider>)
+    const node = screen.getByTestId('studio-node-node-branch')
+    const rows = node.querySelectorAll('.studio-branch-row')
+    expect(rows).toHaveLength(4)
+    expect(rows[0]).toHaveTextContent('IF')
+    expect(rows[0]).toHaveTextContent('金额 ≥ 1000')
+    expect(rows[1]).toHaveTextContent('ELIF')
+    expect(rows[1]).toHaveTextContent('金额 ≥ 500')
+    expect(rows[1]).toHaveTextContent(/条件 2|Case 2/)
+    expect(rows[1].querySelector('.studio-branch-badge')).toHaveTextContent(/或|OR/)
+    expect(rows[2]).toHaveTextContent('ELSE')
+    expect(rows[3]).toHaveTextContent(/错误|Error/)
+    expect(node.querySelector('.react-flow__handle.source[data-handleid="case:c1"]')).toBeInTheDocument()
+    expect(node.querySelector('.react-flow__handle.source[data-handleid="case:c2"]')).toBeInTheDocument()
+    expect(node.querySelectorAll('.react-flow__handle[data-handleid="else"]')).toHaveLength(1)
+    expect(node.querySelector('.react-flow__handle.source[data-handleid="error"]')).toBeInTheDocument()
+    expect(node.querySelector('.react-flow__handle[data-handleid="case"]')).not.toBeInTheDocument()
+    expect(node.querySelector('[data-port-id="case"]')).not.toBeInTheDocument()
+    expect(node).toHaveStyle({ height: '180px' })
+  })
+
+  it('falls back to the default approval buttons when none are configured', () => {
+    const value = manifest('approval')
+    value.nodeType = value.displayName = 'approval'
+    value.outputPorts = [
+      { name: 'decision', kind: 'main', required: false, variadic: true },
+      { name: 'timed_out', kind: 'main', required: false, variadic: false },
+      { name: 'error', kind: 'error', required: false, variadic: false },
+    ]
+    useCanvasRenderStore.setState({ manifests: new Map([['approval@1', value]]), runtimeStatuses: new Map(), bindingSummaries: new Map(), occupiedHandlesByNodeId: new Map(), zoomTier: 'full' })
+    render(<ReactFlowProvider><ManifestNode {...props('approval', { nodeType: 'approval', parameters: {} })} /></ReactFlowProvider>)
+    const node = screen.getByTestId('studio-node-node-approval')
+    const rows = node.querySelectorAll('.studio-branch-row')
+    expect(rows).toHaveLength(4)
+    expect(rows[0]).toHaveTextContent(/按钮|Button/)
+    expect(rows[0]).toHaveTextContent(/通过|Approve/)
+    expect(rows[1]).toHaveTextContent(/拒绝|Reject/)
+    expect(rows[2]).toHaveTextContent(/超时|Timeout/)
+    expect(rows[3]).toHaveTextContent(/错误|Error/)
+    expect(node.querySelector('.react-flow__handle.source[data-handleid="decision:approved"]')).toBeInTheDocument()
+    expect(node.querySelector('.react-flow__handle.source[data-handleid="decision:rejected"]')).toBeInTheDocument()
+    expect(node.querySelector('.react-flow__handle.source[data-handleid="timed_out"]')).toBeInTheDocument()
+    expect(node.querySelector('.react-flow__handle.source[data-handleid="error"]')).toBeInTheDocument()
+    expect(node.querySelector('.react-flow__handle[data-handleid="decision"]')).not.toBeInTheDocument()
+    expect(node).toHaveStyle({ height: '180px' })
+  })
+
+  it('renders configured approval buttons and the timeout row with hours', () => {
+    const onQuickAdd = vi.fn()
+    const value = manifest('approval')
+    value.nodeType = value.displayName = 'approval'
+    value.outputPorts = [
+      { name: 'decision', kind: 'main', required: false, variadic: true },
+      { name: 'timed_out', kind: 'main', required: false, variadic: false },
+      { name: 'error', kind: 'error', required: false, variadic: false },
+    ]
+    useCanvasRenderStore.setState({ manifests: new Map([['approval@1', value]]), runtimeStatuses: new Map(), bindingSummaries: new Map(), occupiedHandlesByNodeId: new Map(), zoomTier: 'full', onQuickAdd })
+    render(<ReactFlowProvider><ManifestNode {...props('approval', { nodeType: 'approval', parameters: { buttons: [{ id: 'ok', label: '同意' }], timeoutMs: 90_000_000 } })} /></ReactFlowProvider>)
+    const node = screen.getByTestId('studio-node-node-approval')
+    const rows = node.querySelectorAll('.studio-branch-row')
+    expect(rows).toHaveLength(3)
+    expect(rows[0]).toHaveTextContent('同意')
+    expect(rows[1]).toHaveTextContent(/25 小时|25 h/)
+    expect(rows[2]).toHaveTextContent(/错误|Error/)
+    expect(node.querySelector('.react-flow__handle.source[data-handleid="decision:ok"]')).toBeInTheDocument()
+    expect(node.querySelector('.react-flow__handle.source[data-handleid="timed_out"]')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /Add node after 同意|在同意后添加节点/i }))
+    expect(onQuickAdd).toHaveBeenCalledWith('node-approval', 'decision:ok', 'decision')
+    expect(node).toHaveStyle({ height: '146px' })
+  })
+
+  it('stacks multi-input rows with left handles and keeps the merge mode summary', () => {
+    const value = manifest('merge')
+    value.nodeType = value.displayName = 'merge'
+    value.inputPorts = [
+      { name: 'main', kind: 'main', required: false, variadic: false },
+      { name: 'left', kind: 'main', required: false, variadic: false },
+      { name: 'right', kind: 'main', required: false, variadic: false },
+    ]
+    useCanvasRenderStore.setState({ manifests: new Map([['merge@1', value]]), runtimeStatuses: new Map(), bindingSummaries: new Map(), occupiedHandlesByNodeId: new Map(), zoomTier: 'full' })
+    render(<ReactFlowProvider><ManifestNode {...props('merge', { nodeType: 'merge', parameters: { mode: 'append' } })} /></ReactFlowProvider>)
+    const node = screen.getByTestId('studio-node-node-merge')
+    expect(node.querySelectorAll('.studio-branch-row-input')).toHaveLength(0)
+    expect(node.querySelector('.studio-card-row')).toHaveTextContent(/追加|Append/)
+    expect(node.querySelector('.react-flow__handle.target[data-handleid="main"]')).toBeInTheDocument()
+    for (const handleId of ['left', 'right']) expect(node.querySelector(`.react-flow__handle.target[data-handleid="${handleId}"]`)).not.toBeInTheDocument()
+  })
+
+  it('keeps branch row handles at compact zoom while row text degrades away', () => {
+    const value = manifest('branch')
+    value.nodeType = value.displayName = 'if'
+    value.outputPorts = [
+      { name: 'case', kind: 'main', required: false, variadic: true },
+      { name: 'else', kind: 'main', required: false, variadic: false },
+      { name: 'error', kind: 'error', required: false, variadic: false },
+    ]
+    useCanvasRenderStore.setState({ manifests: new Map([['if@1', value]]), runtimeStatuses: new Map(), bindingSummaries: new Map(), occupiedHandlesByNodeId: new Map(), zoomTier: 'compact' })
+    render(<ReactFlowProvider><ManifestNode {...props('branch', { nodeType: 'if', parameters: { cases: [{ id: 'c1', conditions: [{ label: '金额 ≥ 1000' }], logicalOp: 'and' }] } })} /></ReactFlowProvider>)
+    const node = screen.getByTestId('studio-node-node-branch')
+    expect(node).toHaveClass('studio-node-zoom-compact')
+    expect(node.querySelectorAll('.studio-branch-row')).toHaveLength(3)
+    expect(node.querySelectorAll('.studio-branch-text')).toHaveLength(3)
+    expect(node.querySelector('.react-flow__handle.source[data-handleid="case:c1"]')).toBeInTheDocument()
+    expect(node.querySelector('.react-flow__handle.source[data-handleid="else"]')).toBeInTheDocument()
+    expect(node.querySelector('.react-flow__handle.source[data-handleid="error"]')).toBeInTheDocument()
   })
 
   it('keeps handles interactive at low zoom and shows actual Agent bindings', () => {
@@ -39,9 +209,8 @@ describe('ManifestNode roles', () => {
     const node = screen.getByTestId('studio-node-node-agent')
     expect(node).toHaveClass('studio-node-zoom-compact')
     expect(screen.getByTitle(/Weather tool/)).toBeInTheDocument()
-    expect(node.querySelectorAll('.react-flow__handle')).toHaveLength(3)
-    expect(node.querySelector('[data-handleid="binding:model"]')).not.toBeInTheDocument()
-    expect(node.querySelector('[data-handleid="binding:workspace_sandbox"]')).not.toBeInTheDocument()
+    expect(node.querySelectorAll('.react-flow__handle')).toHaveLength(2)
+    expect(node.querySelector('[data-handleid^="binding:"]')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Add node after error|在错误后添加节点/i })).toBeInTheDocument()
     const source = node.querySelector('.react-flow__handle.source')!
     fireEvent.mouseEnter(source)
@@ -72,22 +241,11 @@ describe('ManifestNode roles', () => {
     expect(mainLabel).toHaveClass('items-center', 'leading-none')
   })
 
-  it('centers bottom resource labels beneath their handles', () => {
-    const value = manifest('agent')
-    useCanvasRenderStore.setState({ manifests: new Map([['agent@2', value]]), runtimeStatuses: new Map(), bindingSummaries: new Map(), occupiedHandlesByNodeId: new Map(), zoomTier: 'full' })
-    render(<ReactFlowProvider><ManifestNode {...props('agent')} /></ReactFlowProvider>)
-    const node = screen.getByTestId('studio-node-node-agent')
-    const handle = node.querySelector<HTMLElement>('.react-flow__handle.target[data-handleid="binding:mcp_tools"]')!
-    const label = node.querySelector<HTMLElement>('[data-port-type="target"][data-port-id="binding:mcp_tools"]')!
-    expect(label.style.left).toBe(handle.style.left)
-    expect(label).toHaveClass('w-16', 'text-center', '-translate-x-1/2')
-  })
-
   it('keeps quick add visible only for unoccupied or repeatable ports', () => {
     const single = manifest('agent')
     useCanvasRenderStore.setState({
       manifests: new Map([['agent@2', single]]), runtimeStatuses: new Map(), bindingSummaries: new Map(),
-      occupiedHandlesByNodeId: new Map([['node-agent', 'binding:mcp_tools\u0001error']]), zoomTier: 'full', onQuickAdd: () => undefined,
+      occupiedHandlesByNodeId: new Map([['node-agent', 'error']]), zoomTier: 'full', onQuickAdd: () => undefined,
     })
     render(<ReactFlowProvider><ManifestNode {...props('agent')} /></ReactFlowProvider>)
     const node = screen.getByTestId('studio-node-node-agent')
@@ -95,9 +253,8 @@ describe('ManifestNode roles', () => {
 
     const repeatable = manifest('agent')
     repeatable.outputPorts[0].variadic = true
-    repeatable.bindingSlots.find((slot) => slot.placement === 'canvas')!.multiple = true
     act(() => useCanvasRenderStore.setState({ manifests: new Map([['agent@2', repeatable]]) }))
-    expect(node.querySelectorAll('.studio-port-add')).toHaveLength(2)
+    expect(node.querySelectorAll('.studio-port-add')).toHaveLength(1)
   })
 
   it('rerenders only the node whose runtime status changes', () => {

@@ -6,10 +6,12 @@ rust-version.workspace = true
 version.workspace = true
 
 [dependencies]
+anyhow.workspace = true
 agentx-domain.workspace = true
 agentx-node-protocol.workspace = true
 agentx-runtime-contracts.workspace = true
 jsonschema.workspace = true
+ipnet.workspace = true
 regex.workspace = true
 serde.workspace = true
 serde_json.workspace = true

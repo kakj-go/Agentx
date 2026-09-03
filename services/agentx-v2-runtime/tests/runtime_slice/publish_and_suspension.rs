@@ -22,7 +22,7 @@ async fn v2_publish_execution_query_recovery_and_gc_are_fenced_and_idempotent() 
     trace_watermarks_are_atomic_under_concurrency(&pool).await;
     composite_timeout_commands_are_idempotent(&pool).await;
     quota_projection_claim_is_single_owner(&pool).await;
-    trigger_claim_takeover_and_provider_failure_are_fenced(&pool).await;
+    trigger_claim_takeover_is_fenced(&pool).await;
 
     let fixture = Fixture::new(pool);
     command_claim_returns_only_the_current_batch(&fixture).await;
@@ -92,9 +92,15 @@ async fn v2_publish_execution_query_recovery_and_gc_are_fenced_and_idempotent() 
     .await
     .unwrap();
     assert_eq!(execution_context["id"], json!(accepted.execution_id));
-    assert_eq!(execution_context["workflow"]["name"], "Runtime slice Workflow");
+    assert_eq!(
+        execution_context["workflow"]["name"],
+        "Runtime slice Workflow"
+    );
     assert_eq!(execution_context["trigger"]["type"], "api_key");
-    assert_eq!(execution_context["application"]["id"], json!(fixture.application_id));
+    assert_eq!(
+        execution_context["application"]["id"],
+        json!(fixture.application_id)
+    );
     assert!(execution_context["initiator"].get("user").is_none());
     assert!(execution_context.get("node").is_none());
     execution_context_projection_changes_only_affect_future_executions(&fixture).await;
@@ -162,7 +168,6 @@ async fn v2_publish_execution_query_recovery_and_gc_are_fenced_and_idempotent() 
     large_worker_results_are_externalized_and_verified(&fixture).await;
     composite_child_uses_immutable_runtime_snapshot_and_merges_on_success(&fixture).await;
     sandbox_manager_is_fenced_and_idempotent(&fixture).await;
-    skill_worker_loads_and_verifies_the_runtime_object_closure(&fixture).await;
     agent_worker_runs_a_bounded_tool_loop_and_persists_usage(&fixture).await;
     agent_attachment_revocation_is_tool_scoped(&fixture).await;
     application_session_agent_restores_context_across_executions(&fixture).await;
@@ -276,15 +281,43 @@ async fn execution_context_projection_changes_only_affect_future_executions(fixt
     .fetch_one(&mut *tx)
     .await
     .unwrap();
-    assert_eq!(first_context.pointer("/initiator/user/name"), Some(&json!("Historical Operator")));
-    assert_eq!(first_context.pointer("/initiator/department/name"), Some(&json!("Platform")));
-    assert_eq!(first_context.pointer("/initiator/roles/names/0"), Some(&json!("Workflow Operator")));
-    assert_eq!(second_context.pointer("/initiator/user/name"), Some(&json!("Current Operator")));
-    assert_eq!(second_context.pointer("/initiator/department/name"), Some(&json!("Engineering")));
-    assert_eq!(second_context.pointer("/initiator/roles/names/0"), Some(&json!("Renamed Workflow Operator")));
-    assert_eq!(first_context.pointer("/initiator/department/name"), Some(&json!("Platform")), "historical snapshots must remain immutable");
-    assert_eq!(first_authorization, second_authorization, "role variables must not alter Workflow Service Identity authorization");
-    assert_eq!(second_authorization["serviceIdentityId"], json!(fixture.identity_id));
+    assert_eq!(
+        first_context.pointer("/initiator/user/name"),
+        Some(&json!("Historical Operator"))
+    );
+    assert_eq!(
+        first_context.pointer("/initiator/department/name"),
+        Some(&json!("Platform"))
+    );
+    assert_eq!(
+        first_context.pointer("/initiator/roles/names/0"),
+        Some(&json!("Workflow Operator"))
+    );
+    assert_eq!(
+        second_context.pointer("/initiator/user/name"),
+        Some(&json!("Current Operator"))
+    );
+    assert_eq!(
+        second_context.pointer("/initiator/department/name"),
+        Some(&json!("Engineering"))
+    );
+    assert_eq!(
+        second_context.pointer("/initiator/roles/names/0"),
+        Some(&json!("Renamed Workflow Operator"))
+    );
+    assert_eq!(
+        first_context.pointer("/initiator/department/name"),
+        Some(&json!("Platform")),
+        "historical snapshots must remain immutable"
+    );
+    assert_eq!(
+        first_authorization, second_authorization,
+        "role variables must not alter Workflow Service Identity authorization"
+    );
+    assert_eq!(
+        second_authorization["serviceIdentityId"],
+        json!(fixture.identity_id)
+    );
 
     for trigger_type in ["webhook", "schedule"] {
         let source_id = Uuid::now_v7();
@@ -854,152 +887,6 @@ async fn quota_projection_covers_all_dimensions_and_has_no_terminal_residue(fixt
 }
 
 async fn wait_and_approval_resume_exactly_once(fixture: &Fixture) {
-    let wait_execution = start_suspending_work_package(fixture, "wait").await;
-    let wait: (Uuid, Uuid, Value) = sqlx::query_as(
-        "SELECT w.id,w.node_execution_id,t.response_json FROM wait_subscriptions w JOIN execution_resume_tokens t ON t.id=w.resume_token_id WHERE w.tenant_id=? AND w.execution_id=?",
-    )
-    .bind(fixture.tenant_id)
-    .bind(wait_execution)
-    .fetch_one(&fixture.state.pool)
-    .await
-    .unwrap();
-    let token = wait.2["resumeToken"].as_str().unwrap();
-    let request_body = json!({"outputPort":"resumed","payload":{"message":"resumed-once"}});
-    let router = agentx_v2_runtime::gateway::router().with_state(fixture.state.clone());
-    let response = router
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri(format!("/waits/{token}/resume"))
-                .header("content-type", "application/json")
-                .header("idempotency-key", "wait:resume:once")
-                .header("x-agentx-signature", "runtime-slice-signature")
-                .body(Body::from(serde_json::to_vec(&request_body).unwrap()))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(response.status(), axum::http::StatusCode::ACCEPTED);
-    let replay = router
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri(format!("/waits/{token}/resume"))
-                .header("content-type", "application/json")
-                .header("idempotency-key", "wait:resume:once")
-                .header("x-agentx-signature", "runtime-slice-signature")
-                .body(Body::from(serde_json::to_vec(&request_body).unwrap()))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(replay.status(), axum::http::StatusCode::ACCEPTED);
-    let conflict = router
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri(format!("/waits/{token}/resume"))
-                .header("content-type", "application/json")
-                .header("idempotency-key", "wait:resume:once")
-                .header("x-agentx-signature", "runtime-slice-signature")
-                .body(Body::from(
-                    serde_json::to_vec(
-                        &json!({"outputPort":"resumed","payload":{"message":"different"}}),
-                    )
-                    .unwrap(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(conflict.status(), axum::http::StatusCode::CONFLICT);
-    process_execution_commands(fixture, wait_execution).await;
-    let wait_state: (String, String, i64) = sqlx::query_as(
-        "SELECT e.status,w.status,(SELECT COUNT(*) FROM bundle_references r WHERE r.tenant_id=w.tenant_id AND r.reference_kind='pending_wait' AND r.owner_id=w.id AND r.released_at IS NULL) FROM workflow_executions e JOIN wait_subscriptions w ON w.execution_id=e.id AND w.tenant_id=e.tenant_id WHERE e.tenant_id=? AND e.id=?",
-    )
-    .bind(fixture.tenant_id)
-    .bind(wait_execution)
-    .fetch_one(&fixture.state.pool)
-    .await
-    .unwrap();
-    assert_eq!(wait_state, ("succeeded".into(), "resumed".into(), 0));
-
-    let cancelled_wait_execution = start_suspending_work_package(fixture, "wait").await;
-    let cancelled_wait_response: Value = sqlx::query_scalar(
-        "SELECT t.response_json FROM wait_subscriptions w JOIN execution_resume_tokens t ON t.id=w.resume_token_id WHERE w.tenant_id=? AND w.execution_id=?",
-    )
-    .bind(fixture.tenant_id)
-    .bind(cancelled_wait_execution)
-    .fetch_one(&fixture.state.pool)
-    .await
-    .unwrap();
-    let cancelled_wait_token = cancelled_wait_response["resumeToken"].as_str().unwrap();
-    let response = agentx_v2_runtime::gateway::router()
-        .with_state(fixture.state.clone())
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri(format!("/waits/{cancelled_wait_token}/resume"))
-                .header("content-type", "application/json")
-                .header("idempotency-key", "wait:resume:cancel-race")
-                .header("x-agentx-signature", "runtime-slice-signature")
-                .body(Body::from(
-                    serde_json::to_vec(
-                        &json!({"outputPort":"resumed","payload":{"message":"too-late"}}),
-                    )
-                    .unwrap(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(response.status(), axum::http::StatusCode::ACCEPTED);
-    let cancel_command_id = Uuid::now_v7();
-    sqlx::query(
-        "INSERT INTO runtime_commands(id,tenant_id,command_type,aggregate_type,aggregate_id,idempotency_key,payload_json,status) VALUES(?,?,'cancel_execution','execution',?,?,JSON_OBJECT(),'pending')",
-    )
-    .bind(cancel_command_id)
-    .bind(fixture.tenant_id)
-    .bind(cancelled_wait_execution.to_string())
-    .bind(format!("wait:cancel:{cancelled_wait_execution}"))
-    .execute(&fixture.state.pool)
-    .await
-    .unwrap();
-    let race_owner = Uuid::now_v7();
-    let mut commands = claim_commands(&fixture.state.pool, race_owner, 100)
-        .await
-        .unwrap();
-    let cancel = commands
-        .iter()
-        .find(|command| command.command_id == cancel_command_id)
-        .cloned()
-        .unwrap();
-    let resume = commands
-        .drain(..)
-        .find(|command| {
-            command.execution_id == cancelled_wait_execution
-                && command.command_type == "resume_wait"
-        })
-        .unwrap();
-    process_command(&fixture.state.pool, &cancel).await.unwrap();
-    process_command(&fixture.state.pool, &resume).await.unwrap();
-    let cancelled_state: (String, String, String) = sqlx::query_as(
-        "SELECT e.status,w.status,c.status FROM workflow_executions e JOIN wait_subscriptions w ON w.execution_id=e.id AND w.tenant_id=e.tenant_id JOIN runtime_commands c ON c.id=? WHERE e.tenant_id=? AND e.id=?",
-    )
-    .bind(resume.command_id)
-    .bind(fixture.tenant_id)
-    .bind(cancelled_wait_execution)
-    .fetch_one(&fixture.state.pool)
-    .await
-    .unwrap();
-    assert_eq!(
-        cancelled_state,
-        ("cancelled".into(), "cancelled".into(), "completed".into()),
-        "a Resume command that loses the cancellation race must converge without retrying"
-    );
-
     let approval_execution = start_suspending_work_package(fixture, "approval").await;
     let task: (Uuid, u64, String) = sqlx::query_as(
         "SELECT id,version,title FROM approval_tasks WHERE tenant_id=? AND execution_id=?",
@@ -1022,30 +909,110 @@ async fn wait_and_approval_resume_exactly_once(fixture: &Fixture) {
         notification_count, 1,
         "a single-candidate Approval must create one deterministic Runtime notification"
     );
-    let approved = admission_request(
+    let unauthorized_claim = admission_request(
         fixture,
-        100,
-        AdmissionTargetV1::ApprovalDecision {
-            state: RuntimeApprovalDecisionV1 {
+        99,
+        AdmissionTargetV1::ApprovalAction {
+            state: RuntimeApprovalActionV1 {
                 task_id: task.0,
                 task_version: task.1,
-                decision: ApprovalDecisionValueV1::Approved,
-                decided_by: fixture.identity_id,
-                reason: Some("approved by runtime slice".into()),
+                action: ApprovalActionValueV1::Claim,
+                actor_id: Uuid::now_v7(),
+                target_user_id: None,
+                input: None,
+            },
+        },
+        "approval:unauthorized-claim",
+    );
+    let unauthorized_receipt = apply_admission(
+        State(fixture.state.clone()),
+        publisher_headers("runtime.admission.apply"),
+        Json(unauthorized_claim),
+    )
+    .await
+    .unwrap()
+    .0;
+    assert!(!unauthorized_receipt.applied);
+    let claim = admission_request(
+        fixture,
+        100,
+        AdmissionTargetV1::ApprovalAction {
+            state: RuntimeApprovalActionV1 {
+                task_id: task.0,
+                task_version: task.1,
+                action: ApprovalActionValueV1::Claim,
+                actor_id: fixture.identity_id,
+                target_user_id: None,
+                input: None,
+            },
+        },
+        "approval:claim",
+    );
+    let _ = apply_admission(
+        State(fixture.state.clone()),
+        publisher_headers("runtime.admission.apply"),
+        Json(claim),
+    )
+    .await
+    .unwrap();
+    let invalid_button = admission_request(
+        fixture,
+        101,
+        AdmissionTargetV1::ApprovalAction {
+            state: RuntimeApprovalActionV1 {
+                task_id: task.0,
+                task_version: task.1 + 1,
+                action: ApprovalActionValueV1::Decide {
+                    decision_id: "missing-button".into(),
+                },
+                actor_id: fixture.identity_id,
+                target_user_id: None,
+                input: None,
+            },
+        },
+        "approval:decision:missing-button",
+    );
+    assert!(
+        !apply_admission(
+            State(fixture.state.clone()),
+            publisher_headers("runtime.admission.apply"),
+            Json(invalid_button),
+        )
+        .await
+        .unwrap()
+        .0
+        .applied
+    );
+    let approved = admission_request(
+        fixture,
+        101,
+        AdmissionTargetV1::ApprovalAction {
+            state: RuntimeApprovalActionV1 {
+                task_id: task.0,
+                task_version: task.1 + 1,
+                action: ApprovalActionValueV1::Decide {
+                    decision_id: "approved".into(),
+                },
+                actor_id: fixture.identity_id,
+                target_user_id: None,
+                input: Some(json!({"reason":"approved by runtime slice"})),
             },
         },
         "approval:decision:approved",
     );
     let rejected = admission_request(
         fixture,
-        100,
-        AdmissionTargetV1::ApprovalDecision {
-            state: RuntimeApprovalDecisionV1 {
+        101,
+        AdmissionTargetV1::ApprovalAction {
+            state: RuntimeApprovalActionV1 {
                 task_id: task.0,
-                task_version: task.1,
-                decision: ApprovalDecisionValueV1::Rejected,
-                decided_by: Uuid::now_v7(),
-                reason: Some("concurrent rejection".into()),
+                task_version: task.1 + 1,
+                action: ApprovalActionValueV1::Decide {
+                    decision_id: "rejected".into(),
+                },
+                actor_id: fixture.identity_id,
+                target_user_id: None,
+                input: Some(json!({"reason":"concurrent rejection"})),
             },
         },
         "approval:decision:rejected",
@@ -1089,8 +1056,8 @@ async fn wait_and_approval_resume_exactly_once(fixture: &Fixture) {
     .unwrap();
     assert_eq!(decision_commands, 1);
     process_execution_commands(fixture, approval_execution).await;
-    let approval_state: (String, String, String, u64) = sqlx::query_as(
-        "SELECT e.status,a.status,a.resume_status,a.version FROM workflow_executions e JOIN approval_tasks a ON a.execution_id=e.id AND a.tenant_id=e.tenant_id WHERE e.tenant_id=? AND e.id=?",
+    let approval_state: (String, String, String, Option<String>, u64) = sqlx::query_as(
+        "SELECT e.status,a.status,a.resume_status,a.decision_id,a.version FROM workflow_executions e JOIN approval_tasks a ON a.execution_id=e.id AND a.tenant_id=e.tenant_id WHERE e.tenant_id=? AND e.id=?",
     )
     .bind(fixture.tenant_id)
     .bind(approval_execution)
@@ -1098,94 +1065,65 @@ async fn wait_and_approval_resume_exactly_once(fixture: &Fixture) {
     .await
     .unwrap();
     assert_eq!(approval_state.0, "succeeded");
-    assert!(matches!(approval_state.1.as_str(), "approved" | "rejected"));
+    assert_eq!(approval_state.1, "decided");
     assert_eq!(approval_state.2, "succeeded");
-    // Decision acceptance and the subsequent resume completion are distinct
-    // authoritative transitions and therefore advance the task version twice.
-    assert_eq!(approval_state.3, 3);
+    assert!(matches!(
+        approval_state.3.as_deref(),
+        Some("approved" | "rejected")
+    ));
+    // Claim, decision acceptance, and resume completion are three distinct
+    // authoritative transitions after the initial task version.
+    assert_eq!(approval_state.4, 4);
 
-    let invalid_approval_execution = start_suspending_work_package_with_parameters(
+    let timeout_execution = start_suspending_work_package_with_parameters(
         fixture,
         "approval",
         json!({
-            "title":"Invalid approval",
-            "candidateUserId":{
-                "kind":"reference",
-                "selector":{
-                    "namespace":"inputs",
-                    "run":{"kind":"current"},
-                    "item":{"kind":"current"},
-                    "path":["missingCandidate"]
-                },
-                "missingPolicy":{"kind":"error"}
-            }
+            "title":{"kind":"template","segments":[{"kind":"text","text":"Timeout approval"}]},
+            "timeoutMs":1,
+            "candidateUserId":fixture.identity_id
         }),
-    )
-    .await;
-    let invalid_state: (String, String, String, String, String, i64) = sqlx::query_as(
-        "SELECT e.status,e.error_code,n.status,n.error_code,a.error_code,(SELECT COUNT(*) FROM approval_tasks t WHERE t.tenant_id=e.tenant_id AND t.execution_id=e.id) FROM workflow_executions e JOIN node_executions n ON n.tenant_id=e.tenant_id AND n.execution_id=e.id JOIN node_attempts a ON a.tenant_id=n.tenant_id AND a.node_execution_id=n.id WHERE e.tenant_id=? AND e.id=?",
-    )
-    .bind(fixture.tenant_id)
-    .bind(invalid_approval_execution)
-    .fetch_one(&fixture.state.pool)
-    .await
-    .unwrap();
-    assert_eq!(
-        invalid_state,
-        (
-            "failed".into(),
-            "DYNAMIC_VALUE_EVALUATION_FAILED".into(),
-            "failed".into(),
-            "DYNAMIC_VALUE_EVALUATION_FAILED".into(),
-            "DYNAMIC_VALUE_EVALUATION_FAILED".into(),
-            0,
-        )
-    );
-
-    let duration_execution = start_suspending_work_package_with_parameters(
-        fixture,
-        "wait",
-        json!({"kind":"duration","durationMs":1}),
     )
     .await;
     tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     assert_eq!(
-        agentx_v2_runtime::enqueue_due_waits(&fixture.state.pool, Uuid::now_v7(), 100)
+        agentx_v2_runtime::enqueue_due_approval_timeouts(&fixture.state.pool, Uuid::now_v7(), 100)
             .await
             .unwrap(),
         1
     );
-    process_execution_commands(fixture, duration_execution).await;
-    let duration_state: (String, String) = sqlx::query_as(
-        "SELECT e.status,w.status FROM workflow_executions e JOIN wait_subscriptions w ON w.tenant_id=e.tenant_id AND w.execution_id=e.id WHERE e.tenant_id=? AND e.id=?",
+    process_execution_commands(fixture, timeout_execution).await;
+    let timeout_state: (String, String, String) = sqlx::query_as(
+        "SELECT e.status,a.status,a.resume_status FROM workflow_executions e JOIN approval_tasks a ON a.tenant_id=e.tenant_id AND a.execution_id=e.id WHERE e.tenant_id=? AND e.id=?",
     )
     .bind(fixture.tenant_id)
-    .bind(duration_execution)
+    .bind(timeout_execution)
     .fetch_one(&fixture.state.pool)
     .await
     .unwrap();
-    assert_eq!(duration_state, ("succeeded".into(), "resumed".into()));
+    assert_eq!(
+        timeout_state,
+        ("succeeded".into(), "timed_out".into(), "succeeded".into())
+    );
 }
 
 async fn start_suspending_work_package(fixture: &Fixture, node_type: &str) -> Uuid {
-    let parameters = if node_type == "approval" {
-        json!({
-            "title":{
-                "kind":"reference",
-                "selector":{
-                    "namespace":"execution",
-                    "run":{"kind":"current"},
-                    "item":{"kind":"current"},
-                    "path":["workflow","name"]
-                },
-                "missingPolicy":{"kind":"error"}
-            },
-            "timeoutMs":300000,
-            "candidateUserId":{"kind":"literal","value":fixture.identity_id}
-        })
-    } else {
-        json!({"kind":"webhook","authenticationMode":"signed"})
-    };
+    assert_eq!(
+        node_type, "approval",
+        "approval is the only suspending builtin"
+    );
+    let parameters = json!({
+        "title":{"kind":"template","segments":[{
+            "kind":"reference","selector":{
+                "namespace":"execution",
+                "run":{"kind":"current"},
+                "item":{"kind":"current"},
+                "path":["workflow","name"]
+            },"missingPolicy":{"kind":"error"}
+        }]},
+        "timeoutMs":300000,
+        "candidateUserId":fixture.identity_id
+    });
     start_suspending_work_package_with_parameters(fixture, node_type, parameters).await
 }
 
@@ -1261,17 +1199,18 @@ async fn process_execution_commands(fixture: &Fixture, execution_id: Uuid) {
 }
 
 fn suspension_definition(node_type: &str, parameters: Value) -> WorkflowDefinition {
-    let mut connections = vec![
+    assert_eq!(
+        node_type, "approval",
+        "approval is the only suspending builtin"
+    );
+    let connections = vec![
         json!({"id":"start-suspend","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"suspend","targetHandle":"main","order":0}),
+        json!({"id":"approved-end","sourceNodeId":"suspend","sourceHandle":"decision:approved","targetNodeId":"exit","targetHandle":"main","order":0}),
+        json!({"id":"rejected-end","sourceNodeId":"suspend","sourceHandle":"decision:rejected","targetNodeId":"exit","targetHandle":"main","order":1}),
+        json!({"id":"timed-out-end","sourceNodeId":"suspend","sourceHandle":"timed_out","targetNodeId":"exit","targetHandle":"main","order":2}),
     ];
-    if node_type == "approval" {
-        connections.push(json!({"id":"approved-end","sourceNodeId":"suspend","sourceHandle":"approved","targetNodeId":"exit","targetHandle":"main","order":0}));
-        connections.push(json!({"id":"rejected-end","sourceNodeId":"suspend","sourceHandle":"rejected","targetNodeId":"exit","targetHandle":"main","order":1}));
-    } else {
-        connections.push(json!({"id":"resumed-end","sourceNodeId":"suspend","sourceHandle":"resumed","targetNodeId":"exit","targetHandle":"main","order":0}));
-    }
     serde_json::from_value(json!({
-        "schemaVersion":"7.0",
+        "schemaVersion":"8.0",
         "start":{"inputs":{"type":"object","properties":{"missingCandidate":{"type":"string"}},"additionalProperties":true},"contexts":{}},
         "nodes":[{
             "id":"suspend",
@@ -1280,12 +1219,12 @@ fn suspension_definition(node_type: &str, parameters: Value) -> WorkflowDefiniti
             "typeVersion":1,
             "name":"Suspend",
             "parameters":parameters,
-            "outputProjection":{},
+
             "contextWrites":[],
             "resourceReferences":[]
         },{
             "id":"exit","key":"exit","type":"exit","typeVersion":1,"name":"End","disabled":false,"protected":true,
-            "parameters":{"outputs":{},"errorOutputs":{}},"outputProjection":{},"contextWrites":[],
+            "parameters":{"outputs":{},"errorOutputs":{}},"contextWrites":[],
             "resourceReferences":[],"settings":{}
         }],
         "connections":connections,

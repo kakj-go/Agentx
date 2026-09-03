@@ -144,15 +144,17 @@ Agentx 自己实现：
     ├── model/
     └── utils/
 
-Studio 采用 n8n 风格的紧凑桌面画布：画布左上角仅保留圆形 `+`，按需展开 320px Node Creator；中央为完整宽度的无限 Canvas，单击节点后打开 480px 全高 Node Details，底部为可折叠的全局 Execution Rail。节点类型、端口、参数和能力全部来自 Node Manifest；业务组件不得维护 Agent/Code 等 Node Type 白名单。Feature 内任何文件不得超过 2000 行。
+以下Studio规格是[plan5](plan5/README.md)冻结并实现的桌面端边界；业务、视觉和性能验收结果以实施计划记录的命令与证据为准。
 
-画布视觉由 `uiSchema.canvas.role` 驱动（`default`、`trigger`、`branch`、`flow`、`merge`、`loop`、`suspend`、`approval`、`sub_workflow`、`agent`、`code`、`error_handler`），前端再映射为 `compact`、`agent`、`attachment`、`editor` 四个视觉族。执行节点统一使用 n8n 式紧凑矩形几何：普通节点为 96×96、Agent 为 224×96、图标区为 48×48；不再按角色绘制菱形、箭头、六边形或不对称轮廓。角色语义由图标、Trigger 标记、端口标签、边框和运行状态表达。Handle 外层为 16×16、可见标记约 10px、命中区至少 24px，React Flow `connectionRadius=60`；全部执行输出位于右侧，普通输出按 Manifest 顺序在上，Error 输出统一排在其下方。资源附件仍由 `editorKind=binding` 表示，Agent 的 Model、Tool、Memory、Knowledge、Skill 端口位于底边；Skill 和 Tool 只从附件分组创建并连接 Agent，不出现在 AI 执行节点分组。便签和分组是仅编辑态派生节点，只进入 Editor Document。空画布只显示添加 Trigger 和搜索节点两个入口。
+Studio 采用 Dify 式节点配置流程与 n8n 式紧凑桌面画布：左侧为 264px 常驻且可收起的节点栏，中央为无限 Canvas，单击节点后打开 384px 全高 Node Details，底部为可折叠的全局 Execution Rail。可创建节点、端口、字段和能力来自 Node Manifest/有效契约；前端仅为冻结的13类节点维护专用业务布局，并以静态门禁和Registry对账，不能另写一份长期漂移的节点目录。Feature 内任何文件不得超过 2000 行。
 
-连接交互使用独立状态机维护 source hover、connecting、compatible、incompatible、occupied、committed 和 cancelled；合法性通过增量 GraphIndex 校验方向、类型、基数、自连接、重复边和动态 Handle。非 variadic 输入已占用时以一个历史事务替换旧边；存在多个兼容输入时必须显式选择端口。执行边、Binding 边和 Error 边分别使用实线箭头、无箭头虚线和危险色虚线箭头，反向主连接使用固定底部间距、水平偏移和圆角路由。Edge Hover/选中工具栏只提供插入和删除，重新连接通过 React Flow 边端点拖拽完成。
+画布视觉为 Dify 式 240px 横向白卡（plan5 重设计）：头部为 24px 彩色图标方块（六组分类色：起始 `#155EEF`、AI `#6366F1`、逻辑 `#06B6D4`、转换 `#3B82F6`、集成 `#8B5CF6`、输出 `#F59E0B`）+ 标题 + 运行状态；节点体承载 0–3 行配置摘要，`if`/`approval` 按参数渲染分支行且每行右侧独立连接点（`case:{id}` / `decision:{id}`），`merge` 左侧堆叠多个输入行。连接点为左入右出的 3×10px 竖条，Error 端口红色常驻。角色枚举已随 `error_handler` 删除收敛。AI 附件不再是画布节点：工具/技能/知识/记忆收进 Agent 节点的内嵌槽位（节点体附件徽标行 + Inspector 槽位管理，`resourceReferences[].bindingRole`），`loop_over_items` 使用 React Flow 父子容器（`parentId` + `extent` + NodeResizer + 迭代开始 chip）；chip与派生入口线仅属于视图，不进入Definition。便签和分组仍是仅编辑态派生节点；节点面板常驻左侧（可收起），保留端口兼容过滤、多输入选择和拖拽添加。缩放降级（full/compact/minimal）随新卡片结构重写。
 
-画布不保留常驻节点栏；圆形 `+`、空画布入口和端口快速添加均打开同一个 Node Creator。正常缩放下，未占用的执行输出和资源槽默认展示 `+`；已占用的非 `variadic`/非 `multiple` 端口不再展示，低于 0.65 缩放时统一隐藏。创建器负责搜索、合法端口过滤和大预览，Manifest 分组默认仅展开第一个，其他分组按需折叠；便签和分组命令位于创建器顶部。单击执行节点或附件立即打开 480px Details，单击空画布清除选择并关闭；关闭按钮和 Esc 只关闭 Details 并保留选择。
+连接交互使用独立状态机维护source hover、connecting、compatible、incompatible、occupied、committed和cancelled；合法性通过增量GraphIndex校验方向、类型、基数、自连接、重复边和动态Handle。非variadic输入已占用时以一个历史事务替换旧边；存在多个兼容输入时必须显式选择端口。普通执行边使用实线箭头，Error边使用危险色虚线箭头；AI资源直接写入`resourceReferences`，不再绘制Binding边。反向主连接使用固定底部间距、水平偏移和圆角路由。Edge Hover/选中工具栏只提供插入和删除，重新连接通过React Flow边端点拖拽完成。
 
-Manifest `localizations` 是节点名称、说明、搜索关键词、端口和 Binding Slot 展示名的唯一业务本地化来源。显示按当前语言、`en-US`、基础字段依次回退，协议 ID 不翻译。Start/End 是固定边界节点，Start 配置 Inputs/Contexts，End 配置 Workflow 正式 Outputs；两者不进入 Catalog，也不能删除。
+节点栏、圆形 `+`、空画布入口、端口快速添加和边上插入共用同一搜索、分类与合法端口过滤；节点栏收起时快捷入口可临时展开同一创建面板。正常缩放下，未占用的执行输出默认展示 `+`；已占用的非 `variadic` 端口不再展示，低于0.65缩放时统一隐藏。便签和视觉分组命令与运行节点分区显示。单击执行节点立即打开384px Details，单击空画布清除选择并关闭；关闭按钮和Esc只关闭Details并保留选择。Details头部保留运行当前节点，参数/Input/Output/Trace与Pin/Mock形成同一调试闭环。
+
+Manifest `localizations` 是节点名称、说明、搜索关键词、端口和 Binding Slot 展示名的唯一业务本地化来源。显示按当前语言、`en-US`、基础字段依次回退，协议 ID 不翻译。Start 是不可删除的固定输入边界，配置Inputs/Contexts；Exit是真实终止节点，配置共享输出契约与本出口取值。二者使用专用组件和保护规则，不作为普通Catalog节点处理。
 
 画布资源字段统一使用基于 Radix Popover 的 `ResourcePicker`。资源选项 Query Key 包含 Workflow、Resource Type 和 Operation，前端遍历后端分页得到全部当前可见资源，再提供即时搜索；同一类型的不同操作不得复用错误的授权状态。资源行的选择按钮和行尾动作按钮是两个独立交互目标。未授权行不可选择，但可以直接“授权”或“申请”；Pending 提供申请详情入口，Rejected 提供重新申请。存在 Pending 项时每 5 秒轮询，窗口重新聚焦时强制刷新。直接授权或审批完成只失效并刷新 TanStack Query，不调用 `onChange`，用户必须重新打开 Picker 手动选择。已选资源撤权、禁用或失去可见性时保留原引用，显示脱敏危险状态，并由统一资源校验阻止保存、创建版本和运行。
 
@@ -161,7 +163,7 @@ Manifest `localizations` 是节点名称、说明、搜索关键词、端口和 
 React Flow 的 Node 和 Edge 结构只属于前端编辑状态，不能直接成为后端运行协议。Serializer 同时产出运行 Definition 和纯 UI Editor Document，Debug Overlay/运行高亮走独立模型。
 
     React Flow State
-          ├── serialize definition ──> Workflow Definition 5.0 ──> IR
+          ├── serialize definition ──> Workflow Definition 8.0 ──> IR
           └── serialize editor ──────> Editor Document
 
     Pin / Mock / Runtime Highlight ──> Debug Overlay / Execution State
@@ -172,14 +174,14 @@ React Flow 的 Node 和 Edge 结构只属于前端编辑状态，不能直接成
 - 固化 Node Type Version
 - 将 Handle 映射为端口
 - 将 Edge 映射为连接类型和稳定 Connection Order
-- 校验资源连接
+- 校验资源引用和授权状态
 - 将位置、视口、注释和分组只写入 Editor Document
 
-服务端 Draft Revision 原子保存 Definition 和 Editor Document。TanStack Query 保存服务端权威数据；Zustand Editor Store 按 Document、Interaction、History 三个逻辑 slice 维护规范化编辑状态；History 以实体 ID 保存节点、边、便签和分组的前后 Patch，不保存视口、选择、Hover、临时连线或运行高亮；Runtime Overlay Store 按 executionId 隔离运行状态和结果。四者不得互相复制成为第二权威。
+服务端Draft Revision原子保存Definition和Editor Document，并在写入前执行轻量引用可达性校验；非法引用返回字段级错误且不增加revision。TanStack Query保存服务端权威数据；Zustand Editor Store按Document、Interaction、History三个逻辑slice维护规范化编辑状态；History以实体ID保存节点、边、便签和分组的前后Patch，不保存视口、选择、Hover、临时连线或运行高亮；Runtime Overlay Store按executionId隔离运行状态和结果。四者不得互相复制成为第二权威。
 
-所有声明 `x-agentx-dynamicValue` 的 Input、Textarea、Prompt、Expression、JSON 和 Mapper 叶子共用 Reference Picker。文本类字段使用 Lexical Token Editor，将普通文本与变量 Chip 作为独立节点混排，支持光标、选区、Backspace/Delete、Undo/Redo、中英文 IME，以及携带 Agentx 自定义 MIME 的复制粘贴；UI 不展示协议字符串。Expression 使用递归 Visual Builder 编辑 Literal、Reference、Unary/Binary、Conditional、Call、Array 和 Object AST，不向普通 Studio 暴露 CEL/Monaco 源码。
+所有声明`x-agentx-binding`的Reference、Value、Template、Structured、JSON和Mapper叶子共用Reference Picker。文本类字段使用Lexical Token Editor，将普通文本与变量Chip作为独立节点混排，支持光标、选区、Backspace/Delete、Undo/Redo、中英文IME，以及携带Agentx自定义MIME的复制粘贴；UI不展示协议字符串。普通字段不再提供表达式类型或递归Visual Builder，IF/List使用专用ConditionSpec，复杂转换进入Code。
 
-引用树只读取 Start Inputs、声明 Context 和当前节点可达前置节点的 Effective Output Contract。选择器以 Node ID 持久化，以节点名称、端口和字段路径显示；节点重命名不修改 Selector。运行历史只能提供非权威样例值。敏感 Context 不允许插入普通字段或 Preview。
+引用树只读取Start Inputs、声明Context和当前节点经execution边可达前驱的Effective Output Contract；binding/resource关系不解锁输出引用。没有明确目标节点时输出目录为空，Exit main/error分别使用自己的虚拟目标。选择器以Node ID持久化，以节点名称、端口和字段路径显示；节点重命名不修改Selector。断线旧引用保留并显示错误，不自动删除。运行历史只能提供非权威样例值。敏感Context不允许插入普通字段或Preview。
 
 ## 9. 画布扩展
 
@@ -187,7 +189,7 @@ React Flow 的 Node 和 Edge 结构只属于前端编辑状态，不能直接成
 - Zustand 保存编辑器状态。
 - History slice 以手势事务管理 Undo 和 Redo；拖动开始记录参与实体旧位置、结束只提交这些实体的一个 Patch 命令。
 - Monaco Editor 只用于 Code；Prompt/Template 使用 Lexical Token Editor，Expression 使用 Visual Builder，JSON/Mapper 使用结构化叶子绑定控件。
-- 大型 Workflow 在 150 节点启用可见元素渲染、300 节点隐藏 MiniMap；缩放低于 0.65 隐藏标签，低于 0.35 使用简化内容。`IncrementalGraphIndex` 稳定复用 `nodeById`、`portByHandle`、源/目标端口边索引和 Binding 摘要 Map，只更新结构、端口或边的变化项；位置帧不重建连接索引。Group、Node 和 Edge 视图索引保持无关对象引用稳定，节点运行态只替换自身与关联边。
+- 大型Workflow在150节点启用可见元素渲染、300节点隐藏MiniMap；缩放低于0.65隐藏标签，低于0.35使用简化内容。`IncrementalGraphIndex`稳定复用`nodeById`、`portByHandle`、源/目标端口边索引和资源引用摘要Map，只更新结构、端口、资源引用或边的变化项；位置帧不重建连接索引。Group、Node和Edge视图索引保持无关对象引用稳定，节点运行态只替换自身与关联边。
 - 自动保存使用 Server Revision；Undo/Redo 只改变本地 Editor State，不能回退服务端 Revision。
 - Execution Event 使用 Cursor 重连，断线后通过 Execution Query 校准；非终态运行更新最多每 100ms 合并一次，终态立即提交；完整 Trace 和大型输出不进入 Zustand。
 
@@ -195,7 +197,7 @@ Workflow Studio 底部 Trace、独立执行详情和 Node Inspector 复用 `feat
 
 高级调用瀑布复用分页 Query Hook、`TraceWaterfall` 和 `TraceDetail`。Span 数据只保存在 TanStack Query Cache，不复制到 Zustand。瀑布保留筛选匹配项的祖先上下文，支持层级折叠、类型/异常筛选、搜索、50%–200% 时间轴缩放、键盘 treegrid 操作和继续加载；默认选择首个失败 Span，其次运行中 Span，最后选择 Execution 根 Span。详情按 Span 类型与 `contentKind` 动态生成页签，纯生命周期 Span 不显示误导性的空输入/输出。运行中宽度按当前时间刷新，终态只使用服务端耗时。
 
-桌面端高级详情列固定约 370px，低于 1120px 后移到瀑布下方。Studio 首次进入 Trace 页签时，执行轨道扩展到最多 560px（同时受视口 80% 上限约束），但不缩小用户手动设置的更大高度；用户继续向上拖动时最高可占视口的 4/5。轨道自身裁剪溢出，内部节点视图、瀑布和详情各自滚动，避免详情遮挡画布或相邻面板。选择 Node 或子 Span 时联动画布节点。Node Inspector 直接复用单节点语义详情，不再自行搜索 Span 后套通用详情。独立执行详情使用 Trace 和 Recovery 两个主视图并默认显示 Trace；Recovery 只保留 Checkpoint、Wait、Approval、Side Effect、事件与 Fork，删除重复的节点 Outline 和输入输出面板。
+桌面端Node Inspector固定384px；Trace高级详情列在执行轨道内按可用宽度布局，低于1120px后移到瀑布下方。Studio 首次进入 Trace 页签时，执行轨道扩展到最多 560px（同时受视口 80% 上限约束），但不缩小用户手动设置的更大高度；用户继续向上拖动时最高可占视口的 4/5。轨道自身裁剪溢出，内部节点视图、瀑布和详情各自滚动，避免详情遮挡画布或相邻面板。选择 Node 或子 Span 时联动画布节点。Node Inspector 直接复用单节点语义详情，不再自行搜索 Span 后套通用详情。独立执行详情使用 Trace 和 Recovery 两个主视图并默认显示 Trace；Recovery 只保留 Checkpoint、Wait、Approval、Side Effect、事件与 Fork，删除重复的节点 Outline 和输入输出面板。
 
 ## 10. 路由
 

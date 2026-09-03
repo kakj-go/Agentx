@@ -1,54 +1,129 @@
 import type { NodeManifest, StudioEdge, StudioNode } from '../model/types'
+import { canvasBranchPorts } from '../nodes/manifest-node'
 import { canvasNodeMetrics, canvasNodeRole } from '../nodes/node-appearance'
 
 export const LARGE_GRAPH_LAYOUT_THRESHOLD = 250
 
+/** Loop container geometry (demo2 .container): resizer floor and inner padding around the body sub-DAG. */
+export const LOOP_CONTAINER_MIN_WIDTH = 300
+export const LOOP_CONTAINER_MIN_HEIGHT = 160
+export const LOOP_CONTAINER_DEFAULT_WIDTH = 470
+export const LOOP_CONTAINER_DEFAULT_HEIGHT = 300
+export const LOOP_CONTAINER_PADDING = { top: 116, right: 24, bottom: 48, left: 24 }
+/** Iteration start chip anchor inside the container, in parent-relative coordinates. */
+export const LOOP_CHIP_POSITION = { x: 16, y: 56 }
+/** Iteration end chip shares the header row and is anchored against the right edge. */
+export const LOOP_END_CHIP_WIDTH = 140
+export const LOOP_END_CHIP_HEIGHT = 64
+export const loopEndChipPosition = (containerWidth: number) => ({ x: Math.max(LOOP_CHIP_POSITION.x + 180, containerWidth - LOOP_END_CHIP_WIDTH - 16), y: 56 })
+
 export async function autoLayout(nodes: StudioNode[], edges: StudioEdge[], manifests?: Map<string, NodeManifest>) {
   if (nodes.length >= LARGE_GRAPH_LAYOUT_THRESHOLD) return largeGraphLayout(nodes, edges, manifests)
+  const { roots, childrenByLoop } = partitionContainers(nodes)
+  const layouted = new Map(nodes.map((node) => [node.id, { ...node }]))
+  // Containers are sub-canvases: lay out the body first, size the frame from the content.
+  for (const [loopId, children] of childrenByLoop) {
+    const body = await layoutWithElk(children, innerEdges(edges, children), manifests, { x: LOOP_CONTAINER_PADDING.left, y: LOOP_CONTAINER_PADDING.top })
+    for (const node of body) layouted.set(node.id, node)
+    const loop = layouted.get(loopId)
+    if (loop) layouted.set(loopId, { ...loop, width: frameWidth(body, manifests), height: frameHeight(body, manifests) })
+  }
+  const outerEdges = edges.filter((edge) => !isChild(childrenByLoop, edge.source) && !isChild(childrenByLoop, edge.target))
+  const outerSizes = new Map([...childrenByLoop].map(([loopId, children]) => [loopId, frameSize(layouted, loopId, children, manifests)]))
+  for (const node of await layoutWithElk(roots, outerEdges, manifests, { x: 0, y: 0 }, outerSizes)) {
+    const sized = layouted.get(node.id)
+    layouted.set(node.id, sized ? { ...sized, position: node.position } : node)
+  }
+  return nodes.map((node) => layouted.get(node.id) ?? node)
+}
+
+export function largeGraphLayout(nodes: StudioNode[], edges: StudioEdge[], manifests?: Map<string, NodeManifest>) {
+  const { roots, childrenByLoop } = partitionContainers(nodes)
+  const layouted = new Map(nodes.map((node) => [node.id, { ...node }]))
+  for (const [loopId, children] of childrenByLoop) {
+    bucketLayout(children, innerEdges(edges, children), manifests, { x: LOOP_CONTAINER_PADDING.left, y: LOOP_CONTAINER_PADDING.top })
+    for (const node of children) layouted.set(node.id, node)
+    const loop = layouted.get(loopId)
+    if (loop) layouted.set(loopId, { ...loop, width: frameWidth(children, manifests), height: frameHeight(children, manifests) })
+  }
+  const outerEdges = edges.filter((edge) => !isChild(childrenByLoop, edge.source) && !isChild(childrenByLoop, edge.target))
+  const outerSizes = new Map([...childrenByLoop].map(([loopId, children]) => [loopId, frameSize(layouted, loopId, children, manifests)]))
+  bucketLayout(roots, outerEdges, manifests, { x: 0, y: 0 }, outerSizes)
+  for (const node of roots) {
+    const sized = layouted.get(node.id)
+    layouted.set(node.id, sized ? { ...sized, position: node.position } : node)
+  }
+  return nodes.map((node) => layouted.get(node.id) ?? node)
+}
+
+type ContainerPartition = { roots: StudioNode[]; childrenByLoop: Map<string, StudioNode[]> }
+
+function partitionContainers(nodes: StudioNode[]): ContainerPartition {
+  const loops = new Set(nodes
+    .filter((node) => node.data.editorKind === 'action' && node.data.nodeType === 'loop_over_items')
+    .map((node) => node.id))
+  const childrenByLoop = new Map<string, StudioNode[]>()
+  const roots: StudioNode[] = []
+  for (const node of nodes) {
+    const parentId = node.data.editorKind === 'action' && node.data.parentId && loops.has(node.data.parentId) ? node.data.parentId : undefined
+    if (parentId && parentId !== node.id) {
+      const siblings = childrenByLoop.get(parentId)
+      if (siblings) siblings.push(node)
+      else childrenByLoop.set(parentId, [node])
+    } else roots.push(node)
+  }
+  return { roots, childrenByLoop }
+}
+
+const isChild = (childrenByLoop: Map<string, StudioNode[]>, nodeId: string) => [...childrenByLoop.values()].some((children) => children.some((child) => child.id === nodeId))
+
+function innerEdges(edges: StudioEdge[], children: StudioNode[]) {
+  const ids = new Set(children.map((child) => child.id))
+  return edges.filter((edge) => ids.has(edge.source) && ids.has(edge.target))
+}
+
+function nodeMetricsOf(node: StudioNode | undefined, manifests?: Map<string, NodeManifest>) {
+  if (!node) return { width: 240, height: 120 }
+  if (node.data.editorKind === 'exit') return { width: 240, height: 62 }
+  const manifest = manifests?.get(`${node.data.nodeType}@${node.data.typeVersion}`)
+  const metrics = canvasNodeMetrics(canvasNodeRole(manifest), {
+    richHeight: node.height ?? node.measured?.height,
+    ...canvasBranchPorts(manifest, node.data.parameters),
+  })
+  return { width: node.width ?? node.measured?.width ?? metrics.width, height: node.height ?? node.measured?.height ?? metrics.height }
+}
+
+async function layoutWithElk(nodes: StudioNode[], edges: StudioEdge[], manifests: Map<string, NodeManifest> | undefined, origin: { x: number; y: number }, sizes?: Map<string, { width: number; height: number }>) {
   const { default: ELK } = await import('elkjs/lib/elk.bundled.js')
   const elk = new ELK()
   const graph = await elk.layout({
     id: 'root',
     layoutOptions: { 'elk.algorithm': 'layered', 'elk.direction': 'RIGHT', 'elk.spacing.nodeNode': '48', 'elk.layered.spacing.nodeNodeBetweenLayers': '90' },
     children: nodes.map((node) => {
-      if (node.data.editorKind === 'binding') {
-        const metrics = canvasNodeMetrics('default', { kind: 'binding' })
-        return { id: node.id, width: metrics.width, height: metrics.height }
-      }
-      if (node.data.editorKind === 'exit') {
-        return { id: node.id, width: 160, height: 80 }
-      }
-      const manifest = manifests?.get(`${node.data.nodeType}@${node.data.typeVersion}`)
-      const metrics = canvasNodeMetrics(canvasNodeRole(manifest), {
-        inputs: manifest?.inputPorts.length,
-        outputs: manifest?.outputPorts.length,
-        bindings: manifest?.bindingSlots.filter((slot) => slot.placement === 'canvas').length,
-        richHeight: node.height ?? node.measured?.height,
-      })
+      const override = sizes?.get(node.id)
+      const metrics = override ?? nodeMetricsOf(node, manifests)
       return { id: node.id, width: metrics.width, height: metrics.height }
     }),
     edges: edges.map((edge) => ({ id: edge.id, sources: [edge.source], targets: [edge.target] })),
   })
   const positions = new Map(graph.children?.map((node) => [node.id, { x: node.x ?? 0, y: node.y ?? 0 }]))
-  placeBindingsBelowTargets(nodes, edges, positions, manifests)
-  return nodes.map((node) => ({ ...node, position: positions.get(node.id) ?? node.position }))
+  return nodes.map((node) => ({ ...node, position: { x: (positions.get(node.id)?.x ?? node.position.x) + origin.x, y: (positions.get(node.id)?.y ?? node.position.y) + origin.y } }))
 }
 
-export function largeGraphLayout(nodes: StudioNode[], edges: StudioEdge[], manifests?: Map<string, NodeManifest>) {
-  const actions = nodes.filter((node) => node.data.editorKind === 'action' || node.data.editorKind === 'exit')
-  const actionById = new Map(actions.map((node) => [node.id, node]))
-  const actionIds = new Set(actions.map((node) => node.id))
+function bucketLayout(nodes: StudioNode[], edges: StudioEdge[], manifests: Map<string, NodeManifest> | undefined, origin: { x: number; y: number }, sizes?: Map<string, { width: number; height: number }>) {
+  const byId = new Map(nodes.map((node) => [node.id, node]))
+  const ids = new Set(nodes.map((node) => node.id))
   const outgoing = new Map<string, string[]>()
-  const indegree = new Map(actions.map((node) => [node.id, 0]))
-  const levels = new Map(actions.map((node) => [node.id, 0]))
+  const indegree = new Map(nodes.map((node) => [node.id, 0]))
+  const levels = new Map(nodes.map((node) => [node.id, 0]))
   for (const edge of edges) {
-    if (edge.data?.edgeKind === 'binding' || !actionIds.has(edge.source) || !actionIds.has(edge.target)) continue
+    if (!ids.has(edge.source) || !ids.has(edge.target)) continue
     const targets = outgoing.get(edge.source)
     if (targets) targets.push(edge.target)
     else outgoing.set(edge.source, [edge.target])
     indegree.set(edge.target, (indegree.get(edge.target) ?? 0) + 1)
   }
-  const queue = actions.filter((node) => indegree.get(node.id) === 0).map((node) => node.id)
+  const queue = nodes.filter((node) => indegree.get(node.id) === 0).map((node) => node.id)
   for (let cursor = 0; cursor < queue.length; cursor++) {
     const source = queue[cursor]
     for (const target of outgoing.get(source) ?? []) {
@@ -59,46 +134,30 @@ export function largeGraphLayout(nodes: StudioNode[], edges: StudioEdge[], manif
     }
   }
   const buckets = new Map<number, string[]>()
-  for (const node of actions) {
+  for (const node of nodes) {
     const level = levels.get(node.id) ?? 0
     const bucket = buckets.get(level)
     if (bucket) bucket.push(node.id)
     else buckets.set(level, [node.id])
   }
-  const positions = new Map<string, { x: number; y: number }>()
-  for (const [level, ids] of buckets) for (const [index, id] of ids.entries()) {
-    const node = actionById.get(id)
-    const manifest = node?.data.editorKind === 'action' ? manifests?.get(`${node.data.nodeType}@${node.data.typeVersion}`) : undefined
-    const metrics = canvasNodeMetrics(canvasNodeRole(manifest), {
-      inputs: manifest?.inputPorts.length,
-      outputs: manifest?.outputPorts.length,
-      bindings: manifest?.bindingSlots.filter((slot) => slot.placement === 'canvas').length,
-      richHeight: node?.height ?? node?.measured?.height,
-    })
-    positions.set(id, { x: 80 + level * 280, y: 60 + index * Math.max(120, metrics.height + 32) })
+  for (const [level, bucketIds] of buckets) for (const [index, id] of bucketIds.entries()) {
+    const node = byId.get(id)
+    const metrics = sizes?.get(id) ?? nodeMetricsOf(node, manifests)
+    node!.position = { x: origin.x + 80 + level * 280, y: origin.y + 60 + index * Math.max(120, metrics.height + 32) }
   }
-  placeBindingsBelowTargets(nodes, edges, positions, manifests)
-  return nodes.map((node) => ({ ...node, position: positions.get(node.id) ?? node.position }))
 }
 
-function placeBindingsBelowTargets(nodes: StudioNode[], edges: StudioEdge[], positions: Map<string, { x: number; y: number }>, manifests?: Map<string, NodeManifest>) {
-  const bindingIndex = new Map<string, number>()
-  const nodeById = new Map(nodes.map((node) => [node.id, node]))
-  const bindingEdgeBySource = new Map(edges.filter((edge) => edge.data?.edgeKind === 'binding').map((edge) => [edge.source, edge]))
-  for (const node of nodes.filter((item) => item.data.editorKind === 'binding')) {
-    const edge = bindingEdgeBySource.get(node.id)
-    const targetNode = edge ? nodeById.get(edge.target) : undefined
-    const target = edge ? positions.get(edge.target) : undefined
-    const key = target && edge ? edge.target : 'unbound'
-    const index = bindingIndex.get(key) ?? 0
-    bindingIndex.set(key, index + 1)
-    const attachment = canvasNodeMetrics('default', { kind: 'binding' })
-    if (!target || !targetNode || targetNode.data.editorKind !== 'action') {
-      positions.set(node.id, { x: 80 + index * (attachment.width + 40), y: 520 })
-      continue
-    }
-    const manifest = manifests?.get(`${targetNode.data.nodeType}@${targetNode.data.typeVersion}`)
-    const targetMetrics = canvasNodeMetrics(canvasNodeRole(manifest), { richHeight: targetNode.height ?? targetNode.measured?.height })
-    positions.set(node.id, { x: target.x + index * (attachment.width + 16), y: target.y + targetMetrics.height + 72 })
-  }
+const frameWidth = (body: StudioNode[], manifests?: Map<string, NodeManifest>) => Math.max(
+  LOOP_CONTAINER_MIN_WIDTH,
+  ...body.map((node) => node.position.x + nodeMetricsOf(node, manifests).width + LOOP_CONTAINER_PADDING.right),
+)
+const frameHeight = (body: StudioNode[], manifests?: Map<string, NodeManifest>) => Math.max(
+  LOOP_CONTAINER_MIN_HEIGHT,
+  ...body.map((node) => node.position.y + nodeMetricsOf(node, manifests).height + LOOP_CONTAINER_PADDING.bottom),
+)
+
+/** Container frame size after a body layout, reusing measured or persisted overrides. */
+function frameSize(layouted: Map<string, StudioNode>, loopId: string, children: StudioNode[], manifests?: Map<string, NodeManifest>) {
+  const loop = layouted.get(loopId)
+  return { width: Math.max(loop?.width ?? 0, frameWidth(children, manifests)), height: Math.max(loop?.height ?? 0, frameHeight(children, manifests)) }
 }

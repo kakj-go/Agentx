@@ -5,8 +5,8 @@ use time::OffsetDateTime;
 use uuid::Uuid;
 
 use crate::{
-    ContentHash, RuntimeApprovalCandidateV1, RuntimeEvaluationReportV1, RuntimeEventPayloadV1,
-    RuntimeRetentionItemV1,
+    ContentHash, RuntimeApprovalButtonV1, RuntimeApprovalCandidateV1, RuntimeEvaluationReportV1,
+    RuntimeEventPayloadV1, RuntimeRetentionItemV1,
 };
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
@@ -81,6 +81,7 @@ pub enum RuntimeGovernanceSnapshotPayloadV1 {
         title: String,
         description: Option<String>,
         request: Option<Value>,
+        buttons: Vec<RuntimeApprovalButtonV1>,
         status: String,
         resume_status: String,
         claimed_by: Option<Uuid>,
@@ -371,21 +372,6 @@ pub struct NodeAttemptV1 {
     pub result_hash: Option<ContentHash>,
     pub error_code: Option<String>,
     pub error_message: Option<String>,
-}
-
-#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ExecutionWaitV1 {
-    pub wait_id: Uuid,
-    pub node_execution_id: Uuid,
-    pub wait_kind: String,
-    pub status: String,
-    #[schemars(with = "Option<String>")]
-    #[serde(with = "time::serde::rfc3339::option")]
-    pub wake_at: Option<OffsetDateTime>,
-    #[schemars(with = "Option<String>")]
-    #[serde(with = "time::serde::rfc3339::option")]
-    pub timeout_at: Option<OffsetDateTime>,
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]

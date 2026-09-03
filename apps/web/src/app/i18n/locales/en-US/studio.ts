@@ -33,34 +33,30 @@ const translations = {
   },
   "palette": {
     "search": "Search nodes",
-    "actionNodes": "Action nodes",
-    "attachments": "AI attachments",
+    "title": "Add nodes",
+    "collapse": "Collapse node panel",
+    "expand": "Expand node panel",
     "note": "Sticky note",
     "group": "Group",
     "exit": "End node",
-    "exitGroup": "End",
-    "ai": "AI",
     "back": "Back to nodes",
     "chooseInput": "Choose an input for {{node}}",
-    "dragHint": "Click to add or drag onto the canvas",
     "categories": {
-      "triggers": "Triggers",
-      "flow": "Flow control",
-      "ai": "AI & agents",
-      "data": "Data & memory",
-      "integrations": "Actions & integrations",
-      "code": "Code & sandbox",
-      "other": "Other nodes"
+      "start": "Start",
+      "ai": "AI",
+      "logic": "Logic",
+      "transform": "Transform",
+      "integrate": "Integrate",
+      "output": "Output"
     }
   },
   "inspector": {
     "title": "Node inspector",
     "noSelection": "Select a node",
+    "unsupportedNodePanel": "No dedicated panel is registered for {{nodeType}}.",
     "name": "Name",
     "key": "Reference key",
     "disabled": "Disabled",
-    "attachment": "Attachment",
-    "resource": "Resource",
     "required": "Required",
     "multiple": "Multiple",
     "optional": "Optional",
@@ -69,7 +65,6 @@ const translations = {
     "errorPolicy": "Error handling policy",
     "errorStop": "Stop workflow",
     "errorOutput": "Send to Error output",
-    "outputProjection": "Output projection",
     "nativeOutputs": "Native outputs",
     "addProjection": "Add custom output",
     "contextWrites": "Global variable writes",
@@ -80,6 +75,7 @@ const translations = {
     "bindings": "Bindings",
     "advancedConfiguration": "Advanced configuration",
     "advancedDescription": "Limits and execution behavior",
+    "basics": "Basics",
     "toggleAdvanced": "Toggle advanced configuration",
     "agentCore": "Agent core",
     "agentCoreDescription": "Model and workspace isolation are internal Agent capabilities.",
@@ -91,10 +87,11 @@ const translations = {
     "clearResource": "Clear resource",
     "enable": "Enable node",
     "disable": "Disable node",
-    "noExpression": "No expression",
     "editProjection": "Edit custom output",
     "projectionDialogDescription": "Configure the custom output before saving",
     "outputPort": "Output port",
+    "omitWhenMissing": "Omit this field when missing",
+    "omitWhenMissingHint": "Keeps the node running when system triggers do not provide this value.",
     "workflowVersion": "Workflow version",
     "editContextWrite": "Edit global variable write",
     "selectContext": "Select a global variable",
@@ -122,6 +119,141 @@ const translations = {
     ,"confirmAuthorize": "Authorize"
     ,"confirmRequest": "Submit request"
   },
+  "panels": {
+    "model": {
+      "model": "Model",
+      "modelDescription": "Pick an authorized model resource; its capability decides outputs and usage.",
+      "prompt": "Prompt",
+      "output": "Output",
+      "variableHint": "Type / or {{ to open the variable picker. The system prompt sets the role and the user question carries this call's input.",
+      "initializeSchema": "Create object schema"
+    },
+    "agent": {
+      "task": "Task",
+      "budget": "Budget",
+      "budgetHint": "Limit iterations, calls, tokens, cost, and duration in one place.",
+      "budgetCollapsed": "Using default budget",
+      "iterationSummary": "Up to {{count}} rounds",
+      "toolSummary": "{{count}} tool calls",
+      "durationSummary": "{{count}} seconds"
+    },
+    "if": {
+      "branches": "Branches",
+      "elseHint": "Taken when no branch above matches.",
+      "notes": "Notes",
+      "notesHint": "Every branch gets its own connection point on the right of the node; conditions offer type-aware operators."
+    },
+    "loop": {
+      "input": "Input",
+      "stepInput": "1. Choose an array",
+      "stepBody": "2. Configure the loop body",
+      "stepOutput": "3. Choose each result",
+      "inputHint": "Choose the array to iterate from workflow inputs or an upstream output.",
+      "bodyHint": "Drop nodes into the loop frame, or add the first step from Iteration start.",
+      "outputHint": "Choose an output from a terminal body node; results keep input order.",
+      "execution": "Execution",
+      "builtins": "Built-in variables",
+      "builtinsHint": "Nodes inside the container can reference the current item, the complete loop array, and its index (starting at 0).",
+      "errorModes": {
+        "terminate": {
+          "label": "Terminate the iteration",
+          "description": "The first failed item stops the loop and takes the error branch."
+        },
+        "continue": {
+          "label": "Emit null for failed items",
+          "description": "Failed items continue with a null result without interrupting the others."
+        },
+        "remove": {
+          "label": "Drop failed items",
+          "description": "Failed items are removed from the result; the rest keep running."
+        }
+      }
+    },
+    "merge": {
+      "mode": "Merge mode",
+      "modeDescriptions": {
+        "append": "Concatenate entries from every input in arrival order",
+        "combine_by_position": "Pair two inputs element-wise by index",
+        "combine_by_key": "Join on the configured key fields (inner / left / right / full)"
+      },
+      "examples": {
+        "append": "[A, B] + [C]  →  [A, B, C]",
+        "combine_by_position": "[{name:'A'}] + [{score:90}]  →  [{name:'A',score:90}]",
+        "combine_by_key": "Join left.id = right.id with inner / left / right / full"
+      },
+      "inputs": "Inputs",
+      "inputsHint": "The node exposes multiple input ports on the left, one per branch; aggregation expects compatible branch outputs.",
+      "appendInputsHint": "Connect any number of branches to Input; items append in stable port order.",
+      "pairInputsHint": "Connect exactly two branches: Left data and Right data.",
+      "leftField": "Left match field",
+      "rightField": "Right match field",
+      "modeChangeWarning": "Changing merge mode removes the current input connections. Continue?"
+    },
+    "approval": {
+      "content": "Approval content",
+      "contentDescription": "Title, description and approver shown while waiting for the human decision.",
+      "branches": "Branches",
+      "branchesHint": "Each button maps to one decision branch connection point on the right of the node.",
+      "timeout": "Timeout",
+      "timeoutHint": "After the timeout the timed-out branch continues with decision = timed_out."
+    },
+    "code": {
+      "environment": "Runtime",
+      "environmentDescription": "The runner and network policy shape sandbox behavior.",
+      "inputs": "Input variables",
+      "source": "Code",
+      "output": "Output",
+      "networkPolicy": "Network policy",
+      "networkDeny": "Deny outbound network",
+      "networkDenyHint": "The sandbox can only reach Agentx runtime endpoints required for execution.",
+      "networkAllowlist": "Allow destination list",
+      "networkAllowlistHint": "Every connection must use the Agentx TCP proxy and match a destination and port.",
+      "addDestination": "Add destination",
+      "destination": "Domain, IP, or CIDR",
+      "ports": "Ports or ranges",
+      "proxyExample": "Show proxy example",
+      "copyExample": "Copy example",
+      "outputExample": "Return JSON example",
+      "outputExampleDescription": "Enter a JSON example of the object returned by the code so its fields can be derived.",
+      "outputExampleHint": "Downstream nodes can reference the complete returned object or any property within it; null and empty arrays remain dynamic.",
+      "outputObjectRequired": "The return example must be a JSON object",
+      "diagnostics": "Diagnostic fields"
+    },
+    "set": {
+      "values": "Assignments",
+      "valuesDescription": "Set field values row by row, referencing upstream variables.",
+      "options": "Options"
+    },
+    "list": {
+      "input": "Input",
+      "inputHint": "Choose the array to process from workflow inputs or an upstream output.",
+      "filter": "Filter",
+      "sort": "Sort",
+      "limit": "Limit",
+      "nullsFirst": "Nulls first",
+      "nullsLast": "Nulls last",
+      "ascending": "Ascending ↑",
+      "descending": "Descending ↓",
+      "sortAdvanced": "Null ordering"
+    },
+    "http": {
+      "request": "Request",
+      "query": "Query",
+      "headers": "Headers",
+      "body": "Body",
+      "authentication": "Authentication",
+      "timeout": "Timeout",
+      "timeoutSeconds": "Timeout (seconds)",
+      "output": "Output"
+    },
+    "subworkflow": {
+      "target": "Target workflow",
+      "targetDescription": "Pick a published workflow version; it is immutable while the node runs.",
+      "inputs": "Input mapping",
+      "output": "Output",
+      "outputHint": "The sub-workflow end outputs become this node's output; a timed-out child run is cancelled and the parent run resumes."
+    }
+  },
   "ports": {
     "flow": "Flow",
     "error": "Error",
@@ -145,6 +277,20 @@ const translations = {
     "collapse": "Collapse group",
     "delete": "Ungroup",
     "members": "{{count}} nodes"
+  },
+  "container": {
+    "parallelChip": "Parallel ×{{count}}",
+    "errorMode": {
+      "terminate": "Terminate on failure",
+      "continue": "Failed round yields null",
+      "remove": "Drop failed rounds"
+    },
+    "builtinVars": "Built-in variables: item (current element) · items (all data) · index (index)",
+    "iterationStart": "Iteration start",
+    "iterationEnd": "Iteration end",
+    "resize": "Resize loop container",
+    "emptyHint": "Drop a node here, or add the first step from Iteration start",
+    "addFirstNode": "Add loop body node"
   },
   "runtime": {
     "title": "Execution",
@@ -261,19 +407,16 @@ const translations = {
     "locate": "Locate field",
     "issueFallback": "The configuration is invalid ({{code}}).",
     "issues": {
-      "ATTACHMENT_RESOURCE_REQUIRED": "Select a resource for this AI attachment.",
       "UNKNOWN_NODE_VERSION": "Node version {{nodeTypeVersion}} is unavailable in the Node Catalog.",
       "UNSUPPORTED_UI_CONTROL": "Field \"{{field}}\" uses unsupported control \"{{control}}\".",
       "REQUIRED_PARAMETER_MISSING": "Field \"{{field}}\" is required.",
       "RESOURCE_REQUIRED": "Select a {{resourceType}} resource.",
-      "AI_BINDING_REQUIRED": "Connect the required {{slot}} attachment.",
+      "AI_BINDING_REQUIRED": "Select the required {{slot}} attachment in the node panel.",
       "ERROR_POLICY_MISMATCH": "Error connections require the \"Send to Error output\" policy.",
-      "PASTED_RESOURCE_UNAVAILABLE": "The pasted content references a resource that is not visible to this workflow.",
       "CROSS_WORKFLOW_PASTE_REJECTED": "These nodes cannot be pasted until their configuration issues are fixed.",
       "INVALID_WORKFLOW_DEFINITION": "The workflow definition is invalid.",
       "INVALID_EDITOR_DOCUMENT": "The canvas editor data is invalid.",
-      "INVALID_EXPRESSION": "The expression is invalid.",
-      "END_OUTPUT_EXPRESSION_REQUIRED": "The End output expression is required.",
+      "END_OUTPUT_BINDING_REQUIRED": "The End output binding is required.",
       "INVALID_END_OUTPUT_KEY": "End output names may contain only lowercase letters, digits, and underscores.",
       "INVALID_ACTIVATION_BUDGET": "Activation budget must be greater than zero.",
       "INVALID_CONTEXT_KEY": "Global variable names may contain only lowercase letters, digits, and underscores.",
@@ -308,6 +451,8 @@ const translations = {
       "UNSUPPORTED_NODE_VERSION": "The node version is unsupported.",
       "DANGLING_CONNECTION": "The connection references a node that does not exist.",
       "CYCLE_NOT_ALLOWED": "This connection would create a cycle that is not allowed."
+,
+      "CONTAINER_EDGE_CROSSES_BOUNDARY": "This connection crosses a loop container boundary: nodes inside and outside a container cannot connect directly; wire loop body entries from the iteration start chip."
     }
   },
   "toasts": {
@@ -349,24 +494,88 @@ const translations = {
   "exit": {
     "title": "End node",
     "description": "The output contract is shared; each end node maps its own values",
-    "summary": "Output / Error",
+    "summary": "Output variables",
     "protected": "The initial end node cannot be deleted",
-    "paletteLabel": "End node",
-    "paletteMeta": "A workflow terminal; add as many as you need",
+    "sharedBanner": "Shared across all end nodes: edits made on any end node apply everywhere",
     "contractDescription": "Global output fields shared by every end node",
     "errorContractDescription": "Global error output fields shared by every end node",
     "contractDialogDescription": "Output field definitions apply to every end node",
     "contractRenameHint": "Renaming a field updates mappings on all end nodes",
+    "completion": "Completion mode",
+    "completionDescription": "Shared by every end node; decides when the workflow returns",
+    "completionModes": {
+      "first_return": "End on first return",
+      "all_complete": "Wait for all"
+    },
+    "completionModeDescriptions": {
+      "first_return": "Ends the workflow as soon as any end node returns (default)",
+      "all_complete": "Waits for every end node and returns the results as an array"
+    },
     "successMappings": "This node's output mappings",
     "errorMappings": "This node's error mappings",
     "mappingDescription": "Fields come from the global contract; pick this node's sources",
     "errorMappingDescription": "Error fields come from the global contract; pick this node's sources",
     "emptyContract": "Define output fields above first"
   },
+  "conditionBuilder": {
+    "if": "IF",
+    "elseIf": "ELSE IF",
+    "conditions": "Conditions",
+    "logicalOp": "Logical operator",
+    "and": "AND",
+    "or": "OR",
+    "addCondition": "Add condition",
+    "removeCondition": "Remove condition",
+    "addBranch": "Add branch",
+    "removeBranch": "Remove branch",
+    "leftValue": "Left value",
+    "rightValue": "Right value",
+    "operator": "Operator",
+    "branch": "Branch",
+    "defaultBranchName": "Branch {{index}}",
+    "renameBranch": "Rename branch"
+  },
+  "buttonsEditor": {
+    "buttonLabel": "Button label",
+    "addButton": "Add button",
+    "removeButton": "Remove button"
+  },
+  "card": {
+    "setFields": "Set {{count}} fields",
+    "mergeMode": "Mode: {{mode}}",
+    "mergeModes": {
+      "append": "Append",
+      "combine_by_position": "Combine by position",
+      "combine_by_key": "Combine by key"
+    },
+    "modelMode": "Output: {{mode}}",
+    "modelModes": {
+      "text": "Text",
+      "json_schema": "Structured JSON"
+    },
+    "listRules": "{{filters}} filters · {{sorts}} sorts",
+    "takeN": "Take first {{count}}",
+    "maxIterations": "Max {{count}} iterations",
+    "outputs": "Outputs",
+    "version": "Version {{value}}",
+    "addAttachment": "+ Attachment",
+    "ifTag": "IF",
+    "elifTag": "ELIF",
+    "elseTag": "ELSE",
+    "elseFallback": "Everything else",
+    "and": "AND",
+    "or": "OR",
+    "conditionN": "Case {{index}}",
+    "buttonTag": "Button",
+    "timeoutRow": "Timeout",
+    "timeoutHours": "{{hours}} h",
+    "approveDefault": "Approve",
+    "rejectDefault": "Reject"
+  },
   "boundary": {
     "start": "Start",
     "end": "End",
-    "startSummary": "Inputs / Global variables",
+    "startSummary": "Workflow entry",
     "endSummary": "Outputs / Errors",
     "input": "Input",
     "output": "Output",
@@ -385,6 +594,7 @@ const translations = {
     "currentRawOutput": "Current node raw output",
     "sensitiveDisabled": "Sensitive values cannot be inserted here",
     "typeMismatch": "Expected {{expected}}, received {{actual}}",
+    "runtimeConversion": "Received {{actual}}; convert to {{expected}} at runtime and fail if conversion is invalid",
     "convertToString": "Convert to text",
     "recommended": "Recommended",
     "select": "Select a reference",
@@ -481,11 +691,12 @@ const translations = {
     "errorOutputs": "Error outputs",
     "errorOutputsDescription": "Optional failure terminal",
     "errorStrategy": "Error strategy",
-    "collectWindow": "Collect window (ms)",
     "errorFields": "Error fields",
     "outputName": "Output name",
     "fieldDialogDescription": "Configure the field contract before saving",
-    "contextDialogDescription": "Configure a shared global variable before saving"
+    "contextDialogDescription": "Configure a shared global variable before saving",
+    "systemVariables": "System variables",
+    "systemVariablesDescription": "Read-only runtime values available through the variable picker"
   },
   "schema": {
     "field": "Field",
@@ -525,6 +736,7 @@ const translations = {
     "seconds": "Seconds",
     "minutes": "Minutes",
     "hours": "Hours",
+    "days": "Days",
     "tokens": "tokens"
   },
   "mergePolicies": {

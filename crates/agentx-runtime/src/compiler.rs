@@ -1,10 +1,11 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use agentx_domain::{
-    ContextDefinition, ContextWriteOperation, DynamicValue, ExitParameters, ExpressionNode,
-    MissingValuePolicy, TemplateSegment, ValueCoercion, ValueNamespace, ValuePathSegment,
-    ValueSelection, ValueSelector, WORKFLOW_START_NODE_ID, WORKFLOW_EXIT_NODE_TYPE,
-    WorkflowDefinition, WorkflowNode, WorkflowOutput, canonical_content_hash, validate_definition,
+    ConditionOperator, ConditionSpec, ContextDefinition, ContextWriteOperation, ExitParameters,
+    InputBinding, InputTemplateSegment, MissingValuePolicy, ReferenceBinding, ValueNamespace,
+    ValuePathSegment, ValueSelection, ValueSelector, WORKFLOW_EXIT_NODE_TYPE,
+    WORKFLOW_START_NODE_ID, WorkflowDefinition, WorkflowNode, WorkflowOutput,
+    canonical_content_hash, validate_definition,
 };
 use agentx_node_protocol::{NodeManifestVersion, OutputCardinality, PortKind};
 use agentx_runtime_contracts::{
@@ -12,25 +13,33 @@ use agentx_runtime_contracts::{
     IR_SCHEMA_VERSION,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
-use crate::{ExpressionEngine, NodeRegistry};
+use crate::NodeRegistry;
 
 #[path = "compiler_agent.rs"]
 mod compiler_agent;
+#[path = "compiler_code.rs"]
+mod compiler_code;
 #[path = "compiler_normalization.rs"]
 mod normalization;
-#[path = "compiler_parameter_expressions.rs"]
-mod parameter_expressions;
+#[path = "compiler_parameter_bindings.rs"]
+mod parameter_bindings;
+#[path = "compiler_references.rs"]
+mod references;
+#[path = "compiler_schema.rs"]
+mod schema;
 use compiler_agent::{compile_agent_node, validate_binding_slots};
+use compiler_code::validate_code_node;
 use normalization::{
-    normalized_context_writes, normalized_node_parameters, normalized_output_projection,
-    validate_parameter_reference_types,
+    normalized_context_writes, normalized_node_parameters, validate_parameter_reference_types,
 };
+use references::*;
+use schema::*;
 
-pub const COMPILER_VERSION: &str = "agentx-workflow-7.0.0";
+pub const COMPILER_VERSION: &str = "agentx-workflow-8.0.0";
 
 #[derive(Clone, Debug, Default)]
 pub struct CompileContext {
@@ -64,16 +73,12 @@ impl CompileError {
 
 pub struct WorkflowCompiler<'a> {
     registry: &'a NodeRegistry,
-    expressions: ExpressionEngine,
 }
 
 impl<'a> WorkflowCompiler<'a> {
     #[must_use]
     pub fn new(registry: &'a NodeRegistry) -> Self {
-        Self {
-            registry,
-            expressions: ExpressionEngine,
-        }
+        Self { registry }
     }
 
     pub fn compile(
@@ -94,9 +99,7 @@ impl<'a> WorkflowCompiler<'a> {
             .nodes
             .iter()
             .enumerate()
-            .filter(|(_, node)| {
-                !node.disabled && node.node_type != WORKFLOW_EXIT_NODE_TYPE
-            })
+            .filter(|(_, node)| !node.disabled && node.node_type != WORKFLOW_EXIT_NODE_TYPE)
             .collect::<Vec<_>>();
         let indexes = enabled
             .iter()
@@ -107,21 +110,48 @@ impl<'a> WorkflowCompiler<'a> {
             .nodes
             .iter()
             .enumerate()
-            .filter(|(_, node)| {
-                node.node_type == WORKFLOW_EXIT_NODE_TYPE && !node.disabled
-            })
+            .filter(|(_, node)| node.node_type == WORKFLOW_EXIT_NODE_TYPE && !node.disabled)
             .map(|(definition_index, node)| (node.id.as_str(), (definition_index, node)))
             .collect::<BTreeMap<_, _>>();
+        let exit_order = definition
+            .nodes
+            .iter()
+            .filter(|node| node.node_type == WORKFLOW_EXIT_NODE_TYPE && !node.disabled)
+            .map(|node| node.id.clone())
+            .collect::<Vec<_>>();
 
         let mut manifests: Vec<Option<NodeManifestVersion>> = Vec::with_capacity(enabled.len());
         let mut subworkflows = BTreeSet::new();
         for (definition_index, node) in &enabled {
             let path = format!("nodes[{definition_index}]");
-            let manifest = self
-                .registry
-                .get(&node.node_type, node.type_version)
+            let removed_resource_node = matches!(
+                node.node_type.as_str(),
+                "mcp_tool" | "skill" | "rag" | "memory"
+            );
+            let public_definition_node = NodeRegistry::is_definition_node_type(&node.node_type);
+            let manifest = (public_definition_node && !removed_resource_node)
+                .then(|| {
+                    self.registry.resolve_definition_manifest(
+                        &node.node_type,
+                        node.type_version,
+                        &node.parameters,
+                    )
+                })
+                .flatten()
                 .cloned();
-            if manifest.is_none() {
+            if removed_resource_node {
+                issues.push(CompileIssue {
+                    code: "RESOURCE_CAPABILITY_NODE_REMOVED".into(),
+                    path: format!("{path}.type"),
+                    message: format!("{} is available only as an Agent resource", node.node_type),
+                });
+            } else if !public_definition_node {
+                issues.push(CompileIssue {
+                    code: "NODE_TYPE_NOT_PUBLIC".into(),
+                    path: format!("{path}.type"),
+                    message: format!("{} is not a public Workflow node type", node.node_type),
+                });
+            } else if manifest.is_none() {
                 issues.push(CompileIssue {
                     code: "UNKNOWN_NODE_VERSION".into(),
                     path: format!("{path}.typeVersion"),
@@ -134,6 +164,8 @@ impl<'a> WorkflowCompiler<'a> {
             if let Some(manifest) = &manifest {
                 validate_binding_slots(*definition_index, node, manifest, context, &mut issues);
                 validate_parameters(*definition_index, node, manifest, &mut issues);
+                validate_node_owned_schemas(*definition_index, node, &mut issues);
+                validate_dynamic_branch_ids(*definition_index, node, &mut issues);
                 validate_context_write_capability(
                     *definition_index,
                     node,
@@ -149,25 +181,15 @@ impl<'a> WorkflowCompiler<'a> {
                     &mut issues,
                 );
             }
-            validate_expressions(
-                &self.expressions,
+            validate_legacy_expressions(
                 &node.parameters,
                 &format!("{path}.parameters"),
-                &mut issues,
-            );
-            let projection_value = serde_json::to_value(&node.output_projection)
-                .expect("output projection serializes");
-            validate_expressions(
-                &self.expressions,
-                &projection_value,
-                &format!("{path}.outputProjection"),
                 &mut issues,
             );
             for (write_index, write) in node.context_writes.iter().enumerate() {
                 let value =
                     serde_json::to_value(&write.value).expect("dynamic context value serializes");
-                validate_expressions(
-                    &self.expressions,
+                validate_legacy_expressions(
                     &value,
                     &format!("{path}.contextWrites[{write_index}].value"),
                     &mut issues,
@@ -180,19 +202,6 @@ impl<'a> WorkflowCompiler<'a> {
                     .and_then(Value::as_str)
                 {
                     Some(version) => {
-                        if let Some(expected) = node.node_type.strip_prefix("workflow.")
-                            && uuid::Uuid::parse_str(version)
-                                .map(|version| version.simple().to_string())
-                                .ok()
-                                .as_deref()
-                                != Some(expected)
-                        {
-                            issues.push(CompileIssue {
-                                code: "COMPOSITE_VERSION_MISMATCH".into(),
-                                path: format!("{path}.parameters.workflowVersionId"),
-                                message: "Composite node type and immutable Workflow Version do not match".into(),
-                            });
-                        }
                         if context.current_workflow_version_id.as_deref() == Some(version)
                             || context.ancestor_workflow_version_ids.contains(version)
                         {
@@ -214,12 +223,32 @@ impl<'a> WorkflowCompiler<'a> {
             manifests.push(manifest);
         }
 
+        validate_containers(&enabled, definition, &mut issues);
+
         let mut raw_connections = Vec::new();
         let mut raw_start_connections = Vec::new();
         let mut raw_terminal_connections = Vec::new();
         let mut start_to_exit: Option<String> = None;
         let mut terminal_fanouts: BTreeSet<(&str, &str)> = BTreeSet::new();
         for (definition_index, connection) in definition.connections.iter().enumerate() {
+            if let (Some(&source_index), Some(&target_index)) = (
+                indexes.get(connection.source_node_id.as_str()),
+                indexes.get(connection.target_node_id.as_str()),
+            ) {
+                let source_parent = enabled[source_index].1.parent_id.as_deref();
+                let target_parent = enabled[target_index].1.parent_id.as_deref();
+                let same_level = source_parent == target_parent;
+                if !same_level {
+                    issues.push(CompileIssue {
+                        code: "CONTAINER_EDGE_CROSSES_BOUNDARY".into(),
+                        path: format!("connections[{definition_index}]"),
+                        message: format!(
+                            "Edge '{}' crosses a loop container boundary: '{}' and '{}' must live at the same level; Loop body entry is derived from parentId and body in-degree",
+                            connection.id, connection.source_node_id, connection.target_node_id
+                        ),
+                    });
+                }
+            }
             if exits.contains_key(connection.target_node_id.as_str()) {
                 let exit_id = connection.target_node_id.as_str();
                 if connection.source_node_id == WORKFLOW_START_NODE_ID {
@@ -256,6 +285,16 @@ impl<'a> WorkflowCompiler<'a> {
                         ),
                     });
                 }
+                if !dynamic_output_handle_valid(enabled[source].1, &connection.source_handle) {
+                    issues.push(CompileIssue {
+                        code: "UNKNOWN_DYNAMIC_SOURCE_PORT".into(),
+                        path: format!("connections[{definition_index}].sourceHandle"),
+                        message: format!(
+                            "Dynamic port '{}' is not declared by this node instance",
+                            connection.source_handle
+                        ),
+                    });
+                }
                 if let Some(manifest) = &manifests[source]
                     && let Some(kind) = port_kind(&manifest.output_ports, &connection.source_handle)
                     && ((connection.target_handle == "main" && kind != PortKind::Main)
@@ -264,8 +303,9 @@ impl<'a> WorkflowCompiler<'a> {
                     issues.push(CompileIssue {
                         code: "BOUNDARY_PORT_KIND_MISMATCH".into(),
                         path: format!("connections[{definition_index}]"),
-                        message: "Exit.main accepts Main output and Exit.error accepts Error output"
-                            .into(),
+                        message:
+                            "Exit.main accepts Main output and Exit.error accepts Error output"
+                                .into(),
                     });
                 }
                 raw_terminal_connections.push((connection, source, exit_id.to_owned()));
@@ -285,6 +325,13 @@ impl<'a> WorkflowCompiler<'a> {
                             "Port '{}' is not declared by {}",
                             connection.target_handle, manifest.node_type
                         ),
+                    });
+                }
+                if !dynamic_input_handle_valid(enabled[target].1, &connection.target_handle) {
+                    issues.push(CompileIssue {
+                        code: "UNKNOWN_DYNAMIC_TARGET_PORT".into(),
+                        path: format!("connections[{definition_index}].targetHandle"),
+                        message: "Target port is not available in the selected node mode".into(),
                     });
                 }
                 raw_start_connections.push((connection, target));
@@ -308,6 +355,16 @@ impl<'a> WorkflowCompiler<'a> {
                     ),
                 });
             }
+            if !dynamic_output_handle_valid(enabled[source].1, &connection.source_handle) {
+                issues.push(CompileIssue {
+                    code: "UNKNOWN_DYNAMIC_SOURCE_PORT".into(),
+                    path: format!("connections[{definition_index}].sourceHandle"),
+                    message: format!(
+                        "Dynamic port '{}' is not declared by this node instance",
+                        connection.source_handle
+                    ),
+                });
+            }
             if let Some(manifest) = &manifests[target]
                 && !port_matches(&manifest.input_ports, &connection.target_handle)
             {
@@ -318,6 +375,13 @@ impl<'a> WorkflowCompiler<'a> {
                         "Port '{}' is not declared by {}",
                         connection.target_handle, manifest.node_type
                     ),
+                });
+            }
+            if !dynamic_input_handle_valid(enabled[target].1, &connection.target_handle) {
+                issues.push(CompileIssue {
+                    code: "UNKNOWN_DYNAMIC_TARGET_PORT".into(),
+                    path: format!("connections[{definition_index}].targetHandle"),
+                    message: "Target port is not available in the selected node mode".into(),
                 });
             }
             if let (Some(source_manifest), Some(target_manifest)) =
@@ -344,13 +408,20 @@ impl<'a> WorkflowCompiler<'a> {
         let empty_error_sources: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
         for (target, (definition_index, node)) in enabled.iter().enumerate() {
             if let Some(manifest) = manifests[target].as_ref() {
-                validate_parameter_expression_contracts(
+                validate_parameter_binding_contracts(
                     *definition_index,
                     node,
                     manifest,
                     &mut issues,
                 );
-                validate_output_projection(*definition_index, node, manifest, &mut issues);
+                validate_condition_contracts(
+                    *definition_index,
+                    node,
+                    definition,
+                    &enabled,
+                    &manifests,
+                    &mut issues,
+                );
                 validate_parameter_reference_types(
                     &node.parameters,
                     &manifest.parameter_schema,
@@ -361,8 +432,16 @@ impl<'a> WorkflowCompiler<'a> {
                     &mut issues,
                 );
             }
+            let mut reference_parameters = node.parameters.clone();
+            let loop_output_selector = if node.node_type == "loop_over_items" {
+                reference_parameters
+                    .as_object_mut()
+                    .and_then(|parameters| parameters.remove("outputSelector"))
+            } else {
+                None
+            };
             validate_reference_paths(
-                &node.parameters,
+                &reference_parameters,
                 &format!("nodes[{definition_index}].parameters"),
                 Some(target),
                 ReferenceUsage::Parameter,
@@ -373,20 +452,26 @@ impl<'a> WorkflowCompiler<'a> {
                 &empty_error_sources,
                 &mut issues,
             );
-            let projection_value = serde_json::to_value(&node.output_projection)
-                .expect("output projection serializes");
-            validate_reference_paths(
-                &projection_value,
-                &format!("nodes[{definition_index}].outputProjection"),
-                Some(target),
-                ReferenceUsage::OutputProjection,
-                definition,
-                &enabled,
-                &manifests,
-                &graph,
-                &empty_error_sources,
-                &mut issues,
-            );
+            if let Some(output_selector) = loop_output_selector {
+                let mut loop_graph = graph.clone();
+                for (child, (_, candidate)) in enabled.iter().enumerate() {
+                    if candidate.parent_id.as_deref() == Some(node.id.as_str()) {
+                        loop_graph[child].push(target);
+                    }
+                }
+                validate_reference_paths(
+                    &output_selector,
+                    &format!("nodes[{definition_index}].parameters.outputSelector"),
+                    Some(target),
+                    ReferenceUsage::LoopOutput,
+                    definition,
+                    &enabled,
+                    &manifests,
+                    &loop_graph,
+                    &empty_error_sources,
+                    &mut issues,
+                );
+            }
             for (write_index, write) in node.context_writes.iter().enumerate() {
                 let value =
                     serde_json::to_value(&write.value).expect("dynamic context value serializes");
@@ -444,10 +529,9 @@ impl<'a> WorkflowCompiler<'a> {
             };
             let parameters = ExitParameters::parse(&node.parameters).unwrap_or_default();
             for (name, dynamic) in &parameters.outputs {
-                let value =
-                    serde_json::to_value(dynamic).expect("dynamic exit value serializes");
+                let value = serde_json::to_value(dynamic).expect("dynamic exit value serializes");
                 let path = format!("nodes[{definition_index}].parameters.outputs.{name}");
-                validate_expressions(&self.expressions, &value, &path, &mut issues);
+                validate_legacy_expressions(&value, &path, &mut issues);
                 let required = definition
                     .end
                     .outputs
@@ -478,10 +562,9 @@ impl<'a> WorkflowCompiler<'a> {
                 }
             }
             for (name, dynamic) in &parameters.error_outputs {
-                let value =
-                    serde_json::to_value(dynamic).expect("dynamic exit value serializes");
+                let value = serde_json::to_value(dynamic).expect("dynamic exit value serializes");
                 let path = format!("nodes[{definition_index}].parameters.errorOutputs.{name}");
-                validate_expressions(&self.expressions, &value, &path, &mut issues);
+                validate_legacy_expressions(&value, &path, &mut issues);
                 let required = definition
                     .end
                     .error
@@ -595,10 +678,15 @@ impl<'a> WorkflowCompiler<'a> {
                     node_type: node.node_type.clone(),
                     type_version: node.type_version,
                     parameters: normalized_node_parameters(node, manifest),
-                    output_projection: serde_json::to_value(normalized_output_projection(node))
-                        .expect("output projection serializes"),
+                    parameter_schema: manifest.parameter_schema.clone(),
                     context_writes: normalized_context_writes(node, definition),
-                    settings: node.settings.clone(),
+                    settings: {
+                        let mut settings = node.settings.clone();
+                        if settings.timeout_ms.is_none() {
+                            settings.timeout_ms = manifest.default_timeout_ms;
+                        }
+                        settings
+                    },
                     capability: manifest.capability.clone(),
                     execution_style: manifest.execution_style.clone(),
                     readiness: manifest.readiness.clone(),
@@ -613,20 +701,22 @@ impl<'a> WorkflowCompiler<'a> {
                         .iter()
                         .map(|port| port.name.clone())
                         .collect(),
-                    effective_output_contract:
-                        agentx_runtime_contracts::EffectiveOutputContractV1 {
-                            port_schemas: manifest
-                                .output_ports
-                                .iter()
-                                .map(|port| {
-                                    (
-                                        port.name.clone(),
-                                        merged_output_schema(node, manifest, &port.name),
-                                    )
-                                })
-                                .collect(),
-                            cardinalities: manifest.output_cardinality.clone(),
-                        },
+                    variadic_output_ports: manifest
+                        .output_ports
+                        .iter()
+                        .filter(|port| port.variadic)
+                        .map(|port| port.name.clone())
+                        .collect(),
+                    routes_error: definition.connections.iter().any(|connection| {
+                        connection.source_node_id == node.id
+                            && connection.source_handle == "error"
+                            && !node.disabled
+                    }),
+                    container: node.parent_id.clone(),
+                    loop_body: compiled_loop_body(definition, node, &indexes),
+                    effective_output_contract: effective_output_contract(
+                        node, manifest, definition, &enabled, &manifests,
+                    ),
                     side_effect_level: manifest.side_effect_level.clone(),
                     agent: compile_agent_node(node, manifest),
                     incoming_connections: Vec::new(),
@@ -646,42 +736,21 @@ impl<'a> WorkflowCompiler<'a> {
         let start_nodes = start_nodes.into_iter().collect::<Vec<_>>();
         let terminal_connections = raw_terminal_connections
             .into_iter()
-            .map(|(connection, source_node, target_exit)| CompiledTerminalConnection {
-                id: connection.id.clone(),
-                source_node,
-                source_port: connection.source_handle.clone(),
-                target_port: connection.target_handle.clone(),
-                target_exit,
-                branch_order: connection.order,
-            })
+            .map(
+                |(connection, source_node, target_exit)| CompiledTerminalConnection {
+                    id: connection.id.clone(),
+                    source_node,
+                    source_port: connection.source_handle.clone(),
+                    target_port: connection.target_handle.clone(),
+                    target_exit,
+                    branch_order: connection.order,
+                },
+            )
             .collect::<Vec<_>>();
         let exits = exits
             .iter()
             .map(|(exit_id, (_, node))| {
-                let mut parameters = ExitParameters::parse(&node.parameters).unwrap_or_default();
-                for (name, dynamic) in parameters.outputs.iter_mut() {
-                    if definition
-                        .end
-                        .outputs
-                        .get(name)
-                        .is_some_and(|output| output.schema.get("type").and_then(Value::as_str) == Some("string"))
-                        && let DynamicValue::Reference { coerce, .. } = dynamic
-                    {
-                        *coerce = Some(ValueCoercion::String);
-                    }
-                }
-                for (name, dynamic) in parameters.error_outputs.iter_mut() {
-                    if definition
-                        .end
-                        .error
-                        .outputs
-                        .get(name)
-                        .is_some_and(|output| output.schema.get("type").and_then(Value::as_str) == Some("string"))
-                        && let DynamicValue::Reference { coerce, .. } = dynamic
-                    {
-                        *coerce = Some(ValueCoercion::String);
-                    }
-                }
+                let parameters = ExitParameters::parse(&node.parameters).unwrap_or_default();
                 (
                     (*exit_id).to_owned(),
                     CompiledExit {
@@ -703,6 +772,7 @@ impl<'a> WorkflowCompiler<'a> {
             "connections": &connections,
             "terminalConnections": &terminal_connections,
             "exits": &exits,
+            "exitOrder": &exit_order,
             "startNodes": &start_nodes,
             "startToExit": &start_to_exit,
             "components": &components,
@@ -721,6 +791,7 @@ impl<'a> WorkflowCompiler<'a> {
             contexts: definition.start.contexts.clone(),
             end: definition.end.clone(),
             exits,
+            exit_order,
             nodes,
             connections,
             terminal_connections,
@@ -730,47 +801,128 @@ impl<'a> WorkflowCompiler<'a> {
             subworkflow_version_ids: subworkflows.into_iter().collect(),
         })
     }
+
+    /// Draft saving rejects references and security-sensitive configuration
+    /// that can never be valid without requiring every publish-time gate.
+    pub fn validate_draft(
+        &self,
+        definition: &WorkflowDefinition,
+        context: &CompileContext,
+    ) -> Vec<CompileIssue> {
+        self.compile(definition, context)
+            .err()
+            .map(|error| {
+                error
+                    .issues
+                    .into_iter()
+                    .filter(|issue| draft_save_issue(&issue.code))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
 }
 
-fn validate_output_projection(
-    definition_index: usize,
+fn effective_output_contract(
     node: &WorkflowNode,
     manifest: &NodeManifestVersion,
-    issues: &mut Vec<CompileIssue>,
-) {
-    let native_fields = manifest
-        .output_schema
-        .get("properties")
-        .and_then(Value::as_object);
-    for (port, fields) in &node.output_projection {
-        if !port_matches(&manifest.output_ports, port) {
-            issues.push(CompileIssue {
-                code: "UNKNOWN_PROJECTION_PORT".into(),
-                path: format!("nodes[{definition_index}].outputProjection.{port}"),
-                message: format!("Projection port '{port}' is not declared by the node Manifest"),
-            });
-            continue;
-        }
-        let kind = port_kind(&manifest.output_ports, port);
-        if kind == Some(PortKind::Error) {
-            issues.push(CompileIssue {
-                code: "ERROR_PROJECTION_NOT_ALLOWED".into(),
-                path: format!("nodes[{definition_index}].outputProjection.{port}"),
-                message: "Output Projection cannot modify an Error Item".into(),
-            });
-        }
-        for name in fields.keys() {
-            if native_fields.is_some_and(|native| native.contains_key(name)) {
-                issues.push(CompileIssue {
-                    code: "PROJECTION_FIELD_CONFLICT".into(),
-                    path: format!("nodes[{definition_index}].outputProjection.{port}.{name}"),
-                    message: format!(
-                        "Projection field '{name}' conflicts with a native Manifest output field"
-                    ),
-                });
+    definition: &WorkflowDefinition,
+    nodes: &[(usize, &WorkflowNode)],
+    manifests: &[Option<NodeManifestVersion>],
+) -> agentx_runtime_contracts::EffectiveOutputContractV1 {
+    let mut port_schemas = BTreeMap::new();
+    let mut cardinalities = BTreeMap::new();
+    for port in &manifest.output_ports {
+        let instance_ports = match port.name.as_str() {
+            "case" if port.variadic => node
+                .parameters
+                .get("cases")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|branch| branch.get("id").and_then(Value::as_str))
+                .map(|id| format!("case:{id}"))
+                .collect::<Vec<_>>(),
+            "decision" if port.variadic => {
+                let configured = node.parameters.get("buttons").and_then(Value::as_array);
+                if let Some(buttons) = configured.filter(|buttons| !buttons.is_empty()) {
+                    buttons
+                        .iter()
+                        .filter_map(|button| button.get("id").and_then(Value::as_str))
+                        .map(|id| format!("decision:{id}"))
+                        .collect()
+                } else {
+                    vec!["decision:approved".into(), "decision:rejected".into()]
+                }
             }
+            _ => vec![port.name.clone()],
+        };
+        for instance_port in instance_ports {
+            port_schemas.insert(
+                instance_port.clone(),
+                effective_output_schema(
+                    node,
+                    manifest,
+                    &instance_port,
+                    definition,
+                    nodes,
+                    manifests,
+                ),
+            );
+            cardinalities.insert(
+                instance_port,
+                manifest
+                    .output_cardinality
+                    .get(&port.name)
+                    .copied()
+                    .unwrap_or_default(),
+            );
         }
     }
+    agentx_runtime_contracts::EffectiveOutputContractV1 {
+        port_schemas,
+        cardinalities,
+    }
+}
+
+fn draft_save_issue(code: &str) -> bool {
+    matches!(
+        code,
+        "UNKNOWN_NODE_VERSION"
+            | "RESOURCE_CAPABILITY_NODE_REMOVED"
+            | "NODE_TYPE_NOT_PUBLIC"
+            | "UNKNOWN_SOURCE_PORT"
+            | "UNKNOWN_DYNAMIC_SOURCE_PORT"
+            | "UNKNOWN_DYNAMIC_TARGET_PORT"
+            | "UNKNOWN_TARGET_PORT"
+            | "PARAMETER_BINDING_NOT_ALLOWED"
+            | "INPUT_LITERAL_SCALAR_REQUIRED"
+            | "INPUT_BINDING_REQUIRED"
+            | "BINDING_NAMESPACE_NOT_ALLOWED"
+            | "DYNAMIC_BRANCH_ID_INVALID"
+            | "CONTAINER_EDGE_CROSSES_BOUNDARY"
+            | "CONTAINER_PARENT_UNKNOWN"
+            | "CONTAINER_PARENT_NOT_LOOP"
+            | "CONTAINER_NESTING_FORBIDDEN"
+            | "CONTAINER_BODY_CYCLE"
+            | "OUTPUT_REFERENCE_NOT_FOUND"
+            | "UNKNOWN_OUTPUT_REFERENCE"
+            | "OUTPUT_NOT_PREDECESSOR"
+            | "EXPRESSION_DEPENDENCY_CYCLE"
+            | "OUTPUT_PORT_REQUIRED"
+            | "UNKNOWN_OUTPUT_PORT"
+            | "UNKNOWN_OUTPUT_FIELD"
+            | "LOOP_REFERENCE_OUTSIDE_ITERATION"
+            | "UNKNOWN_LOOP_REFERENCE"
+            | "SENSITIVE_INPUT_EXPOSURE"
+            | "SENSITIVE_CONTEXT_EXPOSURE"
+            | "SENSITIVE_OUTPUT_EXPOSURE"
+            | "ERROR_OUTPUT_NOT_COMMON_PREDECESSOR"
+            | "CODE_NETWORK_POLICY_INVALID"
+            | "CODE_NETWORK_TARGET_FORBIDDEN"
+            | "CODE_NETWORK_PORT_RANGE_INVALID"
+            | "CODE_OUTPUT_EXAMPLE_REQUIRED"
+            | "CODE_OUTPUT_EXAMPLE_OBJECT_REQUIRED"
+    )
 }
 
 fn validate_parameters(
@@ -779,7 +931,7 @@ fn validate_parameters(
     manifest: &NodeManifestVersion,
     issues: &mut Vec<CompileIssue>,
 ) {
-    let schema = expression_aware_schema(&manifest.parameter_schema, true);
+    let schema = binding_aware_schema(&manifest.parameter_schema, true);
     let validator = match jsonschema::validator_for(&schema) {
         Ok(validator) => validator,
         Err(error) => {
@@ -807,6 +959,114 @@ fn validate_parameters(
             ),
             message: error.to_string(),
         });
+    }
+}
+
+fn validate_node_owned_schemas(
+    definition_index: usize,
+    node: &WorkflowNode,
+    issues: &mut Vec<CompileIssue>,
+) {
+    if node.node_type == "code" {
+        validate_code_node(definition_index, node, issues);
+        return;
+    }
+    let field = match node.node_type.as_str() {
+        "model"
+            if node.parameters.get("responseMode").and_then(Value::as_str)
+                == Some("json_schema") =>
+        {
+            Some("structuredSchema")
+        }
+        _ => None,
+    };
+    let Some(field) = field else { return };
+    let Some(schema) = node.parameters.get(field) else {
+        issues.push(CompileIssue {
+            code: "NODE_OUTPUT_SCHEMA_REQUIRED".into(),
+            path: format!("nodes[{definition_index}].parameters.{field}"),
+            message: format!("{field} is required for this node configuration"),
+        });
+        return;
+    };
+    if let Err(error) = jsonschema::validator_for(schema) {
+        issues.push(CompileIssue {
+            code: "NODE_OUTPUT_SCHEMA_INVALID".into(),
+            path: format!("nodes[{definition_index}].parameters.{field}"),
+            message: error.to_string(),
+        });
+    }
+}
+
+fn validate_dynamic_branch_ids(
+    definition_index: usize,
+    node: &WorkflowNode,
+    issues: &mut Vec<CompileIssue>,
+) {
+    let (field, reserved) = match node.node_type.as_str() {
+        "if" => ("cases", &["else", "error"][..]),
+        "approval" => ("buttons", &["timed_out", "error"][..]),
+        _ => return,
+    };
+    let mut seen = BTreeSet::new();
+    for (index, entry) in node
+        .parameters
+        .get(field)
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .enumerate()
+    {
+        let id = entry.get("id").and_then(Value::as_str).unwrap_or_default();
+        let valid = !id.is_empty()
+            && id.len() <= 128
+            && id.chars().all(|character| {
+                character.is_ascii_alphanumeric() || matches!(character, '_' | '-')
+            })
+            && !reserved.contains(&id);
+        if !valid || !seen.insert(id) {
+            issues.push(CompileIssue {
+                code: "DYNAMIC_BRANCH_ID_INVALID".into(),
+                path: format!("nodes[{definition_index}].parameters.{field}[{index}].id"),
+                message: "Dynamic branch ids must be unique stable identifiers and cannot use reserved port names".into(),
+            });
+        }
+    }
+}
+
+fn dynamic_output_handle_valid(node: &WorkflowNode, handle: &str) -> bool {
+    let (prefix, field) = match node.node_type.as_str() {
+        "if" if handle.starts_with("case:") => ("case:", "cases"),
+        "approval" if handle.starts_with("decision:") => ("decision:", "buttons"),
+        _ => return true,
+    };
+    let id = handle.trim_start_matches(prefix);
+    if node.node_type == "approval" && node.parameters.get("buttons").is_none() {
+        return matches!(id, "approved" | "rejected");
+    }
+    node.parameters
+        .get(field)
+        .and_then(Value::as_array)
+        .is_some_and(|entries| {
+            entries
+                .iter()
+                .any(|entry| entry.get("id").and_then(Value::as_str) == Some(id))
+        })
+}
+
+fn dynamic_input_handle_valid(node: &WorkflowNode, handle: &str) -> bool {
+    if node.node_type != "merge" {
+        return true;
+    }
+    match node
+        .parameters
+        .get("mode")
+        .and_then(Value::as_str)
+        .unwrap_or("append")
+    {
+        "append" => handle == "main" || handle.starts_with("main:"),
+        "combine_by_position" | "combine_by_key" => matches!(handle, "left" | "right"),
+        _ => false,
     }
 }
 
@@ -892,10 +1152,16 @@ fn validate_composite_context_contract(
     definition: &WorkflowDefinition,
     issues: &mut Vec<CompileIssue>,
 ) {
-    if !node.node_type.starts_with("workflow.") {
+    if !is_subworkflow_type(&node.node_type) {
         return;
     }
     let Some(contract) = manifest.parameter_schema.get("x-agentx-contextContract") else {
+        if node.node_type == "sub_workflow" {
+            // The generic creation Manifest is used while the immutable
+            // dependency is unavailable; dependency closure validation emits
+            // the authoritative missing-version error.
+            return;
+        }
         issues.push(CompileIssue {
             code: "COMPOSITE_CONTEXT_CONTRACT_MISSING".into(),
             path: format!("nodes[{definition_index}].typeVersion"),
@@ -943,7 +1209,7 @@ fn validate_composite_context_contract(
     }
 }
 
-fn validate_parameter_expression_contracts(
+fn validate_parameter_binding_contracts(
     definition_index: usize,
     node: &WorkflowNode,
     manifest: &NodeManifestVersion,
@@ -964,942 +1230,563 @@ fn validate_parameter_expression_contracts(
             continue;
         };
         let path = format!("nodes[{definition_index}].parameters.{name}");
-        parameter_expressions::validate_parameter_expression_value_contract(
+        parameter_bindings::validate_parameter_binding_value_contract(
             name,
             &path,
             value,
             Some(schema),
-            &ParameterExpressionContract::default(),
+            &ParameterBindingContract::default(),
             issues,
         );
     }
 }
 
-#[derive(Clone, Default)]
-struct ParameterExpressionContract {
-    templatable: bool,
-    allowed_namespaces: BTreeSet<String>,
+fn validate_condition_contracts(
+    definition_index: usize,
+    node: &WorkflowNode,
+    definition: &WorkflowDefinition,
+    nodes: &[(usize, &WorkflowNode)],
+    manifests: &[Option<NodeManifestVersion>],
+    issues: &mut Vec<CompileIssue>,
+) {
+    let mut conditions: Vec<(String, Option<&Value>)> = Vec::new();
+    if node.node_type == "list" {
+        if let Some(rows) = node
+            .parameters
+            .pointer("/filter/conditions")
+            .and_then(Value::as_array)
+        {
+            conditions.extend(rows.iter().enumerate().map(|(index, row)| {
+                (
+                    format!(
+                        "nodes[{definition_index}].parameters.filter.conditions[{index}].condition"
+                    ),
+                    row.get("condition"),
+                )
+            }));
+        }
+    } else if node.node_type == "if" {
+        let Some(groups) = node.parameters.get("cases").and_then(Value::as_array) else {
+            return;
+        };
+        for (group_index, group) in groups.iter().enumerate() {
+            for (condition_index, row) in group
+                .get("conditions")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .enumerate()
+            {
+                conditions.push((
+                    format!("nodes[{definition_index}].parameters.cases[{group_index}].conditions[{condition_index}].condition"),
+                    row.get("condition"),
+                ));
+            }
+        }
+    } else {
+        return;
+    }
+    for (path, value) in conditions {
+        let Some(value) = value else { continue };
+        let Ok(condition) = serde_json::from_value::<ConditionSpec>(value.clone()) else {
+            continue;
+        };
+        validate_condition_spec(
+            &condition, &path, node, definition, nodes, manifests, issues,
+        );
+    }
 }
 
-fn parameter_property_schema<'a>(schema: &'a Value, name: &str) -> Option<&'a Value> {
-    schema
-        .get("properties")
-        .and_then(Value::as_object)
-        .and_then(|properties| properties.get(name))
-        .or_else(|| {
-            ["allOf", "anyOf", "oneOf"].into_iter().find_map(|keyword| {
-                schema
-                    .get(keyword)
-                    .and_then(Value::as_array)
-                    .and_then(|variants| {
-                        variants
-                            .iter()
-                            .find_map(|variant| parameter_property_schema(variant, name))
-                    })
+fn validate_condition_spec(
+    condition: &ConditionSpec,
+    path: &str,
+    node: &WorkflowNode,
+    definition: &WorkflowDefinition,
+    nodes: &[(usize, &WorkflowNode)],
+    manifests: &[Option<NodeManifestVersion>],
+    issues: &mut Vec<CompileIssue>,
+) {
+    let left_schema = condition_operand_schema(&condition.left, node, definition, nodes, manifests);
+    let Some(left_schema) = left_schema else {
+        issues.push(CompileIssue {
+            code: "CONDITION_OPERAND_TYPE_UNKNOWN".into(),
+            path: format!("{path}.left"),
+            message: "Condition left value must have a declared schema".into(),
+        });
+        return;
+    };
+    let left_type = schema_types(&left_schema)
+        .into_iter()
+        .find(|value| *value != "null")
+        .unwrap_or("unknown");
+    let allowed = match left_type {
+        "string" => matches!(
+            condition.operator,
+            ConditionOperator::Eq
+                | ConditionOperator::Ne
+                | ConditionOperator::Contains
+                | ConditionOperator::NotContains
+                | ConditionOperator::StartsWith
+                | ConditionOperator::EndsWith
+                | ConditionOperator::Matches
+                | ConditionOperator::IsEmpty
+                | ConditionOperator::IsNotEmpty
+        ),
+        "number" | "integer" => matches!(
+            condition.operator,
+            ConditionOperator::Eq
+                | ConditionOperator::Ne
+                | ConditionOperator::Gt
+                | ConditionOperator::Gte
+                | ConditionOperator::Lt
+                | ConditionOperator::Lte
+                | ConditionOperator::IsEmpty
+                | ConditionOperator::IsNotEmpty
+        ),
+        "boolean" => matches!(
+            condition.operator,
+            ConditionOperator::Eq | ConditionOperator::Ne
+        ),
+        "array" => matches!(
+            condition.operator,
+            ConditionOperator::Contains
+                | ConditionOperator::NotContains
+                | ConditionOperator::IsEmpty
+                | ConditionOperator::IsNotEmpty
+        ),
+        "object" => matches!(
+            condition.operator,
+            ConditionOperator::IsEmpty | ConditionOperator::IsNotEmpty
+        ),
+        _ => matches!(
+            condition.operator,
+            ConditionOperator::Eq
+                | ConditionOperator::Ne
+                | ConditionOperator::IsEmpty
+                | ConditionOperator::IsNotEmpty
+        ),
+    };
+    if !allowed {
+        issues.push(CompileIssue {
+            code: "CONDITION_OPERATOR_TYPE_MISMATCH".into(),
+            path: format!("{path}.operator"),
+            message: format!(
+                "Condition operator {:?} is not valid for {left_type}",
+                condition.operator
+            ),
+        });
+        return;
+    }
+    if matches!(
+        condition.operator,
+        ConditionOperator::IsEmpty | ConditionOperator::IsNotEmpty
+    ) {
+        return;
+    }
+    let Some(right) = condition.right.as_ref() else {
+        issues.push(CompileIssue {
+            code: "CONDITION_RIGHT_OPERAND_REQUIRED".into(),
+            path: format!("{path}.right"),
+            message: "Condition operator requires a right value".into(),
+        });
+        return;
+    };
+    let Some(right_schema) = condition_operand_schema(right, node, definition, nodes, manifests)
+    else {
+        issues.push(CompileIssue {
+            code: "CONDITION_OPERAND_TYPE_UNKNOWN".into(),
+            path: format!("{path}.right"),
+            message: "Condition right value must have a declared schema".into(),
+        });
+        return;
+    };
+    let compatible = match condition.operator {
+        ConditionOperator::Contains | ConditionOperator::NotContains if left_type == "array" => {
+            left_schema
+                .get("items")
+                .is_none_or(|items| json_schemas_compatible(items, &right_schema))
+        }
+        _ => {
+            json_schemas_compatible(&left_schema, &right_schema)
+                || schema_types(&left_schema).is_empty()
+                || schema_types(&right_schema).is_empty()
+                || schema_types(&left_schema).contains(&"string")
+                || schema_types(&right_schema).contains(&"string")
+        }
+    };
+    if !compatible {
+        issues.push(CompileIssue {
+            code: "CONDITION_OPERAND_TYPE_MISMATCH".into(),
+            path: format!("{path}.right"),
+            message: "Condition operands have incompatible schemas".into(),
+        });
+    }
+}
+
+fn condition_operand_schema(
+    binding: &InputBinding,
+    node: &WorkflowNode,
+    definition: &WorkflowDefinition,
+    nodes: &[(usize, &WorkflowNode)],
+    manifests: &[Option<NodeManifestVersion>],
+) -> Option<Value> {
+    let InputBinding::Reference { selector, .. } = binding else {
+        return references::value_binding_schema(binding, definition, nodes, manifests);
+    };
+    if selector.namespace != ValueNamespace::Item {
+        return references::value_binding_schema(binding, definition, nodes, manifests);
+    }
+    let path = selector
+        .path
+        .iter()
+        .map(|segment| match segment {
+            ValuePathSegment::Key(value) => value.clone(),
+            ValuePathSegment::Index(value) => value.to_string(),
+        })
+        .collect::<Vec<_>>();
+    if node.node_type == "list" {
+        let input = node
+            .parameters
+            .get("input")
+            .cloned()
+            .and_then(|value| serde_json::from_value::<InputBinding>(value).ok())?;
+        let array = references::value_binding_schema(&input, definition, nodes, manifests)?;
+        return references::json_schema_at_path(array.get("items")?, &path).cloned();
+    }
+    let mut selected = None;
+    for connection in definition
+        .connections
+        .iter()
+        .filter(|connection| connection.target_node_id == node.id)
+    {
+        let base = source_item_schema(
+            &connection.source_node_id,
+            &connection.source_handle,
+            definition,
+            nodes,
+            manifests,
+            &mut BTreeSet::new(),
+        )?;
+        let candidate = references::json_schema_at_path(&base, &path).cloned()?;
+        if selected.as_ref().is_some_and(|current| {
+            !json_schemas_compatible(current, &candidate)
+                || !json_schemas_compatible(&candidate, current)
+        }) {
+            return None;
+        }
+        selected = Some(candidate);
+    }
+    selected
+}
+
+fn source_item_schema(
+    source_id: &str,
+    source_port: &str,
+    definition: &WorkflowDefinition,
+    nodes: &[(usize, &WorkflowNode)],
+    manifests: &[Option<NodeManifestVersion>],
+    visiting: &mut BTreeSet<String>,
+) -> Option<Value> {
+    if source_id == WORKFLOW_START_NODE_ID {
+        return Some(definition.start.inputs.clone());
+    }
+    if !visiting.insert(source_id.to_owned()) {
+        return None;
+    }
+    let source = nodes
+        .iter()
+        .position(|(_, candidate)| candidate.id == source_id)?;
+    let node = nodes[source].1;
+    let mut schema = if node.node_type == "set" {
+        if node
+            .parameters
+            .get("keepOnlySet")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
+            json!({"type":"object","properties":{},"required":[],"additionalProperties":false})
+        } else {
+            let incoming = definition
+                .connections
+                .iter()
+                .find(|connection| connection.target_node_id == node.id)?;
+            source_item_schema(
+                &incoming.source_node_id,
+                &incoming.source_handle,
+                definition,
+                nodes,
+                manifests,
+                visiting,
+            )?
+        }
+    } else {
+        references::effective_output_schema(
+            node,
+            manifests.get(source)?.as_ref()?,
+            source_port,
+            definition,
+            nodes,
+            manifests,
+        )
+    };
+    if node.node_type == "set"
+        && let Some(InputBinding::Object { fields: values }) = node
+            .parameters
+            .get("values")
+            .cloned()
+            .and_then(|value| serde_json::from_value::<InputBinding>(value).ok())
+    {
+        let properties = schema
+            .as_object_mut()?
+            .entry("properties")
+            .or_insert_with(|| json!({}))
+            .as_object_mut()?;
+        for (name, binding) in values {
+            if let Some(field_schema) =
+                references::value_binding_schema(&binding, definition, nodes, manifests)
+            {
+                properties.insert(name, field_schema);
+            }
+        }
+    }
+    visiting.remove(source_id);
+    Some(schema)
+}
+
+fn compiled_loop_body(
+    definition: &WorkflowDefinition,
+    node: &WorkflowNode,
+    indexes: &BTreeMap<&str, usize>,
+) -> Option<agentx_runtime_contracts::CompiledLoopBodyV1> {
+    if node.node_type != "loop_over_items" {
+        return None;
+    }
+    let children = definition
+        .nodes
+        .iter()
+        .filter(|candidate| candidate.parent_id.as_deref() == Some(node.id.as_str()))
+        .collect::<Vec<_>>();
+    if children.is_empty() {
+        return None;
+    }
+    let child_ids = children
+        .iter()
+        .map(|child| child.id.as_str())
+        .collect::<BTreeSet<_>>();
+    let entries = definition
+        .nodes
+        .iter()
+        .enumerate()
+        .filter(|(_, candidate)| child_ids.contains(candidate.id.as_str()))
+        .filter(|(_, candidate)| {
+            !definition.connections.iter().any(|connection| {
+                child_ids.contains(connection.source_node_id.as_str())
+                    && connection.target_node_id == candidate.id
             })
         })
-        .or_else(|| {
-            schema
-                .get("additionalProperties")
-                .filter(|additional| additional.is_object())
-        })
-}
-
-fn parameter_items_schema(schema: &Value) -> Option<&Value> {
-    schema.get("items").or_else(|| {
-        ["allOf", "anyOf", "oneOf"].into_iter().find_map(|keyword| {
-            schema
-                .get(keyword)
-                .and_then(Value::as_array)
-                .and_then(|variants| variants.iter().find_map(parameter_items_schema))
-        })
-    })
-}
-
-fn json_types_compatible(expected: &str, actual: &str) -> bool {
-    expected == actual
-        || matches!(
-            (expected, actual),
-            ("number", "integer") | ("integer", "number")
-        )
-}
-
-fn expression_aware_schema(schema: &Value, root: bool) -> Value {
-    let mut schema = schema.clone();
-    if let Some(object) = schema.as_object_mut() {
-        for keyword in ["allOf", "anyOf", "oneOf"] {
-            if let Some(variants) = object.get_mut(keyword).and_then(Value::as_array_mut) {
-                for variant in variants {
-                    *variant = expression_aware_schema(variant, false);
-                }
-            }
-        }
-        if let Some(properties) = object.get_mut("properties").and_then(Value::as_object_mut) {
-            for property in properties.values_mut() {
-                *property = expression_aware_schema(property, false);
-            }
-        }
-        if let Some(items) = object.get_mut("items") {
-            *items = expression_aware_schema(items, false);
-        }
-        if let Some(additional) = object.get_mut("additionalProperties")
-            && additional.is_object()
-        {
-            *additional = expression_aware_schema(additional, false);
-        }
-    }
-    if root {
-        schema
-    } else {
-        serde_json::json!({"anyOf":[schema,{"type":"object","required":["kind"],"properties":{"kind":{"enum":["literal","reference","template","expression"]}}}]})
-    }
-}
-
-fn validate_expressions(
-    engine: &ExpressionEngine,
-    value: &Value,
-    path: &str,
-    issues: &mut Vec<CompileIssue>,
-) {
-    match value {
-        Value::String(source) if source.contains("${{") => {
-            let _ = engine;
-            issues.push(CompileIssue {
-                code: "LEGACY_EXPRESSION_NOT_SUPPORTED".into(),
-                path: path.into(),
-                message: "Workflow 5.0 requires a structured dynamic value".into(),
-            });
-        }
-        Value::Array(values) => {
-            for (index, value) in values.iter().enumerate() {
-                validate_expressions(engine, value, &format!("{path}[{index}]"), issues);
-            }
-        }
-        Value::Object(values) => {
-            for (key, value) in values {
-                validate_expressions(engine, value, &format!("{path}.{key}"), issues);
-            }
-        }
-        _ => {}
-    }
-}
-
-fn is_subworkflow_type(node_type: &str) -> bool {
-    node_type == "sub_workflow" || node_type.starts_with("workflow.")
-}
-
-#[derive(Clone, Copy)]
-enum ReferenceUsage {
-    Parameter,
-    OutputProjection,
-    ContextWrite,
-    EndOutput { required: bool },
-    EndErrorOutput { required: bool },
-}
-
-#[allow(clippy::too_many_arguments)]
-fn validate_reference_paths(
-    value: &Value,
-    path: &str,
-    target: Option<usize>,
-    usage: ReferenceUsage,
-    definition: &WorkflowDefinition,
-    nodes: &[(usize, &WorkflowNode)],
-    manifests: &[Option<NodeManifestVersion>],
-    graph: &[Vec<usize>],
-    exit_error_sources: &BTreeMap<usize, Vec<usize>>,
-    issues: &mut Vec<CompileIssue>,
-) {
-    if value.is_object()
-        && let Ok(dynamic) = serde_json::from_value::<DynamicValue>(value.clone())
-    {
-        let mut selectors = Vec::new();
-        collect_dynamic_selectors(&dynamic, &mut selectors);
-        for selector in selectors {
-            if let Some(reference) = structured_selector_reference(selector, nodes) {
-                validate_reference_path(
-                    &reference,
-                    path,
-                    target,
-                    usage,
-                    definition,
-                    nodes,
-                    manifests,
-                    graph,
-                    exit_error_sources,
-                    issues,
-                );
-            } else {
-                issues.push(CompileIssue {
-                    code: "OUTPUT_REFERENCE_NOT_FOUND".into(),
-                    path: path.into(),
-                    message: "Structured selector references an unknown source node".into(),
-                });
-            }
-        }
-        return;
-    }
-    match value {
-        Value::String(_) => {}
-        Value::Array(values) => {
-            for (index, value) in values.iter().enumerate() {
-                validate_reference_paths(
-                    value,
-                    &format!("{path}[{index}]"),
-                    target,
-                    usage,
-                    definition,
-                    nodes,
-                    manifests,
-                    graph,
-                    exit_error_sources,
-                    issues,
-                );
-            }
-        }
-        Value::Object(values) => {
-            for (key, value) in values {
-                validate_reference_paths(
-                    value,
-                    &format!("{path}.{key}"),
-                    target,
-                    usage,
-                    definition,
-                    nodes,
-                    manifests,
-                    graph,
-                    exit_error_sources,
-                    issues,
-                );
-            }
-        }
-        _ => {}
-    }
-}
-
-fn collect_dynamic_selectors<'a>(value: &'a DynamicValue, selectors: &mut Vec<&'a ValueSelector>) {
-    match value {
-        DynamicValue::Literal { .. } => {}
-        DynamicValue::Reference {
-            selector,
-            missing_policy,
-            ..
-        } => {
-            selectors.push(selector);
-            collect_missing_policy_selectors(missing_policy, selectors);
-        }
-        DynamicValue::Template { segments } => {
-            for segment in segments {
-                if let TemplateSegment::Reference {
-                    selector,
-                    missing_policy,
-                } = segment
-                {
-                    selectors.push(selector);
-                    collect_missing_policy_selectors(missing_policy, selectors);
-                }
-            }
-        }
-        DynamicValue::Expression { root } => collect_expression_selectors(root, selectors),
-    }
-}
-
-fn collect_missing_policy_selectors<'a>(
-    policy: &'a MissingValuePolicy,
-    selectors: &mut Vec<&'a ValueSelector>,
-) {
-    if let MissingValuePolicy::Default { value } = policy {
-        collect_dynamic_selectors(value, selectors);
-    }
-}
-
-fn collect_expression_selectors<'a>(
-    node: &'a ExpressionNode,
-    selectors: &mut Vec<&'a ValueSelector>,
-) {
-    match node {
-        ExpressionNode::Literal { .. } => {}
-        ExpressionNode::Reference {
-            selector,
-            missing_policy,
-        } => {
-            selectors.push(selector);
-            collect_missing_policy_selectors(missing_policy, selectors);
-        }
-        ExpressionNode::Unary { operand, .. } => collect_expression_selectors(operand, selectors),
-        ExpressionNode::Binary { left, right, .. } => {
-            collect_expression_selectors(left, selectors);
-            collect_expression_selectors(right, selectors);
-        }
-        ExpressionNode::Conditional {
-            condition,
-            then_value,
-            else_value,
-        } => {
-            collect_expression_selectors(condition, selectors);
-            collect_expression_selectors(then_value, selectors);
-            collect_expression_selectors(else_value, selectors);
-        }
-        ExpressionNode::Call { arguments, .. } | ExpressionNode::Array { items: arguments } => {
-            for argument in arguments {
-                collect_expression_selectors(argument, selectors);
-            }
-        }
-        ExpressionNode::Object { fields } => {
-            for value in fields.values() {
-                collect_expression_selectors(value, selectors);
-            }
-        }
-    }
-}
-
-fn structured_selector_reference(
-    selector: &ValueSelector,
-    nodes: &[(usize, &WorkflowNode)],
-) -> Option<Vec<String>> {
-    let root = match selector.namespace {
-        ValueNamespace::Inputs => "inputs",
-        ValueNamespace::Outputs => "outputs",
-        ValueNamespace::Contexts => "contexts",
-        ValueNamespace::Execution => "execution",
-        ValueNamespace::Item => "item",
-        ValueNamespace::Loop => "loop",
-    };
-    let mut reference = vec![root.to_owned()];
-    if selector.namespace == ValueNamespace::Outputs {
-        let id = selector.source_node_id.as_deref()?;
-        let node = nodes.iter().find(|(_, node)| node.id == id)?.1;
-        reference.push(node.key.clone());
-        if let ValueSelection::Index { index } = selector.run {
-            reference.extend([
-                "runs".into(),
-                index.to_string(),
-                selector.port.clone().unwrap_or_else(|| "main".into()),
-            ]);
-            reference.push(match selector.item {
-                ValueSelection::Index { index } => index.to_string(),
-                _ => "0".into(),
-            });
-            reference.push("json".into());
-        } else {
-            reference.push(selector.port.clone().unwrap_or_else(|| "main".into()));
-            match selector.item {
-                ValueSelection::Current => reference.extend(["current".into(), "json".into()]),
-                ValueSelection::First => reference.extend(["first".into(), "json".into()]),
-                ValueSelection::Last => reference.extend(["last".into(), "json".into()]),
-                ValueSelection::All => reference.push("all".into()),
-                ValueSelection::Index { index } => {
-                    reference.extend(["all".into(), index.to_string(), "json".into()])
-                }
-            }
-        }
-    } else if selector.namespace == ValueNamespace::Item {
-        reference.push("json".into());
-    }
-    reference.extend(selector.path.iter().map(|segment| match segment {
-        ValuePathSegment::Key(key) => key.clone(),
-        ValuePathSegment::Index(index) => index.to_string(),
-    }));
-    Some(reference)
-}
-
-#[allow(clippy::too_many_arguments)]
-fn validate_reference_path(
-    reference: &[String],
-    path: &str,
-    target: Option<usize>,
-    usage: ReferenceUsage,
-    definition: &WorkflowDefinition,
-    nodes: &[(usize, &WorkflowNode)],
-    manifests: &[Option<NodeManifestVersion>],
-    graph: &[Vec<usize>],
-    exit_error_sources: &BTreeMap<usize, Vec<usize>>,
-    issues: &mut Vec<CompileIssue>,
-) {
-    let Some(root) = reference.first().map(String::as_str) else {
-        return;
-    };
-    match root {
-        "inputs" => {
-            if reference.get(1).is_none()
-                || !json_schema_has_path(&definition.start.inputs, &reference[1..])
-            {
-                reference_issue(issues, "UNKNOWN_INPUT_REFERENCE", path, reference);
-            } else if matches!(
-                usage,
-                ReferenceUsage::OutputProjection
-                    | ReferenceUsage::EndOutput { .. }
-                    | ReferenceUsage::EndErrorOutput { .. }
-            ) && json_schema_path_is_sensitive(&definition.start.inputs, &reference[1..])
-            {
-                reference_issue(issues, "SENSITIVE_INPUT_EXPOSURE", path, reference);
-            }
-        }
-        "contexts" => {
-            let Some(name) = reference.get(1) else {
-                reference_issue(issues, "UNKNOWN_CONTEXT_REFERENCE", path, reference);
-                return;
-            };
-            let Some(context) = definition.start.contexts.get(name) else {
-                reference_issue(issues, "UNKNOWN_CONTEXT_REFERENCE", path, reference);
-                return;
-            };
-            if let Some(target) = target
-                && manifests.get(target).is_some_and(|manifest| {
-                    manifest
-                        .as_ref()
-                        .is_some_and(|manifest| !manifest.context_read_capability)
-                })
-            {
-                reference_issue(issues, "CONTEXT_READ_NOT_SUPPORTED", path, reference);
-            }
-            if context.sensitive
-                && matches!(
-                    usage,
-                    ReferenceUsage::OutputProjection
-                        | ReferenceUsage::EndOutput { .. }
-                        | ReferenceUsage::EndErrorOutput { .. }
-                )
-            {
-                reference_issue(issues, "SENSITIVE_CONTEXT_EXPOSURE", path, reference);
-            }
-            if reference.len() > 2 && !json_schema_has_path(&context.schema, &reference[2..]) {
-                reference_issue(issues, "UNKNOWN_CONTEXT_REFERENCE", path, reference);
-            }
-        }
-        "outputs" => {
-            let Some(key) = reference.get(1) else {
-                reference_issue(issues, "UNKNOWN_OUTPUT_REFERENCE", path, reference);
-                return;
-            };
-            let Some((source, (_, source_node))) = nodes
-                .iter()
-                .enumerate()
-                .find(|(_, (_, node))| &node.key == key)
-            else {
-                reference_issue(issues, "UNKNOWN_OUTPUT_REFERENCE", path, reference);
-                return;
-            };
-            if (target == Some(source) && !matches!(usage, ReferenceUsage::ContextWrite))
-                || target.is_some_and(|target| !is_reachable(source, target, graph))
-            {
-                reference_issue(issues, "OUTPUT_NOT_PREDECESSOR", path, reference);
-                return;
-            }
-            if matches!(usage, ReferenceUsage::EndErrorOutput { .. })
-                && let Some(exit_index) = target
-                && let Some(error_sources) = exit_error_sources.get(&exit_index)
-                && !error_sources.is_empty()
-                && !error_sources.iter().all(|&error_source| {
-                    source == error_source || is_reachable(source, error_source, graph)
-                })
-            {
-                reference_issue(
-                    issues,
-                    "ERROR_OUTPUT_NOT_COMMON_PREDECESSOR",
-                    path,
-                    reference,
-                );
-                return;
-            }
-            let Some(port) = reference.get(2) else {
-                reference_issue(issues, "OUTPUT_PORT_REQUIRED", path, reference);
-                return;
-            };
-            let Some(manifest) = manifests[source].as_ref() else {
-                return;
-            };
-            let output_schema = merged_output_schema(source_node, manifest, port);
-            if port == "runs" {
-                if !manifest.expression_capabilities.supports_run_selection {
-                    reference_issue(issues, "OUTPUT_RUN_SELECTOR_NOT_SUPPORTED", path, reference);
-                    return;
-                }
-                let Some(run_index) = reference.get(3) else {
-                    reference_issue(issues, "OUTPUT_RUN_INDEX_REQUIRED", path, reference);
-                    return;
-                };
-                if run_index.parse::<u32>().is_err() {
-                    reference_issue(issues, "OUTPUT_RUN_INDEX_INVALID", path, reference);
-                    return;
-                }
-                let Some(run_port) = reference.get(4) else {
-                    reference_issue(issues, "OUTPUT_PORT_REQUIRED", path, reference);
-                    return;
-                };
-                if !port_matches(&manifest.output_ports, run_port) {
-                    reference_issue(issues, "UNKNOWN_OUTPUT_PORT", path, reference);
-                    return;
-                }
-                let Some(item_index) = reference.get(5) else {
-                    reference_issue(issues, "OUTPUT_ITEM_INDEX_REQUIRED", path, reference);
-                    return;
-                };
-                if item_index.parse::<u32>().is_err() {
-                    reference_issue(issues, "OUTPUT_ITEM_INDEX_INVALID", path, reference);
-                    return;
-                }
-                if reference.get(6).map(String::as_str) != Some("json") {
-                    reference_issue(issues, "OUTPUT_ITEM_JSON_REQUIRED", path, reference);
-                    return;
-                }
-                if reference.len() > 7
-                    && output_schema.get("properties").is_some()
-                    && !json_schema_has_path(&output_schema, &reference[7..])
-                {
-                    unknown_output_field_issue(issues, path, reference, manifest, &reference[7..]);
-                }
-                if output_reference_is_sensitive(&output_schema, reference)
-                    && usage_exposes_value(usage)
-                {
-                    reference_issue(issues, "SENSITIVE_OUTPUT_EXPOSURE", path, reference);
-                }
-                if matches!(
-                    usage,
-                    ReferenceUsage::EndOutput { required: true }
-                        | ReferenceUsage::EndErrorOutput { required: true }
-                ) {
-                    reference_issue(issues, "REQUIRED_OUTPUT_MAY_BE_EMPTY", path, reference);
-                }
-                return;
-            }
-            if !port_matches(&manifest.output_ports, port) {
-                reference_issue(issues, "UNKNOWN_OUTPUT_PORT", path, reference);
-                return;
-            }
-            let cardinality = manifest
-                .output_cardinality
-                .get(port)
-                .copied()
-                .unwrap_or_default();
-            let selector = reference.get(3).map(String::as_str);
-            if !matches!(selector, Some("current" | "first" | "last" | "all")) {
-                reference_issue(issues, "OUTPUT_SELECTOR_REQUIRED", path, reference);
-                return;
-            }
-            if let Some(selector) = selector {
-                let supported = match selector {
-                    "current" => manifest.expression_capabilities.supports_current,
-                    "first" | "last" => manifest.expression_capabilities.supports_first_last,
-                    "all" => manifest.expression_capabilities.supports_all,
-                    _ => false,
-                };
-                if !supported {
-                    reference_issue(issues, "OUTPUT_SELECTOR_NOT_SUPPORTED", path, reference);
-                    return;
-                }
-                let field_offset = if selector == "all" {
-                    if reference.len() == 4 {
-                        4
-                    } else {
-                        let Some(item_index) = reference.get(4) else {
-                            return;
-                        };
-                        if item_index.parse::<u32>().is_err() {
-                            reference_issue(issues, "OUTPUT_ITEM_INDEX_INVALID", path, reference);
-                            return;
-                        }
-                        if reference.get(5).map(String::as_str) != Some("json") {
-                            reference_issue(issues, "OUTPUT_ITEM_JSON_REQUIRED", path, reference);
-                            return;
-                        }
-                        6
-                    }
-                } else {
-                    if reference.get(4).map(String::as_str) != Some("json") {
-                        reference_issue(issues, "OUTPUT_ITEM_JSON_REQUIRED", path, reference);
-                        return;
-                    }
-                    5
-                };
-                if reference.len() > field_offset
-                    && output_schema.get("properties").is_some()
-                    && !json_schema_allows_path(&output_schema, &reference[field_offset..])
-                {
-                    unknown_output_field_issue(
-                        issues,
-                        path,
-                        reference,
-                        manifest,
-                        &reference[field_offset..],
-                    );
-                }
-                if output_reference_is_sensitive(&output_schema, reference)
-                    && usage_exposes_value(usage)
-                {
-                    reference_issue(issues, "SENSITIVE_OUTPUT_EXPOSURE", path, reference);
-                }
-                if matches!(
-                    usage,
-                    ReferenceUsage::EndOutput { required: true }
-                        | ReferenceUsage::EndErrorOutput { required: true }
-                ) && selector != "all"
-                    && matches!(
-                        cardinality,
-                        OutputCardinality::ZeroOrOne | OutputCardinality::ZeroOrMany
-                    )
-                {
-                    reference_issue(issues, "REQUIRED_OUTPUT_MAY_BE_EMPTY", path, reference);
-                }
-            }
-            if let Some(target) = target
-                && !(target == source && matches!(usage, ReferenceUsage::ContextWrite))
-                && is_reachable(target, source, graph)
-            {
-                reference_issue(issues, "EXPRESSION_DEPENDENCY_CYCLE", path, reference);
-            }
-            let _ = source_node;
-        }
-        "loop" => {
-            if !matches!(
-                reference.get(1).map(String::as_str),
-                Some("iteration" | "itemIndex")
-            ) {
-                reference_issue(issues, "UNKNOWN_LOOP_REFERENCE", path, reference);
-                return;
-            }
-            let Some(target) = target else {
-                reference_issue(issues, "LOOP_REFERENCE_OUTSIDE_ITERATION", path, reference);
-                return;
-            };
-            if !nodes.iter().enumerate().any(|(loop_index, (_, node))| {
-                node.node_type == "loop_over_items"
-                    && is_reachable(loop_index, target, graph)
-                    && is_reachable(target, loop_index, graph)
-            }) {
-                reference_issue(issues, "LOOP_REFERENCE_OUTSIDE_ITERATION", path, reference);
-            }
-        }
-        "item" if matches!(usage, ReferenceUsage::EndErrorOutput { .. }) => {
-            const ERROR_FIELDS: &[&str] = &[
-                "code",
-                "message",
-                "details",
-                "sourceNodeId",
-                "nodeExecutionId",
-                "retryable",
-            ];
-            if reference.get(1).map(String::as_str) != Some("json")
-                || reference
-                    .get(2)
-                    .is_some_and(|field| !ERROR_FIELDS.contains(&field.as_str()))
-            {
-                reference_issue(issues, "UNKNOWN_ERROR_ITEM_REFERENCE", path, reference);
-            }
-        }
-        "item" if matches!(usage, ReferenceUsage::EndOutput { .. }) => {
-            reference_issue(issues, "ITEM_NOT_AVAILABLE_AT_SUCCESS_END", path, reference);
-        }
-        _ => {}
-    }
-}
-
-fn usage_exposes_value(usage: ReferenceUsage) -> bool {
-    matches!(
-        usage,
-        ReferenceUsage::OutputProjection
-            | ReferenceUsage::EndOutput { .. }
-            | ReferenceUsage::EndErrorOutput { .. }
-    )
-}
-
-fn json_schema_has_path(schema: &Value, path: &[String]) -> bool {
-    json_schema_at_path(schema, path).is_some()
-}
-
-fn json_schema_allows_path(schema: &Value, path: &[String]) -> bool {
-    let mut current = schema;
-    for segment in path {
-        if segment.parse::<usize>().is_ok() {
-            let Some(items) = current.get("items") else {
-                return current.get("type").and_then(Value::as_str) != Some("array");
-            };
-            current = items;
-            continue;
-        }
-        if let Some(child) = current
-            .get("properties")
-            .and_then(Value::as_object)
-            .and_then(|properties| properties.get(segment))
-        {
-            current = child;
-            continue;
-        }
-        match current.get("additionalProperties") {
-            Some(Value::Bool(false)) => return false,
-            Some(child) if child.is_object() => current = child,
-            _ => return true,
-        }
-    }
-    true
-}
-
-fn json_schema_path_is_sensitive(schema: &Value, path: &[String]) -> bool {
-    let mut current = schema;
-    if schema_is_sensitive(current) {
-        return true;
-    }
-    for segment in path {
-        let Some(next) = json_schema_child(current, segment) else {
-            return false;
-        };
-        current = next;
-        if schema_is_sensitive(current) {
-            return true;
-        }
-    }
-    false
-}
-
-fn schema_is_sensitive(schema: &Value) -> bool {
-    schema
-        .get("sensitive")
-        .or_else(|| schema.get("x-sensitive"))
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
-}
-
-fn output_reference_is_sensitive(output_schema: &Value, reference: &[String]) -> bool {
-    let fields = if reference.get(2).map(String::as_str) == Some("runs") {
-        reference
-            .get(6)
-            .is_some_and(|value| value == "json")
-            .then_some(&reference[7..])
-    } else {
-        match reference.get(3).map(String::as_str) {
-            Some("all") if reference.get(5).is_some_and(|value| value == "json") => {
-                Some(&reference[6..])
-            }
-            Some("current" | "first" | "last")
-                if reference.get(4).is_some_and(|value| value == "json") =>
-            {
-                Some(&reference[5..])
-            }
-            _ => None,
-        }
-    };
-    fields.is_some_and(|fields| json_schema_path_is_sensitive(output_schema, fields))
-}
-
-fn merged_output_schema(node: &WorkflowNode, manifest: &NodeManifestVersion, port: &str) -> Value {
-    let mut schema = manifest
-        .output_port_schemas
-        .get(port)
-        .cloned()
-        .unwrap_or_else(|| manifest.output_schema.clone());
-    let Some(schema_object) = schema.as_object_mut() else {
-        return schema;
-    };
-    if !schema_object.contains_key("properties") {
-        schema_object.insert("properties".into(), Value::Object(Default::default()));
-    }
-    let properties = schema_object
-        .get_mut("properties")
-        .and_then(Value::as_object_mut)
-        .expect("object output schema properties");
-    if let Some(projection) = node.output_projection.get(port) {
-        for (name, field) in projection {
-            let mut field_schema = field.schema.clone();
-            if field.sensitive {
-                if let Some(schema) = field_schema.as_object_mut() {
-                    schema.insert("x-sensitive".into(), Value::Bool(true));
-                }
-            }
-            properties.insert(name.clone(), field_schema);
-        }
-    }
-    schema
-}
-
-fn reference_json_type(
-    reference: &[String],
-    definition: &WorkflowDefinition,
-    nodes: &[(usize, &WorkflowNode)],
-    manifests: &[Option<NodeManifestVersion>],
-) -> Option<String> {
-    match reference.first()?.as_str() {
-        "inputs" => json_schema_at_path(&definition.start.inputs, &reference[1..])?
-            .get("type")?
-            .as_str()
-            .map(str::to_owned),
-        "contexts" => {
-            let context = definition.start.contexts.get(reference.get(1)?)?;
-            json_schema_at_path(&context.schema, &reference[2..])?
-                .get("type")?
-                .as_str()
-                .map(str::to_owned)
-        }
-        "outputs" => {
-            let key = reference.get(1)?;
-            let source = nodes.iter().position(|(_, node)| node.key == *key)?;
-            let manifest = manifests.get(source)?.as_ref()?;
-            let node = nodes.get(source)?.1;
-            let port = reference.get(2).map(String::as_str).unwrap_or("main");
-            let output_schema = merged_output_schema(node, manifest, port);
-            if reference.get(2).map(String::as_str) == Some("runs") {
-                if reference.get(6).is_some_and(|value| value == "json") {
-                    return json_schema_at_path(&output_schema, &reference[7..])
-                        .and_then(|schema| schema.get("type"))
-                        .and_then(Value::as_str)
-                        .map(str::to_owned);
-                }
-                return None;
-            }
-            let selector = reference.get(3).map(String::as_str);
-            if selector == Some("all") {
-                return Some("array".into());
-            }
-            if reference.get(4).is_some_and(|value| value == "json") {
-                return json_schema_at_path(&output_schema, &reference[5..])
-                    .and_then(|schema| schema.get("type"))
-                    .and_then(Value::as_str)
-                    .map(str::to_owned);
-            }
-            None
-        }
-        "item" => match reference.get(2).map(String::as_str) {
-            Some("retryable") => Some("boolean".into()),
-            Some("details") => Some("object".into()),
-            Some("code" | "message" | "sourceNodeId" | "nodeExecutionId") => Some("string".into()),
-            _ => None,
-        },
-        _ => None,
-    }
-}
-
-fn validate_exit_mapping_contract(
-    path: &str,
-    dynamic: &DynamicValue,
-    contract: &WorkflowOutput,
-    definition: &WorkflowDefinition,
-    nodes: &[(usize, &WorkflowNode)],
-    manifests: &[Option<NodeManifestVersion>],
-    issues: &mut Vec<CompileIssue>,
-) {
-    let DynamicValue::Reference { selector, .. } = dynamic else {
-        return;
-    };
-    let Some(reference) = structured_selector_reference(selector, nodes) else {
-        return;
-    };
-    let Some(expected) = contract.schema.get("type").and_then(Value::as_str) else {
-        return;
-    };
-    let actual = reference_json_type(&reference, definition, nodes, manifests);
-    if expected != "string" && actual.as_deref().is_none() {
-        issues.push(CompileIssue {
-            code: "END_OUTPUT_TYPE_UNKNOWN".into(),
-            path: path.into(),
-            message: format!(
-                "Exit mapping at {path} declares {expected}, but the referenced value has no concrete type"
-            ),
-        });
-    } else if expected != "string"
-        && actual
-            .as_deref()
-            .is_some_and(|actual| !json_types_compatible(expected, actual))
-    {
-        issues.push(CompileIssue {
-            code: "END_OUTPUT_TYPE_MISMATCH".into(),
-            path: path.into(),
-            message: format!(
-                "Exit mapping at {path} declares {expected}, but the referenced value is {}",
-                actual.as_deref().unwrap_or("unknown")
-            ),
-        });
-    }
-}
-
-fn json_schema_at_path<'a>(schema: &'a Value, path: &[String]) -> Option<&'a Value> {
-    let mut current = schema;
-    for segment in path {
-        current = json_schema_child(current, segment)?;
-    }
-    Some(current)
-}
-
-fn json_schema_child<'a>(schema: &'a Value, segment: &str) -> Option<&'a Value> {
-    if segment.parse::<usize>().is_ok() {
-        return schema.get("items");
-    }
-    schema
-        .get("properties")
-        .and_then(|properties| properties.get(segment))
-        .or_else(|| {
-            schema
-                .get("additionalProperties")
-                .filter(|additional| additional.is_object())
-        })
-}
-
-fn is_reachable(source: usize, target: usize, graph: &[Vec<usize>]) -> bool {
-    let mut seen = vec![false; graph.len()];
-    let mut pending = vec![source];
-    while let Some(node) = pending.pop() {
-        if node == target {
-            return true;
-        }
-        if seen[node] {
-            continue;
-        }
-        seen[node] = true;
-        pending.extend(graph[node].iter().copied());
-    }
-    false
-}
-
-fn reference_issue(issues: &mut Vec<CompileIssue>, code: &str, path: &str, reference: &[String]) {
-    issues.push(CompileIssue { code: code.into(), path: path.into(), message: format!("Invalid structured reference '{}'; references must resolve through the Workflow 5.0 contract", reference.join(".")) });
-}
-
-fn unknown_output_field_issue(
-    issues: &mut Vec<CompileIssue>,
-    path: &str,
-    reference: &[String],
-    manifest: &NodeManifestVersion,
-    fields: &[String],
-) {
-    let missing = fields.first().map(String::as_str).unwrap_or("unknown");
-    let message = if matches!(manifest.node_type.as_str(), "model" | "agent")
-        && matches!(
-            missing,
-            "message"
-                | "messages"
-                | "toolCalls"
-                | "iterations"
-                | "artifacts"
-                | "providerRawResponse"
-        ) {
-        format!("AI output field '{missing}' no longer exists; reselect the stable 'text' field")
-    } else {
-        format!("Output field '{missing}' does not exist in the frozen Manifest contract")
-    };
-    issues.push(CompileIssue {
-        code: "UNKNOWN_OUTPUT_FIELD".into(),
-        path: path.into(),
-        message: format!("{message} (reference '{}')", reference.join(".")),
-    });
-}
-
-fn port_matches(ports: &[agentx_node_protocol::NodePort], handle: &str) -> bool {
-    ports.iter().any(|port| {
-        port.name == handle
-            || port.variadic
-                && (handle.starts_with(&format!("{}:", port.name))
-                    || handle.bytes().all(|byte| byte.is_ascii_digit()))
-    })
-}
-
-fn port_kind(ports: &[agentx_node_protocol::NodePort], handle: &str) -> Option<PortKind> {
-    ports
+        .filter_map(|(definition_index, _)| enabled_index(indexes, definition, definition_index))
+        .collect::<Vec<_>>();
+    let sinks = definition
+        .nodes
         .iter()
-        .find(|port| {
-            port.name == handle
-                || port.variadic
-                    && (handle.starts_with(&format!("{}:", port.name))
-                        || handle.bytes().all(|byte| byte.is_ascii_digit()))
+        .enumerate()
+        .filter(|(_, candidate)| candidate.parent_id.as_deref() == Some(node.id.as_str()))
+        .filter(|(_, candidate)| {
+            !definition.connections.iter().any(|connection| {
+                connection.source_node_id == candidate.id
+                    && child_ids.contains(connection.target_node_id.as_str())
+            })
         })
-        .map(|port| port.kind.clone())
+        .filter_map(|(definition_index, _)| enabled_index(indexes, definition, definition_index))
+        .collect::<Vec<_>>();
+    let error_mode = node
+        .parameters
+        .get("errorMode")
+        .and_then(Value::as_str)
+        .unwrap_or("terminate")
+        .to_owned();
+    let parallelism = node
+        .parameters
+        .get("parallelism")
+        .and_then(Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok())
+        .unwrap_or(1);
+    let output_selector = node
+        .parameters
+        .get("outputSelector")
+        .cloned()
+        .and_then(|value| serde_json::from_value::<ReferenceBinding>(value).ok())?;
+    Some(agentx_runtime_contracts::CompiledLoopBodyV1 {
+        entries,
+        sinks,
+        output_selector,
+        parallelism,
+        error_mode,
+    })
+}
+
+fn enabled_index(
+    indexes: &BTreeMap<&str, usize>,
+    definition: &WorkflowDefinition,
+    definition_index: usize,
+) -> Option<usize> {
+    let id = definition
+        .nodes
+        .get(definition_index)?
+        .id
+        .as_str()
+        .to_owned();
+    indexes.get(id.as_str()).copied()
+}
+
+fn validate_containers(
+    nodes: &[(usize, &agentx_domain::WorkflowNode)],
+    definition: &WorkflowDefinition,
+    issues: &mut Vec<CompileIssue>,
+) {
+    let by_id = nodes
+        .iter()
+        .map(|(definition_index, node)| (node.id.as_str(), (definition_index, node)))
+        .collect::<BTreeMap<_, _>>();
+    for (definition_index, node) in nodes {
+        let Some(parent_id) = node.parent_id.as_deref() else {
+            continue;
+        };
+        let Some(&(parent_index, parent)) = by_id.get(parent_id) else {
+            issues.push(CompileIssue {
+                code: "CONTAINER_PARENT_UNKNOWN".into(),
+                path: format!("nodes[{definition_index}].parentId"),
+                message: format!("Container parent '{parent_id}' does not exist"),
+            });
+            continue;
+        };
+        if parent.node_type != "loop_over_items" {
+            issues.push(CompileIssue {
+                code: "CONTAINER_PARENT_NOT_LOOP".into(),
+                path: format!("nodes[{definition_index}].parentId"),
+                message: format!(
+                    "Only loop_over_items nodes can contain children, got '{}'",
+                    parent.node_type
+                ),
+            });
+        }
+        if parent.parent_id.is_some() {
+            issues.push(CompileIssue {
+                code: "CONTAINER_NESTING_FORBIDDEN".into(),
+                path: format!("nodes[{parent_index}].parentId"),
+                message: "Loop containers cannot be nested".into(),
+            });
+        }
+    }
+    // Body sub-DAGs must be acyclic: iterations converge through the
+    // container node, never through a cycle inside the body.
+    let all: BTreeMap<&str, &agentx_domain::WorkflowNode> = nodes
+        .iter()
+        .map(|(_, node)| (node.id.as_str(), *node))
+        .collect();
+    for (container_id, container) in &all {
+        if container.node_type != "loop_over_items" {
+            continue;
+        }
+        let body: BTreeMap<&str, &agentx_domain::WorkflowNode> = all
+            .iter()
+            .filter(|(_, node)| node.parent_id.as_deref() == Some(*container_id))
+            .map(|(id, node)| (*id, *node))
+            .collect();
+        let container_definition_index = nodes
+            .iter()
+            .find(|(_, candidate)| candidate.id.as_str() == *container_id)
+            .map(|(index, _)| *index)
+            .unwrap_or_default();
+        if body.is_empty() {
+            issues.push(CompileIssue {
+                code: "LOOP_BODY_EMPTY".into(),
+                path: format!("nodes[{container_definition_index}].parentId"),
+                message: format!("Loop container '{container_id}' must contain at least one node"),
+            });
+        }
+        let entry_count = body
+            .keys()
+            .filter(|body_id| {
+                !definition.connections.iter().any(|connection| {
+                    body.contains_key(connection.source_node_id.as_str())
+                        && connection.target_node_id.as_str() == **body_id
+                })
+            })
+            .count();
+        if !body.is_empty() && entry_count == 0 {
+            issues.push(CompileIssue {
+                code: "LOOP_BODY_ENTRY_REQUIRED".into(),
+                path: format!("nodes[{container_definition_index}].parentId"),
+                message: format!("Loop container '{container_id}' has no acyclic body entry"),
+            });
+        }
+        if node_uses_omit(
+            container
+                .parameters
+                .get("outputSelector")
+                .and_then(|value| serde_json::from_value::<ReferenceBinding>(value.clone()).ok())
+                .as_ref(),
+        ) {
+            issues.push(CompileIssue {
+                code: "LOOP_OUTPUT_SELECTOR_OMIT_FORBIDDEN".into(),
+                path: format!("nodes[{container_definition_index}].parameters.outputSelector"),
+                message: "Loop outputSelector must produce one value per successful iteration; omit is not allowed".into(),
+            });
+        }
+        let mut visiting = BTreeSet::new();
+        let mut done = BTreeSet::new();
+        fn walk<'a>(
+            current: &'a str,
+            body: &BTreeMap<&'a str, &agentx_domain::WorkflowNode>,
+            definition: &'a agentx_domain::WorkflowDefinition,
+            visiting: &mut BTreeSet<&'a str>,
+            done: &mut BTreeSet<&'a str>,
+        ) -> bool {
+            if done.contains(current) {
+                return false;
+            }
+            if !visiting.insert(current) {
+                return true;
+            }
+            let cycle = definition.connections.iter().any(|connection| {
+                connection.source_node_id == current
+                    && body.contains_key(connection.target_node_id.as_str())
+                    && walk(
+                        connection.target_node_id.as_str(),
+                        body,
+                        definition,
+                        visiting,
+                        done,
+                    )
+            });
+            visiting.remove(current);
+            done.insert(current);
+            cycle
+        }
+        for body_id in body.keys() {
+            if walk(body_id, &body, definition, &mut visiting, &mut done) {
+                issues.push(CompileIssue {
+                    code: "CONTAINER_BODY_CYCLE".into(),
+                    path: "connections".into(),
+                    message: format!(
+                        "The body of loop container '{container_id}' must stay acyclic"
+                    ),
+                });
+                break;
+            }
+        }
+    }
+}
+
+fn node_uses_omit(dynamic: Option<&ReferenceBinding>) -> bool {
+    matches!(
+        dynamic,
+        Some(ReferenceBinding::Reference {
+            missing_policy: MissingValuePolicy::Omit,
+            ..
+        })
+    )
 }
 
 fn validate_reachability(
@@ -1911,7 +1798,28 @@ fn validate_reachability(
     start_to_exit: Option<&str>,
     issues: &mut Vec<CompileIssue>,
 ) {
-    let adjacency = adjacency(nodes.len(), connections);
+    let mut adjacency = adjacency(nodes.len(), connections);
+    for (container_index, (_, container)) in nodes.iter().enumerate() {
+        if container.node_type != "loop_over_items" {
+            continue;
+        }
+        let child_indexes = nodes
+            .iter()
+            .enumerate()
+            .filter(|(_, (_, candidate))| {
+                candidate.parent_id.as_deref() == Some(container.id.as_str())
+            })
+            .map(|(index, _)| index)
+            .collect::<BTreeSet<_>>();
+        for &candidate in &child_indexes {
+            let has_body_predecessor = connections.iter().any(|(_, source, target, _)| {
+                *target == candidate && child_indexes.contains(source)
+            });
+            if !has_body_predecessor {
+                adjacency[container_index].push(candidate);
+            }
+        }
+    }
     if start_nodes.is_empty() && start_to_exit.is_none() {
         issues.push(CompileIssue {
             code: "START_REQUIRED".into(),
@@ -1948,6 +1856,21 @@ fn validate_reachability(
             continue;
         }
         reverse[*target].push(*source);
+    }
+    // Container body sinks converge through their container: a loop child
+    // implicitly flows into the loop node, so it can reach an exit whenever
+    // the container itself does (the machine aggregates sinks per iteration).
+    for (compiled_index, (_, node)) in nodes.iter().enumerate() {
+        let Some(container_id) = node.parent_id.as_deref() else {
+            continue;
+        };
+        if let Some((container_index, _)) = nodes
+            .iter()
+            .enumerate()
+            .find(|(_, (_, candidate))| candidate.id == container_id)
+        {
+            reverse[container_index].push(compiled_index);
+        }
     }
     let mut reaches_end = BTreeSet::new();
     let mut queue = end_main_nodes.iter().copied().collect::<VecDeque<_>>();

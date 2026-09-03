@@ -13,9 +13,6 @@ ALTER TABLE node_attempts
     ADD KEY idx_v206_node_attempt_claim
         (status, capability, locked_until, created_at, id);
 
-ALTER TABLE wait_subscriptions
-    ADD KEY idx_v206_wait_claim
-        (status, wake_at, timeout_at, locked_until, id);
 
 ALTER TABLE trigger_bindings
     ADD KEY idx_v206_trigger_claim

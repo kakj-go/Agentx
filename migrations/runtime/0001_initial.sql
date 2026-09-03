@@ -397,21 +397,39 @@ CREATE TABLE approval_tasks (
     id BINARY(16) NOT NULL,
     tenant_id BINARY(16) NOT NULL,
     execution_id BINARY(16) NOT NULL,
+    node_execution_id BINARY(16) NOT NULL,
+    bundle_id BINARY(16) NOT NULL,
+    checkpoint_id BINARY(16) NOT NULL,
     workflow_id BINARY(16) NOT NULL,
     node_id VARCHAR(128) NOT NULL,
     title VARCHAR(255) NOT NULL,
     description VARCHAR(2000) NULL,
     request_payload_json JSON NULL,
-    status ENUM('pending', 'claimed', 'approved', 'rejected', 'cancelled', 'timed_out') NOT NULL DEFAULT 'pending',
+    buttons_json JSON NOT NULL,
+    status ENUM('pending','claimed','decided','timed_out','cancelled') NOT NULL DEFAULT 'pending',
     claimed_by BINARY(16) NULL,
     claimed_at TIMESTAMP(6) NULL,
     resume_status ENUM('not_requested', 'pending', 'succeeded', 'blocked_runtime', 'failed') NOT NULL DEFAULT 'not_requested',
     deadline_at TIMESTAMP(6) NULL,
     version BIGINT UNSIGNED NOT NULL DEFAULT 1,
+    decision_idempotency_key VARCHAR(192) NULL,
+    decision_receipt_json JSON NULL,
+    decision_id VARCHAR(128) NULL,
+    decided_by BINARY(16) NULL,
+    decision_reason VARCHAR(1000) NULL,
+    decided_at TIMESTAMP(6) NULL,
+    locked_by BINARY(16) NULL,
+    locked_until TIMESTAMP(6) NULL,
+    fencing_token BIGINT UNSIGNED NOT NULL DEFAULT 0,
+    last_event_cursor BIGINT UNSIGNED NOT NULL DEFAULT 0,
+    projection_deleted BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
     updated_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
     PRIMARY KEY (id),
-    KEY idx_approval_tasks_inbox (tenant_id, status, deadline_at, created_at)
+    UNIQUE KEY uq_runtime_approval_decision (tenant_id, id, decision_idempotency_key),
+    KEY idx_approval_tasks_inbox (tenant_id, status, deadline_at, created_at),
+    KEY idx_runtime_approval_claim (status, deadline_at, locked_until),
+    KEY idx_runtime_approval_snapshot (tenant_id,last_event_cursor,id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 CREATE TABLE artifact_references (
@@ -653,6 +671,7 @@ CREATE TABLE execution_end_deliveries (
     source_node_id VARCHAR(128) NOT NULL,
     source_port VARCHAR(128) NOT NULL,
     target_port ENUM('main', 'error') NOT NULL,
+    target_exit_id VARCHAR(128) NOT NULL,
     payload_json JSON NOT NULL,
     created_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
     PRIMARY KEY (execution_id, sequence_number),
@@ -677,7 +696,7 @@ CREATE TABLE execution_outbox (
     node_execution_id BINARY(16) NULL,
     attempt_id BINARY(16) NULL,
     message_type ENUM('dispatch_node', 'runtime_event', 'resume', 'cancel') NOT NULL,
-    capability ENUM('builtin', 'declarative_http', 'remote_action') NULL,
+    capability ENUM('builtin', 'declarative_http') NULL,
     payload_json JSON NOT NULL,
     status ENUM('pending', 'published', 'failed') NOT NULL DEFAULT 'pending',
     available_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
@@ -689,24 +708,6 @@ CREATE TABLE execution_outbox (
     created_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
     PRIMARY KEY (id),
     KEY idx_execution_outbox_pending (status, available_at, locked_until, created_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
-
-CREATE TABLE execution_resume_tokens (
-    id BINARY(16) NOT NULL,
-    tenant_id BINARY(16) NOT NULL,
-    execution_id BINARY(16) NOT NULL,
-    node_execution_id BINARY(16) NOT NULL,
-    token_hash CHAR(64) NOT NULL,
-    resume_kind ENUM('time', 'webhook', 'form', 'approval') NOT NULL,
-    status ENUM('active', 'used', 'expired', 'cancelled') NOT NULL DEFAULT 'active',
-    idempotency_key VARCHAR(192) NULL,
-    expires_at TIMESTAMP(6) NULL,
-    used_at TIMESTAMP(6) NULL,
-    created_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-    PRIMARY KEY (id),
-    UNIQUE KEY uq_resume_token_hash (token_hash),
-    UNIQUE KEY uq_resume_node_kind (node_execution_id, resume_kind),
-    KEY idx_resume_token_expiry (status, expires_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 CREATE TABLE execution_snapshots (
@@ -789,9 +790,10 @@ CREATE TABLE node_executions (
     run_index INT UNSIGNED NOT NULL,
     iteration_index INT UNSIGNED NOT NULL DEFAULT 0,
     status ENUM('ready', 'queued', 'running', 'waiting', 'succeeded', 'failed', 'skipped', 'cancelled', 'timed_out') NOT NULL,
-    capability ENUM('builtin', 'declarative_http', 'remote_action') NOT NULL,
+    capability ENUM('builtin', 'declarative_http') NOT NULL,
     side_effect_level ENUM('none', 'idempotent', 'reversible', 'irreversible') NOT NULL DEFAULT 'none',
     input_json JSON NULL,
+    loop_frame_json JSON NULL,
     output_json JSON NULL,
     error_code VARCHAR(128) NULL,
     error_message VARCHAR(1000) NULL,
@@ -1251,27 +1253,6 @@ CREATE TABLE trigger_bindings (
     KEY idx_trigger_binding_scan (status, trigger_kind, next_poll_at, locked_until)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
-CREATE TABLE wait_subscriptions (
-    id BINARY(16) NOT NULL,
-    tenant_id BINARY(16) NOT NULL,
-    execution_id BINARY(16) NOT NULL,
-    node_execution_id BINARY(16) NOT NULL,
-    resume_token_id BINARY(16) NOT NULL,
-    wait_kind ENUM('duration', 'datetime', 'webhook', 'form', 'approval') NOT NULL,
-    status ENUM('waiting', 'resumed', 'timed_out', 'cancelled') NOT NULL DEFAULT 'waiting',
-    wake_at TIMESTAMP(6) NULL,
-    timeout_at TIMESTAMP(6) NULL,
-    authentication_mode ENUM('none', 'header', 'basic', 'signed') NOT NULL DEFAULT 'signed',
-    response_mode ENUM('accepted', 'last_node') NOT NULL DEFAULT 'accepted',
-    payload_schema_json JSON NULL,
-    resumed_at TIMESTAMP(6) NULL,
-    created_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-    updated_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
-    PRIMARY KEY (id),
-    UNIQUE KEY uq_wait_node (node_execution_id),
-    KEY idx_wait_scheduler (status, wake_at, timeout_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
-
 CREATE TABLE worker_capabilities (
     instance_id VARCHAR(160) NOT NULL,
     capability VARCHAR(64) NOT NULL,
@@ -1292,7 +1273,7 @@ CREATE TABLE worker_leases (
     node_execution_id BINARY(16) NOT NULL,
     lease_token BINARY(16) NOT NULL,
     worker_instance_id VARCHAR(160) NOT NULL,
-    capability ENUM('builtin', 'declarative_http', 'remote_action') NOT NULL,
+    capability ENUM('builtin', 'declarative_http') NOT NULL,
     acquired_at TIMESTAMP(6) NOT NULL,
     heartbeat_at TIMESTAMP(6) NOT NULL,
     expires_at TIMESTAMP(6) NOT NULL,

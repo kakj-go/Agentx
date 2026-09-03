@@ -57,6 +57,7 @@ export const router = createBrowserRouter([
   { path: 'login', element: <PublicRoute kind="login"><LoginPage /></PublicRoute> },
   { path: 'change-password', element: <PublicRoute kind="change-password"><ChangePasswordPage /></PublicRoute> },
   { path: '403', element: <Protected><ForbiddenPage /></Protected> },
+  { path: 'workflows/:workflowId/editor', element: <Protected>{deferred(<RequirePermission permission="workflow:edit"><WorkflowCanvas /></RequirePermission>)}</Protected> },
   {
     element: <Protected><EnterpriseLayout /></Protected>,
     children: [
@@ -64,7 +65,6 @@ export const router = createBrowserRouter([
       { path: 'workflows', element: deferred(<RequirePermission permission="workflow:view"><WorkflowsPage /></RequirePermission>) },
       { path: 'environments', element: deferred(<RequirePermission permission="workflow:view"><EnvironmentsPage /></RequirePermission>) },
       { path: 'workflows/:workflowId', element: deferred(<RequirePermission permission="workflow:view"><WorkflowDetailPage /></RequirePermission>) },
-      { path: 'workflows/:workflowId/editor', element: deferred(<RequirePermission permission="workflow:edit"><WorkflowCanvas /></RequirePermission>) },
       { path: 'applications', element: deferred(<RequirePermission permission="application:view"><ApplicationsPage /></RequirePermission>) },
       { path: 'applications/:id', element: deferred(<RequirePermission permission="application:view"><ApplicationDetailPage /></RequirePermission>) },
       { path: 'playground', element: deferred(<RequirePermission permission="application:invoke"><PlaygroundPage /></RequirePermission>) },

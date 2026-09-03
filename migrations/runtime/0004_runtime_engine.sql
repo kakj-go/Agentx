@@ -274,30 +274,6 @@ ALTER TABLE runtime_calls
     ADD COLUMN partial_output_object_id BINARY(16) NULL AFTER response_json,
     ADD COLUMN reconciliation_attempts INT UNSIGNED NOT NULL DEFAULT 0 AFTER partial_output_object_id;
 
-ALTER TABLE wait_subscriptions
-    ADD COLUMN bundle_id BINARY(16) NOT NULL AFTER node_execution_id,
-    ADD COLUMN checkpoint_id BINARY(16) NOT NULL AFTER bundle_id,
-    ADD COLUMN state_version BIGINT UNSIGNED NOT NULL AFTER checkpoint_id,
-    ADD COLUMN locked_by BINARY(16) NULL AFTER timeout_at,
-    ADD COLUMN locked_until TIMESTAMP(6) NULL AFTER locked_by,
-    ADD COLUMN fencing_token BIGINT UNSIGNED NOT NULL DEFAULT 0 AFTER locked_until,
-    ADD COLUMN heartbeat_at TIMESTAMP(6) NULL AFTER fencing_token,
-    ADD KEY idx_runtime_wait_claim (status, wake_at, timeout_at, locked_until);
-
-ALTER TABLE approval_tasks
-    ADD COLUMN node_execution_id BINARY(16) NOT NULL AFTER execution_id,
-    ADD COLUMN bundle_id BINARY(16) NOT NULL AFTER node_execution_id,
-    ADD COLUMN checkpoint_id BINARY(16) NOT NULL AFTER bundle_id,
-    ADD COLUMN decision_idempotency_key VARCHAR(192) NULL AFTER version,
-    ADD COLUMN decision_receipt_json JSON NULL AFTER decision_idempotency_key,
-    ADD COLUMN decided_by BINARY(16) NULL AFTER decision_receipt_json,
-    ADD COLUMN decision_reason VARCHAR(1000) NULL AFTER decided_by,
-    ADD COLUMN decided_at TIMESTAMP(6) NULL AFTER decision_reason,
-    ADD COLUMN locked_by BINARY(16) NULL AFTER deadline_at,
-    ADD COLUMN locked_until TIMESTAMP(6) NULL AFTER locked_by,
-    ADD COLUMN fencing_token BIGINT UNSIGNED NOT NULL DEFAULT 0 AFTER locked_until,
-    ADD UNIQUE KEY uq_runtime_approval_decision (tenant_id, id, decision_idempotency_key),
-    ADD KEY idx_runtime_approval_claim (status, deadline_at, locked_until);
 
 ALTER TABLE checkpoints
     ADD COLUMN bundle_id BINARY(16) NOT NULL AFTER execution_id,

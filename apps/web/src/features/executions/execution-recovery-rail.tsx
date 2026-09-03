@@ -1,16 +1,15 @@
-import { CheckCircle2, Clock3, ExternalLink, GitFork, ShieldAlert, TimerReset } from 'lucide-react'
+import { CheckCircle2, Clock3, ExternalLink, GitFork, ShieldAlert } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
 
-import type { Approval, Checkpoint, ExecutionEvent, ExecutionWait, NodeExecution } from '../../shared/api/types'
+import type { Approval, Checkpoint, ExecutionEvent, NodeExecution } from '../../shared/api/types'
 import { useLocaleFormat } from '../../shared/lib/locale-format'
 import { localizedValue } from '../../shared/lib/localized-value'
 import { Button } from '../../shared/ui/button'
 
 type RecoveryRailProps = {
   checkpoints: Checkpoint[]
-  waits: ExecutionWait[]
   approvals: Approval[]
   nodes: NodeExecution[]
   events: ExecutionEvent[]
@@ -18,16 +17,13 @@ type RecoveryRailProps = {
   onConfirm: (node: NodeExecution) => void
 }
 
-export function ExecutionRecoveryRail({ checkpoints, waits, approvals, nodes, events, canConfirm, onConfirm }: RecoveryRailProps) {
+export function ExecutionRecoveryRail({ checkpoints, approvals, nodes, events, canConfirm, onConfirm }: RecoveryRailProps) {
   const { t } = useTranslation()
   const { formatDateTime } = useLocaleFormat()
   const confirmations = nodes.filter((node) => node.sideEffectLevel === 'irreversible' && node.status === 'waiting')
   return <aside aria-label={t('executions.recovery.ariaLabel')} className="min-w-0 bg-surface">
     <div className="flex h-12 items-center border-b border-border px-4"><strong className="text-xs">{t('executions.recovery.title')}</strong></div>
     <div className="max-h-[calc(100vh-250px)] overflow-auto max-xl:max-h-none">
-      {waits.length > 0 && <RailSection icon={TimerReset} title={t('executions.recovery.wait')}>
-        {waits.map((wait) => <div className="border-b border-border/70 py-2.5 last:border-0" key={wait.id}><div className="flex items-center justify-between gap-2"><strong className="text-[11px]">{wait.waitKind}</strong><span className="text-[10px] text-warning">{localizedValue(t, 'common', wait.status)}</span></div><p className="mt-1 text-[10px] text-muted-foreground">{t('executions.recovery.wake')} {formatDateTime(wait.wakeAt)}<br />{t('executions.recovery.timeout')} {formatDateTime(wait.timeoutAt)}</p>{wait.resumeUrl && <p className="mt-1.5 truncate font-mono text-[9px] text-primary" title={wait.resumeUrl}>{wait.resumeUrl}</p>}</div>)}
-      </RailSection>}
       {approvals.length > 0 && <RailSection icon={CheckCircle2} title={t('executions.recovery.approval')}>
         {approvals.map((approval) => <div className="py-2.5" key={approval.id}><div className="flex items-start justify-between gap-2"><div className="min-w-0"><strong className="block truncate text-[11px]">{approval.title}</strong><p className="mt-1 text-[10px] text-muted-foreground">{localizedValue(t, 'approvals.statuses', approval.status)} · {localizedValue(t, 'approvals.resumeStatuses', approval.resumeStatus)}</p></div><Button asChild aria-label={t('executions.recovery.openApproval')} size="icon" variant="ghost"><Link to={`/approvals/${approval.id}`}><ExternalLink className="size-3.5" /></Link></Button></div></div>)}
       </RailSection>}

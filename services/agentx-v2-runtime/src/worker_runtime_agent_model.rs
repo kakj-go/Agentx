@@ -14,7 +14,7 @@ use agentx_runtime_contracts::{
 use serde_json::{Value, json};
 
 use super::agent_attachments::authorize_attachment_projection;
-use super::agent_core::BudgetCounters;
+use super::agent_budget::BudgetCounters;
 use super::{ClaimedWorkerAttempt, RuntimeWorker};
 use crate::worker_support::openai_chat_completions_endpoint;
 
@@ -34,6 +34,7 @@ pub(super) struct ProviderModelPort<'a> {
 }
 
 impl<'a> ProviderModelPort<'a> {
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn new(
         worker: &'a RuntimeWorker,
         claim: &'a ClaimedWorkerAttempt,
@@ -201,6 +202,7 @@ impl ModelPort for ProviderModelPort<'_> {
             model,
             price,
             credential,
+            ..
         } = &self.binding.configuration
         else {
             return Err(ModelPortError::Effect(

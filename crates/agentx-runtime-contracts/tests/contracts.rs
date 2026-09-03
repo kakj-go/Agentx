@@ -679,6 +679,7 @@ fn evaluation_work_package_payload() -> RuntimeWorkPackagePayloadV1 {
         provider: "fixture".into(),
         endpoint: "https://model.fixture/v1".into(),
         model: "evaluator-v1".into(),
+        context_window: 128_000,
         price: agentx_runtime_contracts::RuntimeModelPriceV1 {
             version_id: "price:1".into(),
             currency: "USD".into(),
@@ -851,7 +852,7 @@ fn compatibility() -> WorkerCompatibilityV1 {
 fn compiled_workflow() -> CompiledWorkflowV1 {
     CompiledWorkflowV1 {
         contract_version: IR_SCHEMA_VERSION,
-        schema_version: "7.0".into(),
+        schema_version: "8.0".into(),
         compiler_version: "3".into(),
         canonical_hash: "canonical".into(),
         definition_hash: "definition".into(),
@@ -861,6 +862,7 @@ fn compiled_workflow() -> CompiledWorkflowV1 {
         contexts: std::collections::BTreeMap::<String, ContextDefinition>::new(),
         end: WorkflowEnd::default(),
         exits: std::collections::BTreeMap::new(),
+        exit_order: vec![],
         nodes: Vec::<CompiledNodeV1>::new(),
         connections: vec![],
         terminal_connections: vec![],

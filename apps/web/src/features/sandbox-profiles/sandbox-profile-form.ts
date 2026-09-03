@@ -13,7 +13,7 @@ export function sandboxVersionFields(t: Translate, version?: SandboxProfileVersi
     { name: 'diskGb', label: t('sandbox.diskGb'), type: 'number', required: true, min: 0.001, step: 'any', defaultValue: bytesToGb(version?.diskBytes ?? 1073741824) },
     { name: 'timeoutSeconds', label: t('sandbox.timeoutSeconds'), type: 'number', required: true, min: 60, max: 86400, defaultValue: String(version?.timeoutSeconds ?? 300) },
     { name: 'outputKb', label: t('sandbox.outputKb'), type: 'number', required: true, min: 0.001, step: 'any', defaultValue: bytesToKb(version?.outputLimitBytes ?? 1048576) },
-    { name: 'allowPublicHttps', label: t('sandbox.allowPublicHttps'), type: 'checkbox', defaultValue: String(publicHttpsEnabled(version?.networkPolicy)), description: t('sandbox.allowPublicHttpsWarning') },
+    { name: 'allowTcpProxy', label: t('sandbox.allowTcpProxy'), type: 'checkbox', defaultValue: String(tcpProxyEnabled(version?.networkPolicy)), description: t('sandbox.allowTcpProxyWarning') },
   ]
 }
 
@@ -28,12 +28,12 @@ export function sandboxVersionBody(values: Record<string, string>, _invalidJsonM
     diskBytes: gbToBytes(values.diskGb),
     timeoutSeconds: positiveInteger(values.timeoutSeconds),
     outputLimitBytes: kbToBytes(values.outputKb),
-    networkPolicy: { defaultAction: 'deny', egressMode: values.allowPublicHttps === 'true' ? 'public_https' : 'none' },
+    networkPolicy: { defaultAction: 'deny', egressMode: values.allowTcpProxy === 'true' ? 'tcp_proxy' : 'none' },
   }
 }
 
-function publicHttpsEnabled(value: unknown) {
-  return Boolean(value && typeof value === 'object' && 'egressMode' in value && value.egressMode === 'public_https')
+function tcpProxyEnabled(value: unknown) {
+  return Boolean(value && typeof value === 'object' && 'egressMode' in value && value.egressMode === 'tcp_proxy')
 }
 
 function positiveInteger(value: string) {

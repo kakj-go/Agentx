@@ -1,9 +1,8 @@
 use std::collections::BTreeMap;
 
 use agentx_domain::{
-    DynamicValue, ExpressionBinaryOperator, ExpressionFunction, ExpressionNode,
-    ExpressionUnaryOperator, MissingValuePolicy, TemplateSegment, ValueCoercion, ValueNamespace,
-    ValuePathSegment, ValueSelection, ValueSelector,
+    ConditionOperator, InputBinding, InputTemplateSegment, MissingValuePolicy, ReferenceBinding,
+    ValueNamespace, ValuePathSegment, ValueSelection, ValueSelector,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -40,7 +39,8 @@ pub enum ExpressionError {
 #[serde(rename_all = "camelCase")]
 pub struct StringConversionRecord {
     pub target_path: String,
-    pub selector: ValueSelector,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selector: Option<ValueSelector>,
     pub source_type: String,
     pub mode: String,
     pub result_bytes: usize,
@@ -71,6 +71,34 @@ impl ExpressionEngine {
         Ok((value, conversions))
     }
 
+    pub fn resolve_parameters_with_schema(
+        &self,
+        parameters: &Value,
+        schema: &Value,
+        context: &ExpressionContext,
+    ) -> Result<(Value, Vec<StringConversionRecord>), ExpressionError> {
+        let (value, mut conversions) =
+            self.resolve_parameters_with_conversions(parameters, context)?;
+        let value = coerce_value_to_schema(value, schema, "parameters", &mut conversions)?;
+        Ok((value, conversions))
+    }
+
+    pub fn resolve_input_with_schema(
+        &self,
+        binding: &InputBinding,
+        schema: &Value,
+        context: &ExpressionContext,
+        target_path: impl Into<String>,
+    ) -> Result<(Option<Value>, Vec<StringConversionRecord>), ExpressionError> {
+        let target_path = target_path.into();
+        let (value, mut conversions) =
+            self.resolve_dynamic_optional_with_conversions(binding, context, target_path.clone())?;
+        let value = value
+            .map(|value| coerce_value_to_schema(value, schema, &target_path, &mut conversions))
+            .transpose()?;
+        Ok((value, conversions))
+    }
+
     fn resolve_parameter_value(
         &self,
         value: &Value,
@@ -79,10 +107,10 @@ impl ExpressionEngine {
         conversions: &mut Vec<StringConversionRecord>,
     ) -> Result<Option<Value>, ExpressionError> {
         if value.is_object()
-            && let Ok(dynamic) = serde_json::from_value::<DynamicValue>(value.clone())
+            && let Ok(binding) = serde_json::from_value::<InputBinding>(value.clone())
         {
             return self.resolve_dynamic_optional_traced(
-                &dynamic,
+                &binding,
                 context,
                 target_path,
                 conversions,
@@ -123,7 +151,7 @@ impl ExpressionEngine {
 
     pub fn resolve_dynamic(
         &self,
-        value: &DynamicValue,
+        value: &InputBinding,
         context: &ExpressionContext,
     ) -> Result<Value, ExpressionError> {
         Ok(self
@@ -131,11 +159,25 @@ impl ExpressionEngine {
             .unwrap_or(Value::Null))
     }
 
+    pub fn resolve_reference(
+        &self,
+        value: &ReferenceBinding,
+        context: &ExpressionContext,
+    ) -> Result<Value, ExpressionError> {
+        let ReferenceBinding::Reference {
+            selector,
+            missing_policy,
+        } = value;
+        Ok(self
+            .resolve_selector_with_policy(selector, missing_policy, context)?
+            .unwrap_or(Value::Null))
+    }
+
     /// Resolves a field-level dynamic value while preserving `omit` as the
     /// absence of a JSON member instead of silently converting it to null.
     pub fn resolve_dynamic_optional(
         &self,
-        value: &DynamicValue,
+        value: &InputBinding,
         context: &ExpressionContext,
     ) -> Result<Option<Value>, ExpressionError> {
         self.resolve_dynamic_optional_with_conversions(value, context, "value")
@@ -144,7 +186,7 @@ impl ExpressionEngine {
 
     pub fn resolve_dynamic_optional_with_conversions(
         &self,
-        value: &DynamicValue,
+        value: &InputBinding,
         context: &ExpressionContext,
         target_path: impl Into<String>,
     ) -> Result<(Option<Value>, Vec<StringConversionRecord>), ExpressionError> {
@@ -157,42 +199,23 @@ impl ExpressionEngine {
 
     fn resolve_dynamic_optional_traced(
         &self,
-        value: &DynamicValue,
+        value: &InputBinding,
         context: &ExpressionContext,
         target_path: &str,
         conversions: &mut Vec<StringConversionRecord>,
     ) -> Result<Option<Value>, ExpressionError> {
         match value {
-            DynamicValue::Literal { value } => Ok(Some(value.clone())),
-            DynamicValue::Reference {
+            InputBinding::Literal { value } => Ok(Some(value.clone())),
+            InputBinding::Reference {
                 selector,
                 missing_policy,
-                coerce,
-            } => {
-                let resolved =
-                    self.resolve_selector_with_policy(selector, missing_policy, context)?;
-                if *coerce != Some(ValueCoercion::String) {
-                    return Ok(resolved);
-                }
-                Ok(resolved.map(|value| {
-                    let source_type = json_type(&value).to_owned();
-                    let text = value_to_text(value);
-                    conversions.push(StringConversionRecord {
-                        target_path: target_path.to_owned(),
-                        selector: selector.clone(),
-                        source_type,
-                        mode: "reference".into(),
-                        result_bytes: text.len(),
-                    });
-                    Value::String(text)
-                }))
-            }
-            DynamicValue::Template { segments } => {
+            } => self.resolve_selector_with_policy(selector, missing_policy, context),
+            InputBinding::Template { segments } => {
                 let mut text = String::new();
                 for (index, segment) in segments.iter().enumerate() {
                     match segment {
-                        TemplateSegment::Text { text: value } => text.push_str(value),
-                        TemplateSegment::Reference {
+                        InputTemplateSegment::Text { text: value } => text.push_str(value),
+                        InputTemplateSegment::Reference {
                             selector,
                             missing_policy,
                         } => {
@@ -205,7 +228,7 @@ impl ExpressionEngine {
                                 let converted = value_to_text(value);
                                 conversions.push(StringConversionRecord {
                                     target_path: format!("{target_path}.segments[{index}]"),
-                                    selector: selector.clone(),
+                                    selector: Some(selector.clone()),
                                     source_type,
                                     mode: "template".into(),
                                     result_bytes: converted.len(),
@@ -217,7 +240,34 @@ impl ExpressionEngine {
                 }
                 Ok(Some(Value::String(text)))
             }
-            DynamicValue::Expression { root } => self.evaluate_node(root, context).map(Some),
+            InputBinding::Array { items } => {
+                let mut resolved = Vec::with_capacity(items.len());
+                for (index, item) in items.iter().enumerate() {
+                    if let Some(value) = self.resolve_dynamic_optional_traced(
+                        item,
+                        context,
+                        &format!("{target_path}[{index}]"),
+                        conversions,
+                    )? {
+                        resolved.push(value);
+                    }
+                }
+                Ok(Some(Value::Array(resolved)))
+            }
+            InputBinding::Object { fields } => {
+                let mut resolved = serde_json::Map::new();
+                for (name, field) in fields {
+                    if let Some(value) = self.resolve_dynamic_optional_traced(
+                        field,
+                        context,
+                        &format!("{target_path}.{name}"),
+                        conversions,
+                    )? {
+                        resolved.insert(name.clone(), value);
+                    }
+                }
+                Ok(Some(Value::Object(resolved)))
+            }
         }
     }
 
@@ -235,9 +285,6 @@ impl ExpressionEngine {
                 }
                 MissingValuePolicy::Null => Ok(Some(Value::Null)),
                 MissingValuePolicy::Omit => Ok(None),
-                MissingValuePolicy::Default { value } => {
-                    self.resolve_dynamic_optional(value, context)
-                }
             },
         }
     }
@@ -293,87 +340,144 @@ impl ExpressionEngine {
         Some(current)
     }
 
-    fn evaluate_node(
+    pub fn evaluate_condition(
         &self,
-        node: &ExpressionNode,
-        context: &ExpressionContext,
-    ) -> Result<Value, ExpressionError> {
-        match node {
-            ExpressionNode::Literal { value } => Ok(value.clone()),
-            ExpressionNode::Reference {
-                selector,
-                missing_policy,
-            } => self
-                .resolve_selector_with_policy(selector, missing_policy, context)?
-                .ok_or_else(|| {
-                    ExpressionError::InvalidOperation(
-                        "missingPolicy=omit cannot remove an expression operand".into(),
-                    )
-                }),
-            ExpressionNode::Array { items } => items
-                .iter()
-                .map(|item| self.evaluate_node(item, context))
-                .collect::<Result<Vec<_>, _>>()
-                .map(Value::Array),
-            ExpressionNode::Object { fields } => fields
-                .iter()
-                .map(|(key, value)| {
-                    self.evaluate_node(value, context)
-                        .map(|value| (key.clone(), value))
-                })
-                .collect::<Result<serde_json::Map<_, _>, _>>()
-                .map(Value::Object),
-            ExpressionNode::Unary { operator, operand } => {
-                let value = self.evaluate_node(operand, context)?;
-                match operator {
-                    ExpressionUnaryOperator::Not => Ok(Value::Bool(!truthy(&value))),
-                    ExpressionUnaryOperator::Negate => json_number(-number(&value)?),
+        operator: ConditionOperator,
+        left: &Value,
+        right: Option<&Value>,
+    ) -> Result<bool, ExpressionError> {
+        evaluate_condition(operator, left, right)
+    }
+}
+
+fn coerce_value_to_schema(
+    mut value: Value,
+    schema: &Value,
+    path: &str,
+    conversions: &mut Vec<StringConversionRecord>,
+) -> Result<Value, ExpressionError> {
+    let types = match schema.get("type") {
+        Some(Value::String(value)) => vec![value.as_str()],
+        Some(Value::Array(values)) => values.iter().filter_map(Value::as_str).collect(),
+        _ => Vec::new(),
+    };
+    if types.is_empty() {
+        return Ok(value);
+    }
+    let current = json_type(&value);
+    let directly_compatible = types
+        .iter()
+        .any(|kind| *kind == current || (*kind == "number" && current == "integer"));
+    let target = if directly_compatible {
+        current
+    } else {
+        types
+            .iter()
+            .copied()
+            .find(|kind| *kind != "null")
+            .unwrap_or(types[0])
+    };
+    if !directly_compatible {
+        let source_type = current.to_owned();
+        value = match target {
+            "string" => Value::String(value_to_text(value)),
+            "integer" => Value::Number(
+                integer_number(&value)
+                    .ok_or_else(|| conversion_error(path, &source_type, target))?,
+            ),
+            "number" => Value::Number(
+                value
+                    .as_str()
+                    .and_then(|text| text.parse::<f64>().ok())
+                    .and_then(serde_json::Number::from_f64)
+                    .ok_or_else(|| conversion_error(path, &source_type, target))?,
+            ),
+            "boolean" => Value::Bool(
+                match value.as_str().map(str::to_ascii_lowercase).as_deref() {
+                    Some("true") => true,
+                    Some("false") => false,
+                    _ => return Err(conversion_error(path, &source_type, target)),
+                },
+            ),
+            "object" | "array" => {
+                let parsed = value
+                    .as_str()
+                    .and_then(|text| serde_json::from_str::<Value>(text).ok())
+                    .ok_or_else(|| conversion_error(path, &source_type, target))?;
+                if (target == "object" && !parsed.is_object())
+                    || (target == "array" && !parsed.is_array())
+                {
+                    return Err(conversion_error(path, &source_type, target));
                 }
+                parsed
             }
-            ExpressionNode::Binary {
-                operator,
-                left,
-                right,
-            } => {
-                if *operator == ExpressionBinaryOperator::And {
-                    let left = self.evaluate_node(left, context)?;
-                    return Ok(Value::Bool(
-                        truthy(&left) && truthy(&self.evaluate_node(right, context)?),
-                    ));
+            "null" if value.as_str() == Some("null") => Value::Null,
+            _ => return Err(conversion_error(path, &source_type, target)),
+        };
+        conversions.push(StringConversionRecord {
+            target_path: path.into(),
+            selector: None,
+            source_type,
+            mode: format!("schema:{target}"),
+            result_bytes: serde_json::to_vec(&value).map_or(0, |bytes| bytes.len()),
+        });
+    }
+    match (&mut value, target) {
+        (Value::Object(fields), "object") => {
+            if let Some(properties) = schema.get("properties").and_then(Value::as_object) {
+                for (name, field) in fields {
+                    if let Some(field_schema) = properties.get(name) {
+                        *field = coerce_value_to_schema(
+                            std::mem::take(field),
+                            field_schema,
+                            &format!("{path}.{name}"),
+                            conversions,
+                        )?;
+                    }
                 }
-                if *operator == ExpressionBinaryOperator::Or {
-                    let left = self.evaluate_node(left, context)?;
-                    return Ok(Value::Bool(
-                        truthy(&left) || truthy(&self.evaluate_node(right, context)?),
-                    ));
-                }
-                let left = self.evaluate_node(left, context)?;
-                let right = self.evaluate_node(right, context)?;
-                evaluate_binary(*operator, left, right)
-            }
-            ExpressionNode::Conditional {
-                condition,
-                then_value,
-                else_value,
-            } => {
-                if truthy(&self.evaluate_node(condition, context)?) {
-                    self.evaluate_node(then_value, context)
-                } else {
-                    self.evaluate_node(else_value, context)
-                }
-            }
-            ExpressionNode::Call {
-                function,
-                arguments,
-            } => {
-                let values = arguments
-                    .iter()
-                    .map(|value| self.evaluate_node(value, context))
-                    .collect::<Result<Vec<_>, _>>()?;
-                evaluate_function(*function, &values)
             }
         }
+        (Value::Array(items), "array") => {
+            if let Some(item_schema) = schema.get("items") {
+                for (index, item) in items.iter_mut().enumerate() {
+                    *item = coerce_value_to_schema(
+                        std::mem::take(item),
+                        item_schema,
+                        &format!("{path}[{index}]"),
+                        conversions,
+                    )?;
+                }
+            }
+        }
+        _ => {}
     }
+    Ok(value)
+}
+
+fn integer_number(value: &Value) -> Option<serde_json::Number> {
+    if let Some(value) = value.as_i64() {
+        return Some(value.into());
+    }
+    if let Some(value) = value.as_u64() {
+        return Some(value.into());
+    }
+    if let Some(value) = value.as_f64()
+        && value.is_finite()
+        && value.fract() == 0.0
+        && value >= i64::MIN as f64
+        && value <= i64::MAX as f64
+    {
+        return Some((value as i64).into());
+    }
+    let text = value.as_str()?;
+    text.parse::<i64>()
+        .map(serde_json::Number::from)
+        .or_else(|_| text.parse::<u64>().map(serde_json::Number::from))
+        .ok()
+}
+
+fn conversion_error(path: &str, source: &str, target: &str) -> ExpressionError {
+    ExpressionError::InvalidOperation(format!("{path} cannot convert {source} to {target}"))
 }
 
 fn json_type(value: &Value) -> &'static str {
@@ -407,116 +511,66 @@ fn select_array_item(value: &Value, selection: &ValueSelection) -> Option<Value>
     }
 }
 
-fn truthy(value: &Value) -> bool {
-    match value {
-        Value::Null => false,
-        Value::Bool(value) => *value,
-        Value::Number(value) => value.as_f64().is_some_and(|value| value != 0.0),
-        Value::String(value) => !value.is_empty(),
-        Value::Array(value) => !value.is_empty(),
-        Value::Object(value) => !value.is_empty(),
-    }
-}
-
 fn number(value: &Value) -> Result<f64, ExpressionError> {
     value
         .as_f64()
         .ok_or_else(|| ExpressionError::InvalidOperation("expected number".into()))
 }
 
-fn json_number(value: f64) -> Result<Value, ExpressionError> {
-    serde_json::Number::from_f64(value)
-        .map(Value::Number)
-        .ok_or_else(|| ExpressionError::Result("number is not finite".into()))
-}
-
-fn evaluate_binary(
-    operator: ExpressionBinaryOperator,
-    left: Value,
-    right: Value,
-) -> Result<Value, ExpressionError> {
-    use ExpressionBinaryOperator as Op;
+fn evaluate_condition(
+    operator: ConditionOperator,
+    left: &Value,
+    right: Option<&Value>,
+) -> Result<bool, ExpressionError> {
+    use ConditionOperator as Op;
     match operator {
-        Op::Eq => Ok(Value::Bool(left == right)),
-        Op::Ne => Ok(Value::Bool(left != right)),
+        Op::Eq => Ok(right.is_some_and(|right| left == right)),
+        Op::Ne => Ok(right.is_none_or(|right| left != right)),
         Op::Gt | Op::Gte | Op::Lt | Op::Lte => {
-            let (left, right) = (number(&left)?, number(&right)?);
-            Ok(Value::Bool(match operator {
+            let right = right.ok_or_else(|| {
+                ExpressionError::InvalidOperation("comparison requires a right operand".into())
+            })?;
+            let (left, right) = (number(left)?, number(right)?);
+            Ok(match operator {
                 Op::Gt => left > right,
                 Op::Gte => left >= right,
                 Op::Lt => left < right,
                 Op::Lte => left <= right,
                 _ => unreachable!(),
-            }))
+            })
         }
-        Op::Add if left.is_string() || right.is_string() => Ok(Value::String(format!(
-            "{}{}",
-            value_to_text(left),
-            value_to_text(right)
-        ))),
-        Op::Add => json_number(number(&left)? + number(&right)?),
-        Op::Subtract => json_number(number(&left)? - number(&right)?),
-        Op::Multiply => json_number(number(&left)? * number(&right)?),
-        Op::Divide => {
-            let divisor = number(&right)?;
-            if divisor == 0.0 {
-                return Err(ExpressionError::InvalidOperation("division by zero".into()));
-            }
-            json_number(number(&left)? / divisor)
-        }
-        Op::Modulo => {
-            let divisor = number(&right)?;
-            if divisor == 0.0 {
-                return Err(ExpressionError::InvalidOperation("modulo by zero".into()));
-            }
-            json_number(number(&left)? % divisor)
-        }
-        Op::In => Ok(Value::Bool(match right {
-            Value::Array(values) => values.contains(&left),
+        Op::In => Ok(match right.unwrap_or(&Value::Null) {
+            Value::Array(values) => values.contains(left),
             Value::Object(values) => left.as_str().is_some_and(|key| values.contains_key(key)),
             Value::String(value) => left.as_str().is_some_and(|needle| value.contains(needle)),
             _ => false,
-        })),
-        Op::And | Op::Or => unreachable!("short-circuit operators are handled by the caller"),
-    }
-}
-
-fn evaluate_function(
-    function: ExpressionFunction,
-    values: &[Value],
-) -> Result<Value, ExpressionError> {
-    use ExpressionFunction as Fn;
-    let first = values.first().cloned().unwrap_or(Value::Null);
-    match function {
-        Fn::Contains => Ok(Value::Bool(values.get(1).is_some_and(
-            |needle| match &first {
+        }),
+        Op::Contains | Op::NotContains => {
+            let contains = right.is_some_and(|needle| match left {
                 Value::String(value) => {
                     needle.as_str().is_some_and(|needle| value.contains(needle))
                 }
-                Value::Array(value) => value.contains(needle),
+                Value::Array(values) => values.contains(needle),
                 _ => false,
-            },
-        ))),
-        Fn::StartsWith => Ok(Value::Bool(
-            first
-                .as_str()
-                .zip(values.get(1).and_then(Value::as_str))
-                .is_some_and(|(value, prefix)| value.starts_with(prefix)),
-        )),
-        Fn::EndsWith => Ok(Value::Bool(
-            first
-                .as_str()
-                .zip(values.get(1).and_then(Value::as_str))
-                .is_some_and(|(value, suffix)| value.ends_with(suffix)),
-        )),
-        // The visual protocol does not accept an arbitrary executable regex
-        // object. Until the typed pattern validator is introduced, matches is
-        // a deterministic literal substring match.
-        Fn::Matches => {
-            let (Some(value), Some(pattern)) =
-                (first.as_str(), values.get(1).and_then(Value::as_str))
+            });
+            Ok(if operator == Op::NotContains {
+                !contains
+            } else {
+                contains
+            })
+        }
+        Op::StartsWith => Ok(left
+            .as_str()
+            .zip(right.and_then(Value::as_str))
+            .is_some_and(|(value, prefix)| value.starts_with(prefix))),
+        Op::EndsWith => Ok(left
+            .as_str()
+            .zip(right.and_then(Value::as_str))
+            .is_some_and(|(value, suffix)| value.ends_with(suffix))),
+        Op::Matches => {
+            let (Some(value), Some(pattern)) = (left.as_str(), right.and_then(Value::as_str))
             else {
-                return Ok(Value::Bool(false));
+                return Ok(false);
             };
             if pattern.len() > 1_024 {
                 return Err(ExpressionError::InvalidOperation(
@@ -526,33 +580,20 @@ fn evaluate_function(
             let regex = regex::Regex::new(pattern).map_err(|error| {
                 ExpressionError::InvalidOperation(format!("invalid regex pattern: {error}"))
             })?;
-            Ok(Value::Bool(regex.is_match(value)))
+            Ok(regex.is_match(value))
         }
-        Fn::Size => Ok(Value::from(match first {
-            Value::String(value) => value.chars().count() as u64,
-            Value::Array(value) => value.len() as u64,
-            Value::Object(value) => value.len() as u64,
-            _ => 0,
-        })),
-        Fn::String | Fn::Timestamp | Fn::Duration => Ok(Value::String(value_to_text(first))),
-        Fn::Int | Fn::Uint => Ok(Value::from(number(&first)? as i64)),
-        Fn::Double => json_number(number(&first)?),
-        Fn::Max | Fn::Min => {
-            let numbers = values.iter().map(number).collect::<Result<Vec<_>, _>>()?;
-            let value = numbers
-                .into_iter()
-                .reduce(|left, right| {
-                    if function == Fn::Max {
-                        left.max(right)
-                    } else {
-                        left.min(right)
-                    }
-                })
-                .ok_or_else(|| {
-                    ExpressionError::InvalidOperation("min/max requires an argument".into())
-                })?;
-            json_number(value)
-        }
+        Op::IsEmpty => Ok(is_empty(left)),
+        Op::IsNotEmpty => Ok(!is_empty(left)),
+    }
+}
+
+fn is_empty(value: &Value) -> bool {
+    match value {
+        Value::Null => true,
+        Value::String(value) => value.is_empty(),
+        Value::Array(value) => value.is_empty(),
+        Value::Object(value) => value.is_empty(),
+        _ => false,
     }
 }
 
@@ -582,45 +623,112 @@ mod tests {
     }
 
     #[test]
-    fn reference_string_coercion_uses_canonical_json() {
-        let dynamic: DynamicValue = serde_json::from_value(json!({
-            "kind":"reference",
-            "selector":{"namespace":"inputs","run":{"kind":"current"},"item":{"kind":"current"},"path":["payload"]},
-            "missingPolicy":{"kind":"error"},
-            "coerce":"string"
-        })).unwrap();
+    fn text_template_uses_canonical_json_for_variable_segments() {
+        let parameters = json!({"text":{"kind":"template","segments":[
+            {"kind":"text","text":"payload="},
+            {"kind":"reference","selector":{"namespace":"inputs","run":{"kind":"current"},"item":{"kind":"current"},"path":["payload"]},"missingPolicy":{"kind":"error"}}
+        ]}});
         let (value, conversions) = ExpressionEngine
-            .resolve_dynamic_optional_with_conversions(
-                &dynamic,
+            .resolve_parameters_with_conversions(
+                &parameters,
                 &ExpressionContext {
                     inputs: json!({"payload":{"z":1,"a":2}}),
                     ..ExpressionContext::default()
                 },
-                "end.outputs.answer",
             )
             .unwrap();
-        assert_eq!(value, Some(json!("{\"a\":2,\"z\":1}")));
+        assert_eq!(value, json!({"text":"payload={\"a\":2,\"z\":1}"}));
         assert_eq!(conversions.len(), 1);
-        assert_eq!(conversions[0].target_path, "end.outputs.answer");
+        assert_eq!(conversions[0].target_path, "parameters.text.segments[1]");
         assert_eq!(conversions[0].source_type, "object");
         assert_eq!(conversions[0].result_bytes, 13);
     }
 
     #[test]
+    fn recursive_input_bindings_preserve_typed_references_inside_json() {
+        let parameters = json!({"payload":{"kind":"array","items":[
+            {"kind":"literal","value":"a"},
+            {"kind":"reference","selector":{"namespace":"inputs","run":{"kind":"current"},"item":{"kind":"current"},"path":["count"]},"missingPolicy":{"kind":"error"}},
+            {"kind":"object","fields":{"label":{"kind":"template","segments":[
+                {"kind":"text","text":"item-"},
+                {"kind":"reference","selector":{"namespace":"inputs","run":{"kind":"current"},"item":{"kind":"current"},"path":["count"]},"missingPolicy":{"kind":"error"}}
+            ]}}}
+        ]}});
+        let value = ExpressionEngine
+            .resolve_parameters(
+                &parameters,
+                &ExpressionContext {
+                    inputs: json!({"count":7}),
+                    ..ExpressionContext::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(value, json!({"payload":["a",7,{"label":"item-7"}]}));
+    }
+
+    #[test]
+    fn schema_directed_conversion_parses_strings_or_reports_the_field() {
+        let parameters = json!({
+            "count":{"kind":"literal","value":"12"},
+            "payload":{"kind":"literal","value":"{\"ok\":true}"}
+        });
+        let schema = json!({"type":"object","properties":{
+            "count":{"type":"integer"},
+            "payload":{"type":"object","properties":{"ok":{"type":"boolean"}}}
+        }});
+        let (value, conversions) = ExpressionEngine
+            .resolve_parameters_with_schema(&parameters, &schema, &ExpressionContext::default())
+            .unwrap();
+        assert_eq!(value, json!({"count":12,"payload":{"ok":true}}));
+        assert_eq!(conversions.len(), 2);
+
+        let error = ExpressionEngine
+            .resolve_parameters_with_schema(
+                &json!({"count":{"kind":"literal","value":"twelve"}}),
+                &json!({"type":"object","properties":{"count":{"type":"integer"}}}),
+                &ExpressionContext::default(),
+            )
+            .unwrap_err();
+        assert!(error.to_string().contains("parameters.count"));
+    }
+
+    #[test]
+    fn integer_schema_accepts_integral_json_numbers_and_rejects_fractions() {
+        let schema = json!({"type":"object","properties":{"budget":{"type":"integer"}}});
+        let (value, conversions) = ExpressionEngine
+            .resolve_parameters_with_schema(
+                &json!({"budget":{"kind":"literal","value":1_000_000.0}}),
+                &schema,
+                &ExpressionContext::default(),
+            )
+            .unwrap();
+        assert_eq!(value, json!({"budget":1_000_000}));
+        assert_eq!(conversions[0].source_type, "number");
+
+        let error = ExpressionEngine
+            .resolve_parameters_with_schema(
+                &json!({"budget":{"kind":"literal","value":1.5}}),
+                &schema,
+                &ExpressionContext::default(),
+            )
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("cannot convert number to integer")
+        );
+    }
+
+    #[test]
     fn matches_uses_a_validated_linear_time_regex() {
-        let dynamic: DynamicValue = serde_json::from_value(json!({
-            "kind":"expression",
-            "root":{"kind":"call","function":"matches","arguments":[
-                {"kind":"literal","value":"invoice-2026"},
-                {"kind":"literal","value":"^invoice-[0-9]{4}$"}
-            ]}
-        }))
-        .unwrap();
-        assert_eq!(
+        assert!(
             ExpressionEngine
-                .resolve_dynamic(&dynamic, &ExpressionContext::default())
-                .unwrap(),
-            json!(true)
+                .evaluate_condition(
+                    ConditionOperator::Matches,
+                    &json!("invoice-2026"),
+                    Some(&json!("^invoice-[0-9]{4}$")),
+                )
+                .unwrap()
         );
     }
 }

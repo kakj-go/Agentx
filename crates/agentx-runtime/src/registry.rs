@@ -33,6 +33,24 @@ pub enum RegistryError {
 }
 
 impl NodeRegistry {
+    #[must_use]
+    pub fn is_definition_node_type(node_type: &str) -> bool {
+        matches!(
+            node_type,
+            "set"
+                | "list"
+                | "if"
+                | "merge"
+                | "loop_over_items"
+                | "approval"
+                | "sub_workflow"
+                | "declarative_http"
+                | "model"
+                | "agent"
+                | "code"
+        )
+    }
+
     pub fn register(&mut self, manifest: NodeManifestVersion) -> Result<(), RegistryError> {
         if manifest.protocol_version != NODE_PROTOCOL_VERSION {
             return Err(RegistryError::UnsupportedProtocol {
@@ -67,8 +85,41 @@ impl NodeRegistry {
         self.manifests.get(&(node_type.to_owned(), version))
     }
 
+    /// Resolves the generic Studio Sub-workflow node to the immutable
+    /// version-derived Manifest when that dependency snapshot is available.
+    #[must_use]
+    pub fn resolve_definition_manifest(
+        &self,
+        node_type: &str,
+        version: u32,
+        parameters: &Value,
+    ) -> Option<&NodeManifestVersion> {
+        if node_type == "sub_workflow"
+            && let Some(version_id) = parameters
+                .get("workflowVersionId")
+                .and_then(Value::as_str)
+                .and_then(|value| uuid::Uuid::parse_str(value).ok())
+        {
+            let derived = format!("workflow.{}", version_id.simple());
+            if let Some(manifest) = self.get(&derived, version) {
+                return Some(manifest);
+            }
+        }
+        self.get(node_type, version)
+    }
+
     pub fn manifests(&self) -> impl Iterator<Item = &NodeManifestVersion> {
         self.manifests.values()
+    }
+
+    /// The only runtime node types users may create in Workflow Studio.
+    /// Resource executors remain registered for Agent attachments, but never
+    /// become a second public node catalog.
+    pub fn studio_manifests(&self) -> impl Iterator<Item = &NodeManifestVersion> {
+        self.manifests.values().filter(|manifest| {
+            Self::is_definition_node_type(&manifest.node_type)
+                && !manifest.node_type.starts_with("workflow.")
+        })
     }
 
     #[must_use]
@@ -113,28 +164,28 @@ fn validate_agent_manifest(manifest: &NodeManifestVersion) -> Result<(), String>
         (
             "mcp_tools",
             ResourceType::McpTool,
-            BindingSlotPlacement::Canvas,
+            BindingSlotPlacement::Inspector,
             false,
             true,
         ),
         (
             "skills",
             ResourceType::Skill,
-            BindingSlotPlacement::Canvas,
+            BindingSlotPlacement::Inspector,
             false,
             true,
         ),
         (
             "knowledge",
             ResourceType::Rag,
-            BindingSlotPlacement::Canvas,
+            BindingSlotPlacement::Inspector,
             false,
             true,
         ),
         (
             "long_term_memory",
             ResourceType::Memory,
-            BindingSlotPlacement::Canvas,
+            BindingSlotPlacement::Inspector,
             false,
             false,
         ),
@@ -180,17 +231,17 @@ fn localized_node_copy(
             "Set or transform item fields.",
             "设置或转换数据字段。",
         ),
+        "list" => (
+            "List Operator",
+            "列表操作",
+            "Filter, sort and truncate the item stream in one node.",
+            "在单个节点内完成过滤、排序与截断。",
+        ),
         "if" => (
             "Condition",
-            "条件",
-            "Route items by a true or false condition.",
-            "根据条件将数据路由到满足或不满足分支。",
-        ),
-        "switch" => (
-            "Switch",
-            "多路条件",
-            "Route items across multiple conditions.",
-            "根据多条条件将数据路由到不同分支。",
+            "条件分支",
+            "Route items to the first matching IF/ELIF branch, else to ELSE.",
+            "按序命中 IF/ELIF 分支，未命中走 ELSE 分支。",
         ),
         "merge" => (
             "Merge",
@@ -203,12 +254,6 @@ fn localized_node_copy(
             "循环处理",
             "Process items in controlled batches.",
             "按批次循环处理数据项。",
-        ),
-        "wait" => (
-            "Wait",
-            "等待",
-            "Suspend execution until a resume condition.",
-            "暂停执行并等待恢复条件。",
         ),
         "approval" => (
             "Approval",
@@ -227,12 +272,6 @@ fn localized_node_copy(
             "HTTP 请求",
             "Call an HTTP endpoint.",
             "调用 HTTP 接口。",
-        ),
-        "remote_action" => (
-            "Remote Action",
-            "远程动作",
-            "Execute a remote Agentx node action.",
-            "执行远程 Agentx 节点动作。",
         ),
         "model" => (
             "Model",
@@ -276,12 +315,6 @@ fn localized_node_copy(
             "Run code in an isolated sandbox.",
             "在隔离沙箱中运行代码。",
         ),
-        "error_handler" => (
-            "Error Handler",
-            "错误处理",
-            "Recover an error item or fail the workflow.",
-            "恢复错误数据或终止工作流。",
-        ),
         _ => (
             "Action",
             "动作",
@@ -301,17 +334,10 @@ fn english_port_label(name: &str, input: bool) -> &'static str {
             }
         }
         "error" => "Error",
-        "true" => "True",
-        "false" => "False",
         "case" => "Case",
-        "fallback" => "Fallback",
-        "loop" => "Loop",
-        "done" => "Done",
-        "resumed" => "Resumed",
+        "else" => "Else",
+        "decision" => "Decision",
         "timed_out" => "Timed out",
-        "approved" => "Approved",
-        "rejected" => "Rejected",
-        "recovered" => "Recovered",
         _ => "Port",
     }
 }
@@ -326,17 +352,10 @@ fn chinese_port_label(name: &str, input: bool) -> &'static str {
             }
         }
         "error" => "错误",
-        "true" => "满足条件",
-        "false" => "不满足条件",
         "case" => "条件分支",
-        "fallback" => "默认分支",
-        "loop" => "循环",
-        "done" => "完成",
-        "resumed" => "已恢复",
+        "else" => "否则分支",
+        "decision" => "审批决策",
         "timed_out" => "已超时",
-        "approved" => "已通过",
-        "rejected" => "已拒绝",
-        "recovered" => "已恢复",
         _ => "端口",
     }
 }
@@ -444,7 +463,7 @@ pub(crate) fn manifest(
         output_schema: json!({"type":"object"}),
         output_port_schemas: BTreeMap::new(),
         output_cardinality,
-        expression_capabilities: agentx_node_protocol::ExpressionCapabilities {
+        selector_capabilities: agentx_node_protocol::SelectorCapabilities {
             namespaces: vec!["inputs".into(), "outputs".into(), "contexts".into()],
             supports_current: true,
             supports_first_last: true,
@@ -453,14 +472,12 @@ pub(crate) fn manifest(
         },
         context_read_capability: true,
         context_write_capability: true,
-        output_projection_schema: json!({"type":"object","additionalProperties":true}),
         artifact_output_schema: json!({"type":"array","items":{"type":"object"}}),
         ui_schema: NodeUiSchema {
             canvas: Some(CanvasAppearance { role }),
             ..Default::default()
         },
         providers: Vec::new(),
-        lifecycle_operations: Vec::new(),
         credentials: Vec::new(),
         default_timeout_ms: Some(30_000),
         retry_policy: Default::default(),
@@ -500,12 +517,12 @@ fn m5_manifest(
     value.parameter_schema = schema;
     let fields = match node_type {
         "model" => {
-            json!({"prompt":{"control":"prompt"},"userQuestion":{"control":"text"}})
+            json!({"prompt":{"control":"prompt"},"userQuestion":{"control":"template"},"responseMode":{"control":"select"},"structuredSchema":{"control":"schema_editor"}})
         }
         "mcp_tool" => json!({"arguments":{"control":"json"}}),
         "rag" | "memory" => json!({"operation":{"control":"select"},"input":{"control":"json"}}),
         "agent" => json!({
-            "systemPrompt":{"control":"prompt"},"userQuestion":{"control":"text"},
+            "systemPrompt":{"control":"prompt"},"userQuestion":{"control":"template"},
             "sessionPolicy":{"control":"json"},
             "maxIterations":{"control":"number","unit":"calls"},"maxModelCalls":{"control":"number","unit":"calls"},
             "maxToolCalls":{"control":"number","unit":"calls"},"maxTotalTokens":{"control":"number","unit":"tokens"},
@@ -514,7 +531,7 @@ fn m5_manifest(
         }),
         "code" => json!({
             "runner":{"control":"select"},"source":{"control":"code","languageField":"runner"},
-            "arguments":{"control":"json"},"networkPolicy":{"control":"json"}
+            "inputs":{"control":"mapper"},"outputExample":{"control":"json5_example"},"networkPolicy":{"control":"network_policy"}
         }),
         _ => json!({}),
     };
@@ -529,14 +546,6 @@ fn m5_manifest(
             "resourceType":resource_type,
             "operation":operation,
             "required":true
-        }));
-    }
-    if node_type == "code" {
-        value.ui_schema.resource_selectors.push(json!({
-            "resourceType":"credential",
-            "operation":"use",
-            "required":false,
-            "label":"Credential"
         }));
     }
     value.default_timeout_ms = Some(300_000);
@@ -559,7 +568,7 @@ fn canvas_role(
     if execution_style == ExecutionStyle::SubWorkflow {
         return CanvasNodeRole::SubWorkflow;
     }
-    if matches!(node_type, "if" | "switch") {
+    if node_type == "if" {
         return CanvasNodeRole::Branch;
     }
     if node_type == "merge" {
@@ -570,9 +579,6 @@ fn canvas_role(
     }
     if node_type == "approval" {
         return CanvasNodeRole::Approval;
-    }
-    if node_type == "error_handler" {
-        return CanvasNodeRole::ErrorHandler;
     }
     if capability == NodeCapability::Agent {
         return CanvasNodeRole::Agent;
@@ -588,24 +594,10 @@ fn canvas_role(
 
 fn category(node_type: &str) -> &'static str {
     match node_type {
-        "item_generator" => "triggers",
-        "if" | "switch" | "merge" | "loop_over_items" | "wait" | "approval" | "sub_workflow"
-        | "error_handler" | "no_op" | "stop_and_error" => "flow",
-        "filter"
-        | "limit"
-        | "sort"
-        | "remove_duplicates"
-        | "split_out"
-        | "aggregate"
-        | "rename_fields"
-        | "json_transform"
-        | "date_time"
-        | "base64"
-        | "hash"
-        | "compare_datasets"
-        | "structured_validator" => "data",
+        "if" | "merge" | "loop_over_items" | "approval" => "logic",
+        "set" | "list" | "code" => "transform",
+        "declarative_http" | "sub_workflow" => "integration",
         "agent" | "model" | "mcp_tool" | "skill" | "rag" | "memory" => "ai",
-        "code" => "code",
         _ => "actions",
     }
 }
@@ -620,29 +612,43 @@ fn icon_key(node_type: &str) -> &'static str {
         "memory" => "memory-stick",
         "code" => "code-2",
         "approval" => "badge-check",
-        "if" | "switch" => "split",
+        "if" => "split",
+        "list" => "filter",
         "merge" => "git-merge",
         "loop_over_items" => "repeat-2",
-        "wait" => "clock-3",
-        "error_handler" => "shield-alert",
-        "filter" => "filter",
-        "limit" => "list-end",
-        "sort" => "arrow-down-a-z",
-        "remove_duplicates" => "copy-minus",
-        "split_out" => "rows-3",
-        "aggregate" => "sigma",
-        "rename_fields" => "replace",
-        "json_transform" => "braces",
-        "no_op" => "circle",
-        "stop_and_error" => "octagon-x",
-        "item_generator" => "list-plus",
-        "date_time" => "calendar-clock",
-        "base64" => "binary",
-        "hash" => "hash",
-        "compare_datasets" => "git-compare",
-        "structured_validator" => "shield-check",
         _ => "box",
     }
+}
+
+fn binding_contract(kind: &str, recursive: bool) -> Value {
+    let accepted_kinds = match kind {
+        "reference" => json!(["reference"]),
+        "template" => json!(["literal", "reference", "template"]),
+        "value" | "structured" => {
+            json!(["literal", "reference", "template", "array", "object"])
+        }
+        _ => json!([]),
+    };
+    json!({
+        "acceptedKinds": accepted_kinds,
+        "allowedNamespaces": ["inputs", "outputs", "contexts", "execution", "item", "loop"],
+        "acceptedCardinality": ["single"],
+        "missingPolicies": ["error", "null", "omit"],
+        "recursive": recursive
+    })
+}
+
+fn condition_spec_schema() -> Value {
+    json!({
+        "type": "object",
+        "required": ["left", "operator"],
+        "properties": {
+            "left": {"x-agentx-binding": binding_contract("value", false)},
+            "operator": {"type":"string","enum":["eq","ne","gt","gte","lt","lte","in","contains","not_contains","ends_with","starts_with","matches","is_empty","is_not_empty"]},
+            "right": {"x-agentx-binding": binding_contract("value", false)}
+        },
+        "additionalProperties": false
+    })
 }
 
 fn default_manifests() -> Vec<NodeManifestVersion> {
@@ -673,21 +679,31 @@ fn default_manifests() -> Vec<NodeManifestVersion> {
                 main_out(),
                 SideEffectLevel::None,
             ),
-            json!({"type":"object","properties":{"values":{"type":"object","default":{}},"keepOnlySet":{"type":"boolean","default":false}},"additionalProperties":false}),
-            json!({"order":["values","keepOnlySet"],"fields":{"values":{"control":"json"},"keepOnlySet":{"control":"boolean"}}}),
+            json!({"type":"object","properties":{"values":{"type":"object","default":{"kind":"object","fields":{}}},"keepOnlySet":{"type":"boolean","default":false}},"additionalProperties":false}),
+            json!({"order":["values","keepOnlySet"],"fields":{"values":{"control":"structured"},"keepOnlySet":{"control":"boolean"}}}),
         ),
         configured(
             manifest(
-                "error_handler",
+                "list",
                 ExecutionStyle::Action,
                 NodeCapability::Builtin,
                 ReadinessPolicy::Any,
-                vec![port("error", PortKind::Error, true, false)],
-                vec![port("recovered", PortKind::Main, false, false)],
+                main_in(),
+                main_out(),
                 SideEffectLevel::None,
             ),
-            json!({"type":"object","properties":{"mode":{"type":"string","enum":["recover","fail"],"default":"recover"}},"additionalProperties":false}),
-            json!({"order":["mode"],"fields":{"mode":{"control":"select"}}}),
+            json!({
+                "type":"object",
+                "required":["input"],
+                "properties":{
+                    "input":{"type":"array","items":{}},
+                    "filter":{"type":"object","properties":{"conditions":{"type":"array","items":{"type":"object","required":["condition"],"properties":{"condition":condition_spec_schema(),"label":{"type":"string"}},"additionalProperties":false}},"logicalOp":{"type":"string","enum":["and","or"],"default":"and"}},"additionalProperties":false,"default":{"conditions":[],"logicalOp":"and"}},
+                    "sort":{"type":"array","items":{"type":"object","required":["selector","direction","nulls"],"properties":{"selector":{"x-agentx-binding":binding_contract("reference",false)},"direction":{"type":"string","enum":["asc","desc"],"default":"asc"},"nulls":{"type":"string","enum":["first","last"],"default":"last"}},"additionalProperties":false},"default":[]},
+                    "takeN":{"type":"integer","minimum":0}
+                },
+                "additionalProperties":false
+            }),
+            json!({"order":["input","filter","sort","takeN"],"fields":{"input":{"control":"value"},"filter":{"control":"condition_builder"},"sort":{"control":"sort_builder"},"takeN":{"control":"number"}}}),
         ),
         configured(
             manifest(
@@ -697,31 +713,14 @@ fn default_manifests() -> Vec<NodeManifestVersion> {
                 ReadinessPolicy::Any,
                 main_in(),
                 vec![
-                    port("true", PortKind::Main, false, false),
-                    port("false", PortKind::Main, false, false),
-                    port("error", PortKind::Error, false, false),
-                ],
-                SideEffectLevel::None,
-            ),
-            json!({"type":"object","required":["condition"],"properties":{"condition":{}},"additionalProperties":false}),
-            json!({"fields":{"condition":{"control":"expression"}}}),
-        ),
-        configured(
-            manifest(
-                "switch",
-                ExecutionStyle::Action,
-                NodeCapability::Builtin,
-                ReadinessPolicy::Any,
-                main_in(),
-                vec![
                     port("case", PortKind::Main, false, true),
-                    port("fallback", PortKind::Main, false, false),
+                    port("else", PortKind::Main, false, false),
                     port("error", PortKind::Error, false, false),
                 ],
                 SideEffectLevel::None,
             ),
-            json!({"type":"object","required":["rules"],"properties":{"rules":{"type":"array","items":{"type":"object","required":["condition"],"properties":{"condition":{}}}},"sendToAllMatches":{"type":"boolean","default":false}},"additionalProperties":false}),
-            json!({"order":["rules","sendToAllMatches"],"fields":{"rules":{"control":"json"},"sendToAllMatches":{"control":"boolean"}}}),
+            json!({"type":"object","required":["cases"],"properties":{"cases":{"type":"array","minItems":1,"default":[{"id":"case_1","name":"","conditions":[{"condition":{"left":{"kind":"literal","value":""},"operator":"eq","right":{"kind":"literal","value":""}}}],"logicalOp":"and"}],"items":{"type":"object","required":["id","conditions"],"properties":{"id":{"type":"string","minLength":1},"name":{"type":"string"},"conditions":{"type":"array","minItems":1,"items":{"type":"object","required":["condition"],"properties":{"condition":condition_spec_schema(),"label":{"type":"string"}},"additionalProperties":false}},"logicalOp":{"type":"string","enum":["and","or"],"default":"and"}},"additionalProperties":false}}},"additionalProperties":false}),
+            json!({"fields":{"cases":{"control":"condition_builder"}}}),
         ),
         configured(
             manifest(
@@ -748,31 +747,13 @@ fn default_manifests() -> Vec<NodeManifestVersion> {
                 ReadinessPolicy::Any,
                 main_in(),
                 vec![
-                    port("loop", PortKind::Main, false, false),
-                    port("done", PortKind::Main, false, false),
+                    port("main", PortKind::Main, false, false),
                     port("error", PortKind::Error, false, false),
                 ],
                 SideEffectLevel::None,
             ),
-            json!({"type":"object","additionalProperties":false}),
-            json!({}),
-        ),
-        configured(
-            manifest(
-                "wait",
-                ExecutionStyle::Suspend,
-                NodeCapability::Builtin,
-                ReadinessPolicy::Any,
-                main_in(),
-                vec![
-                    port("resumed", PortKind::Main, false, false),
-                    port("timed_out", PortKind::Main, false, false),
-                    port("error", PortKind::Error, false, false),
-                ],
-                SideEffectLevel::None,
-            ),
-            json!({"type":"object","properties":{"kind":{"type":"string","enum":["duration","datetime","webhook","form"],"default":"duration"},"durationMs":{"type":"integer","minimum":1,"default":1000},"resumeAt":{"type":"string"},"timeoutAt":{"type":"string"},"payloadSchema":{"type":"object"},"authenticationMode":{"type":"string","enum":["signed","none"],"default":"signed"}},"additionalProperties":false}),
-            json!({"order":["kind","durationMs","resumeAt","timeoutAt","payloadSchema","authenticationMode"],"fields":{"kind":{"control":"select"},"durationMs":{"control":"number","visibleWhen":{"field":"kind","equals":"duration"}},"resumeAt":{"control":"text","visibleWhen":{"field":"kind","equals":"datetime"}},"timeoutAt":{"control":"text"},"payloadSchema":{"control":"json"},"authenticationMode":{"control":"select"}}}),
+            json!({"type":"object","required":["input","outputSelector"],"properties":{"input":{"type":"array","items":{}},"outputSelector":{"x-agentx-binding":binding_contract("reference",false)},"errorMode":{"type":"string","enum":["terminate","continue","remove"],"default":"terminate"},"parallelism":{"type":"integer","minimum":1,"maximum":10,"default":1}},"additionalProperties":false}),
+            json!({"order":["input","outputSelector","errorMode","parallelism"],"fields":{"input":{"control":"value"},"outputSelector":{"control":"reference"},"errorMode":{"control":"select"},"parallelism":{"control":"number"}}}),
         ),
         configured(
             manifest(
@@ -782,15 +763,14 @@ fn default_manifests() -> Vec<NodeManifestVersion> {
                 ReadinessPolicy::Any,
                 main_in(),
                 vec![
-                    port("approved", PortKind::Main, false, false),
-                    port("rejected", PortKind::Main, false, false),
+                    port("decision", PortKind::Main, false, true),
                     port("timed_out", PortKind::Main, false, false),
                     port("error", PortKind::Error, false, false),
                 ],
                 SideEffectLevel::None,
             ),
-            json!({"type":"object","properties":{"title":{"type":"string"},"description":{"type":"string"},"candidateUserId":{"type":"string"},"timeoutMs":{"type":"integer","minimum":1},"timeoutAt":{"type":"string"}},"additionalProperties":false}),
-            json!({"order":["title","description","candidateUserId","timeoutMs","timeoutAt"],"fields":{"title":{"control":"text"},"description":{"control":"textarea"},"candidateUserId":{"control":"text"},"timeoutMs":{"control":"number"},"timeoutAt":{"control":"text"}}}),
+            json!({"type":"object","required":["candidateUserId"],"properties":{"title":{"type":"string"},"description":{"type":"string"},"candidateUserId":{"type":"string","format":"uuid"},"buttons":{"type":"array","minItems":1,"items":{"type":"object","required":["id","label"],"properties":{"id":{"type":"string","minLength":1},"label":{"type":"string"}},"additionalProperties":false}},"timeoutMs":{"type":"integer","minimum":1,"maximum":31_536_000_000_i64}},"additionalProperties":false}),
+            json!({"order":["title","description","candidateUserId","buttons","timeoutMs"],"fields":{"title":{"control":"template"},"description":{"control":"template"},"candidateUserId":{"control":"provider_options","provider":"users"},"buttons":{"control":"buttons_editor"},"timeoutMs":{"control":"number"}}}),
         ),
         {
             let mut sub_workflow = configured(
@@ -803,51 +783,47 @@ fn default_manifests() -> Vec<NodeManifestVersion> {
                     main_out(),
                     SideEffectLevel::None,
                 ),
-                json!({"type":"object","required":["workflowVersionId"],"properties":{"workflowVersionId":{"type":"string","format":"uuid"}},"additionalProperties":false}),
-                json!({"fields":{"workflowVersionId":{"control":"provider_options","provider":"workflow_versions"}}}),
+                json!({"type":"object","required":["workflowVersionId","inputs"],"properties":{"workflowVersionId":{"type":"string","format":"uuid"},"inputs":{"type":"object","additionalProperties":{},"default":{"kind":"object","fields":{}}}},"additionalProperties":false}),
+                json!({"order":["workflowVersionId","inputs"],"fields":{"workflowVersionId":{"control":"provider_options","provider":"workflow_versions"},"inputs":{"control":"mapper"}}}),
             );
             sub_workflow.providers = vec!["workflow_versions".into()];
+            sub_workflow.default_timeout_ms = Some(300_000);
             sub_workflow
         },
-        configured(
-            manifest(
-                "declarative_http",
-                ExecutionStyle::Action,
-                NodeCapability::DeclarativeHttp,
-                ReadinessPolicy::Any,
-                main_in(),
-                main_out(),
-                SideEffectLevel::Idempotent,
-            ),
-            json!({"type":"object","required":["url"],"properties":{"method":{"type":"string","enum":["GET","POST","PUT","PATCH","DELETE"],"default":"GET"},"url":{"type":"string"},"headers":{"type":"object"},"body":{}},"additionalProperties":false}),
-            json!({"order":["method","url","headers","body"],"fields":{"method":{"control":"select"},"url":{"control":"expression"},"headers":{"control":"json"},"body":{"control":"json"}}}),
-        ),
         {
-            let mut remote_action = configured(
+            let mut http = configured(
                 manifest(
-                    "remote_action",
+                    "declarative_http",
                     ExecutionStyle::Action,
-                    NodeCapability::RemoteAction,
+                    NodeCapability::DeclarativeHttp,
                     ReadinessPolicy::Any,
                     main_in(),
                     main_out(),
-                    SideEffectLevel::Irreversible,
+                    SideEffectLevel::Idempotent,
                 ),
-                json!({"type":"object","required":["endpoint"],"properties":{"endpoint":{"type":"string"}},"additionalProperties":true}),
-                json!({"fields":{"endpoint":{"control":"text"}}}),
+                json!({"type":"object","required":["url"],"properties":{"method":{"type":"string","enum":["GET","POST","PUT","PATCH","DELETE"],"default":"GET"},"url":{},"query":{"type":"array","items":{"type":"object","required":["name","value"],"properties":{"name":{"type":"string","minLength":1},"value":{"x-agentx-binding":binding_contract("template",false)}},"additionalProperties":false},"default":[]},"headers":{"type":"array","items":{"type":"object","required":["name","value"],"properties":{"name":{"type":"string","minLength":1},"value":{"x-agentx-binding":binding_contract("template",false)}},"additionalProperties":false},"default":[]},"body":{},"apiKeyPlacement":{"type":"object","required":["in","name"],"properties":{"in":{"type":"string","enum":["header","query"]},"name":{"type":"string","minLength":1}},"additionalProperties":false}},"additionalProperties":false}),
+                json!({"order":["method","url","query","headers","body","apiKeyPlacement"],"fields":{"method":{"control":"select"},"url":{"control":"template"},"query":{"control":"kv_builder"},"headers":{"control":"kv_builder"},"body":{"control":"structured"},"apiKeyPlacement":{"control":"api_key_placement"}}}),
             );
-            remote_action.lifecycle_operations = vec![
-                agentx_node_protocol::LifecycleOperation::Activate,
-                agentx_node_protocol::LifecycleOperation::Deactivate,
-                agentx_node_protocol::LifecycleOperation::Poll,
-                agentx_node_protocol::LifecycleOperation::Webhook,
-            ];
-            remote_action
+            http.binding_slots = vec![BindingSlot {
+                name: "credential".into(),
+                resource_type: ResourceType::Credential,
+                placement: BindingSlotPlacement::Inspector,
+                required: false,
+                multiple: false,
+            }];
+            http.ui_schema.resource_selectors.push(json!({
+                "bindingRole":"credential",
+                "resourceType":"credential",
+                "operation":"use",
+                "required":false,
+                "label":"Credential"
+            }));
+            http
         },
         m5_manifest(
             "model",
             NodeCapability::Model,
-            json!({"type":"object","properties":{"prompt":{"type":"string"},"userQuestion":{"type":"string","templatable":true,"allowedNamespaces":["inputs","outputs","contexts","execution","item","loop"],"expectedType":"string","multiline":false,"richText":false}},"additionalProperties":false}),
+            json!({"type":"object","properties":{"prompt":{"type":"string"},"userQuestion":{"type":"string","templatable":true,"allowedNamespaces":["inputs","outputs","contexts","execution","item","loop"],"expectedType":"string","multiline":false,"richText":false},"responseMode":{"type":"string","enum":["text","json_schema"],"default":"text"},"structuredSchema":{"type":"object"}},"additionalProperties":false}),
             SideEffectLevel::None,
         ),
         m5_manifest(
@@ -916,28 +892,28 @@ fn default_manifests() -> Vec<NodeManifestVersion> {
                 BindingSlot {
                     name: "mcp_tools".into(),
                     resource_type: ResourceType::McpTool,
-                    placement: BindingSlotPlacement::Canvas,
+                    placement: BindingSlotPlacement::Inspector,
                     required: false,
                     multiple: true,
                 },
                 BindingSlot {
                     name: "skills".into(),
                     resource_type: ResourceType::Skill,
-                    placement: BindingSlotPlacement::Canvas,
+                    placement: BindingSlotPlacement::Inspector,
                     required: false,
                     multiple: true,
                 },
                 BindingSlot {
                     name: "knowledge".into(),
                     resource_type: ResourceType::Rag,
-                    placement: BindingSlotPlacement::Canvas,
+                    placement: BindingSlotPlacement::Inspector,
                     required: false,
                     multiple: true,
                 },
                 BindingSlot {
                     name: "long_term_memory".into(),
                     resource_type: ResourceType::Memory,
-                    placement: BindingSlotPlacement::Canvas,
+                    placement: BindingSlotPlacement::Inspector,
                     required: false,
                     multiple: false,
                 },
@@ -957,6 +933,10 @@ fn default_manifests() -> Vec<NodeManifestVersion> {
                     "required":false,
                     "label":"Workspace Sandbox"
                 }),
+                json!({"bindingRole":"mcp_tools","resourceType":"mcp_tool","operation":"use","required":false,"multiple":true,"label":"MCP Tools"}),
+                json!({"bindingRole":"skills","resourceType":"skill","operation":"use","required":false,"multiple":true,"label":"Skills"}),
+                json!({"bindingRole":"knowledge","resourceType":"rag","operation":"read","required":false,"multiple":true,"label":"Knowledge"}),
+                json!({"bindingRole":"long_term_memory","resourceType":"memory","operation":"read","required":false,"multiple":false,"label":"Long-term Memory"}),
             ];
             for (locale, labels) in [
                 (
@@ -997,15 +977,42 @@ fn default_manifests() -> Vec<NodeManifestVersion> {
             "code",
             NodeCapability::Sandbox,
             json!({
-                "type":"object","required":["runner","source"],
-                "properties":{"runner":{"enum":["python","javascript","shell","browser"]},"source":{"type":"string"},"arguments":{"type":"array","items":{"type":"string"}},"networkPolicy":{"type":"object","properties":{"egressMode":{"enum":["none","public_https"],"default":"none"}},"additionalProperties":false}},
+                "type":"object","required":["runner","inputs","source","outputExample","networkPolicy"],
+                "properties":{
+                    "runner":{"type":"string","enum":["python","javascript","shell"],"default":"python"},
+                    "inputs":{"type":"object","additionalProperties":{},"default":{"kind":"object","fields":{}}},
+                    "source":{"type":"string","default":"def main(**inputs):\n    return {}"},
+                    "outputExample":{"type":"object","default":{},"additionalProperties":true},
+                    "networkPolicy":{
+                        "type":"object","required":["mode","destinations"],
+                        "properties":{
+                            "mode":{"type":"string","enum":["deny","allowlist"],"default":"deny"},
+                            "destinations":{
+                                "type":"array","maxItems":32,"default":[],
+                                "items":{
+                                    "type":"object","required":["target","ports"],
+                                    "properties":{
+                                        "target":{"type":"string","minLength":1,"maxLength":253},
+                                        "ports":{"type":"array","minItems":1,"maxItems":8,"items":{"type":"object","required":["from","to"],"properties":{"from":{"type":"integer","minimum":1,"maximum":65535},"to":{"type":"integer","minimum":1,"maximum":65535}},"additionalProperties":false}}
+                                    },
+                                    "additionalProperties":false
+                                }
+                            }
+                        },
+                        "additionalProperties":false,
+                        "default":{"mode":"deny","destinations":[]}
+                    }
+                },
                 "additionalProperties":false
             }),
             SideEffectLevel::Irreversible,
         ),
     ];
-    manifests.extend(crate::builtin_catalog::manifests());
     for manifest in &mut manifests {
+        if manifest.node_type == "approval" {
+            manifest.providers.push("users".into());
+            manifest.default_timeout_ms = None;
+        }
         configure_workflow_v4_capabilities(manifest);
         populate_parameter_localizations(manifest);
     }
@@ -1100,6 +1107,21 @@ fn humanize_protocol_name(value: &str) -> String {
 
 fn chinese_parameter_name(value: &str) -> String {
     match value {
+        "id" => "稳定标识".into(),
+        "name" => "名称".into(),
+        "label" => "显示名称".into(),
+        "title" => "标题".into(),
+        "description" => "描述".into(),
+        "value" => "值".into(),
+        "buttons" => "决策按钮".into(),
+        "cases" => "分支".into(),
+        "conditions" => "条件组".into(),
+        "logicalOp" => "条件关系".into(),
+        "selector" => "字段选择".into(),
+        "in" => "注入位置".into(),
+        "egressMode" => "出站网络".into(),
+        "leftField" => "左侧键".into(),
+        "rightField" => "右侧键".into(),
         "values" => "字段值".into(),
         "keepOnlySet" => "仅保留已设置字段".into(),
         "condition" => "条件".into(),
@@ -1110,11 +1132,22 @@ fn chinese_parameter_name(value: &str) -> String {
         "userQuestion" => "用户问题".into(),
         "sessionPolicy" => "会话策略".into(),
         "retentionPolicyId" => "保留策略".into(),
-        "arguments" => "调用参数".into(),
-        "endpoint" => "端点".into(),
+        "inputs" => "命名输入".into(),
+        "outputSelector" => "每轮输出".into(),
+        "outputSchema" => "输出结构".into(),
+        "outputExample" => "返回 JSON 示例".into(),
+        "responseMode" => "响应模式".into(),
+        "structuredSchema" => "结构化输出结构".into(),
+        "filter" => "过滤条件".into(),
+        "sort" => "排序规则".into(),
+        "takeN" => "取前 N 项".into(),
+        "parallelism" => "并发数".into(),
+        "errorMode" => "失败处理".into(),
         "url" => "地址".into(),
         "method" => "请求方法".into(),
         "headers" => "请求头".into(),
+        "query" => "查询参数".into(),
+        "apiKeyPlacement" => "API Key 位置".into(),
         "body" => "请求体".into(),
         "runner" => "运行器".into(),
         "source" => "源代码".into(),
@@ -1165,14 +1198,24 @@ fn chinese_parameter_name(value: &str) -> String {
         "joinType" => "连接类型".into(),
         "payloadSchema" => "载荷结构".into(),
         "resumeAt" => "恢复时间".into(),
-        "timeoutAt" => "超时时间点".into(),
         "input" => "输入数据".into(),
-        _ => "参数".into(),
+        _ => humanize_protocol_name(value),
     }
 }
 
 fn chinese_enum_label(value: &str) -> String {
     match value {
+        "text" => "文本".into(),
+        "json_schema" => "JSON Schema".into(),
+        "and" => "且".into(),
+        "or" => "或".into(),
+        "terminate" => "终止".into(),
+        "continue" => "保留失败位置".into(),
+        "remove" => "移除失败项".into(),
+        "tcp_proxy" => "允许 TCP 代理".into(),
+        "application_session" => "应用会话".into(),
+        "invocation" => "本次调用".into(),
+        "header" => "请求头".into(),
         "fail_fast" | "fail" | "stop" => "失败并停止".into(),
         "collect" => "收集".into(),
         "recover" => "恢复".into(),
@@ -1183,11 +1226,11 @@ fn chinese_enum_label(value: &str) -> String {
         "python" => "Python".into(),
         "javascript" => "JavaScript".into(),
         "shell" => "Shell".into(),
-        "browser" => "浏览器".into(),
         "sync" => "同步".into(),
         "async" => "异步".into(),
         "approved" => "通过".into(),
         "rejected" => "拒绝".into(),
+        "decided" => "已决策".into(),
         "first" => "第一个".into(),
         "last" => "最后一个".into(),
         "asc" => "升序".into(),
@@ -1245,31 +1288,13 @@ fn chinese_enum_label(value: &str) -> String {
         "update" => "更新".into(),
         "error_output" => "输出错误".into(),
         "partial" => "部分结果".into(),
-        _ => "选项".into(),
+        _ => humanize_protocol_name(value),
     }
 }
 
 fn configure_workflow_v4_capabilities(manifest: &mut NodeManifestVersion) {
-    let dynamic_projection = matches!(
-        manifest.node_type.as_str(),
-        "code"
-            | "declarative_http"
-            | "http_request"
-            | "remote_action"
-            | "model"
-            | "agent"
-            | "rag"
-            | "mcp_tool"
-            | "memory"
-            | "set"
-            | "json_transform"
-            | "json_parse"
-    );
-    if !dynamic_projection {
-        manifest.output_projection_schema = Value::Null;
-    }
     match manifest.node_type.as_str() {
-        "if" | "switch" => {
+        "if" => {
             for port in &manifest.output_ports {
                 manifest.output_cardinality.insert(
                     port.name.clone(),
@@ -1278,35 +1303,26 @@ fn configure_workflow_v4_capabilities(manifest: &mut NodeManifestVersion) {
             }
         }
         "loop_over_items" => {
-            for port in &manifest.output_ports {
-                manifest.output_cardinality.insert(
-                    port.name.clone(),
-                    agentx_node_protocol::OutputCardinality::ZeroOrMany,
-                );
-            }
+            manifest.output_schema = array_items_response_schema();
+            manifest.output_cardinality.insert(
+                "main".into(),
+                agentx_node_protocol::OutputCardinality::ExactlyOne,
+            );
+            manifest.output_cardinality.insert(
+                "error".into(),
+                agentx_node_protocol::OutputCardinality::ZeroOrOne,
+            );
         }
-        "wait" => {
-            for port in &manifest.output_ports {
-                manifest.output_cardinality.insert(
-                    port.name.clone(),
-                    agentx_node_protocol::OutputCardinality::ZeroOrOne,
-                );
-            }
-            let wait_schema = json!({
-                "type":"object",
-                "properties":{
-                    "status":{"type":"string","enum":["resumed","timed_out"]},
-                    "payload":{},
-                    "resumedAt":{"type":["string","null"],"format":"date-time"}
-                },
-                "required":["status","payload","resumedAt"],
-                "additionalProperties":false
-            });
-            for port in ["resumed", "timed_out"] {
-                manifest
-                    .output_port_schemas
-                    .insert(port.into(), wait_schema.clone());
-            }
+        "list" => {
+            manifest.output_schema = array_items_response_schema();
+            manifest.output_cardinality.insert(
+                "main".into(),
+                agentx_node_protocol::OutputCardinality::ExactlyOne,
+            );
+            manifest.output_cardinality.insert(
+                "error".into(),
+                agentx_node_protocol::OutputCardinality::ZeroOrOne,
+            );
         }
         "approval" => {
             for port in &manifest.output_ports {
@@ -1315,23 +1331,15 @@ fn configure_workflow_v4_capabilities(manifest: &mut NodeManifestVersion) {
                     agentx_node_protocol::OutputCardinality::ZeroOrOne,
                 );
             }
-            for (port, decision) in [("approved", "approved"), ("rejected", "rejected")] {
-                manifest.output_port_schemas.insert(
-                    port.into(),
-                    json!({
-                        "type":"object",
-                        "properties":{
-                            "taskId":{"type":"string","format":"uuid"},
-                            "decision":{"type":"string","enum":[decision]},
-                            "decidedBy":{"type":"string","format":"uuid"},
-                            "reason":{"type":["string","null"]},
-                            "input":{}
-                        },
-                        "required":["taskId","decision","decidedBy","reason","input"],
-                        "additionalProperties":false
-                    }),
-                );
-            }
+            manifest.output_port_schemas.insert(
+                "decision".into(),
+                json!({
+                    "type":"object",
+                    "properties":{"taskId":{"type":"string","format":"uuid"},"decision":{"type":"string"},"reason":{"type":["string","null"]},"decidedBy":{"type":["string","null"],"format":"uuid"},"input":{}},
+                    "required":["taskId","decision","decidedBy","reason","input"],
+                    "additionalProperties":false
+                }),
+            );
             manifest.output_port_schemas.insert("timed_out".into(), json!({
                 "type":"object",
                 "properties":{"taskId":{"type":"string","format":"uuid"},"decision":{"type":"string","enum":["timed_out"]},"decidedBy":{"type":"null"},"reason":{"type":"null"},"input":{}},
@@ -1340,7 +1348,7 @@ fn configure_workflow_v4_capabilities(manifest: &mut NodeManifestVersion) {
             }));
         }
         "declarative_http" | "http_request" => {
-            manifest.output_schema = json!({"type":"object","properties":{"statusCode":{"type":"integer"},"headers":{"type":"object"},"body":{},"files":{"type":"array","items":artifact_ref_schema()}},"required":["statusCode","headers","body","files"],"additionalProperties":false});
+            manifest.output_schema = json!({"type":"object","properties":{"statusCode":{"type":"integer"},"headers":{"type":"object"},"body":{"type":"string"},"files":{"type":"array","items":artifact_ref_schema()}},"required":["statusCode","headers","body","files"],"additionalProperties":false});
             manifest.output_cardinality.insert(
                 "main".into(),
                 agentx_node_protocol::OutputCardinality::ExactlyOne,
@@ -1390,7 +1398,7 @@ fn configure_workflow_v4_capabilities(manifest: &mut NodeManifestVersion) {
         }
         _ => {}
     }
-    if manifest.node_type == "skill" || manifest.node_type == "remote_action" {
+    if manifest.node_type == "skill" {
         manifest.output_schema = tool_response_schema();
     }
     let error_schema = error_response_schema();
@@ -1403,13 +1411,7 @@ fn configure_workflow_v4_capabilities(manifest: &mut NodeManifestVersion) {
     }
     if matches!(
         manifest.node_type.as_str(),
-        "if" | "switch"
-            | "merge"
-            | "loop_over_items"
-            | "wait"
-            | "approval"
-            | "error_handler"
-            | "stop_and_error"
+        "if" | "merge" | "loop_over_items" | "approval"
     ) {
         manifest.context_write_capability = false;
     }
@@ -1430,27 +1432,17 @@ fn configure_workflow_v4_capabilities(manifest: &mut NodeManifestVersion) {
         .and_then(Value::as_object_mut)
     {
         for (name, control) in controls {
-            if matches!(
-                control.as_str(),
-                "text"
-                    | "textarea"
-                    | "prompt"
-                    | "expression"
-                    | "json"
-                    | "mapper"
-                    | "fixed_collection"
-                    | "number"
-                    | "boolean"
-                    | "select"
-            ) && let Some(property) = properties.get_mut(&name).and_then(Value::as_object_mut)
+            let binding = match control.as_str() {
+                "reference" => Some(binding_contract("reference", false)),
+                "value" => Some(binding_contract("value", false)),
+                "template" | "prompt" | "textarea" => Some(binding_contract("template", false)),
+                "mapper" | "structured" => Some(binding_contract("structured", true)),
+                _ => None,
+            };
+            if let Some(binding) = binding
+                && let Some(property) = properties.get_mut(&name).and_then(Value::as_object_mut)
             {
-                property.insert("x-agentx-dynamicValue".into(), json!({
-                    "modes": if control == "prompt" || control == "textarea" { json!(["literal","reference","template"]) } else if control == "expression" { json!(["literal","reference","expression"]) } else { json!(["literal","reference"]) },
-                    "allowedNamespaces":["inputs","outputs","contexts","execution","item","loop"],
-                    "acceptedCardinality":["single"],
-                    "missingPolicies":["error","null","default","omit"],
-                    "recursive":matches!(control.as_str(), "json" | "mapper" | "fixed_collection")
-                }));
+                property.insert("x-agentx-binding".into(), binding);
                 property.remove("templatable");
                 property.remove("allowedNamespaces");
                 property.remove("expectedType");
@@ -1481,6 +1473,15 @@ fn ai_response_schema() -> Value {
 
 fn tool_response_schema() -> Value {
     json!({"type":"object","properties":{"text":{"type":"string"},"structuredOutput":{"type":["object","null"]},"files":{"type":"array","items":artifact_ref_schema()}},"required":["text","structuredOutput","files"],"additionalProperties":false})
+}
+
+fn array_items_response_schema() -> Value {
+    json!({
+        "type":"object",
+        "properties":{"items":{"type":"array","items":{}}},
+        "required":["items"],
+        "additionalProperties":false
+    })
 }
 
 fn artifact_ref_schema() -> Value {
@@ -1539,41 +1540,80 @@ mod tests {
     }
 
     #[test]
-    fn wait_manifest_accepts_form_resume() {
-        let registry = NodeRegistry::m4_defaults();
-        let schema = &registry
-            .get("wait", 1)
-            .expect("wait manifest")
-            .parameter_schema;
-        let kinds = schema["properties"]["kind"]["enum"]
-            .as_array()
-            .expect("wait kinds");
-        assert!(kinds.iter().any(|kind| kind == "form"));
-    }
-
-    #[test]
     fn approval_manifest_declares_decision_output_contracts() {
         let registry = NodeRegistry::m5_defaults();
         let manifest = registry.get("approval", 1).expect("approval manifest");
 
-        for (port, decision) in [("approved", "approved"), ("rejected", "rejected")] {
-            let schema = manifest
-                .output_port_schemas
-                .get(port)
-                .expect("decision port schema");
-            assert_eq!(schema["properties"]["decision"]["enum"], json!([decision]));
-            assert_eq!(
-                schema["required"],
-                json!(["taskId", "decision", "decidedBy", "reason", "input"])
-            );
-        }
+        let decision = manifest
+            .output_port_schemas
+            .get("decision")
+            .expect("decision port schema");
+        assert_eq!(
+            decision["required"],
+            json!(["taskId", "decision", "decidedBy", "reason", "input"])
+        );
+        assert!(decision["properties"]["decision"].get("enum").is_none());
         assert_eq!(
             manifest.output_port_schemas["timed_out"]["properties"]["decision"]["enum"],
             json!(["timed_out"])
         );
+        assert!(
+            manifest
+                .output_ports
+                .iter()
+                .any(|port| port.name == "decision" && port.variadic)
+        );
         assert_eq!(
             manifest.output_port_schemas["error"]["properties"]["code"]["type"],
             "string"
+        );
+    }
+
+    #[test]
+    fn specialized_controls_own_bindings_only_at_editable_value_leaves() {
+        let registry = NodeRegistry::m5_defaults();
+        let if_schema = &registry.get("if", 1).unwrap().parameter_schema;
+        assert!(
+            if_schema["properties"]["cases"]
+                .get("x-agentx-binding")
+                .is_none()
+        );
+        assert_eq!(
+            if_schema["properties"]["cases"]["items"]["properties"]["conditions"]["items"]["properties"]
+                ["condition"]["properties"]["left"]["x-agentx-binding"]["acceptedKinds"],
+            json!(["literal", "reference", "template", "array", "object"])
+        );
+
+        let list_schema = &registry.get("list", 1).unwrap().parameter_schema;
+        assert!(
+            list_schema["properties"]["filter"]
+                .get("x-agentx-binding")
+                .is_none()
+        );
+        assert!(
+            list_schema["properties"]["sort"]
+                .get("x-agentx-binding")
+                .is_none()
+        );
+        assert_eq!(
+            list_schema["properties"]["sort"]["items"]["properties"]["selector"]["x-agentx-binding"]
+                ["acceptedKinds"],
+            json!(["reference"])
+        );
+
+        let http_schema = &registry
+            .get("declarative_http", 1)
+            .unwrap()
+            .parameter_schema;
+        assert!(
+            http_schema["properties"]["query"]
+                .get("x-agentx-binding")
+                .is_none()
+        );
+        assert_eq!(
+            http_schema["properties"]["query"]["items"]["properties"]["value"]["x-agentx-binding"]
+                ["acceptedKinds"],
+            json!(["literal", "reference", "template"])
         );
     }
 
@@ -1708,20 +1748,12 @@ mod tests {
             assert!(manifest.localizations.contains_key("en-US"));
         }
 
-        let aggregate = registry.get("aggregate", 1).expect("aggregate manifest");
-        let english = aggregate
-            .localizations
-            .get("en-US")
-            .expect("English locale");
+        let branch = registry.get("if", 1).expect("if manifest");
+        let english = branch.localizations.get("en-US").expect("English locale");
         assert!(
             english
                 .parameter_labels
-                .contains_key("operations[].operation")
-        );
-        assert!(
-            english
-                .parameter_enum_options
-                .contains_key("operations[].operation")
+                .contains_key("cases[].conditions[].condition")
         );
         assert!(english.parameter_descriptions.is_empty());
 
@@ -1739,18 +1771,18 @@ mod tests {
             Err(RegistryError::InvalidManifest { .. })
         ));
 
-        let mut invalid_nested = aggregate.clone();
+        let mut invalid_nested = branch.clone();
         invalid_nested
             .localizations
             .get_mut("en-US")
             .expect("English localization")
             .parameter_labels
-            .insert("operations[].missing".into(), "Missing".into());
+            .insert("cases[].missing".into(), "Missing".into());
         assert!(invalid_nested.validate_localizations().is_err());
     }
 
     #[test]
-    fn agent_and_standalone_nodes_share_skill_and_tool_resources() {
+    fn agent_resources_remain_internal_and_studio_catalog_is_exact() {
         let registry = NodeRegistry::m5_defaults();
         assert_eq!(
             registry
@@ -1759,6 +1791,33 @@ mod tests {
                 .capability,
             NodeCapability::McpTool
         );
+        assert_eq!(
+            registry
+                .studio_manifests()
+                .map(|manifest| manifest.node_type.as_str())
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from([
+                "agent",
+                "approval",
+                "code",
+                "declarative_http",
+                "if",
+                "list",
+                "loop_over_items",
+                "merge",
+                "model",
+                "set",
+                "sub_workflow",
+            ])
+        );
+        for resource_only in ["mcp_tool", "skill", "rag", "memory"] {
+            assert!(
+                registry
+                    .studio_manifests()
+                    .all(|manifest| manifest.node_type != resource_only),
+                "{resource_only} must stay out of the Studio Catalog"
+            );
+        }
         assert_eq!(
             registry.get("skill", 1).expect("Skill manifest").capability,
             NodeCapability::Skill
@@ -1779,14 +1838,14 @@ mod tests {
                 .binding_slots
                 .iter()
                 .any(|slot| slot.name == "mcp_tools"
-                    && slot.placement == BindingSlotPlacement::Canvas)
+                    && slot.placement == BindingSlotPlacement::Inspector)
         );
         assert!(
             agent
                 .binding_slots
                 .iter()
                 .any(|slot| slot.name == "skills"
-                    && slot.placement == BindingSlotPlacement::Canvas)
+                    && slot.placement == BindingSlotPlacement::Inspector)
         );
         assert!(agent.binding_slots.iter().any(|slot| {
             slot.name == "model"
@@ -1820,16 +1879,27 @@ mod tests {
     }
 
     #[test]
-    fn local_data_catalog_contains_all_new_capabilities() {
+    fn generated_studio_catalog_fixture_does_not_drift() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(
+            "../../apps/web/src/features/workflow-designer/testing/studio-catalog.fixture.json",
+        );
+        let committed: Value = serde_json::from_str(
+            &std::fs::read_to_string(&path)
+                .unwrap_or_else(|error| panic!("read {}: {error}", path.display())),
+        )
+        .expect("Studio Catalog fixture is valid JSON");
         let registry = NodeRegistry::m5_defaults();
-        for node_type in crate::builtin_catalog::NODE_TYPES {
-            let manifest = registry.get(node_type, 1).expect("local data manifest");
-            assert_eq!(manifest.capability, NodeCapability::Builtin);
-            assert!(manifest.providers.is_empty());
-            assert!(manifest.credentials.is_empty());
-            assert!(manifest.localizations.contains_key("en-US"));
-            assert!(manifest.localizations.contains_key("zh-CN"));
-        }
+        let generated = serde_json::to_value(registry.studio_manifests().collect::<Vec<_>>())
+            .expect("Studio Catalog serializes");
+        assert_eq!(
+            committed, generated,
+            "Studio Catalog drift: run `cargo run -p agentx-runtime --bin generate-studio-catalog -- apps/web/src/features/workflow-designer/testing/studio-catalog.fixture.json`"
+        );
+    }
+
+    #[test]
+    fn merge_manifest_ports_and_modes_are_declared() {
+        let registry = NodeRegistry::m5_defaults();
         let merge = registry.get("merge", 1).expect("merge manifest");
         assert_eq!(
             merge

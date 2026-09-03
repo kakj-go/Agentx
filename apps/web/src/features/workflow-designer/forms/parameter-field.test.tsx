@@ -2,12 +2,13 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { useState } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 
-import { ParameterField } from './parameter-field'
+import { ParameterField, SUPPORTED_CONTROLS } from './parameter-field'
 
 const referenceCatalog = {
   inputs: [{ id: 'inputs.question', label: 'question', path: 'inputs.question', selector: { namespace: 'inputs' as const, run: { kind: 'current' as const }, item: { kind: 'current' as const }, path: ['question'] }, type: 'string', children: [] }],
   outputs: [],
   contexts: [],
+  execution: [{ id: 'execution.root', label: 'Execution information', path: 'execution', children: [] }],
 }
 
 vi.mock('./code-editor', () => ({
@@ -35,18 +36,34 @@ describe('ParameterField', () => {
 
   it('renders a dedicated key/value mapper declared by the manifest', () => {
     const onChange = vi.fn()
-    render(<ParameterField name="values" onChange={onChange} parameters={{}} schema={{ type: 'object' }} ui={{ control: 'mapper' }} value={{ total: 'gross' }} />)
+    render(<ParameterField name="values" onChange={onChange} parameters={{}} schema={{ type: 'object' }} ui={{ control: 'mapper' }} value={{ kind: 'object', fields: { total: { kind: 'literal', value: 'gross' } } }} />)
 
     expect(screen.getByTestId('mapper-control')).toBeInTheDocument()
-    fireEvent.change(screen.getByLabelText('Value'), { target: { value: 'net' } })
-    expect(onChange).toHaveBeenCalledWith({ total: 'net' })
+    fireEvent.click(screen.getByRole('button', { name: /Add field|添加字段/ }))
+    expect(onChange).toHaveBeenCalledWith({ kind: 'object', fields: { total: { kind: 'literal', value: 'gross' }, field2: { kind: 'literal', value: '' } } })
+  })
+
+  it('propagates mapper binding namespaces to dynamic value rows', () => {
+    render(<ParameterField
+      name="inputs"
+      onChange={vi.fn()}
+      parameters={{}}
+      referenceCatalog={referenceCatalog}
+      schema={{ type: 'object', additionalProperties: {}, "x-agentx-binding": { acceptedKinds: ['literal', 'reference', 'template', 'array', 'object'], allowedNamespaces: ['execution'], acceptedCardinality: ['single'], missingPolicies: ['error'], recursive: true } }}
+      ui={{ control: 'mapper' }}
+      value={{ kind: 'object', fields: { workflow_name: { kind: 'literal', value: '' } } }}
+    />)
+
+    fireEvent.click(screen.getByRole('textbox', { name: 'Value' }))
+    expect(screen.getByRole('button', { name: 'Execution information' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Inputs|输入/ })).not.toBeInTheDocument()
   })
 
   it('edits object and array parameters through visible field controls', () => {
     const onChange = vi.fn()
     render(
       <ParameterField
-        name="arguments"
+        name="payload"
         onChange={onChange}
         parameters={{}}
         schema={{
@@ -61,7 +78,7 @@ describe('ParameterField', () => {
       />,
     )
 
-    const field = screen.getByTestId('parameter-arguments')
+    const field = screen.getByTestId('parameter-payload')
     fireEvent.change(within(field).getByRole('textbox'), {
       target: { value: 'Agentx E2E' },
     })
@@ -102,15 +119,15 @@ describe('ParameterField', () => {
         referenceCatalog={referenceCatalog}
         schema={{
           type: 'array',
-          "x-agentx-dynamicValue": { modes: ['literal', 'reference'], allowedNamespaces: ['inputs'], acceptedCardinality: ['single'], missingPolicies: ['error'], recursive: true },
+          "x-agentx-binding": { acceptedKinds: ['literal', 'reference', 'template', 'array', 'object'], allowedNamespaces: ['inputs'], acceptedCardinality: ['single'], missingPolicies: ['error'], recursive: true },
         }}
-        ui={{ control: 'json' }}
-        value={[{ kind: 'literal', value: 7 }]}
+        ui={{ control: 'structured' }}
+        value={{ kind: 'array', items: [{ kind: 'literal', value: 7 }] }}
       />,
     )
 
     const field = screen.getByTestId('parameter-items')
-    expect(within(field).getByRole('combobox', { name: 'Value type' })).toHaveTextContent('Number')
+    expect(within(field).queryByTestId('literal-type-badge')).not.toBeInTheDocument()
     expect(within(field).getByRole('textbox', { name: 'Value' })).toHaveTextContent('7')
   })
 
@@ -176,7 +193,7 @@ describe('ParameterField', () => {
         parameters={{}}
         referenceCatalog={referenceCatalog}
         schema={{ type: 'string' }}
-        ui={{ control: 'prompt' }}
+        ui={{ control: 'text' }}
         value=""
       />,
     )
@@ -190,12 +207,12 @@ describe('ParameterField', () => {
         onChange={vi.fn()}
         parameters={{}}
         referenceCatalog={referenceCatalog}
-        schema={{ type: 'string', "x-agentx-dynamicValue": { modes: ['literal', 'reference'], allowedNamespaces: ['inputs'], acceptedCardinality: ['single'], missingPolicies: ['error'], recursive: false } }}
-        ui={{ control: 'text' }}
+        schema={{ type: 'string', "x-agentx-binding": { acceptedKinds: ['literal', 'reference', 'template'], allowedNamespaces: ['inputs'], acceptedCardinality: ['single'], missingPolicies: ['error'], recursive: false } }}
+        ui={{ control: 'template' }}
         value=""
       />,
     )
-    fireEvent.focus(screen.getByRole('textbox'))
+    fireEvent.click(screen.getByRole('textbox'))
     expect(screen.getByTestId('reference-picker')).toBeInTheDocument()
   })
 
@@ -208,15 +225,15 @@ describe('ParameterField', () => {
           onChange={setValue}
           parameters={{}}
           referenceCatalog={referenceCatalog}
-          schema={{ type: 'string', "x-agentx-dynamicValue": { modes: ['literal', 'reference'], allowedNamespaces: ['inputs'], acceptedCardinality: ['single'], missingPolicies: ['error'], recursive: false } }}
-          ui={{ control: 'text' }}
+          schema={{ type: 'string', "x-agentx-binding": { acceptedKinds: ['literal', 'reference', 'template'], allowedNamespaces: ['inputs'], acceptedCardinality: ['single'], missingPolicies: ['error'], recursive: false } }}
+          ui={{ control: 'template' }}
           value={value}
         />
       )
     }
     render(<Harness />)
 
-    fireEvent.focus(screen.getByRole('textbox', { name: 'Value' }))
+    fireEvent.click(screen.getByRole('textbox', { name: 'Value' }))
     fireEvent.click(screen.getByRole('button', { name: /输入|Inputs/ }))
     fireEvent.click(screen.getByRole('button', { name: /question/i }))
 
@@ -231,5 +248,82 @@ describe('ParameterField', () => {
     render(<ParameterField name="maxOutputTokens" onChange={vi.fn()} parameters={{}} schema={{ type: 'integer' }} ui={{ control: 'number', unit: 'tokens' }} value={4096} />)
 
     expect(screen.getByText('tokens')).toBeInTheDocument()
+  })
+})
+
+describe('SUPPORTED_CONTROLS reconciliation', () => {
+  it('matches exactly the control set offered by the current backend catalog', () => {
+    // Hardcoded mirror of the control names emitted by crates/agentx-runtime/src/registry.rs.
+    const backendControls = [
+      'text', 'textarea', 'number', 'boolean', 'select', 'provider_options',
+      'collection', 'fixed_collection', 'mapper', 'reference', 'value', 'template', 'structured', 'prompt',
+      'json', 'code', 'condition_builder', 'buttons_editor', 'schema_editor',
+      'json5_example', 'network_policy', 'kv_builder', 'sort_builder', 'api_key_placement',
+    ]
+    expect([...SUPPORTED_CONTROLS].sort()).toEqual([...backendControls].sort())
+  })
+})
+
+describe('condition builder control', () => {
+  it('edits IF/ELIF branches with names, logical operators and condition rows', () => {
+    const onChange = vi.fn()
+    const value = { cases: [{ id: 'case_1', name: 'Long', conditions: [{ condition: { left: { kind: 'literal', value: true }, operator: 'eq', right: { kind: 'literal', value: true } }, label: '' }], logicalOp: 'and' }] }
+    render(<ParameterField name="cases" onChange={onChange} parameters={{ cases: value.cases }} schema={{ type: 'array' }} ui={{ control: 'condition_builder' }} value={value.cases} />)
+
+    const builder = screen.getByTestId('condition-builder')
+    expect(within(builder).getByTestId('condition-branch-0')).toBeInTheDocument()
+    fireEvent.click(within(builder).getByRole('button', { name: /Rename branch|重命名分支/ }))
+    fireEvent.change(within(builder).getByLabelText(/Name|名称/), { target: { value: 'Approved' } })
+    expect(onChange).toHaveBeenLastCalledWith([{ id: 'case_1', name: 'Approved', conditions: value.cases[0].conditions, logicalOp: 'and' }])
+
+    fireEvent.click(within(builder).getByRole('button', { name: /Add branch|添加分支/ }))
+    const added = onChange.mock.calls.at(-1)?.[0] as Array<{ id: string; name: string; conditions: unknown[]; logicalOp: string }>
+    expect(added[0]).toEqual(value.cases[0])
+    expect(added[1]).toMatchObject({ name: '', conditions: [{ condition: { left: { kind: 'literal', value: '' }, operator: 'eq', right: { kind: 'literal', value: '' } } }], logicalOp: 'and' })
+    expect(added[1].id).toMatch(/^case_[0-9a-f-]{36}$/)
+
+  })
+
+  it('adds and removes condition rows inside a branch', () => {
+    const onChange = vi.fn()
+    const cases = [{ id: 'case_1', name: '', conditions: [], logicalOp: 'and' }]
+    render(<ParameterField name="cases" onChange={onChange} parameters={{ cases }} schema={{ type: 'array' }} ui={{ control: 'condition_builder' }} value={cases} />)
+
+    const builder = screen.getByTestId('condition-builder')
+    fireEvent.click(within(builder).getByRole('button', { name: /Add condition|添加条件/ }))
+    expect(onChange).toHaveBeenLastCalledWith([{ id: 'case_1', name: '', conditions: [{ condition: { left: { kind: 'literal', value: '' }, operator: 'eq', right: { kind: 'literal', value: '' } } }], logicalOp: 'and' }])
+  })
+
+  it('edits a single condition group for object-shaped filter parameters', () => {
+    const onChange = vi.fn()
+    const filter = { conditions: [{ condition: { left: { kind: 'literal', value: true }, operator: 'eq', right: { kind: 'literal', value: true } }, label: '' }], logicalOp: 'and' }
+    render(<ParameterField name="filter" onChange={onChange} parameters={{ filter }} schema={{ type: 'object' }} ui={{ control: 'condition_builder' }} value={filter} />)
+
+    const builder = screen.getByTestId('condition-builder')
+    expect(within(builder).queryByRole('combobox', { name: /Logical operator|逻辑运算/i })).not.toBeInTheDocument()
+
+    fireEvent.click(within(builder).getAllByRole('button', { name: /Remove condition|删除条件/ })[0])
+    expect(onChange).toHaveBeenLastCalledWith({ conditions: [], logicalOp: 'and' })
+  })
+})
+
+describe('buttons editor control', () => {
+  it('keeps stable hidden ids while editing labels and adding buttons', () => {
+    const onChange = vi.fn()
+    const value = { buttons: [{ id: 'approve', label: 'Approve' }] }
+    render(<ParameterField name="buttons" onChange={onChange} parameters={value} schema={{ type: 'array' }} ui={{ control: 'buttons_editor' }} value={value} />)
+
+    const editor = screen.getByTestId('buttons-editor')
+    fireEvent.change(within(editor).getByLabelText(/Button label|按钮文本/), { target: { value: '通过' } })
+    expect(onChange).toHaveBeenLastCalledWith({ buttons: [{ id: 'approve', label: '通过' }] })
+
+    fireEvent.click(within(editor).getByRole('button', { name: /Add button|添加按钮/ }))
+    const added = onChange.mock.calls.at(-1)?.[0] as { buttons: Array<{ id: string; label: string }> }
+    expect(added.buttons[0]).toEqual({ id: 'approve', label: 'Approve' })
+    expect(added.buttons[1]).toMatchObject({ label: '' })
+    expect(added.buttons[1].id).toMatch(/^decision_[0-9a-f-]{36}$/)
+
+    fireEvent.click(within(editor).getByRole('button', { name: /Remove button|删除按钮/ }))
+    expect(onChange).toHaveBeenLastCalledWith({ buttons: [] })
   })
 })

@@ -33,11 +33,7 @@ pub struct EditorDocument {
     #[serde(default)]
     pub boundary_layouts: Vec<BoundaryLayout>,
     #[serde(default)]
-    pub binding_layouts: Vec<BindingLayout>,
-    #[serde(default)]
     pub edges: Vec<EditorEdge>,
-    #[serde(default)]
-    pub binding_edges: Vec<BindingEdge>,
     #[serde(default)]
     pub annotations: Vec<EditorAnnotation>,
     #[serde(default)]
@@ -76,27 +72,10 @@ pub struct NodeLayout {
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct BindingLayout {
-    pub binding_id: String,
-    pub x: f64,
-    pub y: f64,
-}
-
-#[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct EditorEdge {
     pub edge_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label_position: Option<f64>,
-}
-
-#[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct BindingEdge {
-    pub edge_id: String,
-    pub source_binding_id: String,
-    pub target_node_id: String,
-    pub target_slot: String,
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Serialize)]
@@ -182,11 +161,15 @@ pub struct DebugPlan {
     pub overlay_hash: Option<String>,
 }
 
+/// The single source of truth for the persisted Workflow Definition schema
+/// version. Bump together with `WorkflowSchemaVersion` and every fixture.
+pub const WORKFLOW_SCHEMA_VERSION: &str = "8.0";
+
 #[derive(JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum WorkflowSchemaVersion {
-    #[serde(rename = "7.0")]
-    V7,
+    #[serde(rename = "8.0")]
+    V8,
 }
 
 fn deserialize_workflow_schema_version<'de, D>(deserializer: D) -> Result<String, D::Error>
@@ -194,21 +177,23 @@ where
     D: Deserializer<'de>,
 {
     let version = String::deserialize(deserializer)?;
-    if version == "7.0" {
+    if version == WORKFLOW_SCHEMA_VERSION {
         Ok(version)
     } else {
         Err(de::Error::custom(format!(
-            "unsupported Workflow Definition schema version '{version}'; expected 7.0"
+            "unsupported Workflow Definition schema version '{version}'; expected {WORKFLOW_SCHEMA_VERSION}"
         )))
     }
 }
 
-/// A persisted dynamic value is always a tagged object.  It deliberately
-/// lives beside ordinary JSON rather than overloading strings, so business
-/// payloads cannot accidentally become expressions.
+/// The only public value language accepted by Workflow Definition 8.0.
+///
+/// Input bindings deliberately contain no calculation node. Arrays and objects
+/// are recursive so structured JSON may embed stable references and text
+/// templates without falling back to a second expression protocol.
 #[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", tag = "kind", deny_unknown_fields)]
-pub enum DynamicValue {
+pub enum InputBinding {
     Literal {
         value: Value,
     },
@@ -216,21 +201,27 @@ pub enum DynamicValue {
         selector: ValueSelector,
         #[serde(default, rename = "missingPolicy")]
         missing_policy: MissingValuePolicy,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        coerce: Option<ValueCoercion>,
     },
     Template {
-        segments: Vec<TemplateSegment>,
+        segments: Vec<InputTemplateSegment>,
     },
-    Expression {
-        root: ExpressionNode,
+    Array {
+        items: Vec<InputBinding>,
+    },
+    Object {
+        fields: BTreeMap<String, InputBinding>,
     },
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ValueCoercion {
-    String,
+/// Reference-only parameters such as List input and Loop input/output.
+#[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", tag = "kind", deny_unknown_fields)]
+pub enum ReferenceBinding {
+    Reference {
+        selector: ValueSelector,
+        #[serde(default, rename = "missingPolicy")]
+        missing_policy: MissingValuePolicy,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Serialize)]
@@ -286,15 +277,12 @@ pub enum MissingValuePolicy {
     #[default]
     Error,
     Null,
-    Default {
-        value: Box<DynamicValue>,
-    },
     Omit,
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", tag = "kind", deny_unknown_fields)]
-pub enum TemplateSegment {
+pub enum InputTemplateSegment {
     Text {
         text: String,
     },
@@ -305,85 +293,33 @@ pub enum TemplateSegment {
     },
 }
 
+/// The only computation shape accepted by IF and List filter rows.
 #[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase", tag = "kind", deny_unknown_fields)]
-pub enum ExpressionNode {
-    Literal {
-        value: Value,
-    },
-    Reference {
-        selector: ValueSelector,
-        #[serde(default, rename = "missingPolicy")]
-        missing_policy: MissingValuePolicy,
-    },
-    Unary {
-        operator: ExpressionUnaryOperator,
-        operand: Box<ExpressionNode>,
-    },
-    Binary {
-        operator: ExpressionBinaryOperator,
-        left: Box<ExpressionNode>,
-        right: Box<ExpressionNode>,
-    },
-    Conditional {
-        condition: Box<ExpressionNode>,
-        then_value: Box<ExpressionNode>,
-        else_value: Box<ExpressionNode>,
-    },
-    Call {
-        function: ExpressionFunction,
-        arguments: Vec<ExpressionNode>,
-    },
-    Array {
-        items: Vec<ExpressionNode>,
-    },
-    Object {
-        fields: BTreeMap<String, ExpressionNode>,
-    },
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ConditionSpec {
+    pub left: InputBinding,
+    pub operator: ConditionOperator,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub right: Option<InputBinding>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub enum ExpressionUnaryOperator {
-    Not,
-    Negate,
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ExpressionBinaryOperator {
+pub enum ConditionOperator {
     Eq,
     Ne,
     Gt,
     Gte,
     Lt,
     Lte,
-    Add,
-    Subtract,
-    Multiply,
-    Divide,
-    Modulo,
-    And,
-    Or,
     In,
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ExpressionFunction {
     Contains,
-    Double,
-    Duration,
+    NotContains,
     EndsWith,
-    Int,
-    Matches,
-    Max,
-    Min,
-    Size,
     StartsWith,
-    String,
-    Timestamp,
-    Uint,
+    Matches,
+    IsEmpty,
+    IsNotEmpty,
 }
 
 impl WorkflowDefinition {
@@ -399,14 +335,14 @@ impl WorkflowDefinition {
             name: "End".to_owned(),
             disabled: false,
             protected: true,
+            parent_id: None,
             parameters: ExitParameters::default().to_value(),
-            output_projection: BTreeMap::new(),
             context_writes: Vec::new(),
             resource_references: Vec::new(),
             settings: NodeSettings::default(),
         };
         Self {
-            schema_version: "7.0".to_owned(),
+            schema_version: WORKFLOW_SCHEMA_VERSION.to_owned(),
             start: WorkflowStart::default(),
             nodes: vec![exit],
             connections: vec![WorkflowConnection {
@@ -489,43 +425,35 @@ pub enum ContextMergePolicy {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WorkflowEnd {
     #[serde(default)]
+    pub completion: WorkflowCompletion,
+    #[serde(default)]
     pub outputs: BTreeMap<String, WorkflowOutput>,
     #[serde(default)]
     pub error: WorkflowErrorEnd,
 }
 
-#[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Serialize)]
+/// How the engine finalizes an execution whose branches reach exit nodes.
+///
+/// - `FirstReturn` (default): the first delivery to reach an exit (main or
+///   error port, symmetric) finalizes the execution immediately and cancels
+///   every other in-flight activation.
+/// - `AllComplete`: the execution waits for quiescence; every reached exit is
+///   evaluated against the shared `end.outputs` contract and each output field
+///   is returned as an array with one element per reached exit (definition
+///   order; unreached exits and unbound fields are omitted).
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkflowCompletion {
+    #[default]
+    FirstReturn,
+    AllComplete,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, JsonSchema, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WorkflowErrorEnd {
     #[serde(default)]
-    pub strategy: EndErrorStrategy,
-    #[serde(default = "default_error_collect_window_ms")]
-    #[schemars(range(min = 100, max = 60_000))]
-    pub collect_window_ms: u64,
-    #[serde(default)]
     pub outputs: BTreeMap<String, WorkflowOutput>,
-}
-
-impl Default for WorkflowErrorEnd {
-    fn default() -> Self {
-        Self {
-            strategy: EndErrorStrategy::FailFast,
-            collect_window_ms: default_error_collect_window_ms(),
-            outputs: BTreeMap::new(),
-        }
-    }
-}
-
-const fn default_error_collect_window_ms() -> u64 {
-    5_000
-}
-
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum EndErrorStrategy {
-    #[default]
-    FailFast,
-    Collect,
 }
 
 /// The global output contract shared by every exit node. Field values are
@@ -547,9 +475,9 @@ pub struct WorkflowOutput {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ExitParameters {
     #[serde(default)]
-    pub outputs: BTreeMap<String, DynamicValue>,
+    pub outputs: BTreeMap<String, InputBinding>,
     #[serde(default)]
-    pub error_outputs: BTreeMap<String, DynamicValue>,
+    pub error_outputs: BTreeMap<String, InputBinding>,
 }
 
 impl ExitParameters {
@@ -563,7 +491,7 @@ impl ExitParameters {
 
     #[must_use]
     pub fn to_value(&self) -> Value {
-        serde_json::to_value(self).unwrap_or_else(|_| Value::Null)
+        serde_json::to_value(self).unwrap_or(Value::Null)
     }
 }
 
@@ -572,7 +500,7 @@ impl ExitParameters {
 pub struct ContextWrite {
     pub operation: ContextWriteOperation,
     pub path: String,
-    pub value: DynamicValue,
+    pub value: InputBinding,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
@@ -623,15 +551,6 @@ const fn default_activation_budget() -> u32 {
     10_000
 }
 
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum NodeErrorPolicy {
-    #[default]
-    StopWorkflow,
-    ContinueRegularOutput,
-    ContinueErrorOutput,
-}
-
 #[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct NodeSettings {
@@ -647,8 +566,6 @@ pub struct NodeSettings {
     pub wait_between_tries_ms: u64,
     #[serde(default)]
     pub timeout_ms: Option<u64>,
-    #[serde(default)]
-    pub on_error: NodeErrorPolicy,
 }
 
 impl Default for NodeSettings {
@@ -660,7 +577,6 @@ impl Default for NodeSettings {
             max_tries: default_max_tries(),
             wait_between_tries_ms: 0,
             timeout_ms: None,
-            on_error: NodeErrorPolicy::StopWorkflow,
         }
     }
 }
@@ -685,26 +601,16 @@ pub struct WorkflowNode {
     /// exit created with the workflow is protected.
     #[serde(default)]
     pub protected: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<String>,
     #[serde(default)]
     pub parameters: Value,
-    #[serde(default)]
-    pub output_projection: BTreeMap<String, BTreeMap<String, OutputProjectionField>>,
     #[serde(default)]
     pub context_writes: Vec<ContextWrite>,
     #[serde(default)]
     pub resource_references: Vec<ResourceReference>,
     #[serde(default)]
     pub settings: NodeSettings,
-}
-
-#[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct OutputProjectionField {
-    pub value: DynamicValue,
-    #[serde(default)]
-    pub schema: Value,
-    #[serde(default)]
-    pub sensitive: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
@@ -730,12 +636,12 @@ pub struct DefinitionIssue {
 #[must_use]
 pub fn validate_definition(definition: &WorkflowDefinition) -> Vec<DefinitionIssue> {
     let mut issues = Vec::new();
-    if definition.schema_version != "7.0" {
+    if definition.schema_version != WORKFLOW_SCHEMA_VERSION {
         issue(
             &mut issues,
             "UNSUPPORTED_SCHEMA",
             "schemaVersion",
-            "Only schema version 7.0 is supported",
+            "Only schema version 8.0 is supported",
         );
     }
     if definition.settings.activation_budget == 0 {
@@ -786,14 +692,6 @@ pub fn validate_definition(definition: &WorkflowDefinition) -> Vec<DefinitionIss
         &definition.end.error.outputs,
         &mut issues,
     );
-    if !(100..=60_000).contains(&definition.end.error.collect_window_ms) {
-        issue(
-            &mut issues,
-            "INVALID_ERROR_COLLECT_WINDOW",
-            "end.error.collectWindowMs",
-            "Error collectWindowMs must be between 100 and 60000 milliseconds",
-        );
-    }
     let mut ids = HashSet::new();
     let mut keys = HashSet::new();
     let mut exit_ids = HashSet::new();
@@ -846,7 +744,7 @@ pub fn validate_definition(definition: &WorkflowDefinition) -> Vec<DefinitionIss
                 &mut issues,
                 "TRIGGER_NODE_REMOVED",
                 &format!("nodes[{index}].type"),
-                "Trigger nodes are not part of Workflow Definition 7.0; configure a Trigger Binding instead",
+                "Trigger nodes are not part of Workflow Definition 8.0; configure a Trigger Binding instead",
             );
         }
         if node.node_type.is_empty()
@@ -887,35 +785,6 @@ pub fn validate_definition(definition: &WorkflowDefinition) -> Vec<DefinitionIss
                 &format!("nodes[{index}].settings.maxTries"),
                 "maxTries must be greater than zero",
             );
-        }
-        for (port, fields) in &node.output_projection {
-            if port.trim().is_empty() {
-                issue(
-                    &mut issues,
-                    "INVALID_PROJECTION_PORT",
-                    &format!("nodes[{index}].outputProjection"),
-                    "Projection output port is required",
-                );
-            }
-            for (name, field) in fields {
-                let path = format!("nodes[{index}].outputProjection.{port}.{name}");
-                if !valid_reference_key(name) {
-                    issue(
-                        &mut issues,
-                        "INVALID_PROJECTION_FIELD_KEY",
-                        &path,
-                        "Projection field keys must use lowercase ASCII letters, digits and underscores",
-                    );
-                }
-                if !field.schema.is_object() {
-                    issue(
-                        &mut issues,
-                        "INVALID_PROJECTION_SCHEMA",
-                        &format!("{path}.schema"),
-                        "Projection field schema must be an object",
-                    );
-                }
-            }
         }
         for (reference_index, reference) in node.resource_references.iter().enumerate() {
             if is_resource_node(&node.node_type)
@@ -984,7 +853,7 @@ pub fn validate_definition(definition: &WorkflowDefinition) -> Vec<DefinitionIss
                 &mut issues,
                 "END_BOUNDARY_REMOVED",
                 &format!("connections[{index}]"),
-                "Workflow Definition 7.0 removed the __end__ boundary; connect to an exit node instead",
+                "Workflow Definition 8.0 uses Exit nodes; connect to an Exit node instead",
             );
             continue;
         }
@@ -1043,7 +912,7 @@ fn validate_agent_node(index: usize, node: &WorkflowNode, issues: &mut Vec<Defin
             issues,
             "UNSUPPORTED_NODE_VERSION",
             &format!("{node_path}.typeVersion"),
-            "Workflow Definition 7.0 requires Agent node version 2",
+            "Workflow Definition 8.0 requires Agent node version 2",
         );
     }
 
@@ -1066,73 +935,50 @@ fn validate_agent_node(index: usize, node: &WorkflowNode, issues: &mut Vec<Defin
     let mut model_count = 0_usize;
     let mut workspace_sandbox_count = 0_usize;
     let mut long_term_memory_count = 0_usize;
-    let mut binding_ids = HashSet::new();
 
     for (reference_index, reference) in node.resource_references.iter().enumerate() {
         let path = format!("{node_path}.resourceReferences[{reference_index}]");
-        let inspector = matches!(
-            reference.resource_type,
-            ResourceType::Model | ResourceType::SandboxProfile
-        );
-        if inspector && (reference.binding_id.is_some() || reference.binding_role.is_some()) {
-            issue(
-                issues,
-                "AGENT_RESOURCE_SLOT_INVALID",
-                &path,
-                "Inspector references must not contain bindingId or bindingRole",
-            );
-        }
-        if !inspector && (reference.binding_id.is_none() || reference.binding_role.is_none()) {
-            issue(
-                issues,
-                "AGENT_RESOURCE_SLOT_INVALID",
-                &path,
-                "Canvas attachment references must contain bindingId and bindingRole",
-            );
-        }
-        if let Some(binding_id) = reference.binding_id.as_deref() {
-            if binding_id.is_empty() || !binding_ids.insert(binding_id) {
+        // Every embedded Agent resource names its frozen slot via bindingRole.
+        if let Some(binding_role) = reference.binding_role.as_deref() {
+            if binding_role.is_empty() {
                 issue(
                     issues,
                     "AGENT_RESOURCE_SLOT_INVALID",
-                    &format!("{path}.bindingId"),
-                    "Canvas attachment bindingId must be present and unique within the Agent node",
+                    &format!("{path}.bindingRole"),
+                    "Agent attachment bindingRole must not be empty",
                 );
             }
         }
 
         let valid = match (reference.binding_role.as_deref(), reference.resource_type) {
-            (None, ResourceType::Model) => {
+            (Some("model"), ResourceType::Model) => {
                 model_count += 1;
                 reference.operation == ResourceOperation::Use
                     && reference.resource_version_id.is_some()
             }
-            (None, ResourceType::SandboxProfile) => {
+            (Some("workspace_sandbox"), ResourceType::SandboxProfile) => {
                 workspace_sandbox_count += 1;
                 reference.operation == ResourceOperation::Use
                     && reference.resource_version_id.is_some()
             }
             (Some("mcp_tools"), ResourceType::McpTool) => {
-                reference.resource_type == ResourceType::McpTool
-                    && reference.operation == ResourceOperation::Use
+                reference.operation == ResourceOperation::Use
+                    && reference.resource_version_id.is_some()
             }
             (Some("skills"), ResourceType::Skill) => {
-                reference.resource_type == ResourceType::Skill
-                    && reference.operation == ResourceOperation::Use
+                reference.operation == ResourceOperation::Use
+                    && reference.resource_version_id.is_some()
             }
             (Some("knowledge"), ResourceType::Rag) => {
-                reference.resource_type == ResourceType::Rag
-                    && reference.operation == ResourceOperation::Read
+                reference.operation == ResourceOperation::Read
+                    && reference.resource_version_id.is_some()
             }
             (Some("long_term_memory"), ResourceType::Memory) => {
                 long_term_memory_count += 1;
-                reference.resource_type == ResourceType::Memory
-                    && matches!(
-                        reference.operation,
-                        ResourceOperation::Read
-                            | ResourceOperation::Write
-                            | ResourceOperation::Manage
-                    )
+                matches!(
+                    reference.operation,
+                    ResourceOperation::Read | ResourceOperation::Write | ResourceOperation::Manage
+                ) && reference.resource_version_id.is_some()
             }
             _ => false,
         };
@@ -1201,7 +1047,7 @@ fn validate_exit_mappings(
     issues: &mut Vec<DefinitionIssue>,
     node_path: &str,
     group: &str,
-    mappings: &BTreeMap<String, DynamicValue>,
+    mappings: &BTreeMap<String, InputBinding>,
     contract: &BTreeMap<String, WorkflowOutput>,
 ) {
     for name in mappings.keys() {
@@ -1270,12 +1116,6 @@ pub fn validate_editor_document(
         .iter()
         .map(|node| node.id.as_str())
         .collect::<HashSet<_>>();
-    let binding_ids = definition
-        .nodes
-        .iter()
-        .flat_map(|node| node.resource_references.iter())
-        .filter_map(|reference| reference.binding_id.as_deref())
-        .collect::<HashSet<_>>();
     let mut layout_nodes = HashSet::new();
     for (index, layout) in document.node_layouts.iter().enumerate() {
         if !node_ids.contains(layout.node_id.as_str()) {
@@ -1327,43 +1167,6 @@ pub fn validate_editor_document(
                 "INVALID_BOUNDARY_LAYOUT",
                 &format!("boundaryLayouts[{index}]"),
                 "Boundary layout coordinates must be finite",
-            );
-        }
-    }
-    let mut layout_bindings = HashSet::new();
-    for (index, layout) in document.binding_layouts.iter().enumerate() {
-        if !binding_ids.contains(layout.binding_id.as_str()) {
-            issue(
-                &mut issues,
-                "DANGLING_BINDING_LAYOUT",
-                &format!("bindingLayouts[{index}].bindingId"),
-                "Binding layout references a missing resource binding",
-            );
-        }
-        if !layout_bindings.insert(layout.binding_id.as_str()) {
-            issue(
-                &mut issues,
-                "DUPLICATE_BINDING_LAYOUT",
-                &format!("bindingLayouts[{index}].bindingId"),
-                "Each resource binding may have only one layout",
-            );
-        }
-    }
-    for (index, edge) in document.binding_edges.iter().enumerate() {
-        if !binding_ids.contains(edge.source_binding_id.as_str()) {
-            issue(
-                &mut issues,
-                "DANGLING_BINDING_EDGE",
-                &format!("bindingEdges[{index}].sourceBindingId"),
-                "Binding edge references a missing resource binding",
-            );
-        }
-        if !node_ids.contains(edge.target_node_id.as_str()) {
-            issue(
-                &mut issues,
-                "DANGLING_BINDING_TARGET",
-                &format!("bindingEdges[{index}].targetNodeId"),
-                "Binding edge references a missing workflow node",
             );
         }
     }
@@ -1535,7 +1338,7 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        EditorDocument, WorkflowDefinition, WORKFLOW_EXIT_NODE_TYPE, canonical_content_hash,
+        EditorDocument, WORKFLOW_EXIT_NODE_TYPE, WorkflowDefinition, canonical_content_hash,
         validate_definition,
     };
 
@@ -1576,7 +1379,7 @@ mod tests {
 
     fn agent_definition(resource_references: serde_json::Value) -> WorkflowDefinition {
         serde_json::from_value(json!({
-            "schemaVersion":"7.0",
+            "schemaVersion":"8.0",
             "start":{"inputs":{"type":"object","properties":{},"additionalProperties":false},"contexts":{}},
             "nodes":[{
                 "id":"agent","key":"agent","type":"agent","typeVersion":2,"name":"Agent",
@@ -1586,12 +1389,13 @@ mod tests {
             "connections":[],
             "end":{"outputs":{}}
         }))
-        .expect("Agent Definition 7.0 fixture")
+        .expect("Agent Definition 8.0 fixture")
     }
 
     #[test]
     fn agent_definition_requires_internal_model_and_validates_inspector_references() {
         let model = json!({
+            "bindingRole":"model",
             "resourceType":"model",
             "resourceId":"018f47a0-7e9c-7000-8000-000000000001",
             "resourceVersionId":"018f47a0-7e9c-7000-8000-000000000002",
@@ -1607,21 +1411,21 @@ mod tests {
                 .any(|issue| issue.code == "AGENT_MODEL_REQUIRED")
         );
 
-        let model_attachment = agent_definition(json!([{
-            "bindingId":"model-binding",
-            "bindingRole":"model",
+        let wrong_model_role = agent_definition(json!([{
+            "bindingRole":"workspace_sandbox",
             "resourceType":"model",
             "resourceId":"018f47a0-7e9c-7000-8000-000000000001",
             "resourceVersionId":"018f47a0-7e9c-7000-8000-000000000002",
             "operation":"use"
         }]));
         assert!(
-            validate_definition(&model_attachment)
+            validate_definition(&wrong_model_role)
                 .iter()
                 .any(|issue| { issue.code == "AGENT_RESOURCE_SLOT_INVALID" })
         );
 
         let unversioned_model = agent_definition(json!([{
+            "bindingRole":"model",
             "resourceType":"model",
             "resourceId":"018f47a0-7e9c-7000-8000-000000000001",
             "operation":"use"
@@ -1635,12 +1439,14 @@ mod tests {
         let duplicate_sandbox = agent_definition(json!([
             model,
             {
+                "bindingRole":"workspace_sandbox",
                 "resourceType":"sandbox_profile",
                 "resourceId":"018f47a0-7e9c-7000-8000-000000000003",
                 "resourceVersionId":"018f47a0-7e9c-7000-8000-000000000004",
                 "operation":"use"
             },
             {
+                "bindingRole":"workspace_sandbox",
                 "resourceType":"sandbox_profile",
                 "resourceId":"018f47a0-7e9c-7000-8000-000000000005",
                 "resourceVersionId":"018f47a0-7e9c-7000-8000-000000000006",
@@ -1669,12 +1475,15 @@ mod tests {
         assert!(serde_json::from_value::<WorkflowDefinition>(serialized).is_err());
     }
 
-    fn exit_definition(exit_parameters: serde_json::Value, end: serde_json::Value) -> WorkflowDefinition {
+    fn exit_definition(
+        exit_parameters: serde_json::Value,
+        end: serde_json::Value,
+    ) -> WorkflowDefinition {
         serde_json::from_value(json!({
-            "schemaVersion":"7.0",
+            "schemaVersion":"8.0",
             "start":{"inputs":{"type":"object","properties":{},"additionalProperties":false},"contexts":{}},
             "nodes":[
-                {"id":"source","key":"source","type":"no_op","typeVersion":1,"name":"Source"},
+                {"id":"source","key":"source","type":"set","typeVersion":1,"name":"Source"},
                 {"id":"exit","key":"exit","type":"exit","typeVersion":1,"name":"End","parameters":exit_parameters}
             ],
             "connections":[
@@ -1682,7 +1491,7 @@ mod tests {
             ],
             "end":end
         }))
-        .expect("Exit Definition 7.0 fixture")
+        .expect("Exit Definition 8.0 fixture")
     }
 
     #[test]
@@ -1723,10 +1532,7 @@ mod tests {
 
     #[test]
     fn exit_nodes_are_terminals_and_the_end_boundary_is_gone() {
-        let mut exit_as_source = exit_definition(
-            json!({}),
-            json!({"outputs":{}}),
-        );
+        let mut exit_as_source = exit_definition(json!({}), json!({"outputs":{}}));
         exit_as_source.connections[0] = serde_json::from_value(json!({
             "id":"exit-leak","sourceNodeId":"exit","sourceHandle":"main",
             "targetNodeId":"source","targetHandle":"main","order":0
@@ -1774,11 +1580,11 @@ mod tests {
     #[test]
     fn rejects_dangling_cycles_and_mismatched_resources() {
         let definition: WorkflowDefinition = serde_json::from_value(json!({
-            "schemaVersion":"7.0",
+            "schemaVersion":"8.0",
             "start":{"inputs":{"type":"object","properties":{},"additionalProperties":false},"contexts":{}},
             "nodes":[
-                {"id":"root","key":"root","type":"no_op","typeVersion":1,"name":"Root","outputProjection":{},"contextWrites":[],"resourceReferences":[]},
-                {"id":"model","key":"model","type":"model","typeVersion":1,"name":"Model","outputProjection":{},"contextWrites":[],"resourceReferences":[{"resourceType":"mcp_tool","resourceId":"018f47a0-7e9c-7000-8000-000000000001","operation":"use"}]}
+                {"id":"root","key":"root","type":"set","typeVersion":1,"name":"Root","contextWrites":[],"resourceReferences":[]},
+                {"id":"model","key":"model","type":"model","typeVersion":1,"name":"Model","contextWrites":[],"resourceReferences":[{"resourceType":"mcp_tool","resourceId":"018f47a0-7e9c-7000-8000-000000000001","operation":"use"}]}
             ],
             "connections":[
                 {"id":"edge","sourceNodeId":"root","sourceHandle":"main","targetNodeId":"model","targetHandle":"main","order":0},
@@ -1799,17 +1605,20 @@ mod tests {
     }
 
     #[test]
-    fn accepts_controlled_cycles() {
+    fn accepts_loop_container_membership_without_control_edges() {
         let definition: WorkflowDefinition = serde_json::from_value(json!({
-            "schemaVersion":"7.0",
+            "schemaVersion":"8.0",
             "start":{"inputs":{"type":"object","properties":{},"additionalProperties":false},"contexts":{}},
             "nodes":[
-                {"id":"root","key":"root","type":"no_op","typeVersion":1,"name":"Root","outputProjection":{},"contextWrites":[]},
-                {"id":"loop","key":"loop","type":"loop_over_items","typeVersion":1,"name":"Loop","outputProjection":{},"contextWrites":[]}
+                {"id":"root","key":"root","type":"set","typeVersion":1,"name":"Root","contextWrites":[]},
+                {"id":"loop","key":"loop","type":"loop_over_items","typeVersion":1,"name":"Loop","parameters":{"input":{"kind":"literal","value":[]},"outputSelector":{"kind":"literal","value":{}}},"contextWrites":[]},
+                {"id":"body","key":"body","type":"set","typeVersion":1,"name":"Body","parentId":"loop","contextWrites":[]},
+                {"id":"exit","key":"exit","type":"exit","typeVersion":1,"name":"Exit","parameters":{"outputs":{},"errorOutputs":{}}}
             ],
             "connections":[
-                {"id":"start","sourceNodeId":"root","sourceHandle":"main","targetNodeId":"loop","targetHandle":"main","order":0},
-                {"id":"back","sourceNodeId":"loop","sourceHandle":"loop","targetNodeId":"loop","targetHandle":"main","order":0}
+                {"id":"start","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"root","targetHandle":"main","order":0},
+                {"id":"root-loop","sourceNodeId":"root","sourceHandle":"main","targetNodeId":"loop","targetHandle":"main","order":0},
+                {"id":"loop-exit","sourceNodeId":"loop","sourceHandle":"main","targetNodeId":"exit","targetHandle":"main","order":0}
             ],
             "end":{"outputs":{}}
         })).unwrap();
@@ -1819,12 +1628,12 @@ mod tests {
     #[test]
     fn connection_order_is_scoped_to_the_source_port() {
         let definition: WorkflowDefinition = serde_json::from_value(json!({
-            "schemaVersion":"7.0",
+            "schemaVersion":"8.0",
             "start":{"inputs":{"type":"object","properties":{},"additionalProperties":false},"contexts":{}},
             "nodes":[
-                {"id":"source","key":"source","type":"switch","typeVersion":1,"name":"Source","outputProjection":{},"contextWrites":[]},
-                {"id":"left","key":"left","type":"set","typeVersion":1,"name":"Left","outputProjection":{},"contextWrites":[]},
-                {"id":"right","key":"right","type":"set","typeVersion":1,"name":"Right","outputProjection":{},"contextWrites":[]}
+                {"id":"source","key":"source","type":"if","typeVersion":1,"name":"Source","parameters":{"cases":[{"id":"0","conditions":[{"condition":true}]},{"id":"1","conditions":[{"condition":false}]}]},"contextWrites":[]},
+                {"id":"left","key":"left","type":"set","typeVersion":1,"name":"Left","contextWrites":[]},
+                {"id":"right","key":"right","type":"set","typeVersion":1,"name":"Right","contextWrites":[]}
             ],
             "connections":[
                 {"id":"left-edge","sourceNodeId":"source","sourceHandle":"case:0","targetNodeId":"left","targetHandle":"main","order":0},

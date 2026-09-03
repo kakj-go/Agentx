@@ -50,6 +50,19 @@ pub(super) fn openai_chat_request(
             }
         }]);
     }
+    if claim.node_type == "model"
+        && claim
+            .node_parameters
+            .get("responseMode")
+            .and_then(Value::as_str)
+            == Some("json_schema")
+        && let Some(schema) = claim.node_parameters.get("structuredSchema")
+    {
+        request["response_format"] = json!({
+            "type":"json_schema",
+            "json_schema":{"name":"agentx_response","strict":true,"schema":schema}
+        });
+    }
     request
 }
 
@@ -64,7 +77,10 @@ pub(super) fn system_prompt<'a>(parameters: &'a Value, node_type: &str) -> Optio
         .filter(|value| !value.is_empty())
 }
 
-pub(super) fn openai_execution_output(execution: WorkerExecution) -> WorkerExecution {
+pub(super) fn openai_execution_output(
+    execution: WorkerExecution,
+    parameters: &Value,
+) -> WorkerExecution {
     if execution.status != WorkerResultStatusV1::Succeeded {
         return execution;
     }
@@ -104,11 +120,47 @@ pub(super) fn openai_execution_output(execution: WorkerExecution) -> WorkerExecu
         }));
     }
     let content = message.get("content").cloned().unwrap_or(Value::Null);
-    let structured_output = content
-        .as_str()
-        .and_then(|value| serde_json::from_str::<Value>(value).ok())
-        .filter(|value| value.is_object() || value.is_array())
-        .unwrap_or(Value::Null);
+    let structured_output =
+        if parameters.get("responseMode").and_then(Value::as_str) == Some("json_schema") {
+            let Some(text) = content.as_str() else {
+                return WorkerExecution::failed(
+                    "MODEL_STRUCTURED_OUTPUT_INVALID",
+                    "Structured model response is not text JSON",
+                    false,
+                );
+            };
+            let Ok(value) = serde_json::from_str::<Value>(text) else {
+                return WorkerExecution::failed(
+                    "MODEL_STRUCTURED_OUTPUT_INVALID",
+                    "Structured model response is not valid JSON",
+                    false,
+                );
+            };
+            let Some(schema) = parameters.get("structuredSchema") else {
+                return WorkerExecution::failed(
+                    "MODEL_STRUCTURED_SCHEMA_REQUIRED",
+                    "structuredSchema is required for json_schema mode",
+                    false,
+                );
+            };
+            let Ok(validator) = jsonschema::validator_for(schema) else {
+                return WorkerExecution::failed(
+                    "MODEL_STRUCTURED_SCHEMA_INVALID",
+                    "structuredSchema is not a valid JSON Schema",
+                    false,
+                );
+            };
+            if let Err(error) = validator.validate(&value) {
+                return WorkerExecution::failed(
+                    "MODEL_STRUCTURED_OUTPUT_INVALID",
+                    error.to_string(),
+                    false,
+                );
+            }
+            value
+        } else {
+            Value::Null
+        };
     // Keep the adapter payload identical to the Model manifest.  Downstream
     // selectors are validated against that contract, so aliases such as
     // `answer` and `finalAnswer` turn a successful provider call into an
@@ -259,7 +311,10 @@ pub(super) fn runtime_call_side_effect(kind: &str, request: &Value) -> &'static 
     }
 }
 
-pub(super) fn sandbox_execution_output(execution: WorkerExecution) -> WorkerExecution {
+pub(super) fn sandbox_execution_output(
+    execution: WorkerExecution,
+    parameters: &Value,
+) -> WorkerExecution {
     if execution.status != WorkerResultStatusV1::Succeeded {
         return execution;
     }
@@ -277,12 +332,44 @@ pub(super) fn sandbox_execution_output(execution: WorkerExecution) -> WorkerExec
             false,
         );
     };
+    let structured_output = output
+        .get("structuredOutput")
+        .cloned()
+        .unwrap_or(Value::Null);
+    if !structured_output.is_object() {
+        return WorkerExecution::failed(
+            "CODE_OUTPUT_OBJECT_REQUIRED",
+            "Code must write a JSON object as its structured output",
+            false,
+        );
+    }
+    let Some(schema) = parameters.get("outputSchema") else {
+        return WorkerExecution::failed(
+            "CODE_OUTPUT_SCHEMA_REQUIRED",
+            "Code outputSchema is required",
+            false,
+        );
+    };
+    let Ok(validator) = jsonschema::validator_for(schema) else {
+        return WorkerExecution::failed(
+            "CODE_OUTPUT_SCHEMA_INVALID",
+            "Code outputSchema is not valid JSON Schema",
+            false,
+        );
+    };
+    if let Err(error) = validator.validate(&structured_output) {
+        return WorkerExecution::failed(
+            "CODE_OUTPUT_SCHEMA_VALIDATION_FAILED",
+            error.to_string(),
+            false,
+        );
+    }
     WorkerExecution::succeeded(json!({
         "stdout":output.get("stdout").and_then(Value::as_str).unwrap_or_default(),
         "stderr":output.get("stderr").and_then(Value::as_str).unwrap_or_default(),
         "exitCode":output.get("exitCode").and_then(Value::as_i64).unwrap_or_default(),
-        "structuredOutput":output.get("structuredOutput").or_else(|| output.get("structuredOutputs")).cloned().unwrap_or(Value::Null),
-        "files":output.get("files").or_else(|| output.get("downloadedArtifacts")).cloned().unwrap_or_else(|| json!([])),
+        "structuredOutput":structured_output,
+        "files":output.get("files").cloned().unwrap_or_else(|| json!([])),
         "partial":output.get("partial").and_then(Value::as_bool).unwrap_or(false),
     }))
 }

@@ -404,23 +404,6 @@
         ],
         "title": "SessionResponseV1",
         "type": "object"
-      },
-      "WaitResumeRequest": {
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "additionalProperties": false,
-        "properties": {
-          "outputPort": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "payload": {
-            "default": null
-          }
-        },
-        "title": "WaitResumeRequestV1",
-        "type": "object"
       }
     },
     "securitySchemes": {
@@ -1184,110 +1167,6 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/InvocationResponse"
-                }
-              }
-            },
-            "description": "Successful Runtime response"
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/GatewayError"
-                }
-              }
-            },
-            "description": "Runtime error"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/GatewayError"
-                }
-              }
-            },
-            "description": "Runtime error"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/GatewayError"
-                }
-              }
-            },
-            "description": "Runtime error"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/GatewayError"
-                }
-              }
-            },
-            "description": "Runtime error"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/GatewayError"
-                }
-              }
-            },
-            "description": "Runtime error"
-          },
-          "503": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/GatewayError"
-                }
-              }
-            },
-            "description": "Runtime error"
-          }
-        },
-        "security": [
-          {
-            "runtimeBearer": []
-          }
-        ]
-      }
-    },
-    "/gateway/v1/waits/{resume_token}/resume": {
-      "post": {
-        "operationId": "resumeWait",
-        "parameters": [
-          {
-            "in": "header",
-            "name": "Idempotency-Key",
-            "required": true,
-            "schema": {
-              "maxLength": 192,
-              "minLength": 1,
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/WaitResumeRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "202": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CommandAccepted"
                 }
               }
             },

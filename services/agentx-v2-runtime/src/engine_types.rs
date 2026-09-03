@@ -13,6 +13,7 @@ pub struct ClaimedWorkerAttempt {
     pub node_version: u32,
     pub run_index: u32,
     pub iteration_index: u32,
+    pub timeout_ms: u64,
     pub node_parameters: Value,
     pub per_item_parameters: Vec<Value>,
     pub string_conversions: Value,

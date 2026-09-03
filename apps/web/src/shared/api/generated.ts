@@ -96,10 +96,15 @@ export interface components {
             userId: string;
         };
         ApprovalResponse: {
+            buttons: {
+                id: string;
+                label: string;
+            }[];
             claimedBy?: string | null;
             claimedByName?: string | null;
             createdAt: string;
             deadlineAt?: string | null;
+            decision?: Record<string, never> | null;
             description?: string | null;
             executionId: string;
             id: string;
@@ -343,21 +348,21 @@ export interface components {
             draftRevision: number;
         };
         CreateWebhookRequest: {
-            /** @enum {string} */
-            providerType: "dingtalk" | "wecom" | "feishu" | "agentx";
-            channelMode?: string;
             channelConfig?: {
                 [key: string]: unknown;
             } | null;
-            inputMappings?: {
-                source: string;
-                target: string;
-                missingPolicy?: string;
-            }[];
+            channelMode?: string;
             fixedInputs?: {
                 [key: string]: unknown;
             };
+            inputMappings?: {
+                missingPolicy?: string;
+                source: string;
+                target: string;
+            }[];
             name: string;
+            /** @enum {string} */
+            providerType: "dingtalk" | "wecom" | "feishu" | "agentx";
         };
         CreateWorkflowRequest: {
             description?: string | null;
@@ -442,7 +447,9 @@ export interface components {
             workflowId: string;
         };
         DecideApprovalRequest: {
-            input?: unknown;
+            decisionId: string;
+            idempotencyKey: string;
+            reason?: string | null;
             version: number;
         };
         DeleteCaseRequest: {
@@ -716,9 +723,6 @@ export interface components {
             description?: string | null;
             name: string;
             package: components["schemas"]["WorkflowPackage"];
-            resourceBindings?: {
-                [key: string]: components["schemas"]["ResourceBindingTarget"];
-            };
             visibility: string;
         };
         ImportedWorkflowResponse: {
@@ -963,6 +967,7 @@ export interface components {
         NodeProviderOption: {
             description?: string | null;
             label: string;
+            manifest?: unknown;
             value: string;
         };
         NodeProviderOptionsResponse: {
@@ -1063,18 +1068,6 @@ export interface components {
             resourceId: string;
             resourceType: string;
             workflowId: string;
-        };
-        ResourceBindingPlaceholder: {
-            bindingRole?: string | null;
-            id: string;
-            nodeId: string;
-            operation: string;
-            referenceIndex: number;
-            resourceType: string;
-        };
-        ResourceBindingTarget: {
-            resourceId: string;
-            resourceVersionId?: string | null;
         };
         ResourceGrantRequestAuditResponse: {
             action: string;
@@ -1584,21 +1577,21 @@ export interface components {
             version: number;
         };
         UpdateWebhookRequest: {
-            /** @enum {string} */
-            providerType: "dingtalk" | "wecom" | "feishu" | "agentx";
-            channelMode?: string;
             channelConfig?: {
                 [key: string]: unknown;
             } | null;
-            inputMappings?: {
-                source: string;
-                target: string;
-                missingPolicy?: string;
-            }[];
+            channelMode?: string;
             fixedInputs?: {
                 [key: string]: unknown;
             };
+            inputMappings?: {
+                missingPolicy?: string;
+                source: string;
+                target: string;
+            }[];
             name: string;
+            /** @enum {string} */
+            providerType: "dingtalk" | "wecom" | "feishu" | "agentx";
             status: string;
             version: number;
         };
@@ -1647,53 +1640,39 @@ export interface components {
         VersionActionRequest: {
             version: number;
         };
-        WaitListResponse: {
-            items: components["schemas"]["WaitResponse"][];
-        };
-        WaitResponse: {
-            authenticationMode: string;
-            executionId: string;
-            id: string;
-            nodeExecutionId: string;
-            resumeUrl?: string | null;
-            status: string;
-            timeoutAt?: string | null;
-            waitKind: string;
-            wakeAt?: string | null;
-        };
         WebhookProviderTemplate: {
-            provider: string;
-            mode: string;
             fields: {
                 key: string;
-                sensitive: boolean;
                 required: boolean;
+                sensitive: boolean;
             }[];
             /** @description Raw payload paths (raw.<dotted.path>) this provider's messages carry beyond the standardized Trigger Context fields, offered as mapping source suggestions. */
             mappingSources?: string[];
+            mode: string;
+            provider: string;
         };
         WebhookResponse: {
-            id: string;
-            name: string;
-            providerType: string;
             channelMode?: string;
             configFields?: {
                 [key: string]: unknown;
             };
-            connectionStatus?: string | null;
+            configurationRevision: number;
             connectionError?: string | null;
-            lastConnectedAt?: string | null;
-            inputMappings: {
-                source: string;
-                target: string;
-                missingPolicy?: string;
-            }[];
+            connectionStatus?: string | null;
             fixedInputs: {
                 [key: string]: unknown;
             };
-            configurationRevision: number;
+            id: string;
+            inputMappings: {
+                missingPolicy?: string;
+                source: string;
+                target: string;
+            }[];
+            lastConnectedAt?: string | null;
             mappingCount: number;
+            name: string;
             path: string;
+            providerType: string;
             publicId: string;
             secret?: string | null;
             status: string;
@@ -1721,7 +1700,6 @@ export interface components {
             editorDocument: unknown;
             manifest: components["schemas"]["WorkflowPackageManifest"];
             nodeLock: components["schemas"]["NodeLock"][];
-            resourceBindingPlaceholders: components["schemas"]["ResourceBindingPlaceholder"][];
             subWorkflowReferences: string[];
             workflowDefinition: unknown;
         };

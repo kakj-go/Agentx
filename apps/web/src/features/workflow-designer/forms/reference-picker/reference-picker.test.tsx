@@ -3,15 +3,23 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { Dialog, DialogContent } from '../../../../shared/ui/dialog'
 import type { ReferenceCatalog } from '../../model/types'
-import { ReferencePicker } from './reference-picker'
+import { ReferencePicker, schemaCompatible } from './reference-picker'
 
 const catalog: ReferenceCatalog = {
-  inputs: [{ id: 'inputs.question', label: 'question', path: 'inputs.question', selector: { namespace: 'inputs', run: { kind: 'current' }, item: { kind: 'current' }, path: ['question'] }, type: 'string', children: [] }],
+  inputs: [{ id: 'inputs.question', label: 'question', path: 'inputs.question', selector: { namespace: 'inputs', run: { kind: 'current' }, item: { kind: 'current' }, path: ['question'] }, type: 'string', schema: { type: 'string' }, children: [] }],
   outputs: [],
   contexts: [],
 }
 
 describe('ReferencePicker', () => {
+  it('checks array items and required object fields with full schemas', () => {
+    expect(schemaCompatible({ type: 'integer' }, { type: 'number' })).toBe(true)
+    expect(schemaCompatible({ type: 'array', items: { type: 'string' } }, { type: 'array', items: { type: 'number' } })).toBe(false)
+    expect(schemaCompatible(
+      { type: 'object', properties: { name: { type: 'string' } } },
+      { type: 'object', required: ['id'], properties: { id: { type: 'integer' } } },
+    )).toBe(false)
+  })
   it('shows execution information only when the field contract allows it', () => {
     const executionLabel = ['Execution', 'information'].join(' ')
     const executionCatalog: ReferenceCatalog = {
@@ -39,21 +47,24 @@ describe('ReferencePicker', () => {
     expect(open).toHaveBeenCalledWith(false)
   })
 
-  it('expands output branches inline as a tree', () => {
+  it('groups output references under source node headers with type color dots', () => {
     const insert = vi.fn()
     const open = vi.fn()
     const treeCatalog: ReferenceCatalog = {
       ...catalog,
-      outputs: [{ id: 'outputs.model', label: 'model', path: 'outputs.model', children: [{ id: 'outputs.model.main', label: 'main', path: 'outputs.model.main', children: [{ id: 'outputs.model.main.first', label: 'first', path: 'outputs.model.main.first', children: [{ id: 'outputs.model.main.first.json.text', label: 'text', path: 'outputs.model.main.first.json.text', selector: { namespace: 'outputs', sourceNodeId: 'model', port: 'main', run: { kind: 'current' }, item: { kind: 'first' }, path: ['text'] }, type: 'string', recommended: true, children: [] }] }] }] }],
+      outputs: [{ id: 'outputs.model', label: 'model', path: 'outputs.model', sourceNodeType: 'model', children: [{ id: 'outputs.model.main', label: 'main', path: 'outputs.model.main', children: [{ id: 'outputs.model.main.first', label: 'first', path: 'outputs.model.main.first', children: [{ id: 'outputs.model.main.first.json.text', label: 'text', path: 'outputs.model.main.first.json.text', selector: { namespace: 'outputs', sourceNodeId: 'model', port: 'main', run: { kind: 'current' }, item: { kind: 'first' }, path: ['text'] }, type: 'string', recommended: true, children: [] }] }] }] }],
     }
     render(<ReferencePicker catalog={treeCatalog} onInsert={insert} onOpenChange={open} open />)
 
     fireEvent.click(screen.getByText('Outputs'))
-    const model = screen.getByRole('button', { name: /model/ })
-    expect(model).toHaveAttribute('aria-expanded', 'false')
-    fireEvent.click(model)
-    expect(model).toHaveAttribute('aria-expanded', 'true')
-    fireEvent.click(screen.getByRole('button', { name: /main/ }))
+    const group = screen.getByTestId('reference-group-model')
+    expect(group).toHaveTextContent('model')
+    const dot = group.querySelector<HTMLElement>('span[style]')
+    expect(dot).toHaveStyle({ backgroundColor: '#6366f1' })
+    const main = screen.getByRole('button', { name: /main/ })
+    expect(main).toHaveAttribute('aria-expanded', 'false')
+    fireEvent.click(main)
+    expect(main).toHaveAttribute('aria-expanded', 'true')
     fireEvent.click(screen.getByRole('button', { name: /first/ }))
     expect(screen.getByText(/Recommended|推荐/)).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /text/ }))
@@ -106,39 +117,39 @@ describe('ReferencePicker', () => {
     expect(screen.getByTestId('reference-picker')).toHaveStyle({ height: '300px', left: '400px', top: '394px', width: '420px' })
   })
 
-  it('allows unknown values for string targets with an explicit conversion marker', () => {
+  it('allows unknown values for runtime conversion to typed targets', () => {
     const insert = vi.fn()
-    const unknownCatalog: ReferenceCatalog = { ...catalog, inputs: [{ ...catalog.inputs[0], type: undefined }] }
-    render(<ReferencePicker catalog={unknownCatalog} expectedType="string" onInsert={insert} onOpenChange={vi.fn()} open />)
+    const unknownCatalog: ReferenceCatalog = { ...catalog, inputs: [{ ...catalog.inputs[0], type: undefined, schema: undefined }] }
+    render(<ReferencePicker catalog={unknownCatalog} expectedSchema={{ type: 'string' }} onInsert={insert} onOpenChange={vi.fn()} open />)
     fireEvent.click(screen.getByText('Inputs'))
     const field = screen.getByRole('button', { name: /question/ })
     expect(field).not.toBeDisabled()
-    expect(screen.getByText(/Convert to text|自动转为文本/)).toBeInTheDocument()
     fireEvent.click(field)
     expect(insert).toHaveBeenCalled()
   })
 
-  it('allows selecting a whole object for a string target while its arrow still expands children', () => {
+  it('keeps an incompatible object branch enabled so its compatible children remain reachable', () => {
     const insert = vi.fn()
     const selector = { namespace: 'contexts' as const, run: { kind: 'current' as const }, item: { kind: 'current' as const }, path: ['profile'] }
     const objectCatalog: ReferenceCatalog = {
       ...catalog,
-      contexts: [{ id: 'contexts.profile', label: 'profile', path: 'contexts.profile', selector, type: 'object', children: [{ id: 'contexts.profile.name', label: 'name', path: 'contexts.profile.name', selector: { ...selector, path: ['profile', 'name'] }, type: 'string', children: [] }] }],
+      contexts: [{ id: 'contexts.profile', label: 'profile', path: 'contexts.profile', selector, type: 'object', schema: { type: 'object', properties: { name: { type: 'string' } } }, children: [{ id: 'contexts.profile.name', label: 'name', path: 'contexts.profile.name', selector: { ...selector, path: ['profile', 'name'] }, type: 'string', schema: { type: 'string' }, children: [] }] }],
     }
-    render(<ReferencePicker catalog={objectCatalog} expectedType="string" onInsert={insert} onOpenChange={vi.fn()} open />)
+    render(<ReferencePicker catalog={objectCatalog} expectedSchema={{ type: 'string' }} onInsert={insert} onOpenChange={vi.fn()} open />)
     fireEvent.click(screen.getByRole('button', { name: /Global variables|Contexts|全局变量/ }))
     const object = screen.getByRole('button', { name: /profile/ })
     fireEvent.click(object.querySelector('[data-tree-toggle]')!)
     expect(object).toHaveAttribute('aria-expanded', 'true')
     expect(screen.getByText('name')).toBeInTheDocument()
-    fireEvent.click(screen.getByText('profile'))
-    expect(insert).toHaveBeenCalledWith(selector, expect.objectContaining({ type: 'object' }))
+    expect(object).not.toHaveAttribute('aria-disabled')
+    fireEvent.click(screen.getByText('name'))
+    expect(insert).toHaveBeenCalledWith(expect.objectContaining({ path: ['profile', 'name'] }), expect.objectContaining({ type: 'string' }))
   })
 
-  it('rejects unknown values for non-string targets', () => {
-    const unknownCatalog: ReferenceCatalog = { ...catalog, inputs: [{ ...catalog.inputs[0], type: undefined }] }
-    render(<ReferencePicker catalog={unknownCatalog} expectedType="integer" onInsert={vi.fn()} onOpenChange={vi.fn()} open />)
+  it('allows unknown values for runtime conversion to non-string targets', () => {
+    const unknownCatalog: ReferenceCatalog = { ...catalog, inputs: [{ ...catalog.inputs[0], type: undefined, schema: undefined }] }
+    render(<ReferencePicker catalog={unknownCatalog} expectedSchema={{ type: 'integer' }} onInsert={vi.fn()} onOpenChange={vi.fn()} open />)
     fireEvent.click(screen.getByText('Inputs'))
-    expect(screen.getByRole('button', { name: /question/ })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /question/ })).not.toBeDisabled()
   })
 })

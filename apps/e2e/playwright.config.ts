@@ -8,6 +8,7 @@ const hostResolverRules = process.env.AGENTX_E2E_HOST_RESOLVER_RULES
 
 export default defineConfig({
   testDir: './tests',
+  snapshotPathTemplate: '{testDir}/__snapshots__/{testFilePath}/{arg}{ext}',
   fullyParallel: false,
   workers: 1,
   timeout: 600_000,

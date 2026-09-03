@@ -60,6 +60,7 @@ pub struct GatewayState {
     trusted_keys: Arc<HashMap<String, Vec<u8>>>,
     allowed_ports: Arc<BTreeSet<u16>>,
     blocked_networks: Arc<Vec<IpNet>>,
+    allowed_private_networks: Arc<Vec<IpNet>>,
     docker_desktop_dns: bool,
     used_tokens: Arc<Mutex<HashMap<Uuid, i64>>>,
     sandbox_tunnels: Arc<Semaphore>,
@@ -126,6 +127,17 @@ impl GatewayState {
                     .with_context(|| format!("invalid blocked CIDR {value}"))
             })
             .collect::<Result<Vec<_>>>()?;
+        let allowed_private_networks = env::var("AGENTX_EGRESS_ALLOWED_PRIVATE_CIDRS")
+            .unwrap_or_default()
+            .split(',')
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| {
+                value
+                    .parse::<IpNet>()
+                    .with_context(|| format!("invalid allowed private CIDR {value}"))
+            })
+            .collect::<Result<Vec<_>>>()?;
         let docker_desktop_dns = env::var("AGENTX_EGRESS_ALLOW_DOCKER_DESKTOP_DNS")
             .map(|value| value.eq_ignore_ascii_case("true"))
             .unwrap_or(false);
@@ -160,6 +172,7 @@ impl GatewayState {
             trusted_keys: Arc::new(trusted_keys),
             allowed_ports: Arc::new(allowed_ports),
             blocked_networks: Arc::new(blocked_networks),
+            allowed_private_networks: Arc::new(allowed_private_networks),
             docker_desktop_dns,
             used_tokens: Arc::new(Mutex::new(HashMap::new())),
             sandbox_tunnels: Arc::new(Semaphore::new(max_sandbox_tunnels)),
@@ -175,6 +188,7 @@ impl GatewayState {
             trusted_keys: Arc::new(HashMap::new()),
             allowed_ports: Arc::new(allowed_ports),
             blocked_networks: Arc::new(Vec::new()),
+            allowed_private_networks: Arc::new(Vec::new()),
             docker_desktop_dns,
             used_tokens: Arc::new(Mutex::new(HashMap::new())),
             sandbox_tunnels: Arc::new(Semaphore::new(64)),
@@ -467,7 +481,7 @@ async fn authorize_request<B>(
         .port_u16()
         .ok_or_else(|| anyhow!("CONNECT port is required"))?;
     validate_host_name(&host)?;
-    if !state.allowed_ports.contains(&port) {
+    if kind == ListenerKind::Runtime && !state.allowed_ports.contains(&port) {
         bail!("target port is not allowed");
     }
     let token = proxy_token(request, kind)?;
@@ -481,9 +495,10 @@ async fn authorize_request<B>(
     if claims.role != EgressRole::Sandbox {
         state.consume_runtime_token(&claims)?;
     }
+    let allow_private = claims.role == EgressRole::Sandbox;
     let literal = host.parse::<IpAddr>().ok();
     let addresses = if let Some(ip) = literal {
-        validate_ip(ip, false, state)?;
+        validate_ip(ip, false, allow_private, state)?;
         vec![SocketAddr::new(ip, port)]
     } else {
         let resolved =
@@ -491,7 +506,7 @@ async fn authorize_request<B>(
                 .await
                 .map_err(|_| anyhow!("DNS resolution timed out"))??
                 .collect::<Vec<_>>();
-        validate_resolved_addresses(&resolved, state)?;
+        validate_resolved_addresses(&resolved, allow_private, state)?;
         let mut unique = HashSet::new();
         resolved
             .into_iter()
@@ -550,12 +565,16 @@ fn proxy_token<B>(request: &Request<B>, kind: ListenerKind) -> Result<String> {
     bail!("Proxy-Authorization is invalid for this listener")
 }
 
-fn validate_resolved_addresses(addresses: &[SocketAddr], state: &GatewayState) -> Result<()> {
+fn validate_resolved_addresses(
+    addresses: &[SocketAddr],
+    allow_private: bool,
+    state: &GatewayState,
+) -> Result<()> {
     if addresses.is_empty() {
         bail!("DNS returned no address");
     }
     for address in addresses {
-        validate_ip(address.ip(), true, state)?;
+        validate_ip(address.ip(), true, allow_private, state)?;
     }
     Ok(())
 }
@@ -581,7 +600,12 @@ fn validate_host_name(host: &str) -> Result<()> {
     Ok(())
 }
 
-fn validate_ip(ip: IpAddr, from_dns: bool, state: &GatewayState) -> Result<()> {
+fn validate_ip(
+    ip: IpAddr,
+    from_dns: bool,
+    allow_private: bool,
+    state: &GatewayState,
+) -> Result<()> {
     let docker_synthetic = "198.18.0.0/15".parse::<IpNet>().expect("static CIDR");
     if docker_synthetic.contains(&ip) {
         if from_dns && state.docker_desktop_dns {
@@ -589,15 +613,49 @@ fn validate_ip(ip: IpAddr, from_dns: bool, state: &GatewayState) -> Result<()> {
         }
         bail!("benchmark address range is forbidden");
     }
-    if !is_public_ip(ip)
-        || state
-            .blocked_networks
-            .iter()
-            .any(|network| network.contains(&ip))
+    if is_permanently_blocked_ip(ip) {
+        bail!("loopback, link-local, metadata, multicast, and reserved addresses are forbidden");
+    }
+    if state
+        .blocked_networks
+        .iter()
+        .any(|network| network.contains(&ip))
     {
-        bail!("non-public or cluster address is forbidden");
+        bail!("permanently blocked address is forbidden");
+    }
+    if !is_public_ip(ip)
+        && (!allow_private
+            || !state
+                .allowed_private_networks
+                .iter()
+                .any(|network| network.contains(&ip)))
+    {
+        bail!("private address is outside the platform allowlist");
     }
     Ok(())
+}
+
+fn is_permanently_blocked_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(ip) => {
+            let octets = ip.octets();
+            ip.is_unspecified()
+                || ip.is_loopback()
+                || ip.is_link_local()
+                || ip.is_multicast()
+                || ip.is_broadcast()
+                || octets[0] == 0
+                || octets[0] >= 224
+                || (octets[0] == 169 && octets[1] == 254)
+                || (octets[0] == 198 && matches!(octets[1], 18 | 19))
+        }
+        IpAddr::V6(ip) => {
+            ip.is_unspecified()
+                || ip.is_loopback()
+                || ip.is_multicast()
+                || (ip.segments()[0] & 0xffc0) == 0xfe80
+        }
+    }
 }
 
 fn is_public_ip(ip: IpAddr) -> bool {
@@ -811,8 +869,8 @@ mod tests {
     use std::{collections::BTreeSet, net::IpAddr};
 
     use agentx_runtime_contracts::{
-        EGRESS_TOKEN_AUDIENCE, EGRESS_TOKEN_ISSUER, EgressConnectClaimsV1, EgressMode, EgressRole,
-        issue_egress_connect_token,
+        EGRESS_TOKEN_AUDIENCE, EGRESS_TOKEN_ISSUER, EgressConnectClaimsV1, EgressDestinationV1,
+        EgressMode, EgressPortRangeV1, EgressRole, content_hash, issue_egress_connect_token,
     };
     use hyper::{Method, Request, header};
     use uuid::Uuid;
@@ -831,6 +889,10 @@ mod tests {
 
     fn egress_claims(role: EgressRole, jti: Uuid) -> EgressConnectClaimsV1 {
         let now = agentx_runtime_contracts::now_unix();
+        let destinations = vec![EgressDestinationV1 {
+            target: "api.example.com".into(),
+            ports: vec![EgressPortRangeV1 { from: 443, to: 443 }],
+        }];
         EgressConnectClaimsV1 {
             iss: EGRESS_TOKEN_ISSUER.into(),
             aud: EGRESS_TOKEN_AUDIENCE.into(),
@@ -838,17 +900,24 @@ mod tests {
             tenant_id: Uuid::now_v7(),
             execution_id: Some(Uuid::now_v7()),
             request_id: None,
-            egress_mode: EgressMode::PublicHttps,
-            target_host: if role == EgressRole::Sandbox {
-                "*".into()
-            } else {
-                "api.example.com".into()
-            },
-            target_port: 443,
+            egress_mode: EgressMode::TcpProxy,
+            policy_hash: content_hash(&destinations).unwrap(),
+            destinations,
             iat: now,
             exp: now + 60,
             jti,
         }
+    }
+
+    fn set_target(claims: &mut EgressConnectClaimsV1, target: &str, port: u16) {
+        claims.destinations = vec![EgressDestinationV1 {
+            target: target.into(),
+            ports: vec![EgressPortRangeV1 {
+                from: port,
+                to: port,
+            }],
+        }];
+        claims.policy_hash = content_hash(&claims.destinations).unwrap();
     }
 
     #[test]
@@ -889,10 +958,10 @@ mod tests {
     fn docker_desktop_synthetic_range_only_allows_dns_results() {
         let state = GatewayState::for_test(BTreeSet::from([443]), true);
         let ip = "198.18.10.2".parse().unwrap();
-        assert!(validate_ip(ip, true, &state).is_ok());
-        assert!(validate_ip(ip, false, &state).is_err());
+        assert!(validate_ip(ip, true, false, &state).is_ok());
+        assert!(validate_ip(ip, false, false, &state).is_err());
         let strict = GatewayState::for_test(BTreeSet::from([443]), false);
-        assert!(validate_ip(ip, true, &strict).is_err());
+        assert!(validate_ip(ip, true, false, &strict).is_err());
     }
 
     #[test]
@@ -949,10 +1018,14 @@ mod tests {
             "1.1.1.1:443".parse().unwrap(),
             "10.0.0.1:443".parse().unwrap(),
         ];
-        assert!(validate_resolved_addresses(&answers, &state).is_err());
+        assert!(validate_resolved_addresses(&answers, false, &state).is_err());
         assert!(
-            validate_resolved_addresses(&["[2606:4700:4700::1111]:443".parse().unwrap()], &state)
-                .is_ok()
+            validate_resolved_addresses(
+                &["[2606:4700:4700::1111]:443".parse().unwrap()],
+                false,
+                &state
+            )
+            .is_ok()
         );
     }
 
@@ -964,7 +1037,7 @@ mod tests {
             PUBLIC_KEY.to_vec(),
         )]));
         let mut claims = egress_claims(EgressRole::WorkflowWorker, Uuid::now_v7());
-        claims.target_host = "1.1.1.1".into();
+        set_target(&mut claims, "1.1.1.1", 443);
         let token =
             issue_egress_connect_token("workflow-worker-current", PRIVATE_KEY, &claims).unwrap();
         let request = Request::builder()
@@ -1010,7 +1083,7 @@ mod tests {
             PUBLIC_KEY.to_vec(),
         )]));
         let mut claims = egress_claims(EgressRole::RuntimeGateway, Uuid::now_v7());
-        claims.target_host = "10.0.0.1".into();
+        set_target(&mut claims, "10.0.0.1", 443);
         let token =
             issue_egress_connect_token("runtime-gateway-current", PRIVATE_KEY, &claims).unwrap();
         let request = Request::builder()
@@ -1021,6 +1094,45 @@ mod tests {
             .unwrap();
         assert!(
             authorize_request(&request, &state, ListenerKind::Runtime)
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn sandbox_can_reach_only_explicitly_allowed_private_targets() {
+        let mut state = GatewayState::for_test(BTreeSet::from([443]), false);
+        state.allowed_private_networks = std::sync::Arc::new(vec!["10.0.0.0/8".parse().unwrap()]);
+        state.trusted_keys = std::sync::Arc::new(std::collections::HashMap::from([(
+            "sandbox-current".into(),
+            PUBLIC_KEY.to_vec(),
+        )]));
+        let mut claims = egress_claims(EgressRole::Sandbox, Uuid::now_v7());
+        set_target(&mut claims, "10.20.30.40", 5432);
+        let token = issue_egress_connect_token("sandbox-current", PRIVATE_KEY, &claims).unwrap();
+        let request = Request::builder()
+            .method(Method::CONNECT)
+            .uri("10.20.30.40:5432")
+            .header(header::PROXY_AUTHORIZATION, format!("Bearer {token}"))
+            .body(())
+            .unwrap();
+        assert!(
+            authorize_request(&request, &state, ListenerKind::Sandbox)
+                .await
+                .is_ok()
+        );
+
+        let mut metadata = egress_claims(EgressRole::Sandbox, Uuid::now_v7());
+        set_target(&mut metadata, "169.254.169.254", 80);
+        let token = issue_egress_connect_token("sandbox-current", PRIVATE_KEY, &metadata).unwrap();
+        let request = Request::builder()
+            .method(Method::CONNECT)
+            .uri("169.254.169.254:80")
+            .header(header::PROXY_AUTHORIZATION, format!("Bearer {token}"))
+            .body(())
+            .unwrap();
+        assert!(
+            authorize_request(&request, &state, ListenerKind::Sandbox)
                 .await
                 .is_err()
         );

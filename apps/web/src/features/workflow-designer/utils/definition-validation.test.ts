@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
 
 import type { StudioDocument } from "../model/types";
-import { definitionIssues, isDynamicValueEmpty, isReferenceKey } from "./definition-validation";
+import { definitionIssues, isInputBindingEmpty, isReferenceKey } from "./definition-validation";
 
 const document = (): StudioDocument => ({
   start: { inputs: { type: "object" }, contexts: {} },
   nodes: [],
   edges: [],
-  end: { outputs: {}, error: { strategy: "fail_fast", collectWindowMs: 5000, outputs: {} } },
+  end: { completion: "first_return", outputs: {}, error: { outputs: { } } },
   boundaryLayouts: [],
   viewport: { x: 0, y: 0, zoom: 1 },
   annotations: [],
@@ -25,11 +25,10 @@ describe("workflow definition validation", () => {
   });
 
   it("distinguishes missing End output content from valid falsey values and references", () => {
-    expect(isDynamicValueEmpty({ kind: "literal", value: "  " })).toBe(true);
-    expect(isDynamicValueEmpty({ kind: "template", segments: [{ kind: "text", text: "" }] })).toBe(true);
-    expect(isDynamicValueEmpty({ kind: "literal", value: 0 })).toBe(false);
-    expect(isDynamicValueEmpty({ kind: "literal", value: false })).toBe(false);
-    expect(isDynamicValueEmpty({ kind: "reference", selector: { namespace: "inputs", run: { kind: "current" }, item: { kind: "current" }, path: ["question"] }, missingPolicy: { kind: "error" } })).toBe(false);
+    expect(isInputBindingEmpty({ kind: "literal", value: "  " })).toBe(true);
+    expect(isInputBindingEmpty({ kind: "literal", value: 0 })).toBe(false);
+    expect(isInputBindingEmpty({ kind: "literal", value: false })).toBe(false);
+    expect(isInputBindingEmpty({ kind: "reference", selector: { namespace: "inputs", run: { kind: "current" }, item: { kind: "current" }, path: ["question"] }, missingPolicy: { kind: "error" } })).toBe(false);
   });
 
   it("finds user-editable values rejected by backend definition validation", () => {
@@ -38,7 +37,6 @@ describe("workflow definition validation", () => {
     value.start.contexts["Bad-name"] = { schema: { type: "string" }, default: "", mutable: true, sensitive: false, clientWritable: false, scope: "execution_tree", maxSize: 0, mergePolicy: "replace" };
     value.end.outputs["中文"] = { schema: { type: "string" }, required: false, sensitive: false };
     value.end.outputs["answer"] = { schema: { type: "string" }, required: false, sensitive: false };
-    value.end.error.collectWindowMs = 99;
     value.nodes = [{ id: "exit", type: "exit", position: { x: 0, y: 0 }, data: { editorKind: "exit", key: "exit", label: "End", protected: false, parameters: { outputs: { answer: { kind: "literal", value: "  " } }, errorOutputs: {} } } }];
 
     expect(definitionIssues(value).map((issue) => issue.code)).toEqual(expect.arrayContaining([
@@ -46,8 +44,7 @@ describe("workflow definition validation", () => {
       "INVALID_CONTEXT_KEY",
       "INVALID_CONTEXT_MAX_SIZE",
       "INVALID_END_OUTPUT_KEY",
-      "END_OUTPUT_EXPRESSION_REQUIRED",
-      "INVALID_ERROR_COLLECT_WINDOW",
+      "END_OUTPUT_BINDING_REQUIRED",
     ]));
   });
 
@@ -80,7 +77,6 @@ describe("workflow definition validation", () => {
         label: " ",
         key: "Bad-key",
         parameters: {},
-        outputProjection: { "": { "Bad-field": { value: { kind: "literal", value: "" }, schema: [], sensitive: false } } },
         contextWrites: [],
         resourceReferences: [],
         settings: { maxTries: 0 },
@@ -97,9 +93,6 @@ describe("workflow definition validation", () => {
       "INVALID_NODE_NAME",
       "UNSUPPORTED_NODE_VERSION",
       "INVALID_MAX_TRIES",
-      "INVALID_PROJECTION_PORT",
-      "INVALID_PROJECTION_FIELD_KEY",
-      "INVALID_PROJECTION_SCHEMA",
       "INVALID_CONNECTION_ID",
       "END_BOUNDARY_REMOVED",
     ]));

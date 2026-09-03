@@ -33,6 +33,7 @@ pub(crate) async fn externalize_attempt_input(
             claim.task.attempt_id,
             "input",
             encoded,
+            "application/json",
         )
         .await?;
         register_artifact(
@@ -75,6 +76,7 @@ pub(crate) async fn externalize_runtime_call_response(
             call_id,
             "provider-response",
             encoded,
+            "application/json",
         )
         .await?;
         register_artifact(
@@ -92,6 +94,45 @@ pub(crate) async fn externalize_runtime_call_response(
         Ok(value) => value,
         Err(error) => {
             tracing::warn!(%error, %call_id, "Provider response Artifact externalization failed");
+            None
+        }
+    }
+}
+
+pub(crate) async fn externalize_http_binary(
+    pool: &MySqlPool,
+    objects: &Arc<dyn ObjectStore>,
+    claim: &ClaimedWorkerAttempt,
+    call_id: Uuid,
+    bytes: Vec<u8>,
+    media_type: &str,
+) -> Option<RuntimeObjectReferenceV1> {
+    let result = async {
+        let artifact = persist_content(
+            pool,
+            objects,
+            claim.task.tenant_id,
+            call_id,
+            "http-response",
+            bytes,
+            media_type,
+        )
+        .await?;
+        register_artifact(
+            pool,
+            &artifact,
+            claim.task.execution_id,
+            claim.task.node_execution_id,
+            TraceContentKindV1::RuntimeResponse,
+        )
+        .await?;
+        Ok::<_, anyhow::Error>(artifact)
+    }
+    .await;
+    match result {
+        Ok(value) => Some(value),
+        Err(error) => {
+            tracing::warn!(%error, %call_id, "HTTP binary Artifact externalization failed");
             None
         }
     }
@@ -147,6 +188,7 @@ async fn persist_content(
     attempt_id: Uuid,
     role: &str,
     encoded: Vec<u8>,
+    media_type: &str,
 ) -> anyhow::Result<RuntimeObjectReferenceV1> {
     let object_id = agentx_runtime_contracts::deterministic_uuid(
         attempt_id,
@@ -160,7 +202,7 @@ async fn persist_content(
         anyhow::ensure!(
             row.try_get::<String, _>("content_hash")? == content_hash.as_str()
                 && row.try_get::<u64, _>("size_bytes")? == encoded.len() as u64
-                && row.try_get::<String, _>("media_type")? == "application/json"
+                && row.try_get::<String, _>("media_type")? == media_type
                 && row.try_get::<String, _>("status")? == "ready",
             "Trace Artifact identity conflicts with existing content"
         );
@@ -170,9 +212,9 @@ async fn persist_content(
         let request_hash = agentx_runtime_contracts::content_hash(&json!({
             "attemptId":attempt_id,"role":role,"contentHash":content_hash,"sizeBytes":encoded.len()
         }))?;
-        if let Err(error) = sqlx::query("INSERT INTO runtime_objects(object_id,tenant_id,object_key,content_hash,size_bytes,media_type,status,idempotency_key,request_hash,temporary_expires_at,ready_at) VALUES(?,?,?,?,?,'application/json','ready',?,?,UTC_TIMESTAMP(6),UTC_TIMESTAMP(6))")
+        if let Err(error) = sqlx::query("INSERT INTO runtime_objects(object_id,tenant_id,object_key,content_hash,size_bytes,media_type,status,idempotency_key,request_hash,temporary_expires_at,ready_at) VALUES(?,?,?,?,?,?,'ready',?,?,UTC_TIMESTAMP(6),UTC_TIMESTAMP(6))")
             .bind(object_id).bind(tenant_id).bind(&object_key).bind(content_hash.as_str())
-            .bind(encoded.len() as u64).bind(format!("trace-content:{attempt_id}:{role}"))
+            .bind(encoded.len() as u64).bind(media_type).bind(format!("trace-content:{attempt_id}:{role}"))
             .bind(request_hash.as_str()).execute(pool).await
         {
             let _ = objects.delete(&path).await;
@@ -186,7 +228,7 @@ async fn persist_content(
         object_key,
         content_hash,
         size_bytes: encoded.len() as u64,
-        media_type: "application/json".into(),
+        media_type: media_type.into(),
     })
 }
 

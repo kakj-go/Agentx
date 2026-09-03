@@ -53,17 +53,12 @@ pub async fn render(
 }
 
 async fn ensure_namespaces(config: &DeploymentConfig, targets: &[&str]) -> Result<()> {
-    let mut planes = Vec::new();
-    for target in targets {
-        let plane = if *target == "observability" {
-            "runtime"
-        } else {
-            target
-        };
-        if !planes.contains(&plane) {
-            planes.push(plane);
-        }
-    }
+    let _ = targets;
+    // Namespace labels are cluster-global security state: the NetworkPolicies
+    // of every plane trust the dependencies namespace's ingress label, so a
+    // narrow `--target control` upgrade must still reconcile all of them.
+    // kubectl apply is idempotent, so this is safe for any target.
+    let planes = vec!["dependencies", "control", "runtime"];
     for plane in planes {
         let mut labels = Map::from_iter([
             ("agentx.io/plane".into(), Value::String(plane.into())),

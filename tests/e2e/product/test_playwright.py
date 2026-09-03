@@ -76,7 +76,7 @@ def _assert_execution_context_snapshot(installed_agentx: dict[str, str], evidenc
 @pytest.mark.cluster
 @pytest.mark.product
 def test_product_playwright_suite(
-    installed_agentx: dict[str, str], service_urls: dict[str, str], e2e_providers: dict[str, str]
+    installed_agentx: dict[str, str], service_urls: dict[str, str], e2e_providers: dict[str, str], code_egress_fixtures: dict[str, str]
 ) -> None:
     environment = os.environ.copy()
     environment["AGENTX_E2E_RUN_ID"] = installed_agentx["run_id"]
@@ -84,9 +84,11 @@ def test_product_playwright_suite(
     environment["AGENTX_E2E_BASE_URL"] = service_urls["web"]
     environment["AGENTX_E2E_RUNTIME_URL"] = service_urls["runtime"]
     environment["AGENTX_E2E_ECHO_BASE_URL"] = e2e_providers["echo_mcp"]
-    environment["AGENTX_E2E_REMOTE_NODE_ENDPOINT"] = e2e_providers["echo_node"]
     environment["AGENTX_E2E_LIGHTRAG_BASE_URL"] = e2e_providers["lightrag"]
     environment["AGENTX_E2E_MEM0_BASE_URL"] = e2e_providers["mem0"]
+    environment["AGENTX_E2E_CODE_EGRESS_HOST"] = code_egress_fixtures["host"]
+    environment["AGENTX_E2E_CODE_HTTP_PORT"] = code_egress_fixtures["http_port"]
+    environment["AGENTX_E2E_CODE_TCP_PORT"] = code_egress_fixtures["tcp_port"]
     pnpm = "pnpm.cmd" if os.name == "nt" else "pnpm"
     with tempfile.TemporaryDirectory(prefix="agentx-e2e-context-") as context_dir:
         environment["AGENTX_V2_08_CONTEXT_OUTPUT"] = str(Path(context_dir) / "v2-08-context.json")
@@ -110,25 +112,40 @@ def test_product_playwright_suite(
                 "product-closure",
                 (
                     "tests/m6-workflow-studio.spec.ts",
+                    "tests/workflow-loop-input-regressions.spec.ts",
                     "tests/m6-local-builtins.spec.ts",
                     "tests/m7-business-closure.spec.ts",
                     "tests/safe-deletion.spec.ts",
                 ),
             ),
             ("workflow-multi-exit", ("tests/workflow-multi-exit.spec.ts",)),
+            ("workflow-performance", ("tests/workflow-canvas-performance.spec.ts",)),
         )
-        only_suite = os.environ.get("AGENTX_E2E_ONLY_SUITE")
+        only_suites = {
+            suite.strip() for suite in os.environ.get("AGENTX_E2E_ONLY_SUITE", "").split(",") if suite.strip()
+        }
+        playwright_grep = os.environ.get("AGENTX_E2E_PLAYWRIGHT_GREP")
+        failures: list[str] = []
         for suite, tests in suites:
-            if only_suite and suite != only_suite:
+            if only_suites and suite not in only_suites:
                 continue
-            _run_playwright(pnpm, suite, tests, environment, root)
-            if suite == "product-closure":
+            selected_tests = (*tests, "--grep", playwright_grep) if playwright_grep else tests
+            try:
+                _run_playwright(pnpm, suite, selected_tests, environment, root)
+            except subprocess.CalledProcessError:
+                failures.append(suite)
+                continue
+            if suite == "product-closure" and not playwright_grep:
                 _assert_execution_context_snapshot(installed_agentx, execution_context_evidence)
-        if not only_suite or only_suite == "session-diagnostics":
-            _run_playwright(
-                pnpm,
-                "session-diagnostics",
-                ("tests/agent-sessions-diagnostics.spec.ts",),
-                environment,
-                root,
-            )
+        if not only_suites or "session-diagnostics" in only_suites:
+            try:
+                _run_playwright(
+                    pnpm,
+                    "session-diagnostics",
+                    ("tests/agent-sessions-diagnostics.spec.ts",),
+                    environment,
+                    root,
+                )
+            except subprocess.CalledProcessError:
+                failures.append("session-diagnostics")
+        assert not failures, f"Playwright suites failed: {', '.join(failures)}"

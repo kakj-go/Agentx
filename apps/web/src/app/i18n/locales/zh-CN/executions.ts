@@ -42,7 +42,7 @@ const translations = {
     "selectNode": "选择左侧节点查看运行数据", "ariaLabel": "节点运行数据", "outlineAriaLabel": "执行节点大纲", "outline": "执行节点大纲", "runCount": "{{count}} 次运行", "noNodes": "尚无节点运行", "run": "运行", "input": "输入", "output": "输出", "lineage": "Lineage", "attempts": "尝试记录", "logs": "日志", "noInput": "该节点没有输入", "noOutput": "该节点尚无输出", "noLineage": "没有 Lineage 记录", "noAttempts": "没有尝试记录", "noLogs": "没有节点日志", "attempt": "尝试 {{number}}", "worker": "Worker", "deadline": "截止时间", "started": "开始时间", "sourceSummary": "运行 {{run}} · 输出 {{output}} · 项 {{source}} → 项 {{target}}"
   }
   ,"recovery": {
-    "ariaLabel": "恢复与事件", "title": "时间线与恢复", "wait": "等待", "approval": "审批", "sideEffectConfirmation": "副作用确认", "wake": "唤醒", "timeout": "超时", "openApproval": "打开审批", "irreversibleWaiting": "不可逆节点正在等待恢复决策。", "handle": "处理", "checkpoints": "检查点 · {{count}}", "noCheckpoints": "尚无检查点", "events": "事件", "noEvents": "尚无时间线事件", "activationsAndDeliveries": "{{activations}} 次激活 · {{deliveries}} 次投递", "download": "下载"
+    "ariaLabel": "恢复与事件", "title": "时间线与恢复", "approval": "审批", "sideEffectConfirmation": "副作用确认", "openApproval": "打开审批", "irreversibleWaiting": "不可逆节点正在等待恢复决策。", "handle": "处理", "checkpoints": "检查点 · {{count}}", "noCheckpoints": "尚无检查点", "events": "事件", "noEvents": "尚无时间线事件", "activationsAndDeliveries": "{{activations}} 次激活 · {{deliveries}} 次投递", "download": "下载"
   }
   ,"sideEffects": { "none": "无", "reversible": "可恢复", "irreversible": "不可逆" }
   ,"forkDialog": {

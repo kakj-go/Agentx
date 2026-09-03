@@ -1,4 +1,7 @@
 use agentx_domain::NodeExecutionId;
+use agentx_runtime::{
+    CompiledWorkflow, ExpressionContext, ExpressionEngine, materialize_and_validate_start_input,
+};
 use serde_json::{Value, json};
 use sqlx::{MySql, Row, Transaction};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
@@ -16,6 +19,8 @@ pub(crate) async fn create_child(
     parent_node_execution_id: NodeExecutionId,
     activation: &agentx_runtime::NodeActivation,
     node: &agentx_runtime::CompiledNode,
+    parent_workflow: &CompiledWorkflow,
+    current_context: &Value,
 ) -> RuntimeResult<()> {
     let workflow_version_id = node
         .parameters
@@ -49,7 +54,7 @@ pub(crate) async fn create_child(
     }
     .ok_or_else(|| invalid("COMPOSITE_SNAPSHOT_MISSING", "Composite Definition and IR were not materialized during Prepare"))?;
     let parent = sqlx::query(
-        "SELECT e.application_id,e.admission_epoch,e.initiator_user_id,e.initiator_user_name,e.initiator_department_id,e.initiator_department_name,s.resource_snapshot_json,s.authorization_snapshot_json,s.policy_snapshot_json,s.execution_context_json,s.worker_compatibility_json,s.object_manifest_json,s.runtime_settings_json FROM workflow_executions e JOIN execution_snapshots s ON s.tenant_id=e.tenant_id AND s.execution_id=e.id WHERE e.tenant_id=? AND e.id=?",
+        "SELECT e.application_id,e.admission_epoch,e.input_json,e.initiator_user_id,e.initiator_user_name,e.initiator_department_id,e.initiator_department_name,s.resource_snapshot_json,s.authorization_snapshot_json,s.policy_snapshot_json,s.execution_context_json,s.worker_compatibility_json,s.object_manifest_json,s.runtime_settings_json FROM workflow_executions e JOIN execution_snapshots s ON s.tenant_id=e.tenant_id AND s.execution_id=e.id WHERE e.tenant_id=? AND e.id=?",
     )
     .bind(tenant_id)
     .bind(parent_execution_id)
@@ -67,16 +72,44 @@ pub(crate) async fn create_child(
         .or_else(|| activation.inputs.values().next())
         .cloned()
         .unwrap_or_default();
-    let input = if input_items.len() == 1 {
+    let current_input = if input_items.len() == 1 {
         input_items[0].json.clone()
     } else {
         Value::Array(input_items.into_iter().map(|item| item.json).collect())
     };
-    let context_overlay = node
-        .parameters
-        .get("contextOverlay")
-        .cloned()
-        .unwrap_or_else(|| json!({}));
+    let outputs =
+        crate::engine_persistence::load_output_namespace(tx, tenant_id, parent_execution_id)
+            .await?;
+    let mut input = ExpressionEngine
+        .resolve_parameters(
+            node.parameters.get("inputs").ok_or_else(|| {
+                invalid(
+                    "COMPOSITE_INPUTS_REQUIRED",
+                    "Sub-workflow inputs mapping is required",
+                )
+            })?,
+            &ExpressionContext {
+                json: current_input.clone(),
+                input: current_input,
+                inputs: parent
+                    .try_get::<Option<Value>, _>("input_json")?
+                    .unwrap_or(Value::Null),
+                outputs,
+                contexts: current_context.clone(),
+                execution: parent.try_get("execution_context_json")?,
+                loop_context: activation.loop_frame.clone().unwrap_or(Value::Null),
+                output_node_keys: parent_workflow
+                    .nodes
+                    .iter()
+                    .map(|node| (node.id.clone(), node.key.clone()))
+                    .collect(),
+                ..ExpressionContext::default()
+            },
+        )
+        .map_err(|error| invalid("COMPOSITE_INPUT_MAPPING_INVALID", &error.to_string()))?;
+    materialize_and_validate_start_input(&mut input, &compiled_ir.start.inputs)
+        .map_err(|error| invalid("COMPOSITE_INPUT_INVALID", &error.to_string()))?;
+    let context_overlay = current_context.clone();
     let overlay_hash = agentx_runtime_contracts::content_hash(&context_overlay)
         .map_err(|error| RuntimeError::Internal(error.into()))?;
     let timeout_micros = node

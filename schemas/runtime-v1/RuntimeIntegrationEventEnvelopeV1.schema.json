@@ -1,5 +1,21 @@
 {
   "$defs": {
+    "RuntimeApprovalButtonV1": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "label"
+      ],
+      "type": "object"
+    },
     "RuntimeApprovalCandidateKindV1": {
       "enum": [
         "user",
@@ -336,6 +352,12 @@
         {
           "additionalProperties": false,
           "properties": {
+            "buttons": {
+              "items": {
+                "$ref": "#/$defs/RuntimeApprovalButtonV1"
+              },
+              "type": "array"
+            },
             "candidates": {
               "items": {
                 "$ref": "#/$defs/RuntimeApprovalCandidateV1"
@@ -405,6 +427,7 @@
             "workflowId",
             "nodeId",
             "title",
+            "buttons",
             "status",
             "resumeStatus",
             "candidates"

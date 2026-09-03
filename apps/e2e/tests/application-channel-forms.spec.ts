@@ -101,14 +101,12 @@ test('channel dialog renders provider-specific fields and stream channels hide t
   await dialog.getByRole('button', { name: '保存' }).click()
   await expect(dialog).toHaveCount(0)
 
-  const channel = page.getByRole('group', { name: `钉钉长连接渠道 ${suffix}` }).first()
+  const channel = page.getByRole('button', { name: new RegExp(`^钉钉长连接渠道 ${suffix}`) }).first()
   await expect(channel).toBeVisible()
-  await channel.click()
-  const details = page.getByRole('heading', { name: '渠道详情' }).locator('..')
-  await expect(details.getByText('长连接 (Stream)')).toBeVisible()
-  await expect(details.getByText('连接状态')).toBeVisible()
-  await expect(details.getByText('生产接入地址')).toHaveCount(0)
-  await expect(details.getByText('长连接模式无需公网接入地址')).toBeVisible()
+  await expect(channel.getByText(/钉钉 · 长连接 \(Stream\)/)).toBeVisible()
+  await expect(page.getByText('连接状态', { exact: true })).toBeVisible()
+  await expect(page.getByText('生产接入地址', { exact: true })).toHaveCount(0)
+  await expect(page.getByText(/长连接模式无需公网接入地址/)).toBeVisible()
 
   // Missing required config fields are rejected server-side per the template.
   const rejected = await page.request.fetch(`/api/v1/applications/${application.id}/webhooks`, {

@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use agentx_domain::{
-    ContextDefinition, ContextWrite, DynamicValue, ExecutionOrder, NodeSettings, ResourceOperation,
-    ResourceType, WorkflowEnd, WorkflowStart,
+    ContextDefinition, ContextWrite, ExecutionOrder, InputBinding, NodeSettings, ReferenceBinding,
+    ResourceOperation, ResourceType, WorkflowEnd, WorkflowStart,
 };
 use agentx_node_protocol::{
     ExecutionStyle, NodeCapability, OutputCardinality, PortKind, ReadinessPolicy, SideEffectLevel,
@@ -29,6 +29,10 @@ pub struct CompiledWorkflowV1 {
     /// that actually received the delivery.
     #[serde(default)]
     pub exits: BTreeMap<String, CompiledExitV1>,
+    /// Enabled Exit ids in their original Definition order. Runtime result
+    /// materialization must use this list instead of map-key ordering.
+    #[serde(default)]
+    pub exit_order: Vec<String>,
     pub nodes: Vec<CompiledNodeV1>,
     pub connections: Vec<CompiledConnectionV1>,
     pub terminal_connections: Vec<CompiledTerminalConnectionV1>,
@@ -45,9 +49,9 @@ pub struct CompiledWorkflowV1 {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CompiledExitV1 {
     #[serde(default)]
-    pub outputs: BTreeMap<String, DynamicValue>,
+    pub outputs: BTreeMap<String, InputBinding>,
     #[serde(default)]
-    pub error_outputs: BTreeMap<String, DynamicValue>,
+    pub error_outputs: BTreeMap<String, InputBinding>,
     #[serde(default)]
     pub protected: bool,
 }
@@ -62,7 +66,7 @@ pub struct CompiledNodeV1 {
     pub node_type: String,
     pub type_version: u32,
     pub parameters: Value,
-    pub output_projection: Value,
+    pub parameter_schema: Value,
     pub context_writes: Vec<ContextWrite>,
     pub settings: NodeSettings,
     pub capability: NodeCapability,
@@ -70,6 +74,18 @@ pub struct CompiledNodeV1 {
     pub readiness: ReadinessPolicy,
     pub required_input_ports: Vec<String>,
     pub output_ports: Vec<String>,
+    #[serde(default)]
+    pub variadic_output_ports: Vec<String>,
+    /// True when the node has at least one outgoing `error` edge: a failed
+    /// attempt then emits an error item on that branch instead of failing the
+    /// workflow ("wiring is the policy").
+    #[serde(default)]
+    pub routes_error: bool,
+    /// Definition id of the container node this node lives in (loop body).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub container: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub loop_body: Option<CompiledLoopBodyV1>,
     pub effective_output_contract: EffectiveOutputContractV1,
     pub side_effect_level: SideEffectLevel,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -99,7 +115,6 @@ pub struct CompiledAgentResourceReferenceV2 {
 #[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CompiledAgentAttachmentV2 {
-    pub binding_id: String,
     pub binding_role: String,
     pub resource_type: ResourceType,
     pub resource_id: uuid::Uuid,
@@ -123,6 +138,21 @@ pub struct DerivedCoreToolV2 {
     pub workspace_sandbox_version_id: uuid::Uuid,
 }
 
+/// Container execution contract for `loop_over_items`: the machine fans each
+/// input item into one activation round of the body sub-DAG (distinct
+/// generation per iteration) and aggregates the body sinks back into an
+/// ordered array on the loop node's `main` output.
+#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CompiledLoopBodyV1 {
+    pub entries: Vec<usize>,
+    pub sinks: Vec<usize>,
+    pub output_selector: ReferenceBinding,
+    pub parallelism: u32,
+    /// terminate | continue | remove
+    pub error_mode: String,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CompiledAgentNodeV2 {
@@ -132,7 +162,7 @@ pub struct CompiledAgentNodeV2 {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace_sandbox: Option<CompiledAgentResourceReferenceV2>,
     #[serde(default)]
-    pub canvas_attachments: Vec<CompiledAgentAttachmentV2>,
+    pub attachments: Vec<CompiledAgentAttachmentV2>,
     #[serde(default)]
     pub core_tools: Vec<DerivedCoreToolV2>,
 }

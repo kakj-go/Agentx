@@ -330,7 +330,7 @@ pub fn derive_attachment_registry(
             .map(|tool| tool.name.clone()),
     );
     let mut direct_attachments = BTreeSet::new();
-    for attachment in &configuration.canvas_attachments {
+    for attachment in &configuration.attachments {
         if !direct_attachments.insert((
             attachment.resource_type,
             attachment.resource_id,
@@ -560,7 +560,7 @@ fn expand_skill_attachments(
     resources: &[RuntimeResourceBindingV1],
 ) -> Result<Vec<crate::CompiledAgentAttachmentV2>, String> {
     validate_skill_dependency_cycles(configuration, resources)?;
-    let mut expanded = configuration.canvas_attachments.clone();
+    let mut expanded = configuration.attachments.clone();
     let mut seen = expanded
         .iter()
         .map(|attachment| {
@@ -641,10 +641,6 @@ fn expand_skill_attachments(
                 operation,
             )) {
                 expanded.push(crate::CompiledAgentAttachmentV2 {
-                    binding_id: format!(
-                        "skill-dependency:{}:{}",
-                        attachment.resource_version_id, dependency.resource_id
-                    ),
                     binding_role: "skill_dependency".into(),
                     resource_type,
                     resource_id: dependency.resource_id,
@@ -715,7 +711,7 @@ fn validate_skill_dependency_cycles(
 
     let mut visiting = BTreeSet::new();
     let mut visited = BTreeSet::new();
-    for attachment in &configuration.canvas_attachments {
+    for attachment in &configuration.attachments {
         if attachment.resource_type == agentx_domain::ResourceType::Skill {
             visit(
                 attachment.resource_id,
@@ -1330,7 +1326,7 @@ mod attachment_registry_tests {
     }
 
     fn configuration(
-        canvas_attachments: Vec<crate::CompiledAgentAttachmentV2>,
+        attachments: Vec<crate::CompiledAgentAttachmentV2>,
     ) -> crate::CompiledAgentNodeV2 {
         crate::CompiledAgentNodeV2 {
             contract_version: AGENT_CORE_CONTRACT_VERSION.into(),
@@ -1343,7 +1339,7 @@ mod attachment_registry_tests {
                 operation: ResourceOperation::Use,
             },
             workspace_sandbox: None,
-            canvas_attachments,
+            attachments,
             core_tools: vec![],
         }
     }
@@ -1354,7 +1350,6 @@ mod attachment_registry_tests {
         resource_version_id: Uuid,
     ) -> crate::CompiledAgentAttachmentV2 {
         crate::CompiledAgentAttachmentV2 {
-            binding_id: format!("binding-{resource_id}"),
             binding_role: resource_type.as_str().into(),
             resource_type,
             resource_id,
@@ -1448,8 +1443,7 @@ mod attachment_registry_tests {
                 operation: ResourceOperation::Use,
             },
             workspace_sandbox: None,
-            canvas_attachments: vec![crate::CompiledAgentAttachmentV2 {
-                binding_id: "skill".into(),
+            attachments: vec![crate::CompiledAgentAttachmentV2 {
                 binding_role: "skill".into(),
                 resource_type: ResourceType::Skill,
                 resource_id: skill_id,
@@ -1594,6 +1588,7 @@ mod attachment_registry_tests {
             state_epoch: 1,
             content_hash: hash(),
             configuration: RuntimeResourceConfigurationV1::Credential {
+                credential_type: "bearer".into(),
                 secret,
                 allowed_operations: BTreeSet::from(["use".into()]),
             },

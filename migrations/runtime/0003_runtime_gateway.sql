@@ -76,11 +76,6 @@ ALTER TABLE trigger_bindings
     ADD COLUMN activated_at TIMESTAMP(6) NULL AFTER last_error,
     ADD KEY idx_trigger_bundle (tenant_id, bundle_id, status);
 
-ALTER TABLE execution_resume_tokens
-    ADD COLUMN authentication_mode ENUM('none','header','basic','signed') NOT NULL DEFAULT 'signed' AFTER resume_kind,
-    ADD COLUMN authentication_config_json JSON NULL AFTER authentication_mode,
-    ADD COLUMN request_hash CHAR(71) NULL AFTER idempotency_key,
-    ADD COLUMN response_json JSON NULL AFTER request_hash;
 
 CREATE TABLE runtime_user_admission (
     tenant_id BINARY(16) NOT NULL,

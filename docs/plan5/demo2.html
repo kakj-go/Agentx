@@ -1,0 +1,897 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Agentx Workflow 控制组件重设计 · Demo 2（参照 Dify）</title>
+<style>
+  :root {
+    --c-logic: #06B6D4;      /* cyan-500  逻辑类（if/loop/approval/list） */
+    --c-transform: #3B82F6;  /* blue-500  转换类（code/set/merge） */
+    --c-integrate: #8B5CF6;  /* violet-500 集成类（http） */
+    --ink-1: #101828;
+    --ink-2: #344054;
+    --ink-3: #667085;
+    --ink-4: #98a2b3;
+    --line: #e4e7ec;
+    --line-2: #f2f4f7;
+    --bg: #f6f7f9;
+    --card: #ffffff;
+    --brand: #155eef;
+    --success: #12b76a;
+    --warn: #f59e0b;
+    --danger: #f04438;
+    --handle: #b6c0cf;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+    background: var(--bg);
+    color: var(--ink-1);
+    font-size: 13px;
+    overflow-x: hidden;
+  }
+  /* ========== 顶栏 ========== */
+  .topbar {
+    height: 52px; display: flex; align-items: center; gap: 12px;
+    padding: 0 16px; background: var(--card); border-bottom: 1px solid var(--line);
+    position: sticky; top: 0; z-index: 50;
+  }
+  .topbar .logo {
+    width: 26px; height: 26px; border-radius: 7px; background: var(--brand);
+    color: #fff; display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 13px;
+  }
+  .topbar h1 { font-size: 14px; font-weight: 600; }
+  .topbar .sub { color: var(--ink-4); font-size: 12px; }
+  .topbar .spacer { flex: 1; }
+  .legend { display: flex; align-items: center; gap: 14px; font-size: 12px; color: var(--ink-3); }
+  .legend .dot { width: 10px; height: 10px; border-radius: 3px; display: inline-block; margin-right: 4px; vertical-align: -1px; }
+  .topbar a { color: var(--brand); text-decoration: none; font-size: 12px; }
+  /* ========== 三栏布局 ========== */
+  .layout { display: flex; height: calc(100vh - 52px); min-height: 560px; }
+  /* ----- 左：节点面板 ----- */
+  .palette {
+    width: 264px; flex: none; background: var(--card); border-right: 1px solid var(--line);
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  .palette .p-head { padding: 12px 12px 8px; }
+  .palette .p-head h2 { font-size: 13px; font-weight: 600; margin-bottom: 8px; }
+  .p-search {
+    width: 100%; height: 30px; border: 1px solid var(--line); border-radius: 8px;
+    padding: 0 10px; font-size: 12px; outline: none; background: #fbfcfd;
+  }
+  .p-search:focus { border-color: var(--brand); background: #fff; }
+  .p-scroll { flex: 1; overflow-y: auto; padding: 0 8px 12px; }
+  .p-group { margin-top: 10px; }
+  .p-group-title {
+    font-size: 11px; color: var(--ink-4); padding: 4px 6px;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .p-item {
+    display: flex; gap: 9px; padding: 8px; border-radius: 10px; cursor: pointer;
+    border: 1px solid transparent; align-items: flex-start; user-select: none;
+  }
+  .p-item:hover { background: #f4f7fb; }
+  .p-item.active { background: #eef4ff; border-color: #b2ccff; }
+  .p-item .p-icon {
+    width: 26px; height: 26px; border-radius: 7px; flex: none;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .p-item .p-name { font-size: 12.5px; font-weight: 600; color: var(--ink-2); line-height: 1.25; }
+  .p-item .p-en { font-size: 10px; color: var(--ink-4); font-weight: 400; margin-left: 4px; }
+  .p-item .p-desc { font-size: 11px; color: var(--ink-3); margin-top: 2px; line-height: 1.4; }
+  .p-item.removed { opacity: .55; }
+  .p-item.removed:hover { opacity: .8; background: #faf5f5; }
+  .p-tag-del {
+    font-size: 10px; color: var(--danger); border: 1px solid #fecdc9; background: #fffbfa;
+    border-radius: 5px; padding: 0 5px; margin-left: 6px; font-weight: 500;
+  }
+  .p-note { font-size: 10.5px; color: var(--ink-4); padding: 6px; line-height: 1.5; }
+  /* ----- 中：画布 ----- */
+  .canvas-wrap { flex: 1; overflow: auto; position: relative; }
+  .canvas {
+    position: relative; width: 3360px; height: 620px;
+    background-image: radial-gradient(circle, #d3d9e2 1px, transparent 1px);
+    background-size: 20px 20px;
+  }
+  .canvas svg.edges { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+  .canvas svg.edges path.edge { stroke: var(--handle); stroke-width: 1.6; fill: none; }
+  .canvas svg.edges path.edge.dashed { stroke-dasharray: 5 4; }
+  .canvas svg.edges path.edge.lit { stroke: var(--brand); }
+  .canvas svg.edges text { font-size: 10px; fill: var(--ink-4); }
+  /* ----- 节点（Dify 视觉语言：240px 卡片 + 彩色图标 + 竖条连接点） ----- */
+  .node {
+    position: absolute; width: 240px; background: var(--card);
+    border: 1px solid var(--line); border-radius: 16px;
+    box-shadow: 0 1px 2px rgba(16,24,40,.06);
+    cursor: pointer; transition: box-shadow .15s, border-color .15s;
+  }
+  .node:hover { box-shadow: 0 6px 16px rgba(16,24,40,.12); }
+  .node.selected { border-color: var(--brand); box-shadow: 0 0 0 3px rgba(21,94,239,.15); }
+  .n-head { display: flex; align-items: center; gap: 8px; padding: 12px 12px 8px; }
+  .n-icon {
+    width: 24px; height: 24px; border-radius: 6px; flex: none;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .n-title { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .n-status { margin-left: auto; flex: none; display: flex; align-items: center; }
+  .n-ok { color: var(--success); }
+  .n-body { padding: 0 12px 10px; font-size: 11px; color: var(--ink-3); line-height: 1.55; }
+  .n-body .u { color: var(--ink-4); }
+  .n-rows { border-top: 1px solid var(--line-2); }
+  .n-row {
+    position: relative; display: flex; align-items: center; gap: 6px;
+    height: 34px; padding: 0 12px; font-size: 11.5px; color: var(--ink-2);
+  }
+  .n-row + .n-row { border-top: 1px solid var(--line-2); }
+  .n-row .r-tag {
+    font-size: 10px; font-weight: 700; color: var(--c-logic); background: #ecfdff;
+    border: 1px solid #a5f0fc; border-radius: 5px; padding: 1px 5px; flex: none;
+  }
+  .n-row .r-tag.blue { color: var(--c-transform); background: #eff6ff; border-color: #bfdbfe; }
+  .n-row .r-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .n-row .r-sub { color: var(--ink-4); font-size: 10.5px; }
+  .n-row .r-sp { flex: 1; }
+  /* 连接点：Dify 式竖条，默认淡灰，hover 放大 */
+  .hd {
+    position: absolute; width: 10px; height: 18px; display: flex; align-items: center; justify-content: center;
+    cursor: crosshair; z-index: 5;
+  }
+  .hd::after { content: ""; width: 3px; height: 10px; border-radius: 2px; background: var(--handle); transition: all .12s; }
+  .hd:hover::after { background: var(--brand); transform: scale(1.4); }
+  .hd.in { left: -6px; }
+  .hd.out { right: -6px; }
+  .hd.row-out { right: -17px; }
+  /* 容器节点（迭代） */
+  .container {
+    position: absolute; border: 1.5px solid #a5f0fc; background: rgba(6,182,212,.045);
+    border-radius: 16px;
+  }
+  .container .c-head { display: flex; align-items: center; gap: 8px; padding: 12px 12px 6px; }
+  .container .c-title { font-size: 13px; font-weight: 600; }
+  .container .c-body { padding: 0 12px 4px; font-size: 11px; color: var(--ink-3); }
+  .container .c-note {
+    position: absolute; left: 12px; bottom: 8px; font-size: 10px; color: var(--ink-4);
+  }
+  .chip-node {
+    position: absolute; height: 40px; display: flex; align-items: center; gap: 7px;
+    background: #fff; border: 1px dashed #67e8f9; border-radius: 10px;
+    padding: 0 12px; font-size: 12px; font-weight: 600; color: #0e7490; z-index: 2;
+  }
+  .ghost {
+    position: absolute; height: 34px; display: flex; align-items: center;
+    border: 1px dashed #cbd5e1; color: var(--ink-4); border-radius: 10px;
+    padding: 0 10px; font-size: 11px; background: rgba(255,255,255,.6);
+  }
+  /* 智能体附件槽（替代原画布附件节点） */
+  .n-att { display: flex; flex-wrap: wrap; gap: 4px; padding: 0 12px 10px; }
+  .att {
+    display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 6px;
+    border: 1px solid var(--line); border-radius: 6px; font-size: 10px; color: var(--ink-2);
+    background: #fafbfc; white-space: nowrap;
+  }
+  .att svg { width: 11px; height: 11px; flex: none; }
+  .att.add { border-style: dashed; color: var(--ink-4); }
+  .att .a-dot { width: 5px; height: 5px; border-radius: 2px; flex: none; }
+  /* 开始节点的输入字段行 */
+  .vrow { display: flex; align-items: center; justify-content: space-between; padding: 2px 0; font-size: 11px; color: var(--ink-2); }
+  .vrow span { color: var(--ink-4); font-size: 10px; font-family: ui-monospace, Consolas, monospace; }
+  /* 附件管理行（配置面板） */
+  .att-mg {
+    display: flex; align-items: center; gap: 8px; padding: 7px 9px;
+    border: 1px solid var(--line); border-radius: 9px; margin-bottom: 6px; font-size: 11.5px;
+  }
+  .att-mg .am-ic { width: 20px; height: 20px; border-radius: 5px; flex: none; display: flex; align-items: center; justify-content: center; }
+  .att-mg .am-n { font-weight: 600; color: var(--ink-2); }
+  .att-mg .am-d { color: var(--ink-4); font-size: 10.5px; }
+  .att-mg .am-btn { margin-left: auto; font-size: 10.5px; color: var(--brand); cursor: pointer; flex: none; }
+  /* ----- 右：配置面板 ----- */
+  .inspector {
+    width: 480px; min-width: 420px; max-width: 640px; flex: none; background: var(--card); border-left: 1px solid var(--line); resize: horizontal; overflow: auto;
+    overflow-y: auto;
+  }
+  .insp-head {
+    display: flex; align-items: center; gap: 9px; padding: 14px 14px 10px;
+    border-bottom: 1px solid var(--line-2); position: sticky; top: 0; background: #fff; z-index: 2;
+  }
+  .insp-head .n-icon { width: 28px; height: 28px; border-radius: 8px; }
+  .insp-title { font-size: 13.5px; font-weight: 600; }
+  .insp-type { font-size: 10.5px; color: var(--ink-4); font-family: ui-monospace, Consolas, monospace; }
+  .insp-body { padding: 12px 14px 24px; }
+  .sec { margin-bottom: 16px; }
+  .sec-t { font-size: 11px; font-weight: 600; color: var(--ink-3); margin-bottom: 7px; letter-spacing: .02em; }
+  .fld { margin-bottom: 8px; }
+  .fld label { display: block; font-size: 11.5px; color: var(--ink-2); margin-bottom: 4px; font-weight: 500; }
+  .inp, .sel {
+    width: 100%; height: 30px; border: 1px solid var(--line); border-radius: 8px;
+    padding: 0 9px; font-size: 12px; color: var(--ink-1); background: #fff; outline: none;
+  }
+  .inp:focus, .sel:focus { border-color: var(--brand); }
+  .sel { appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%2398a2b3' fill='none' stroke-width='1.5'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 9px center; }
+  textarea.inp { height: 56px; padding: 7px 9px; resize: none; line-height: 1.5; }
+  /* 变量胶囊（Dify variable tag） */
+  .vpill {
+    display: inline-flex; align-items: center; gap: 4px; max-width: 100%; min-width: 0;
+    background: #eef4ff; color: #175cd3; border: 1px solid #d1e0ff;
+    border-radius: 6px; padding: 2px 7px; font-size: 11px; font-weight: 500;
+    vertical-align: middle;
+  }
+  .vpill .vd { width: 7px; height: 7px; border-radius: 2px; flex: none; }
+  .vpill .vt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .vpill .vv { color: #667085; font-weight: 400; }
+  .var-inp {
+    display: flex; align-items: center; gap: 6px; width: 100%; min-width: 0; flex: 1; min-height: 30px;
+    border: 1px solid var(--line); border-radius: 8px; padding: 3px 8px; background: #fff;
+    overflow: hidden;
+  }
+  .var-inp .x { margin-left: auto; color: var(--ink-4); font-size: 10px; font-family: monospace; border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
+  /* 条件构建器 */
+  .cond-block { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; margin-bottom: 8px; }
+  .cond-block .cb-head {
+    display: flex; align-items: center; gap: 6px; padding: 6px 8px;
+    background: #f8fafc; border-bottom: 1px solid var(--line-2);
+    font-size: 10.5px; font-weight: 700; color: #0e7490;
+  }
+  .cond-block .cb-head.blue { color: #1d4ed8; }
+  .cond-block .cb-head.gray { color: var(--ink-3); }
+  .cond-row { display: flex; align-items: center; gap: 5px; padding: 7px 8px; }
+  .cond-row + .cond-row { border-top: 1px dashed var(--line-2); }
+  .cond-row .op {
+    width: 58px; height: 26px; flex: none; border: 1px solid var(--line); border-radius: 7px;
+    font-size: 11px; color: var(--ink-2); background: #fff; display: flex; align-items: center; justify-content: center;
+  }
+  .cond-row .val {
+    width: 64px; height: 26px; flex: none; border: 1px solid var(--line); border-radius: 7px;
+    font-size: 11px; padding: 0 7px; color: var(--ink-1);
+  }
+  .logic-chip {
+    font-size: 9.5px; font-weight: 700; color: var(--warn); background: #fffaeb;
+    border: 1px solid #fedf89; border-radius: 5px; padding: 0 4px; margin: 0 2px;
+  }
+  .btn-line {
+    display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--brand);
+    border: 1px dashed #b2ccff; background: #f5f9ff; border-radius: 7px; padding: 4px 9px; cursor: pointer;
+  }
+  /* 模式卡片 */
+  .mode-cards { display: flex; flex-direction: column; gap: 6px; }
+  .mode-card {
+    border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; cursor: pointer;
+  }
+  .mode-card.on { border-color: var(--brand); background: #f5f9ff; box-shadow: 0 0 0 2px rgba(21,94,239,.08); }
+  .mode-card .mc-t { font-size: 12px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
+  .mode-card .mc-d { font-size: 10.5px; color: var(--ink-3); margin-top: 2px; line-height: 1.45; }
+  .radio { width: 12px; height: 12px; border: 1.5px solid #cbd5e1; border-radius: 50%; flex: none; }
+  .mode-card.on .radio { border-color: var(--brand); border-width: 4px; }
+  /* 开关 */
+  .tgl { display: flex; align-items: center; justify-content: space-between; font-size: 12px; color: var(--ink-2); padding: 3px 0; }
+  .sw { width: 30px; height: 17px; border-radius: 10px; background: #e4e7ec; position: relative; flex: none; }
+  .sw.on { background: var(--brand); }
+  .sw::after { content: ""; position: absolute; top: 2px; left: 2px; width: 13px; height: 13px; border-radius: 50%; background: #fff; transition: left .15s; }
+  .sw.on::after { left: 15px; }
+  /* 代码块 */
+  .codebox {
+    background: #0b1220; color: #c9d7f2; border-radius: 10px; padding: 10px 12px;
+    font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 11px; line-height: 1.6;
+    white-space: pre; overflow-x: auto;
+  }
+  .codebox .kw { color: #7dd3fc; } .codebox .fn { color: #f0abfc; } .codebox .str { color: #86efac; }
+  /* kv 行 */
+  .kv { display: flex; gap: 5px; margin-bottom: 5px; }
+  .kv .inp { height: 28px; font-size: 11.5px; }
+  /* tabs */
+  .tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--line-2); margin-bottom: 8px; }
+  .tabs span { font-size: 11.5px; color: var(--ink-3); padding: 5px 9px; cursor: pointer; border-bottom: 2px solid transparent; }
+  .tabs span.on { color: var(--brand); border-bottom-color: var(--brand); font-weight: 600; }
+  .hint { font-size: 10.5px; color: var(--ink-4); line-height: 1.55; }
+  .hint b { color: var(--ink-3); }
+  .chip {
+    display: inline-block; font-size: 10px; font-weight: 700; border-radius: 5px; padding: 1px 6px;
+  }
+  .chip.violet { color: #6941c6; background: #f4f3ff; border: 1px solid #d9d6fe; }
+  .chip.cyan { color: #0e7490; background: #ecfdff; border: 1px solid #a5f0fc; }
+  .chip.gray { color: var(--ink-3); background: #f2f4f7; border: 1px solid var(--line); }
+  .badge-del {
+    display: inline-block; font-size: 10px; font-weight: 600; color: var(--danger);
+    background: #fffbfa; border: 1px solid #fecdc9; border-radius: 6px; padding: 2px 8px;
+  }
+  /* ========== 映射说明区 ========== */
+  .mapping { background: var(--card); border-top: 1px solid var(--line); padding: 28px 32px 48px; }
+  .mapping h2 { font-size: 16px; font-weight: 700; margin-bottom: 4px; }
+  .mapping .m-sub { color: var(--ink-3); font-size: 12.5px; margin-bottom: 18px; }
+  .m-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; align-items: start; }
+  table.mt { width: 100%; border-collapse: collapse; font-size: 12px; }
+  table.mt th, table.mt td {
+    text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line-2); vertical-align: top; line-height: 1.5;
+  }
+  table.mt th { font-size: 11px; color: var(--ink-4); font-weight: 600; background: #f8fafc; border-bottom: 1px solid var(--line); }
+  table.mt td code { font-family: ui-monospace, Consolas, monospace; font-size: 11px; background: #f2f4f7; border-radius: 4px; padding: 1px 5px; }
+  .st-keep { color: var(--success); font-weight: 600; font-size: 11px; }
+  .st-merge { color: var(--brand); font-weight: 600; font-size: 11px; }
+  .st-del { color: var(--danger); font-weight: 600; font-size: 11px; }
+  .st-out { color: var(--ink-4); font-weight: 600; font-size: 11px; }
+  .m-col h3 { font-size: 13px; font-weight: 700; margin: 14px 0 8px; }
+  .m-col h3:first-child { margin-top: 0; }
+  .m-col ul { padding-left: 18px; color: var(--ink-2); font-size: 12.5px; line-height: 1.8; }
+  .m-col li b { font-weight: 600; }
+  @media (max-width: 1280px) {
+    .m-grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<header class="topbar">
+  <div class="logo">Ax</div>
+  <h1>Agentx Studio · 工作流控制组件重设计</h1>
+  <span class="sub">Demo 2 — 视觉与交互参照 Dify，节点语义对齐 Agentx Workflow Definition 8.0（plan5）</span>
+  <div class="spacer"></div>
+  <div class="legend">
+    <span><i class="dot" style="background:#155eef"></i>起始</span>
+    <span><i class="dot" style="background:#6366f1"></i>AI</span>
+    <span><i class="dot" style="background:var(--c-logic)"></i>逻辑</span>
+    <span><i class="dot" style="background:var(--c-transform)"></i>转换</span>
+    <span><i class="dot" style="background:var(--c-integrate)"></i>集成</span>
+    <span><i class="dot" style="background:var(--warn)"></i>输出</span>
+  </div>
+  <a href="#mapping">节点取舍说明 ↓</a>
+</header>
+
+<div class="layout">
+  <aside class="palette">
+    <div class="p-head">
+      <h2>添加节点</h2>
+      <input class="p-search" id="pSearch" placeholder="搜索节点…">
+    </div>
+    <div class="p-scroll" id="pScroll"></div>
+  </aside>
+  <main class="canvas-wrap">
+    <div class="canvas" id="canvas">
+      <svg class="edges" id="edges"></svg>
+    </div>
+  </main>
+  <aside class="inspector" id="inspector"></aside>
+</div>
+
+<section class="mapping" id="mapping">
+  <h2>节点取舍说明：Agentx 节点 × Dify 组件对照</h2>
+  <p class="m-sub">范围：全部节点。Dify 无对应组件的节点先行移除（子流程按需求保留）；AI 附件从画布节点改为节点内嵌附件槽。</p>
+  <div class="m-grid">
+    <div>
+      <table class="mt">
+        <thead><tr><th style="width:31%">Agentx 节点</th><th style="width:27%">Dify 参照</th><th>取舍</th></tr></thead>
+        <tbody>
+          <tr><td><code>start</code> 开始</td><td>用户输入 User Input</td><td><span class="st-keep">保留·重设计</span><br>输入字段列表（名称 + 类型 + 必填）+ 上下文（全局变量），系统变量 <code>execution.*</code> 挂入口侧</td></tr>
+          <tr><td><code>exit</code> 结束</td><td>输出 Output</td><td><span class="st-keep">保留·重设计</span><br>输出变量表<b>全局共享</b>（任一结束节点编辑同步），值绑定各出口独立；完成模式：第一次返回即结束（默认）/ 等待全部完成按数组返回</td></tr>
+          <tr><td><code>model</code> 模型</td><td>LLM</td><td><span class="st-keep">保留·重设计</span><br>模型卡片 + 提示词内嵌变量插入 + 结构化输出开关</td></tr>
+          <tr><td><code>agent</code> 智能体</td><td>Agent</td><td><span class="st-keep">保留·重设计</span><br>策略 / 提示词 / 预算收敛进面板，附件以槽位内嵌（见下行）</td></tr>
+          <tr><td><code>mcp_tool</code> <code>skill</code> <code>rag</code> <code>memory</code> AI 附件</td><td>节点内工具列表</td><td><span class="st-merge">改进交互</span><br>取消画布附件节点，改为智能体 / 模型节点上的附件槽：节点体显示附件徽标，面板集中管理</td></tr>
+          <tr><td><code>if</code> 条件</td><td>IF/ELSE 条件分支</td><td><span class="st-keep">保留·重设计</span><br>分支改为 IF/ELIF/ELSE 行，每行右侧独立连接点，节点体直接显示条件摘要</td></tr>
+          <tr><td><code>loop_over_items</code> 循环处理</td><td>迭代 Iteration</td><td><span class="st-keep">保留·重设计</span><br>图环回连改为容器子流程，内置 <code>item</code>/<code>index</code> 变量，并行度与失败策略收进配置</td></tr>
+          <tr><td><code>merge</code> 合并</td><td>变量聚合器</td><td><span class="st-keep">保留·重设计</span><br>左侧多个输入连接点，追加 / 按键合并等模式收进面板</td></tr>
+          <tr><td><code>approval</code> 审批</td><td>人工介入 Human Input</td><td><span class="st-keep">保留·重设计</span><br>通过 / 拒绝 / 超时为分支行，每行一个连接点</td></tr>
+          <tr><td><code>sub_workflow</code> 子流程</td><td>—（按需求加回）</td><td><span class="st-keep">保留·重设计</span><br>目标工作流 + 不可变版本卡片，输入输出显式映射，可从面板跳入子流程画布</td></tr>
+          <tr><td><code>code</code> 代码</td><td>代码执行</td><td><span class="st-keep">保留</span><br>语言 + 沙箱策略 + 输入输出声明，面板沿用 Dify 布局</td></tr>
+          <tr><td><code>declarative_http</code> HTTP 请求</td><td>HTTP 请求</td><td><span class="st-keep">保留</span><br>方法/URL/参数/请求头/请求体分页签，认证与超时折叠</td></tr>
+          <tr><td><code>filter</code> / <code>sort</code> / <code>limit</code></td><td>列表操作 List Operator</td><td><span class="st-merge">三合一</span><br>合并为单个「列表操作」节点：过滤 + 排序 + 取前 N</td></tr>
+          <tr><td><code>set</code> 字段编辑</td><td>变量赋值 Variable Assigner</td><td><span class="st-keep">保留·重设计</span><br>字段 = 值 的赋知行 + 仅保留设置字段开关</td></tr>
+          <tr><td><code>switch</code> 多路条件</td><td>—</td><td><span class="st-del">移除</span> 能力并入条件分支的 ELIF 行</td></tr>
+          <tr><td><code>error_handler</code> 错误处理</td><td>节点级失败分支（Fail Branch）</td><td><span class="st-del">移除节点</span> error 端口接线即失败分支；错误与返回语义由完成模式统一决定，无需节点级配置</td></tr>
+          <tr><td><code>wait</code> 等待</td><td>—</td><td><span class="st-del">移除</span> 挂起能力只由审批节点承载</td></tr>
+          <tr><td><code>no_op</code> / <code>stop_and_error</code></td><td>—</td><td><span class="st-del">移除</span></td></tr>
+          <tr><td><code>remote_action</code> 远程动作</td><td>—</td><td><span class="st-del">整条协议废弃</span> 只需触发内部工作流，由子流程承载；第三方节点未来归 MCP</td></tr>
+          <tr><td><code>aggregate</code> <code>remove_duplicates</code> <code>split_out</code> <code>date_time</code> <code>base64</code> <code>hash</code> <code>compare_datasets</code> <code>structured_validator</code> <code>item_generator</code></td><td>—</td><td><span class="st-del">移除</span> 用「代码执行」覆盖，不为小函数维护独立节点</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="m-col">
+      <h3>设计要点（对齐 Dify）</h3>
+      <ul>
+        <li><b>节点卡片</b>：固定 240px 宽，圆角 16px 白卡，头部 = 24px 彩色图标方块 + 标题 + 运行状态；图标颜色即分类色（逻辑青 / 转换蓝 / 集成紫）。</li>
+        <li><b>连接点</b>：左入右出的 3px 竖条，对齐头部图标高度；分支类节点（条件 / 审批）不画默认出点，<b>每个分支行右侧各一个连接点</b>，边从分支行直接拉出。</li>
+        <li><b>条件分支</b>：节点体即条件摘要（变量 + 操作符 + 值），多条件间显示 AND/OR 徽标；配置面板为可视化条件构建器，变量用「来源节点 · 字段」胶囊。</li>
+        <li><b>循环处理</b>：参照 Dify 迭代改为容器节点——内部嵌子流程（迭代开始 → 循环体节点），可拖拽调整尺寸；内置 <code>item</code> / <code>index</code>，并行度与失败策略收进配置面板，替代原来的图环回连。</li>
+        <li><b>合并</b>：参照变量聚合器，左侧堆叠多个输入连接点，下游只需接一次。</li>
+        <li><b>审批</b>：参照人工介入——每个动作按钮 = 一条分支行，超时走独立分支。</li>
+        <li><b>AI 附件槽</b>：工具 / 技能 / 知识 / 记忆不再是画布上的独立节点，而是智能体节点上的内嵌槽位——节点体显示附件徽标行，配置面板集中管理，减少画布噪音。</li>
+        <li><b>开始 / 结束</b>：开始节点列出输入字段与类型；结束节点即输出变量表，允许存在多个。</li>
+        <li><b>子流程</b>：引用不可变的已发布版本，输入输出显式映射，面板一键跳入子流程画布。</li>
+        <li><b>变量选择器</b>：所有引用上游输出的字段统一为 <span class="vpill"><i class="vd" style="background:#3b82f6"></i>节点名 · 字段<span class="vv"></span></span> 胶囊，点击弹出按上游节点分组的变量面板，按类型过滤。</li>
+      </ul>
+      <h3>与原设计的差异</h3>
+      <ul>
+        <li>画布节点收敛到 <b>13 种</b>（含起始 / AI / 输出），原 30+ 种回到 Dify 同量级。</li>
+        <li><b>AI 附件不再是画布节点</b>：工具 / 技能 / 知识 / 记忆收进智能体节点的附件槽，画布上不再出现附件节点与虚线连接。</li>
+        <li>错误处理不再是独立节点：每个节点统一带 error 端口，接 error 边即失败分支，无需失败策略配置；错误与返回由工作流完成模式统一解释。</li>
+        <li><code>filter</code>/<code>sort</code>/<code>limit</code> 三节点合一，配置面板内分页承载。</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<script>
+/* ================= 图标（内联 SVG，白色描边） ================= */
+const I = (p) => `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`;
+const ICONS = {
+  branch: I('<circle cx="6" cy="5" r="2.2"/><circle cx="6" cy="19" r="2.2"/><circle cx="18" cy="7" r="2.2"/><path d="M6 7.2v9.6M18 9.2a6 6 0 0 1-6 5.6"/>'),
+  repeat: I('<path d="M17 2l4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/>'),
+  merge:  I('<circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="18" r="2.5"/><path d="M6 8.5V19M18 15.5a9 9 0 0 1-9-9"/>'),
+  check:  I('<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="m16 11 2 2 4-4"/>'),
+  filter: I('<path d="M3 4h18l-7 8v6l-4 2v-8L3 4z"/>'),
+  code:   I('<path d="m8 6-6 6 6 6M16 6l6 6-6 6"/>'),
+  edit:   I('<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>'),
+  globe:  I('<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18 15 15 0 0 1 0-18"/>'),
+  play:   I('<circle cx="12" cy="12" r="9"/><path d="M10 8l6 4-6 4V8z"/>'),
+  minus:  I('<circle cx="12" cy="12" r="9"/><path d="M8 12h8"/>'),
+  home:   I('<path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/>'),
+  cpu:    I('<rect x="5" y="5" width="14" height="14" rx="2"/><rect x="9.5" y="9.5" width="5" height="5"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/>'),
+  robot:  I('<rect x="4" y="9" width="16" height="11" rx="2"/><path d="M12 5v4M8.5 14h.01M15.5 14h.01M9 17.5h6"/><circle cx="12" cy="3.5" r="1.2"/>'),
+  flag:   I('<path d="M5 21V4c4-2.5 8 2.5 12 0v9c-4 2.5-8-2.5-12 0"/>'),
+  grid:   I('<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>'),
+  wrench: I('<path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.7 2.7-2-2 2.7-2.7z"/>'),
+  zap:    I('<path d="M13 2 4 14h6l-1 8 9-12h-6l1-8z"/>'),
+  book:   I('<path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/>'),
+  db:     I('<ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/>'),
+};
+const OK = '<svg class="n-ok" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9" opacity=".35"/><path d="m8.5 12.5 2.5 2.5 5-5"/></svg>';
+</script>
+<script>
+/* ================= 节点定义（13 种） ================= */
+const C = { logic: 'var(--c-logic)', transform: 'var(--c-transform)', integrate: 'var(--c-integrate)' };
+const DEFS = {
+  start:{ name: '开始', en: 'User Input', icon: 'home', color: '#155EEF', cat: 'start',
+           desc: '定义工作流输入字段与触发上下文', type: 'start' },
+  model:{ name: '模型', en: 'LLM', icon: 'cpu', color: '#6366F1', cat: 'ai',
+           desc: '调用大模型生成文本或结构化输出', type: 'model' },
+  agent:{ name: '智能体', en: 'Agent', icon: 'robot', color: '#6366F1', cat: 'ai',
+           desc: '自主规划，调用附件（工具 / 技能 / 知识 / 记忆）完成任务', type: 'agent' },
+  if:    { name: '条件分支', en: 'Condition', icon: 'branch', color: C.logic, cat: 'logic',
+           desc: '按条件把数据路由到 IF / ELIF / ELSE 分支', type: 'if' },
+  loop:  { name: '循环处理', en: 'Loop Over Items', icon: 'repeat', color: C.logic, cat: 'logic',
+           desc: '对数组逐元素执行容器内的子流程，内置 item / index', type: 'loop_over_items' },
+  merge: { name: '合并', en: 'Merge', icon: 'merge', color: C.logic, cat: 'logic',
+           desc: '汇聚多条分支的输出，支持追加与按键合并', type: 'merge' },
+  approval: { name: '审批', en: 'Approval', icon: 'check', color: C.logic, cat: 'logic',
+           desc: '挂起流程等待人工决策，通过 / 拒绝 / 超时各为一条分支', type: 'approval' },
+  code:  { name: '代码执行', en: 'Code', icon: 'code', color: C.transform, cat: 'transform',
+           desc: '在沙箱中运行 Python / JavaScript，输出自定义结构', type: 'code' },
+  set:   { name: '字段编辑', en: 'Edit Fields', icon: 'edit', color: C.transform, cat: 'transform',
+           desc: '逐字段赋值，可引用上游变量', type: 'set' },
+  list:  { name: '列表操作', en: 'List Operator', icon: 'filter', color: C.transform, cat: 'transform',
+           desc: '数组过滤 + 排序 + 取前 N（合并原 filter / sort / limit）', type: 'list' },
+  http:  { name: 'HTTP 请求', en: 'HTTP Request', icon: 'globe', color: C.integrate, cat: 'integrate',
+           desc: '调用外部 API，支持认证、超时与文件', type: 'declarative_http' },
+  subwf: { name: '子流程', en: 'Sub-workflow', icon: 'grid', color: C.integrate, cat: 'integrate',
+           desc: '调用已发布的工作流版本，输入输出显式映射', type: 'sub_workflow' },
+  end:   { name: '结束', en: 'Output', icon: 'flag', color: '#F59E0B', cat: 'output',
+           desc: '定义工作流输出变量，允许存在多个', type: 'exit' },
+};
+const CATS = [
+  ['start', '起始'], ['ai', 'AI'], ['logic', '逻辑'], ['transform', '转换'],
+  ['integrate', '集成'], ['output', '输出'],
+];
+const REMOVED = [
+  ['switch', '多路条件', '并入条件分支的 ELIF'],
+  ['error_handler', '错误处理', '改为节点级失败分支设置'],
+  ['wait', '等待', '挂起能力由审批承载'],
+  ['no_op', '无操作', 'Dify 无对应'],
+  ['stop_and_error', '错误终止', 'Dify 无对应'],
+  ['remote_action', '远程动作', '协议废弃，内部触发由子流程承载'],
+  ['aggregate', '聚合统计', '用代码执行覆盖'],
+  ['remove_duplicates', '去重', '用代码执行覆盖'],
+  ['split_out', '字段拆分', '用代码执行覆盖'],
+  ['date_time', '日期时间', '用代码执行覆盖'],
+  ['base64', '编解码', '用代码执行覆盖'],
+  ['hash', '哈希', '用代码执行覆盖'],
+  ['compare_datasets', '数据集对比', '用代码执行覆盖'],
+  ['structured_validator', '结构校验', '用代码执行覆盖'],
+  ['item_generator', '测试数据生成', 'Dify 无对应'],
+];
+const EXCLUDED = 'AI 附件（mcp_tool 工具 / skill 技能 / rag 知识 / memory 记忆）不再是画布上的独立节点，改为智能体 / 模型节点上的附件槽，在节点内集中配置。';
+
+/* ================= 画布实例 ================= */
+/* geom: 普通节点 w=240；分支行行高 34；头部高 44 */
+const HEAD_H = 44, ROW_H = 34;
+const N = [
+  { id: 'start1', def: 'start', x: 30, y: 90, title: '开始', ok: true,
+    body: `<div class="vrow"><b>query</b><span>string</span></div><div class="vrow"><b>amount</b><span>number</span></div>` },
+  { id: 'agent1', def: 'agent', x: 320, y: 60, title: '工单助手', ok: true,
+    body: `模型 GPT-4o · 最多 8 轮`,
+    att: [['cpu', '#6366f1', 'GPT-4o'], ['wrench', '#3b82f6', '工具 ×3'], ['zap', '#3b82f6', '技能 ×1'], ['book', '#22c55e', '知识 ×2'], ['db', '#3b82f6', '记忆']] },
+  { id: 'http',  def: 'http', x: 640, y: 90, title: '获取工单列表', ok: true,
+    body: `<span class="chip violet">GET</span> https://api.internal/tickets` },
+  { id: 'code1', def: 'code', x: 920, y: 90, title: '数据清洗', ok: true,
+    body: `Python · 输出 items 数组` },
+  { id: 'loop1', def: 'loop', x: 1200, y: 40, w: 470, h: 300, container: true,
+    title: '循环处理',
+    body: `遍历 <span class="vpill"><i class="vd" style="background:#3b82f6"></i><span class="vt">数据清洗 · items</span></span> · 失败项剔除` },
+  { id: 'istart', def: null, chip: true, x: 1216, y: 140, w: 130, title: '迭代开始' },
+  { id: 'set1',  def: 'set', x: 1380, y: 120, title: '字段编辑', inContainer: true,
+    body: `设置 2 个字段` },
+  { id: 'if1',   def: 'if', x: 1750, y: 80, title: '条件分支',
+    rows: [
+      { tag: 'IF',   label: '金额 ≥ 1000' },
+      { tag: 'ELIF', label: '金额 ≥ 500' },
+      { tag: 'ELSE', label: '', sub: '其他全部' },
+    ] },
+  { id: 'appr1', def: 'approval', x: 2070, y: 60, title: '主管审批',
+    body: `工单 #<span class="u">{id}</span> · 金额审批`,
+    rows: [
+      { tag: '', label: '审批通过' },
+      { tag: '', label: '审批拒绝' },
+      { tag: '', label: '超时', sub: '24h' },
+    ] },
+  { id: 'subwf1', def: 'subwf', x: 2400, y: 40, title: '报销入账流程',
+    body: `<span class="chip gray">v3 · 已发布</span> 2 入参 / 1 出参` },
+  { id: 'list1', def: 'list', x: 2070, y: 330, title: '列表操作',
+    body: `过滤 1 条 · 金额 ↓ · 前 20` },
+  { id: 'model1', def: 'model', x: 2400, y: 330, title: '生成审批摘要',
+    body: `GPT-4o mini · 结构化输出` },
+  { id: 'merge1', def: 'merge', x: 2740, y: 160, title: '合并',
+    body: `模式：追加`,
+    inputs: ['输入 1', '输入 2', '输入 3'] },
+  { id: 'end1',  def: 'end', x: 3070, y: 160, title: '结束',
+    body: `<div class="vrow"><b>reply</b><span>string</span></div><div class="vrow"><b>tickets</b><span>array</span></div>` },
+  { id: 'ghost1', ghost: true, x: 2400, y: 470, w: 96, title: '… 超时处理' },
+];
+/* 边：f/t = [节点id, 'in'|'out'|分支行号|输入序号] */
+const EDGES = [
+  { f: ['start1', 'out'], t: ['agent1', 'in'] },
+  { f: ['agent1', 'out'], t: ['http', 'in'] },
+  { f: ['http', 'out'],  t: ['code1', 'in'] },
+  { f: ['code1', 'out'], t: ['loop1', 'in'] },
+  { f: ['istart', 'out'], t: ['set1', 'in'] },
+  { f: ['loop1', 'out'], t: ['if1', 'in'] },
+  { f: ['if1', 0], t: ['appr1', 'in'] },
+  { f: ['if1', 2], t: ['list1', 'in'] },
+  { f: ['appr1', 0], t: ['subwf1', 'in'] },
+  { f: ['appr1', 1], t: ['merge1', 1] },
+  { f: ['appr1', 2], t: ['ghost1', 'in'], dashed: true },
+  { f: ['list1', 'out'], t: ['model1', 'in'] },
+  { f: ['subwf1', 'out'], t: ['merge1', 0] },
+  { f: ['model1', 'out'], t: ['merge1', 2] },
+  { f: ['merge1', 'out'], t: ['end1', 'in'] },
+];
+const byId = Object.fromEntries(N.map(n => [n.id, n]));
+
+/* ================= 几何 ================= */
+const NW = 240;
+const wOf = n => n.w || NW;
+function outPos(n, key) {
+  if (n.chip) return [n.x + n.w, n.y + 20];
+  if (n.ghost) return null;
+  if (key === 'out') return [n.x + wOf(n), n.y + 24];
+  /* 分支行：body 高 27，行连接点在卡片右缘外 12px */
+  const descH = n.body ? 27 : 0;
+  return [n.x + wOf(n) + 12, n.y + HEAD_H + descH + key * ROW_H + ROW_H / 2];
+}
+function inPos(n, key) {
+  if (n.ghost) return [n.x, n.y + 17];
+  if (key === 'in') return [n.x, n.y + 24];
+  /* merge 多输入行：body 高 27，行高 26 */
+  const descH = n.body ? 27 : 0;
+  return [n.x, n.y + HEAD_H + descH + key * 26 + 13];
+}
+function bez(x1, y1, x2, y2) {
+  const dx = Math.max(48, Math.abs(x2 - x1) * 0.45);
+  return `M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`;
+}
+
+/* ================= 渲染：画布 ================= */
+function nodeHtml(n) {
+  if (n.ghost) {
+    return `<div class="ghost" data-nid="${n.id}" style="left:${n.x}px;top:${n.y}px;width:${n.w}px">${n.title}
+      <span class="hd in" style="top:8px"></span></div>`;
+  }
+  if (n.chip) {
+    return `<div class="chip-node" data-nid="${n.id}" style="left:${n.x}px;top:${n.y}px;width:${n.w}px">
+      ${ICONS.play}${n.title}<span class="hd out" style="top:11px"></span></div>`;
+  }
+  if (n.container) {
+    return `<div class="node container" data-nid="${n.id}" style="left:${n.x}px;top:${n.y}px;width:${n.w}px;height:${n.h}px">
+      <div class="c-head">
+        <span class="n-icon" style="background:${DEFS[n.def].color}">${ICONS[DEFS[n.def].icon]}</span>
+        <span class="c-title">${n.title}</span>
+        <span class="chip cyan" style="margin-left:auto">并行 ×10</span>
+      </div>
+      <div class="c-body">${n.body}</div>
+      <div class="c-note">内置变量：item（当前元素）· index（序号）</div>
+      <span class="hd in" style="top:15px"></span>
+      <span class="hd out" style="top:15px"></span>
+    </div>`;
+  }
+  const d = DEFS[n.def];
+  let rows = '';
+  if (n.rows) {
+    rows = `<div class="n-rows">` + n.rows.map((r, i) => `
+      <div class="n-row">
+        ${r.tag ? `<span class="r-tag">${r.tag}</span>` : ''}
+        <span class="r-label">${r.label}</span>${r.sub ? `<span class="r-sub">${r.sub}</span>` : ''}
+        <span class="r-sp"></span>
+        <span class="hd out row-out" data-port="${i}" style="top:8px"></span>
+      </div>`).join('') + `</div>`;
+  }
+  if (n.inputs) {
+    rows = `<div class="n-rows">` + n.inputs.map((t, i) => `
+      <div class="n-row" style="height:26px">
+        <span class="hd in" data-port="${i}" style="top:4px"></span>
+        <span class="r-label r-sub">${t}</span>
+      </div>`).join('') + `</div>`;
+  }
+  return `<div class="node" data-nid="${n.id}" style="left:${n.x}px;top:${n.y}px">
+    <div class="n-head">
+      <span class="n-icon" style="background:${d.color}">${ICONS[d.icon]}</span>
+      <span class="n-title">${n.title}</span>
+      <span class="n-status">${n.ok ? OK : ''}</span>
+    </div>
+    ${n.body ? `<div class="n-body">${n.body}</div>` : ''}
+    ${n.att ? `<div class="n-att">${n.att.map(([ic, cl, t]) =>
+      `<span class="att"><i class="a-dot" style="background:${cl}"></i>${ICONS[ic] ? ICONS[ic].replace('stroke="#fff"', `stroke="${cl}"`) : ''}${t}</span>`).join('')}
+      <span class="att add">＋ 附件</span></div>` : ''}
+    ${rows}
+    ${n.inputs ? '' : '<span class="hd in" style="top:15px"></span>'}
+    ${n.rows ? '' : '<span class="hd out" style="top:15px"></span>'}
+  </div>`;
+}
+
+function renderCanvas() {
+  const cv = document.getElementById('canvas');
+  cv.querySelectorAll('.node,.chip-node,.ghost').forEach(e => e.remove());
+  cv.insertAdjacentHTML('beforeend', N.map(nodeHtml).join(''));
+  const svg = document.getElementById('edges');
+  svg.innerHTML = EDGES.map(e => {
+    const p1 = outPos(byId[e.f[0]], e.f[1]), p2 = inPos(byId[e.t[0]], e.t[1]);
+    if (!p1 || !p2) return '';
+    return `<path class="edge ${e.dashed ? 'dashed' : ''}" data-f="${e.f[0]}" data-t="${e.t[0]}" d="${bez(p1[0], p1[1], p2[0], p2[1])}"/>`;
+  }).join('');
+}
+
+/* ================= 渲染：节点面板 ================= */
+function renderPalette(filter = '') {
+  const el = document.getElementById('pScroll');
+  const kw = filter.trim().toLowerCase();
+  let html = '';
+  for (const [cat, label] of CATS) {
+    const items = Object.entries(DEFS).filter(([, d]) => d.cat === cat &&
+      (!kw || d.name.toLowerCase().includes(kw) || d.en.toLowerCase().includes(kw)));
+    if (!items.length) continue;
+    html += `<div class="p-group"><div class="p-group-title">${label}</div>` +
+      items.map(([k, d]) => `
+        <div class="p-item" data-def="${k}">
+          <span class="p-icon" style="background:${d.color}">${ICONS[d.icon]}</span>
+          <div><div class="p-name">${d.name}<span class="p-en">${d.en}</span></div>
+          <div class="p-desc">${d.desc}</div></div>
+        </div>`).join('') + `</div>`;
+  }
+  const rm = REMOVED.filter(([t, n2]) => !kw || n2.includes(kw) || t.includes(kw));
+  if (rm.length) {
+    html += `<div class="p-group"><div class="p-group-title">已移除（Dify 无对应）<span>${rm.length}</span></div>` +
+      rm.map(([t, n2, why]) => `
+        <div class="p-item removed" data-removed="${t}" data-why="${why}" data-name="${n2}">
+          <span class="p-icon" style="background:#cbd5e1">${ICONS.minus}</span>
+          <div><div class="p-name">${n2}<span class="p-tag-del">移除</span></div>
+          <div class="p-desc">${why}</div></div>
+        </div>`).join('') + `</div>`;
+  }
+  html += `<div class="p-note">${EXCLUDED}</div>`;
+  el.innerHTML = html;
+}
+
+/* ================= 配置面板 ================= */
+const vp = (color, node, v) => `<span class="vpill"><i class="vd" style="background:${color}"></i><span class="vt">${node} · <b>${v}</b></span></span>`;
+const sec = (t, inner) => `<div class="sec"><div class="sec-t">${t}</div>${inner}</div>`;
+const fld = (l, c) => `<div class="fld"><label>${l}</label>${c}</div>`;
+const varInp = pill => `<div class="var-inp">${pill}<span class="x">{x}</span></div>`;
+
+const PANELS = {
+  start: () => sec('输入字段', `
+      <div class="kv"><input class="inp" value="query"><select class="sel" style="width:96px;flex:none"><option>string</option><option>number</option><option>boolean</option><option>file</option></select><div class="tgl" style="flex:none;padding:0"><span class="sw on"></span></div></div>
+      <div class="kv"><input class="inp" value="amount"><select class="sel" style="width:96px;flex:none"><option>number</option><option>string</option></select><div class="tgl" style="flex:none;padding:0"><span class="sw"></span></div></div>
+      <span class="btn-line">＋ 添加输入字段</span>`) +
+    sec('上下文（全局变量）', `<div class="hint">类似函数的全局变量：开始节点声明，任意节点可读写（contextWrites），结束节点可引用。</div>`) +
+    sec('系统变量', `<div class="hint"><b>execution.id</b> · <b>execution.startedAt</b> · <b>trigger.source</b> 等由运行时注入，可在任意下游节点以变量胶囊引用。</div>`),
+
+  model: () => sec('模型', `
+      <div class="mode-card on"><div class="mc-t"><span class="radio"></span>GPT-4o mini <span class="chip gray">openai</span></div><div class="mc-d">temperature 0.3 · 最大输出 4096 tokens</div></div>`) +
+    sec('提示词', `
+      ${fld('系统', '<textarea class="inp">你是工单审批助手，输出不超过 120 字的摘要。</textarea>')}
+      ${fld('用户', `<div class="var-inp" style="min-height:52px;align-items:flex-start;padding-top:6px">${vp('#06b6d4', '列表操作', 'result')}<span class="x">{x}</span></div>`)}
+      <div class="hint">输入 <b>/</b> 或 <b>{{</b> 唤起变量插入浮层</div>`) +
+    sec('输出', `
+      <div class="tgl">结构化输出（JSON Schema） <span class="sw on"></span></div>
+      <div class="hint" style="margin-top:6px"><b>text</b> string · <b>structuredOutput</b> object · <b>usage</b> object</div>`),
+
+  agent: () => sec('模型', `
+      <div class="mode-card on"><div class="mc-t"><span class="radio"></span>GPT-4o <span class="chip gray">openai</span></div><div class="mc-d">temperature 0.7 · 巡检场景主力模型</div></div>`) +
+    sec('任务', `
+      ${fld('目标（系统提示）', '<textarea class="inp">你是工单处理助手，根据用户问题查询工单并给出处理建议。</textarea>')}
+      ${fld('用户问题', varInp(vp('#155eef', '开始', 'query')))}`) +
+    sec('附件（节点内嵌槽位）', `
+      <div class="att-mg"><span class="am-ic" style="background:#eff6ff">${ICONS.wrench.replace('stroke="#fff"', 'stroke="#3b82f6"')}</span><div><div class="am-n">工具 <span class="am-d">×3</span></div><div class="am-d">工单查询 · 日历 · 邮件</div></div><span class="am-btn">管理</span></div>
+      <div class="att-mg"><span class="am-ic" style="background:#eff6ff">${ICONS.zap.replace('stroke="#fff"', 'stroke="#3b82f6"')}</span><div><div class="am-n">技能 <span class="am-d">×1</span></div><div class="am-d">周报生成</div></div><span class="am-btn">管理</span></div>
+      <div class="att-mg"><span class="am-ic" style="background:#f0fdf4">${ICONS.book.replace('stroke="#fff"', 'stroke="#22c55e"')}</span><div><div class="am-n">知识库 <span class="am-d">×2</span></div><div class="am-d">工单 SOP · 产品手册</div></div><span class="am-btn">管理</span></div>
+      <div class="att-mg"><span class="am-ic" style="background:#eff6ff">${ICONS.db.replace('stroke="#fff"', 'stroke="#3b82f6"')}</span><div><div class="am-n">长期记忆</div><div class="am-d">跨会话记住用户偏好</div></div><div class="tgl" style="margin-left:auto;padding:0"><span class="sw on"></span></div></div>
+      <span class="btn-line">＋ 挂载附件</span>
+      <div class="hint" style="margin-top:6px">附件挂为节点槽位，不再是画布上的独立节点与连线。</div>`) +
+    sec('预算', `
+      <div class="kv"><input class="inp" value="8"><input class="inp" value="20"></div>
+      <div class="hint">最大迭代轮次 · 最大工具调用次数；超出按 <b>limitAction</b> 收尾。</div>`),
+
+  subwf: () => sec('目标工作流', `
+      <select class="sel"><option>报销入账流程</option><option>合同归档流程</option></select>
+      <div style="margin-top:6px"><span class="chip gray">v3 · 已发布 · 不可变</span> <span class="btn-line" style="margin-left:6px">打开子流程 ↗</span></div>`) +
+    sec('输入映射', `
+      <div class="kv"><input class="inp" value="ticket_id">${varInp(vp('#06b6d4', '主管审批', 'taskId'))}</div>
+      <div class="kv"><input class="inp" value="amount">${varInp(vp('#8b5cf6', '获取工单列表', 'amount'))}</div>`) +
+    sec('输出', `<div class="hint">子流程「结束」节点的输出即本节点输出：<b>voucher_no</b> string。子执行超时将取消并恢复父执行。</div>`),
+
+  end: () => sec('输出变量（全局共享）', `
+      <div class="kv"><input class="inp" value="reply">${varInp(vp('#6366f1', '生成审批摘要', 'text'))}</div>
+      <div class="kv"><input class="inp" value="tickets">${varInp(vp('#3b82f6', '合并', 'merged'))}</div>
+      <span class="btn-line">＋ 添加输出</span>`) +
+    sec('完成模式', `
+      <div class="mode-cards">
+        <div class="mode-card on"><div class="mc-t"><span class="radio"></span>第一次返回即结束</div><div class="mc-d">首个到达的返回立即结束执行，其余分支取消（默认）</div></div>
+        <div class="mode-card"><div class="mc-t"><span class="radio"></span>等待全部完成</div><div class="mc-d">所有分支完成后，输出字段按数组返回（元素 = 各结束节点的绑定值）</div></div>
+      </div>`) +
+    sec('说明', `<div class="hint">输出表<b>全局共享</b>：编辑任一结束节点的名称 / 类型即同步全部，每个结束节点单独绑定取值。错误与返回由完成模式统一解释：节点 error 端口接线即失败分支，无需单独配置错误策略。</div>`),
+
+  if: () => sec('分支', `
+    <div class="cond-block">
+      <div class="cb-head">IF</div>
+      <div class="cond-row">${varInp(vp('#8b5cf6', '获取工单列表', 'amount'))}<span class="op">≥</span><input class="val" value="1000"></div>
+      <div class="cond-row"><span class="logic-chip">AND</span>${varInp(vp('#3b82f6', '数据清洗', 'count'))}<span class="op">&gt;</span><input class="val" value="10"></div>
+      <div style="padding:6px 8px"><span class="btn-line">＋ 添加条件</span></div>
+    </div>
+    <div class="cond-block">
+      <div class="cb-head blue">ELIF 1</div>
+      <div class="cond-row">${varInp(vp('#8b5cf6', '获取工单列表', 'amount'))}<span class="op">≥</span><input class="val" value="500"></div>
+    </div>
+    <div class="cond-block">
+      <div class="cb-head gray">ELSE</div>
+      <div class="cond-row"><span class="hint">不满足以上任何条件时走此分支</span></div>
+    </div>
+    <span class="btn-line">＋ 添加 ELIF 分支</span>`) +
+    sec('说明', `<div class="hint">每个分支在节点右侧生成<b>独立连接点</b>；条件按变量类型提供操作符（包含 / 为空 / = / ≥ …）。</div>`),
+
+  loop: () => sec('输入', fld('输入数组', varInp(vp('#3b82f6', '数据清洗', 'items')))) +
+    sec('输出', fld('每轮输出', varInp(vp('#3b82f6', '字段编辑', 'item')))) +
+    sec('执行', `
+      <div class="tgl">并行执行 <span class="sw on"></span></div>
+      ${fld('并发数（上限 10）', '<input class="inp" value="10">')}
+      ${fld('失败时', `<select class="sel"><option>剔除失败项</option><option>终止整个迭代</option><option>失败项输出 null</option></select>`)}`) +
+    sec('内置变量', `<div class="hint">容器内节点可引用 <b>item</b>（当前元素）与 <b>index</b>（序号，从 0 开始）。容器可拖拽调整尺寸。</div>`),
+
+  merge: () => sec('合并模式', `
+    <div class="mode-cards">
+      <div class="mode-card on"><div class="mc-t"><span class="radio"></span>追加</div><div class="mc-d">按到达顺序汇合所有输入的条目</div></div>
+      <div class="mode-card"><div class="mc-t"><span class="radio"></span>按位置合并</div><div class="mc-d">两路输入按下标一一配对</div></div>
+      <div class="mode-card"><div class="mc-t"><span class="radio"></span>按键合并</div><div class="mc-d">按指定字段 join（inner / left / right / full）</div></div>
+    </div>`) +
+    sec('输入', `<div class="hint">节点左侧提供<b>多个输入连接点</b>，每个分支各接一条；聚合要求各分支输出同构。</div>`),
+
+  approval: () => sec('审批内容', `
+      ${fld('标题', '<input class="inp" value="工单 #{id} 金额审批">')}
+      ${fld('说明', '<textarea class="inp">请审核该工单的报销金额与事由。</textarea>')}
+      ${fld('审批人', '<select class="sel"><option>指定用户 · 张三</option><option>指定用户 · 李四</option></select>')}`) +
+    sec('分支', `
+      <div class="cond-block">
+        <div class="cond-row"><span class="r-tag">按钮</span><input class="inp" style="height:26px" value="审批通过"></div>
+        <div class="cond-row"><span class="r-tag">按钮</span><input class="inp" style="height:26px" value="审批拒绝"></div>
+      </div>
+      <span class="btn-line">＋ 添加按钮（每个按钮 = 一条分支）</span>`) +
+    sec('超时', `
+      <div class="tgl">启用超时分支 <span class="sw on"></span></div>
+      ${fld('超时时间', '<input class="inp" value="24 小时">')}
+      <div class="hint">超时后从「超时」分支继续，输出 <b>decision = timed_out</b>。</div>`),
+
+  code: () => sec('运行环境', `
+      ${fld('语言', `<select class="sel"><option>Python 3</option><option>JavaScript</option><option>Shell</option></select>`)}
+      ${fld('网络策略', `<select class="sel"><option>禁止外网</option><option>白名单出站</option></select>`)}`) +
+    sec('输入变量', `
+      <div class="kv"><input class="inp" value="response_body">${varInp(vp('#8b5cf6', '获取工单列表', 'body'))}</div>`) +
+    sec('代码', `<div class="codebox"><span class="kw">import</span> json
+
+<span class="kw">def</span> <span class="fn">main</span>(response_body):
+    items = json.loads(response_body)[<span class="str">"json"</span>][<span class="str">"items"</span>]
+    out = []
+    <span class="kw">for</span> t <span class="kw">in</span> items:
+        t[<span class="str">"amount"</span>] = <span class="fn">float</span>(t[<span class="str">"amount"</span>])
+        out.append(t)
+    <span class="kw">return</span> {<span class="str">"items"</span>: out}</div>`) +
+    sec('输出', `<div class="kv"><input class="inp" value="items"><select class="sel"><option>array&lt;object&gt;</option></select></div><div class="hint" style="margin-top:6px">输出字段由用户明确声明并在运行时校验；stdout / stderr / exitCode 固定附带。</div>`),
+
+  set: () => sec('赋值', `
+      <div class="kv"><input class="inp" value="amount">${varInp(vp('#06b6d4', '循环处理', 'item.amount'))}</div>
+      <div class="kv"><input class="inp" value="status"><input class="inp" value='"approved"'></div>
+      <span class="btn-line">＋ 添加字段</span>`) +
+    sec('选项', `<div class="tgl">仅保留设置的字段 <span class="sw"></span></div>`),
+
+  list: () => sec('输入', fld('数组', varInp(vp('#3b82f6', '数据清洗', 'items')))) +
+    sec('过滤', `
+      <div class="cond-block"><div class="cond-row">${varInp(vp('#3b82f6', 'item', 'status'))}<span class="op">=</span><input class="val" value="active"></div></div>
+      <span class="btn-line">＋ 添加条件</span>`) +
+    sec('排序', `
+      <div class="kv"><select class="sel"><option>amount</option><option>created_at</option></select>
+      <select class="sel"><option>降序 ↓</option><option>升序 ↑</option></select></div>`) +
+    sec('限量', fld('取前 N 条', '<input class="inp" value="20">')),
+
+  http: () => sec('请求', `
+      <div class="kv"><select class="sel" style="width:86px;flex:none"><option>GET</option><option>POST</option><option>PUT</option><option>DELETE</option></select>
+      <input class="inp" value="https://api.internal/tickets"></div>
+      <div class="tabs"><span class="on">参数</span><span>请求头</span><span>请求体</span></div>
+      <div class="kv"><input class="inp" value="status">${varInp(vp('#06b6d4', '条件分支', '…'))}</div>
+      <div class="kv"><input class="inp" value="page_size"><input class="inp" value="50"></div>
+      <span class="btn-line">＋ 添加参数</span>`) +
+    sec('认证', `<select class="sel"><option>无认证</option><option>API Key（Basic / Bearer / 自定义）</option></select>`) +
+    sec('输出', `<div class="hint"><b>statusCode</b> number · <b>headers</b> object · <b>body</b> · <b>files</b> array（自动探测二进制）</div>`),
+};
+
+function renderInspectorForRemoved(type, name, why) {
+  document.getElementById('inspector').innerHTML = `
+    <div class="insp-head">
+      <span class="n-icon" style="background:#cbd5e1">${ICONS.minus}</span>
+      <div><div class="insp-title">${name}</div><div class="insp-type">type: ${type}</div></div>
+    </div>
+    <div class="insp-body">
+      <div class="sec"><span class="badge-del">已移除</span></div>
+      ${sec('原因', `<div class="hint">${why}。Dify 无对应组件，按重设计规范先行移除，不保留兼容层。</div>`)}
+      ${sec('替代', `<div class="hint">数据加工类需求由 <b>代码执行</b> 覆盖；错误处理改为节点级失败分支设置。</div>`)}
+    </div>`;
+}
+
+function renderInspector(defKey, inst) {
+  const d = DEFS[defKey];
+  document.getElementById('inspector').innerHTML = `
+    <div class="insp-head">
+      <span class="n-icon" style="background:${d.color}">${ICONS[d.icon]}</span>
+      <div><div class="insp-title">${inst ? inst.title : d.name}</div>
+      <div class="insp-type">type: ${d.type} · v1</div></div>
+    </div>
+    <div class="insp-body">${PANELS[defKey]()}</div>`;
+}
+
+/* ================= 选择与交互 ================= */
+let selected = null;
+function clearSel() {
+  document.querySelectorAll('.node.selected').forEach(e => e.classList.remove('selected'));
+  document.querySelectorAll('.edge.lit').forEach(e => e.classList.remove('lit'));
+  document.querySelectorAll('.p-item.active').forEach(e => e.classList.remove('active'));
+}
+function selectNode(id) {
+  clearSel(); selected = id;
+  const n = byId[id];
+  const el = document.querySelector(`[data-nid="${id}"]`);
+  if (el && el.classList.contains('node')) el.classList.add('selected');
+  EDGES.forEach(e => {
+    if (e.f[0] === id || e.t[0] === id) {
+      document.querySelectorAll(`.edge[data-f="${e.f[0]}"][data-t="${e.t[0]}"]`).forEach(p => p.classList.add('lit'));
+    }
+  });
+  if (n.container) renderInspector('loop', n);
+  else if (n.def) renderInspector(n.def, n);
+}
+function selectPalette(defKey, el) {
+  clearSel(); el.classList.add('active');
+  renderInspector(defKey, null);
+}
+
+document.getElementById('canvas').addEventListener('click', ev => {
+  const nEl = ev.target.closest('[data-nid]');
+  if (nEl) { selectNode(nEl.dataset.nid); return; }
+});
+document.getElementById('pScroll').addEventListener('click', ev => {
+  const it = ev.target.closest('.p-item');
+  if (!it) return;
+  if (it.dataset.removed) { clearSel(); it.classList.add('active'); renderInspectorForRemoved(it.dataset.removed, it.dataset.name, it.dataset.why); return; }
+  selectPalette(it.dataset.def, it);
+});
+document.getElementById('pSearch').addEventListener('input', ev => renderPalette(ev.target.value));
+
+/* ================= 初始化 ================= */
+renderPalette();
+renderCanvas();
+selectNode('agent1');
+</script>
+</body>
+</html>

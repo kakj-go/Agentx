@@ -6,7 +6,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 
 import { useAuth } from '../../app/providers/auth-provider'
 import { apiRequest, jsonBody } from '../../shared/api/client'
-import type { Approval, Checkpoint, Execution, ExecutionEvent, ExecutionWait, ForkExecutionRequest, NodeExecution, PageResponse, SideEffectConfirmationRequest } from '../../shared/api/types'
+import type { Approval, Checkpoint, Execution, ExecutionEvent, ForkExecutionRequest, NodeExecution, PageResponse, SideEffectConfirmationRequest } from '../../shared/api/types'
 import { ConfirmDialog } from '../../shared/components/confirm-dialog'
 import { EmptyState } from '../../shared/components/empty-state'
 import { StatusBadge } from '../../shared/components/status-badge'
@@ -50,7 +50,6 @@ export function ExecutionDetailPage() {
   })
   const nodes = useQuery({ queryKey: ['execution-nodes', id], queryFn: () => apiRequest<ItemResponse<NodeExecution>>(`/executions/${id}/nodes`), refetchInterval: execution.data && !terminalStatuses.has(execution.data.status) ? 2_000 : false })
   const checkpoints = useQuery({ enabled: canViewExecution, queryKey: ['execution-checkpoints', id], queryFn: () => apiRequest<ItemResponse<Checkpoint>>(`/executions/${id}/checkpoints`), refetchInterval: execution.data && !terminalStatuses.has(execution.data.status) ? 2_000 : false })
-  const waits = useQuery({ enabled: canViewExecution, queryKey: ['execution-waits', id], queryFn: () => apiRequest<ItemResponse<ExecutionWait>>(`/executions/${id}/waits`), refetchInterval: execution.data && !terminalStatuses.has(execution.data.status) ? 2_000 : false })
   const events = useQuery({ enabled: canViewExecution, queryKey: ['execution-recovery-events', id], queryFn: () => apiRequest<{ items: ExecutionEvent[] }>(`/executions/${id}/events?after=0&limit=200`), refetchInterval: execution.data && !terminalStatuses.has(execution.data.status) ? 2_000 : false })
   const approvals = useQuery({ enabled: auth.hasPermission('approval:view'), queryKey: ['approvals', 'execution', id], queryFn: () => apiRequest<PageResponse<Approval>>('/approvals?pageSize=100'), refetchInterval: execution.data && !terminalStatuses.has(execution.data.status) ? 2_000 : false })
 
@@ -64,7 +63,6 @@ export function ExecutionDetailPage() {
       queryClient.invalidateQueries({ queryKey: ['execution-nodes', id] }),
       queryClient.invalidateQueries({ queryKey: ['execution-node', id] }),
       queryClient.invalidateQueries({ queryKey: ['execution-checkpoints', id] }),
-      queryClient.invalidateQueries({ queryKey: ['execution-waits', id] }),
       queryClient.invalidateQueries({ queryKey: ['execution-recovery-events', id] }),
       queryClient.invalidateQueries({ queryKey: ['execution-trace-spans', id] }),
       queryClient.invalidateQueries({ queryKey: ['approvals', 'execution', id] }),
@@ -81,7 +79,6 @@ export function ExecutionDetailPage() {
     queryClient.invalidateQueries({ queryKey: ['execution', id] }),
     queryClient.invalidateQueries({ queryKey: ['execution-nodes', id] }),
     queryClient.invalidateQueries({ queryKey: ['execution-checkpoints', id] }),
-    queryClient.invalidateQueries({ queryKey: ['execution-waits', id] }),
     queryClient.invalidateQueries({ queryKey: ['execution-recovery-events', id] }),
     queryClient.invalidateQueries({ queryKey: ['execution-trace-spans', id] }),
     queryClient.invalidateQueries({ queryKey: ['executions'] }),
@@ -130,7 +127,7 @@ export function ExecutionDetailPage() {
     <Tabs onValueChange={setMainView} value={mainView}>
       <TabsList className="h-11 border-b border-border bg-surface px-6"><TabsTrigger onClick={() => setMainView('trace')} value="trace">{t('executions.mainViews.trace')}</TabsTrigger>{canViewExecution && <TabsTrigger onClick={() => setMainView('recovery')} value="recovery">{t('executions.mainViews.recovery')}</TabsTrigger>}</TabsList>
       <TabsContent value="trace"><TraceWorkspace active={mainView === 'trace'} className="min-h-[620px]" execution={value} executionId={id} nodes={nodeItems} onDownloadArtifact={downloadArtifact} onNodeSelect={(node) => setSelectedId(node.id)} /></TabsContent>
-      {canViewExecution && <TabsContent value="recovery"><div className="min-h-[620px] overflow-hidden"><ExecutionRecoveryRail approvals={executionApprovals} canConfirm={auth.hasPermission('execution:fork')} checkpoints={checkpoints.data?.items ?? []} events={events.data?.items ?? []} nodes={nodeItems} onConfirm={setConfirmationNode} waits={waits.data?.items ?? []} /></div></TabsContent>}
+      {canViewExecution && <TabsContent value="recovery"><div className="min-h-[620px] overflow-hidden"><ExecutionRecoveryRail approvals={executionApprovals} canConfirm={auth.hasPermission('execution:fork')} checkpoints={checkpoints.data?.items ?? []} events={events.data?.items ?? []} nodes={nodeItems} onConfirm={setConfirmationNode} /></div></TabsContent>}
     </Tabs>
 
     <ExecutionForkDialog checkpoints={checkpoints.data?.items ?? []} initialNodeId={selectedNode?.nodeId} nodes={nodeItems} onClose={closeFork} onSubmit={(request) => fork.mutateAsync(request).then(() => undefined)} open={forkOpen} pending={fork.isPending} />

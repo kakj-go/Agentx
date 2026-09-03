@@ -19,21 +19,20 @@ export function StudioEdgeComponent(props: EdgeProps<StudioEdge>) {
   const requestEdgeInsert = useEditorStore((state) => state.requestEdgeInsert)
   const renderer = useStore((state) => state.domNode?.querySelector('.react-flow__renderer'))
   const viewport = useViewport()
-  const binding = props.data?.edgeKind === 'binding'
   const error = props.data?.sourcePortKind === 'error'
   const runtimeStatus = props.data?.runtimeStatus
-  const { path, labelX, labelY } = getStudioEdgePath(props, binding)
+  const { path, labelX, labelY } = getStudioEdgePath(props)
   const toolbarVisible = hovered || props.selected
   return <>
-    <BaseEdge id={props.id} interactionWidth={40} markerEnd={binding ? undefined : props.markerEnd} path={path} style={{ stroke: binding ? 'var(--ui-warning)' : error || runtimeStatus === 'failed' ? 'var(--ui-danger)' : runtimeStatus === 'running' ? 'var(--ui-warning)' : runtimeStatus === 'succeeded' ? 'var(--ui-success)' : props.selected ? 'var(--ui-primary)' : 'var(--ui-border-strong)', strokeDasharray: binding ? '5 6' : error ? '7 5' : undefined, strokeWidth: 2 }} />
+    <BaseEdge id={props.id} interactionWidth={40} markerEnd={props.markerEnd} path={path} style={{ stroke: error || runtimeStatus === 'failed' ? 'var(--ui-danger)' : runtimeStatus === 'running' ? 'var(--ui-warning)' : runtimeStatus === 'succeeded' ? 'var(--ui-success)' : props.selected ? 'var(--ui-primary)' : 'var(--ui-border-strong)', strokeDasharray: error ? '7 5' : undefined, strokeWidth: 2 }} />
     <path d={path} fill="none" onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)} pointerEvents="stroke" stroke="transparent" strokeWidth={40} />
     {renderer && createPortal(<div className="nodrag nopan studio-edge-toolbar absolute z-20 flex -translate-x-1/2 -translate-y-1/2 items-center rounded-md border border-border bg-surface p-0.5 shadow-sm" data-edge-id={props.id} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)} style={{ left: labelX * viewport.zoom + viewport.x, opacity: toolbarVisible ? 1 : 0, pointerEvents: toolbarVisible ? 'auto' : 'none', top: labelY * viewport.zoom + viewport.y }}><button aria-label={t('studio.edges.insert')} className="grid size-6 place-items-center rounded hover:bg-muted" onClick={() => requestEdgeInsert(props.id)} title={t('studio.edges.insert')} type="button"><Plus className="size-3.5" /></button><button aria-label={t('studio.edges.delete')} className="grid size-6 place-items-center rounded text-danger hover:bg-danger/10" onClick={() => removeEdge(props.id)} title={t('studio.edges.delete')} type="button"><Trash2 className="size-3.5" /></button></div>, renderer)}
   </>
 }
 
-export function getStudioEdgePath(props: Pick<EdgeProps<StudioEdge>, 'sourceX' | 'sourceY' | 'sourcePosition' | 'targetX' | 'targetY' | 'targetPosition'>, binding = false) {
+export function getStudioEdgePath(props: Pick<EdgeProps<StudioEdge>, 'sourceX' | 'sourceY' | 'sourcePosition' | 'targetX' | 'targetY' | 'targetPosition'>) {
   const { sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition } = props
-  if (binding || sourceX - HANDLE_SIZE <= targetX) {
+  if (sourceX - HANDLE_SIZE <= targetX) {
     const [path, labelX, labelY] = getBezierPath(props)
     return { path, labelX, labelY }
   }

@@ -164,12 +164,19 @@ impl DeploymentConfig {
             .values
             .pointer_mut("/global/ingress/className")
             .unwrap() = format!("agentx-e2e-{normalized}").into();
-        if self.string("/global/network/egressGateway/sandboxAccess/mode") == Some("nodePort") {
+        if matches!(
+            self.string("/global/network/egressGateway/sandboxAccess/mode"),
+            Some("nodePort" | "privateLoadBalancer")
+        ) {
             let port = deterministic_e2e_node_port(&normalized);
             *self
                 .values
                 .pointer_mut("/global/network/egressGateway/sandboxAccess/endpoint")
                 .unwrap() = format!("https://host.docker.internal:{port}").into();
+            *self
+                .values
+                .pointer_mut("/global/network/egressGateway/sandboxAccess/port")
+                .unwrap() = u64::from(port).into();
         }
         Ok(self)
     }
@@ -200,6 +207,43 @@ impl DeploymentConfig {
         }
         if !seen.contains(&443) {
             bail!("egress allowedPublicPorts must be unique and include 443");
+        }
+        let sandbox_endpoint = self
+            .string("/global/network/egressGateway/sandboxAccess/endpoint")
+            .unwrap();
+        let sandbox_endpoint = url::Url::parse(sandbox_endpoint)
+            .context("sandbox Egress endpoint must be a valid HTTPS URL")?;
+        let sandbox_port = self
+            .u64("/global/network/egressGateway/sandboxAccess/port")
+            .unwrap();
+        if sandbox_endpoint.port_or_known_default() != Some(sandbox_port as u16) {
+            bail!("sandbox Egress endpoint port must match sandboxAccess.port");
+        }
+        for path in [
+            "/global/network/egressGateway/allowedPrivateCidrs",
+            "/global/network/egressGateway/blockedCidrs",
+        ] {
+            for cidr in self.array(path).into_iter().flatten() {
+                let network = IpNet::from_str(cidr.as_str().unwrap())?;
+                if network.prefix_len() == 0 {
+                    bail!("egress gateway CIDRs cannot contain an unrestricted network");
+                }
+            }
+        }
+        let protected = self
+            .array("/global/network/egressGateway/blockedCidrs")
+            .into_iter()
+            .flatten()
+            .map(|cidr| {
+                IpNet::from_str(cidr.as_str().unwrap())
+                    .map(|network| network.to_string())
+                    .map_err(Into::into)
+            })
+            .collect::<Result<std::collections::BTreeSet<_>>>()?;
+        for required in ["10.96.0.0/12", "10.244.0.0/16"] {
+            if !protected.contains(required) {
+                bail!("egress blockedCidrs must permanently include Kubernetes network {required}");
+            }
         }
         if let Some(targets) = self.object("/global/network/externalEgress") {
             for target in targets.values() {
@@ -422,11 +466,30 @@ mod tests {
     }
 
     #[test]
+    fn kubernetes_service_and_pod_networks_cannot_be_removed_from_egress_protection() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../deploy/values/local.yaml");
+        let mut config = DeploymentConfig::load(path, None).unwrap();
+        config
+            .values
+            .pointer_mut("/global/network/egressGateway/blockedCidrs")
+            .and_then(Value::as_array_mut)
+            .unwrap()
+            .retain(|value| value.as_str() != Some("10.96.0.0/12"));
+        assert!(
+            config
+                .validate_semantics()
+                .unwrap_err()
+                .to_string()
+                .contains("Kubernetes network")
+        );
+    }
+
+    #[test]
     fn embedded_beta_is_the_default_standalone_configuration() {
         let config = DeploymentConfig::load_embedded_beta(None).unwrap();
         assert_eq!(config.path, PathBuf::from("embedded:dockerhub-beta.yaml"));
         assert_eq!(config.environment(), "local");
-        assert_eq!(config.string("/global/images/tag"), Some("v0.0.2-beta"));
+        assert_eq!(config.string("/global/images/tag"), Some("v0.0.3-beta"));
     }
 
     #[test]
@@ -443,6 +506,10 @@ mod tests {
             Some("https://host.docker.internal:30957")
         );
         assert_eq!(
+            config.u64("/global/network/egressGateway/sandboxAccess/port"),
+            Some(30_957)
+        );
+        assert_eq!(
             config.string("/global/components/controlMysql/host"),
             Some("control-mysql.agentx-e2e-control-test-run.svc")
         );
@@ -456,7 +523,7 @@ mod tests {
         );
         assert_eq!(
             config.string("/global/components/sandbox/endpoint"),
-            Some("http://opensandbox.agentx-deps.svc:8080")
+            Some("http://host.docker.internal:18080")
         );
     }
 

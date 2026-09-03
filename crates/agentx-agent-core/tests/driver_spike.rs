@@ -383,8 +383,15 @@ fn threshold_compaction_projects_summary_tail_and_recent_messages() {
         session_id: run_input.session_id.clone(),
         version: 7,
         messages: vec![
-            AgentMessageV1::user("old-1", "a long old message that must be summarized because it contains many many many many many many many many many many many many many many many many many many many many many many many many words"),
-            AgentMessageV1::assistant("old-2", "another old message with lots of content that should be compressed because it is very very very very very very very very very very very very very very very very very very very very very very long", vec![]),
+            AgentMessageV1::user(
+                "old-1",
+                "a long old message that must be summarized because it contains many many many many many many many many many many many many many many many many many many many many many many many many words",
+            ),
+            AgentMessageV1::assistant(
+                "old-2",
+                "another old message with lots of content that should be compressed because it is very very very very very very very very very very very very very very very very very very very very very very long",
+                vec![],
+            ),
         ],
         ..AgentSessionStateV1::default()
     };
@@ -422,6 +429,52 @@ fn threshold_compaction_projects_summary_tail_and_recent_messages() {
             .messages
             .iter()
             .any(|message| message.content == "stable summary")
+    );
+}
+
+#[test]
+fn threshold_compaction_does_not_reinsert_an_oversized_turn_or_drop_new_tool_results() {
+    let mut run_input = input(true);
+    run_input.model_context_window = 712;
+    run_input.prompt = "context ".repeat(400);
+    let call = ToolCallV1 {
+        call_id: "call-1".into(),
+        name: "read".into(),
+        arguments: json!({"path":"notes.txt"}),
+    };
+    let mut model = FakeModel {
+        responses: VecDeque::from([
+            response("compaction-1", "short summary", vec![]),
+            response("assistant-1", "", vec![call]),
+            response("assistant-2", "done", vec![]),
+        ]),
+        requests: vec![],
+    };
+    let mut tools = FakeTools::default();
+    let mut state = MemoryState::default();
+    let mut events = Events::default();
+    let result = AgentCore::run(
+        &run_input,
+        &mut model,
+        &mut tools,
+        &mut state,
+        &mut events,
+        &FixedClock,
+        &mut budget(BudgetDecision::Continue),
+    )
+    .expect("compacted agent completes");
+
+    assert_eq!(result.terminal_reason, TerminalReasonV1::Completed);
+    assert_eq!(model.requests.len(), 3);
+    assert_eq!(model.requests[0].purpose, ModelPurposeV1::Compaction);
+    assert!(model.requests[2].messages.iter().any(|message| {
+        message.role == MessageRole::ToolResult && message.tool_call_id.as_deref() == Some("call-1")
+    }));
+    assert!(
+        !model.requests[2]
+            .messages
+            .iter()
+            .any(|message| message.content == run_input.prompt)
     );
 }
 
@@ -716,4 +769,54 @@ fn turn_started_and_ended_events_are_emitted() {
         .count();
     assert_eq!(turn_started, 1, "should emit one TurnStarted event");
     assert_eq!(turn_ended, 1, "should emit one TurnEnded event");
+}
+
+#[test]
+fn model_failure_closes_open_turn_and_model_operation_spans() {
+    let mut model = FakeModel {
+        responses: VecDeque::from([Err(ModelPortError::Effect(
+            "HTTP 429 Too Many Requests: rate_limit_error".into(),
+        ))]),
+        requests: vec![],
+    };
+    let mut tools = FakeTools::default();
+    let mut state = MemoryState::default();
+    let mut events = Events::default();
+    let result = AgentCore::run(
+        &input(false),
+        &mut model,
+        &mut tools,
+        &mut state,
+        &mut events,
+        &FixedClock,
+        &mut budget(BudgetDecision::Continue),
+    )
+    .expect("model failure settles the run");
+    assert_eq!(result.terminal_reason, TerminalReasonV1::ModelError);
+    assert!(
+        events
+            .0
+            .iter()
+            .any(|event| matches!(event, CoreEventV1::ModelSettled { is_error: true, .. })),
+        "model failure must settle the model operation span with an error"
+    );
+    assert!(
+        events
+            .0
+            .iter()
+            .any(|event| matches!(event, CoreEventV1::TurnEnded { is_error: true, .. })),
+        "model failure must close the open turn span with an error"
+    );
+    let detail = result
+        .state
+        .operation
+        .as_ref()
+        .and_then(|operation| match &operation.phase {
+            OperationPhaseV1::SettledFailure { error } => Some(error.as_str()),
+            _ => None,
+        });
+    assert!(
+        detail.is_some_and(|detail| detail.contains("429")),
+        "terminal operation retains the provider error for settlement"
+    );
 }

@@ -4,7 +4,6 @@
       "enum": [
         "builtin",
         "declarative_http",
-        "remote_action",
         "agent",
         "model",
         "mcp_tool",

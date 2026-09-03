@@ -23,7 +23,7 @@ Agentx 是一个采用 n8n 式画布交互、但使用 Agentx 原生 Workflow/No
 | [09-codebase-architecture.md](09-codebase-architecture.md) | Monorepo、Rust 服务、公共 Crate 和依赖边界 |
 | [10-frontend-architecture.md](10-frontend-architecture.md) | Tailwind UI 体系、企业工作台和 React Flow 画布 |
 | [11-node-integration.md](11-node-integration.md) | Node Manifest、Action/Provider/Lifecycle HTTP 协议与接入验证 |
-| [12-workflow-5.md](12-workflow-5.md) | Workflow Definition 5.0、DynamicValue、Selector、输出契约与故障终态 |
+| [12-workflow-5.md](12-workflow-5.md) | Workflow Definition 8.0、Binding、Selector、输出契约与故障终态 |
 | [13-architecture-service-data-map.md](13-architecture-service-data-map.md) | 当前架构、服务访问链路、全量表目录和跨域 ER 关系 |
 | [reference/mysql-schema-catalog.md](reference/mysql-schema-catalog.md) | V2-00 逐表处置使用的历史 V1 MySQL 字段、索引与外键快照 |
 | [planv2/contracts/table-disposition.json](planv2/contracts/table-disposition.json) | 历史 133 表迁往 Control/Runtime/Split/Delete 的机器可读处置输入 |
@@ -31,6 +31,7 @@ Agentx 是一个采用 n8n 式画布交互、但使用 Agentx 原生 Workflow/No
 | [planv2/README.md](planv2/README.md) | 控制面、执行面与可观测面分离的破坏性重构计划；V2-08A 本地功能闭环与 V1 删除已完成，生产容量、安全、恢复和发布认证仍在 08B |
 | [plan3/README.md](plan3/README.md) | 参考 earendil-works/pi 行为实现的 Agentx 原生内核、内置模型、OpenSandbox 四工具、会话压缩与外挂能力重构计划 |
 | [plan4/README.md](plan4/README.md) | Application 渠道对接：第一阶段 HTTP 回调入站；第二阶段渠道凭证内置化、按平台动态表单、钉钉 Stream 与飞书长连接双模式，出站回复仅方案讨论 |
+| [plan5/README.md](plan5/README.md) | 已完成的Workflow节点体系重构：Dify式配置与调试流程、Definition 8.0、13类节点、Agent附件、Loop容器、Approval/Exit/集成执行闭环及完整Kubernetes门禁；[implementation-plan.md](plan5/implementation-plan.md) 保存M0–M6 + F1–F8完成清单与证据 |
 | [planv2/evidence/egress-gateway.md](planv2/evidence/egress-gateway.md) | SaaS 受控公网出口、真实模型、密钥轮换、稳定性、滚动升级和生产 CNI 未关闭门禁证据 |
 | [plan/m2-task-list.md](plan/m2-task-list.md) | M2 Workflow 控制面与资源中心的详细实施批次和任务清单 |
 | [plan/m2.1-resource-redesign.md](plan/m2.1-resource-redesign.md) | M2.1 MCP、Skill Workspace、Kubernetes Addon 与全局 E2E 重构任务 |
@@ -52,7 +53,7 @@ Agentx 是一个采用 n8n 式画布交互、但使用 Agentx 原生 Workflow/No
 | [plan/uniqueness-validation-acceptance-evidence.md](plan/uniqueness-validation-acceptance-evidence.md) | 用户输入唯一字段前检、并发兜底、字段错误、Artifact 补偿与 UI 验收证据 |
 | [plan/e2e-testing-standard.md](plan/e2e-testing-standard.md) | 临时 Kubernetes Playwright 端到端测试规范 |
 | [plan/safe-deletion-acceptance-evidence.md](plan/safe-deletion-acceptance-evidence.md) | 业务域国际化、统一删除契约、引用保护和临时 Kubernetes 验收证据 |
-| [plan/workflow-multi-exit.md](plan/workflow-multi-exit.md) | Definition 7.0 多结束节点（exit）重构：全局共享输出契约、per-exit 映射、初始 protected 出口与验收状态 |
+| [plan/workflow-multi-exit.md](plan/workflow-multi-exit.md) | 历史多结束节点设计记录；当前正式契约以Definition 8.0与plan5为准 |
 | [plan/m2-acceptance-evidence.md](plan/m2-acceptance-evidence.md) | 已被 M2.1 取代的旧 M2 历史证据 |
 
 ## 阅读和实施顺序

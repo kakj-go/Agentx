@@ -151,7 +151,7 @@ pub(super) async fn upsert_activation(
 ) -> RuntimeResult<()> {
     let status = activation_status(activation.status);
     sqlx::query(
-        "INSERT INTO node_executions(id,tenant_id,execution_id,node_id,node_key,node_name,node_type,node_version,generation,activation_slot,run_index,iteration_index,status,capability,side_effect_level,input_json,started_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,IF(?='ready',NULL,UTC_TIMESTAMP(6))) ON DUPLICATE KEY UPDATE status=VALUES(status),input_json=VALUES(input_json),started_at=IF(started_at IS NULL AND VALUES(status)<>'ready',UTC_TIMESTAMP(6),started_at),updated_at=UTC_TIMESTAMP(6)",
+        "INSERT INTO node_executions(id,tenant_id,execution_id,node_id,node_key,node_name,node_type,node_version,generation,activation_slot,run_index,iteration_index,status,capability,side_effect_level,input_json,loop_frame_json,started_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,IF(?='ready',NULL,UTC_TIMESTAMP(6))) ON DUPLICATE KEY UPDATE status=VALUES(status),input_json=VALUES(input_json),loop_frame_json=VALUES(loop_frame_json),started_at=IF(started_at IS NULL AND VALUES(status)<>'ready',UTC_TIMESTAMP(6),started_at),updated_at=UTC_TIMESTAMP(6)",
     )
     .bind(activation.id.as_uuid())
     .bind(tenant_id)
@@ -169,6 +169,7 @@ pub(super) async fn upsert_activation(
     .bind(node.capability.as_str())
     .bind(side_effect_name(&node.side_effect_level))
     .bind(serde_json::to_value(&activation.inputs).map_err(|error| RuntimeError::Internal(error.into()))?)
+    .bind(activation.loop_frame.clone())
     .bind(status)
     .execute(&mut **tx)
     .await?;
@@ -273,6 +274,33 @@ pub(super) async fn finish_execution(
     .bind(execution_id)
     .execute(&mut **tx)
     .await?;
+    let approval_ids = sqlx::query_scalar::<_, Uuid>(
+        "SELECT id FROM approval_tasks WHERE tenant_id=? AND execution_id=? AND status IN ('pending','claimed') FOR UPDATE",
+    )
+    .bind(tenant_id)
+    .bind(execution_id)
+    .fetch_all(&mut **tx)
+    .await?;
+    if !approval_ids.is_empty() {
+        sqlx::query("UPDATE approval_tasks SET status='cancelled',version=version+1,resume_status='not_requested' WHERE tenant_id=? AND execution_id=? AND status IN ('pending','claimed')")
+            .bind(tenant_id).bind(execution_id).execute(&mut **tx).await?;
+        for task_id in approval_ids {
+            crate::event_export::enqueue_approval_event_from_task(tx, tenant_id, task_id).await?;
+        }
+    }
+    let child_ids = sqlx::query_scalar::<_, Uuid>("SELECT child_execution_id FROM execution_children WHERE tenant_id=? AND parent_execution_id=? AND relationship='composite' AND merge_status='pending'")
+        .bind(tenant_id).bind(execution_id).fetch_all(&mut **tx).await?;
+    for child_id in child_ids {
+        let command_id = agentx_runtime_contracts::deterministic_uuid(
+            execution_id,
+            format!("terminal-cancel:{child_id}").as_bytes(),
+        );
+        sqlx::query("INSERT INTO runtime_commands(id,tenant_id,command_type,aggregate_type,aggregate_id,idempotency_key,payload_json,status) VALUES(?,?,'cancel_execution','execution',?,?,?,'pending') ON DUPLICATE KEY UPDATE id=id")
+            .bind(command_id).bind(tenant_id).bind(child_id.to_string())
+            .bind(format!("parent-terminal:{execution_id}:{child_id}"))
+            .bind(json!({"reason":"parent_terminal","parentExecutionId":execution_id}))
+            .execute(&mut **tx).await?;
+    }
     let invocation_status = if status == "succeeded" {
         "completed"
     } else if machine.status() == RuntimeExecutionStatus::Cancelled {
@@ -463,7 +491,7 @@ async fn append_session_assistant_message(
     .bind(sequence)
     .execute(&mut **tx)
     .await?;
-    let parts = crate::output_projection::assistant_message_parts(output, &mapping)?;
+    let parts = crate::assistant_message::assistant_message_parts(output, &mapping)?;
     for (index, part) in parts.into_iter().enumerate() {
         sqlx::query(
             "INSERT INTO application_message_parts(id,tenant_id,message_id,part_index,part_type,content_json,artifact_id) VALUES(?,?,?,?,?,?,?)",
@@ -563,9 +591,11 @@ async fn materialize_result(
                 .map_or_else(String::new, |delivery| delivery.target_exit.clone());
             for (name, dynamic) in &exit.error_outputs {
                 let contract = workflow.end.error.outputs.get(name);
+                let schema = contract.map_or_else(|| json!({}), |output| output.schema.clone());
                 let (value, mut conversions) = engine
-                    .resolve_dynamic_optional_with_conversions(
+                    .resolve_input_with_schema(
                         dynamic,
+                        &schema,
                         &error_context,
                         format!("exit.{exit_id}.errorOutputs.{name}"),
                     )
@@ -625,47 +655,96 @@ async fn materialize_result(
             string_conversions,
         ));
     }
-    let main_delivery = machine
+    let main_deliveries = machine
         .end_deliveries()
         .iter()
-        .find(|delivery| delivery.target_port == "main");
-    let selected_exit = main_delivery
-        .and_then(|delivery| workflow.exits.get(&delivery.target_exit))
-        .or_else(|| {
-            workflow
-                .start_to_exit
-                .as_ref()
-                .and_then(|exit_id| workflow.exits.get(exit_id))
-        });
+        .filter(|delivery| delivery.target_port == "main")
+        .collect::<Vec<_>>();
+    let all_complete = workflow.end.completion == agentx_domain::WorkflowCompletion::AllComplete;
+    // Exit evaluation order follows the Definition's exit order so the
+    // assembled output is deterministic regardless of delivery timing.
+    let reached_exits = if all_complete {
+        workflow
+            .exit_order
+            .iter()
+            .filter(|exit_id| {
+                main_deliveries
+                    .iter()
+                    .any(|delivery| &delivery.target_exit == *exit_id)
+            })
+            .filter_map(|exit_id| {
+                let delivery = main_deliveries
+                    .iter()
+                    .find(|delivery| &delivery.target_exit == exit_id)?;
+                workflow
+                    .exits
+                    .get(exit_id)
+                    .map(|exit| (exit_id.clone(), exit, Some(*delivery)))
+            })
+            .collect::<Vec<_>>()
+    } else {
+        main_deliveries
+            .first()
+            .and_then(|delivery| {
+                workflow
+                    .exits
+                    .get_key_value(&delivery.target_exit)
+                    .map(|(exit_id, exit)| (exit_id.clone(), exit, Some(*delivery)))
+            })
+            .or_else(|| {
+                workflow.start_to_exit.as_ref().and_then(|exit_id| {
+                    workflow
+                        .exits
+                        .get_key_value(exit_id)
+                        .map(|(exit_id, exit)| (exit_id.clone(), exit, None))
+                })
+            })
+            .into_iter()
+            .collect::<Vec<_>>()
+    };
     let mut result = Map::new();
-    if let Some(exit) = selected_exit {
-        let exit_id = main_delivery.map_or(
-            workflow
-                .start_to_exit
-                .clone()
-                .unwrap_or_default(),
-            |delivery| delivery.target_exit.clone(),
-        );
-        for (name, dynamic) in &exit.outputs {
-            let contract = workflow.end.outputs.get(name);
-            let (value, mut conversions) = engine
-                .resolve_dynamic_optional_with_conversions(
-                    dynamic,
-                    &expression_context,
-                    format!("exit.{exit_id}.outputs.{name}"),
-                )
-                .map_err(|error| RuntimeError::Deterministic {
-                    code: "END_OUTPUT_EVALUATION_FAILED",
-                    message: error.to_string(),
-                })?;
+    for (exit_id, exit, delivery) in reached_exits {
+        let mut exit_context = expression_context.clone();
+        if let Some(item) = delivery.and_then(|delivery| delivery.items.last()) {
+            exit_context.json = item.json.clone();
+            exit_context.input = item.json.clone();
+        }
+        for (name, contract) in &workflow.end.outputs {
+            let (value, mut conversions) = if let Some(dynamic) = exit.outputs.get(name) {
+                engine
+                    .resolve_input_with_schema(
+                        dynamic,
+                        &contract.schema,
+                        &exit_context,
+                        format!("exit.{exit_id}.outputs.{name}"),
+                    )
+                    .map_err(|error| RuntimeError::Deterministic {
+                        code: "END_OUTPUT_EVALUATION_FAILED",
+                        message: error.to_string(),
+                    })?
+            } else {
+                (None, Vec::new())
+            };
             string_conversions.append(&mut conversions);
-            let required = contract.is_some_and(|output| output.required);
+            let required = contract.required;
             let Some(value) = value else {
                 if required {
                     return Err(RuntimeError::Deterministic {
                         code: "REQUIRED_END_OUTPUT_OMITTED",
                         message: format!("required End output {name} was omitted"),
                     });
+                }
+                if all_complete {
+                    match result.entry(name.clone()) {
+                        serde_json::map::Entry::Vacant(slot) => {
+                            slot.insert(Value::Array(vec![Value::Null]));
+                        }
+                        serde_json::map::Entry::Occupied(mut slot) => {
+                            if let Value::Array(elements) = slot.get_mut() {
+                                elements.push(Value::Null);
+                            }
+                        }
+                    }
                 }
                 continue;
             };
@@ -675,7 +754,7 @@ async fn materialize_result(
                     &format!("required End output {name} resolved to null"),
                 ));
             }
-            if let Some(contract) = contract {
+            if !value.is_null() {
                 jsonschema::validator_for(&contract.schema)
                     .map_err(|error| RuntimeError::Deterministic {
                         code: "END_OUTPUT_SCHEMA_INVALID",
@@ -687,14 +766,28 @@ async fn materialize_result(
                         message: error.to_string(),
                     })?;
             }
-            result.insert(name.clone(), value);
+            match result.entry(name.clone()) {
+                serde_json::map::Entry::Vacant(slot) => {
+                    // all_complete wraps every output field in an array with
+                    // one element per reached exit (definition order).
+                    slot.insert(if all_complete {
+                        Value::Array(vec![value])
+                    } else {
+                        value
+                    });
+                }
+                serde_json::map::Entry::Occupied(mut slot) => {
+                    if let Value::Array(elements) = slot.get_mut() {
+                        elements.push(value);
+                    }
+                }
+            }
         }
     }
     if result.is_empty()
-        && let Some(item) = machine
-            .end_deliveries()
+        && !all_complete
+        && let Some(item) = main_deliveries
             .iter()
-            .filter(|delivery| delivery.target_port == "main")
             .flat_map(|delivery| &delivery.items)
             .next()
     {

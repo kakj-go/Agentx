@@ -5,9 +5,10 @@ const translations = {
   "approve": "Approve",
   "reject": "Reject",
   "release": "Release",
-  "confirmReject": "Reject this approval?",
   "approvalUpdated": "Approval updated",
   "resumeStatus": "Resume status",
+  "decision": "Decision",
+  "reason": "Reason (optional)",
   "request": "Approval request",
   "actionHistory": "Action history",
   "trace": "View trace",
@@ -21,10 +22,10 @@ const translations = {
     "not_requested": "Not requested", "pending": "Pending", "succeeded": "Resumed", "blocked_runtime": "Blocked by Runtime", "failed": "Resume failed"
   },
   "statuses": {
-    "pending": "Pending", "claimed": "Claimed", "approved": "Approved", "rejected": "Rejected", "cancelled": "Cancelled", "timed_out": "Timed out"
+    "pending": "Pending", "claimed": "Claimed", "decided": "Decided", "cancelled": "Cancelled", "timed_out": "Timed out"
   },
   "actionTypes": {
-    "claim": "Claim", "release": "Release", "reassign": "Reassign", "approve": "Approve", "reject": "Reject", "cancel": "Cancel", "timeout": "Timeout"
+    "claim": "Claim", "release": "Release", "reassign": "Reassign", "decide": "Decide", "cancel": "Cancel", "timeout": "Timeout"
   },
   "auditActions": {
     "created": "Request created", "submitted": "Request submitted", "approved": "Approved", "rejected": "Rejected", "cancelled": "Cancelled", "review_approved": "Department review approved", "review_rejected": "Department review rejected"

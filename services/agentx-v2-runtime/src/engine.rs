@@ -13,7 +13,7 @@ use anyhow::Context;
 use object_store::ObjectStore;
 use serde_json::{Value, json};
 use sqlx::{MySql, MySqlPool, Row, Transaction};
-use time::{Duration, OffsetDateTime, format_description::well_known::Rfc3339};
+use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
 
 use crate::{
@@ -47,8 +47,6 @@ mod persist_machine;
 pub(super) mod string_conversion_trace;
 #[path = "engine_types.rs"]
 mod types;
-#[path = "engine_wait_payload.rs"]
-mod wait_payload;
 
 pub(crate) use crate::engine_persistence::persist_checkpoint;
 pub use crate::engine_protocol::worker_result_hash;
@@ -339,25 +337,7 @@ pub async fn resume_execution(pool: &MySqlPool, claim: &RuntimeCommandClaim) -> 
         .filter(|status| matches!(*status, "resumed" | "timed_out"))
         .unwrap_or("resumed");
     let raw_payload = claim.payload.get("payload").cloned().unwrap_or(Value::Null);
-    let is_wait_node: bool = sqlx::query_scalar("SELECT node_type='wait' FROM node_executions WHERE tenant_id=? AND execution_id=? AND id=?")
-        .bind(claim.tenant_id).bind(claim.execution_id).bind(node_execution_id).fetch_one(&mut *tx).await?;
-    if is_wait_node && output_port == "resumed"
-        && let Some(schema) = sqlx::query_scalar::<_, Option<Value>>("SELECT payload_schema_json FROM wait_subscriptions WHERE tenant_id=? AND execution_id=? AND node_execution_id=? ORDER BY created_at DESC LIMIT 1")
-            .bind(claim.tenant_id).bind(claim.execution_id).bind(node_execution_id).fetch_optional(&mut *tx).await?.flatten()
-    {
-        wait_payload::validate(&schema, &raw_payload).map_err(|(code, message)| {
-            RuntimeError::InvalidRequest(code, message)
-        })?;
-    }
-    let payload = if is_wait_node && matches!(output_port, "resumed" | "timed_out") {
-        json!({
-            "status":wait_status,
-            "payload":raw_payload,
-            "resumedAt":OffsetDateTime::now_utc().format(&Rfc3339).ok(),
-        })
-    } else {
-        raw_payload
-    };
+    let payload = raw_payload;
     let composite_status = claim.payload.get("childStatus").and_then(Value::as_str);
     let agent_session_wakeup = claim
         .payload
@@ -526,17 +506,8 @@ pub async fn resume_execution(pool: &MySqlPool, claim: &RuntimeCommandClaim) -> 
     .bind(node_execution_id)
     .execute(&mut *tx)
     .await?;
-    sqlx::query(
-        "UPDATE wait_subscriptions SET status=?,resumed_at=UTC_TIMESTAMP(6),locked_by=NULL,locked_until=NULL WHERE tenant_id=? AND execution_id=? AND node_execution_id=? AND status='waiting'",
-    )
-    .bind(wait_status)
-    .bind(claim.tenant_id)
-    .bind(claim.execution_id)
-    .bind(node_execution_id)
-    .execute(&mut *tx)
-    .await?;
     let approval = sqlx::query(
-        "SELECT id FROM approval_tasks WHERE tenant_id=? AND execution_id=? AND node_execution_id=? AND status IN ('approved','rejected','timed_out') AND resume_status='pending' FOR UPDATE",
+        "SELECT id FROM approval_tasks WHERE tenant_id=? AND execution_id=? AND node_execution_id=? AND status IN ('decided','timed_out') AND resume_status='pending' FOR UPDATE",
     )
     .bind(claim.tenant_id)
     .bind(claim.execution_id)
@@ -569,14 +540,6 @@ pub async fn resume_execution(pool: &MySqlPool, claim: &RuntimeCommandClaim) -> 
     {
         tracing::warn!(%error, execution_id = %claim.execution_id, "Resumed Span finalization failed");
     }
-    sqlx::query(
-        "UPDATE bundle_references r JOIN wait_subscriptions w ON w.id=r.owner_id SET r.released_at=UTC_TIMESTAMP(6) WHERE r.tenant_id=? AND r.reference_kind='pending_wait' AND w.execution_id=? AND w.node_execution_id=? AND r.released_at IS NULL",
-    )
-    .bind(claim.tenant_id)
-    .bind(claim.execution_id)
-    .bind(node_execution_id)
-    .execute(&mut *tx)
-    .await?;
     if is_terminal(machine.status()) {
         finish_execution(
             &mut tx,
@@ -913,7 +876,7 @@ pub async fn claim_worker_attempt(
         ));
     }
     let row = sqlx::query(
-        "SELECT a.id,a.tenant_id,a.execution_id,a.node_execution_id,a.capability,a.worker_protocol_version,a.input_json,a.fencing_token,a.deadline_at,n.node_id,n.node_type,n.node_version,n.run_index,n.iteration_index,e.input_json execution_input_json,s.compiled_ir_json,s.resource_snapshot_json,s.execution_context_json,s.runtime_settings_json,r.context_json FROM node_attempts a JOIN node_executions n ON n.id=a.node_execution_id JOIN workflow_executions e ON e.id=a.execution_id JOIN execution_snapshots s ON s.execution_id=a.execution_id JOIN execution_runtime_state r ON r.execution_id=a.execution_id WHERE a.id=? AND a.status='queued' AND (a.locked_until IS NULL OR a.locked_until<=UTC_TIMESTAMP(6)) AND (a.deadline_at IS NULL OR a.deadline_at>UTC_TIMESTAMP(6)) FOR UPDATE",
+        "SELECT a.id,a.tenant_id,a.execution_id,a.node_execution_id,a.capability,a.worker_protocol_version,a.input_json,a.fencing_token,a.deadline_at,n.node_id,n.node_type,n.node_version,n.run_index,n.iteration_index,e.input_json execution_input_json,n.loop_frame_json,s.compiled_ir_json,s.resource_snapshot_json,s.execution_context_json,s.runtime_settings_json,r.context_json FROM node_attempts a JOIN node_executions n ON n.id=a.node_execution_id JOIN workflow_executions e ON e.id=a.execution_id JOIN execution_snapshots s ON s.execution_id=a.execution_id JOIN execution_runtime_state r ON r.execution_id=a.execution_id WHERE a.id=? AND a.status='queued' AND (a.locked_until IS NULL OR a.locked_until<=UTC_TIMESTAMP(6)) AND (a.deadline_at IS NULL OR a.deadline_at>UTC_TIMESTAMP(6)) FOR UPDATE",
     )
     .bind(task.attempt_id)
     .fetch_optional(&mut *tx)
@@ -967,25 +930,18 @@ pub async fn claim_worker_attempt(
     let node_type: String = row.try_get("node_type")?;
     let node_id: String = row.try_get("node_id")?;
     let node_version: u32 = row.try_get("node_version")?;
-    let mut raw_parameters = compiled
+    let compiled_node = compiled
         .nodes
         .iter()
         .find(|node| {
             node.id == node_id && node.node_type == node_type && node.type_version == node_version
         })
-        .map(|node| node.parameters.clone())
-        .unwrap_or_else(|| json!({}));
+        .ok_or_else(|| RuntimeError::Internal(anyhow::anyhow!("compiled node is missing")))?;
+    let mut raw_parameters = compiled_node.parameters.clone();
     // Project the frozen Agent Bundle into the worker task without consulting
     // Control Plane. The compiled node is used only to prove that the Bundle
     // entry belongs to this exact immutable Workflow snapshot.
-    if let Some(agent) = compiled
-        .nodes
-        .iter()
-        .find(|node| {
-            node.id == node_id && node.node_type == node_type && node.type_version == node_version
-        })
-        .and_then(|node| node.agent.as_ref())
-    {
+    if let Some(agent) = compiled_node.agent.as_ref() {
         let runtime_settings: Value = row.try_get("runtime_settings_json")?;
         let agent_bundle = runtime_settings
             .get("agentBundle")
@@ -1017,8 +973,12 @@ pub async fn claim_worker_attempt(
         .map_err(|error| RuntimeError::Internal(error.into()))?;
     let context: Value = row.try_get("context_json")?;
     let (node_parameters, per_item_parameters, string_conversions) = parameter_resolution::resolve(
+        &node_type,
         &raw_parameters,
+        &compiled_node.parameter_schema,
         &inputs,
+        row.try_get::<Option<Value>, _>("loop_frame_json")?
+            .unwrap_or(Value::Null),
         row.try_get::<Option<Value>, _>("execution_input_json")?
             .unwrap_or(Value::Null),
         load_output_namespace(&mut tx, task.tenant_id, task.execution_id).await?,
@@ -1052,6 +1012,12 @@ pub async fn claim_worker_attempt(
         node_version,
         run_index: row.try_get("run_index")?,
         iteration_index: row.try_get("iteration_index")?,
+        timeout_ms: compiled
+            .nodes
+            .iter()
+            .find(|node| node.id == node_id)
+            .and_then(|node| node.settings.timeout_ms)
+            .unwrap_or(30_000),
         node_parameters,
         per_item_parameters,
         string_conversions,
@@ -1192,48 +1158,6 @@ async fn submit_worker_result_resolved(
             effective_error_code = Some(crate::output_contract::violation_code(node).into());
             effective_error_message = Some(message);
             effective_outputs.clear();
-        }
-        if effective_status == WorkerResultStatusV1::Succeeded
-            && node
-                .output_projection
-                .as_object()
-                .is_some_and(|projection| !projection.is_empty())
-        {
-            let upstream = load_output_namespace(&mut tx, tenant_id, execution_id).await?;
-            match crate::output_projection::apply(
-                &mut effective_outputs,
-                &node.output_projection,
-                &ExpressionContext {
-                    inputs: attempt
-                        .try_get::<Option<Value>, _>("input_json")?
-                        .unwrap_or(Value::Null),
-                    outputs: upstream,
-                    contexts: context.clone(),
-                    execution: crate::execution_context::with_node(
-                        crate::execution_context::load(&mut tx, tenant_id, execution_id).await?,
-                        &node.id,
-                        node_execution_id.as_uuid(),
-                        activation.run_index,
-                        None,
-                        attempt.try_get("iteration_index")?,
-                    ),
-                    output_node_keys: machine
-                        .workflow()
-                        .nodes
-                        .iter()
-                        .map(|node| (node.id.clone(), node.key.clone()))
-                        .collect(),
-                    ..ExpressionContext::default()
-                },
-            ) {
-                Ok(mut conversions) => string_conversions.append(&mut conversions),
-                Err(error) => {
-                    effective_status = WorkerResultStatusV1::Failed;
-                    effective_error_code = Some("DYNAMIC_VALUE_EVALUATION_FAILED".into());
-                    effective_error_message = Some(error.to_string());
-                    effective_outputs.clear();
-                }
-            }
         }
         if effective_status == WorkerResultStatusV1::Succeeded
             && let Err(message) = validate_node_output_contract(node, &effective_outputs)
@@ -1635,9 +1559,12 @@ async fn apply_context_writes(
     let mut conversions = Vec::new();
     let mut session_writes = 0_u64;
     for write in &node.context_writes {
+        let target_schema = context_write_schema(&machine.workflow().contexts, &write.path)
+            .unwrap_or_else(|| json!({}));
         let (value, mut write_conversions) = ExpressionEngine
-            .resolve_dynamic_optional_with_conversions(
+            .resolve_input_with_schema(
                 &write.value,
+                &target_schema,
                 &expression_context,
                 format!("contextWrites.{}", write.path),
             )
@@ -1710,6 +1637,23 @@ async fn apply_context_writes(
         version: next_context_version,
         conversions,
     })
+}
+
+fn context_write_schema(
+    contexts: &BTreeMap<String, agentx_domain::ContextDefinition>,
+    path: &str,
+) -> Option<Value> {
+    let mut segments = path.split('.');
+    let root = segments.next()?;
+    let mut schema = &contexts.get(root)?.schema;
+    for segment in segments {
+        if segment.parse::<usize>().is_ok() {
+            schema = schema.get("items")?;
+        } else {
+            schema = schema.get("properties")?.get(segment)?;
+        }
+    }
+    Some(schema.clone())
 }
 
 struct ReadySchedule<'a> {
@@ -1915,6 +1859,8 @@ async fn schedule_ready(
                 node_execution_id,
                 &activation,
                 &node,
+                ready.machine.workflow(),
+                ready.context,
             )
             .await?;
             continue;

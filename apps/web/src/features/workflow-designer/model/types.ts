@@ -25,7 +25,7 @@ export type BindingSlot = {
   multiple: boolean;
 };
 export type JsonSchemaProperty = {
-  type?: string;
+  type?: string | string[];
   title?: string;
   description?: string;
   default?: unknown;
@@ -44,15 +44,13 @@ export type JsonSchemaProperty = {
   additionalProperties?: boolean | JsonSchemaProperty;
   required?: string[];
   format?: string;
-  "x-agentx-dynamicValue"?: {
-    modes: Array<"literal" | "reference" | "template" | "expression">;
+  "x-agentx-binding"?: {
+    acceptedKinds: Array<"literal" | "reference" | "template" | "array" | "object">;
     allowedNamespaces: ValueNamespace[];
     acceptedCardinality: Array<"single" | "many">;
-    missingPolicies: Array<"error" | "null" | "default" | "omit">;
+    missingPolicies: Array<"error" | "null" | "omit">;
     recursive: boolean;
   };
-  /** @deprecated Internal tests only; manifests use x-agentx-dynamicValue. */
-  templatable?: boolean;
   multiline?: boolean;
 };
 export type ParameterSchema = {
@@ -76,9 +74,8 @@ export type CanvasNodeRole =
   | "approval"
   | "sub_workflow"
   | "agent"
-  | "code"
-  | "error_handler";
-export type CanvasNodeFamily = "compact" | "agent" | "attachment" | "editor";
+  | "code";
+export type CanvasNodeFamily = "compact" | "agent";
 export type ConnectionInteractionState =
   | { status: "idle" | "cancelled" | "committed" }
   | {
@@ -125,7 +122,7 @@ export type NodeManifest = {
     string,
     "zero_or_one" | "exactly_one" | "zero_or_many" | "many"
   >;
-  expressionCapabilities?: {
+  selectorCapabilities?: {
     namespaces?: string[];
     supportsCurrent?: boolean;
     supportsFirstLast?: boolean;
@@ -134,7 +131,6 @@ export type NodeManifest = {
   };
   contextReadCapability?: boolean;
   contextWriteCapability?: boolean;
-  outputProjectionSchema?: unknown;
   artifactOutputSchema?: unknown;
   uiSchema: NodeUiSchema;
   providers: string[];
@@ -166,7 +162,6 @@ export type NodeManifestLocalization = {
 };
 
 export type ResourceReference = {
-  bindingId?: string;
   bindingRole?: string;
   resourceType: ResourceType;
   resourceId: string;
@@ -182,8 +177,8 @@ export type DefinitionNode = {
   name: string;
   disabled: boolean;
   protected: boolean;
+  parentId?: string;
   parameters: Record<string, unknown>;
-  outputProjection: OutputProjection;
   contextWrites: ContextWrite[];
   resourceReferences: ResourceReference[];
   settings: Record<string, unknown>;
@@ -201,31 +196,20 @@ export type ValueSelector = {
 export type MissingValuePolicy =
   | { kind: "error" }
   | { kind: "null" }
-  | { kind: "omit" }
-  | { kind: "default"; value: DynamicValue };
-export type TemplateSegment =
+  | { kind: "omit" };
+export type InputTemplateSegment =
   | { kind: "text"; text: string }
   | { kind: "reference"; selector: ValueSelector; missingPolicy: MissingValuePolicy };
-export type ExpressionNode =
+export type InputBinding =
   | { kind: "literal"; value: unknown }
   | { kind: "reference"; selector: ValueSelector; missingPolicy: MissingValuePolicy }
-  | { kind: "unary"; operator: "not" | "negate"; operand: ExpressionNode }
-  | { kind: "binary"; operator: "eq" | "ne" | "gt" | "gte" | "lt" | "lte" | "add" | "subtract" | "multiply" | "divide" | "modulo" | "and" | "or" | "in"; left: ExpressionNode; right: ExpressionNode }
-  | { kind: "conditional"; condition: ExpressionNode; thenValue: ExpressionNode; elseValue: ExpressionNode }
-  | { kind: "call"; function: string; arguments: ExpressionNode[] }
-  | { kind: "array"; items: ExpressionNode[] }
-  | { kind: "object"; fields: Record<string, ExpressionNode> };
-export type DynamicValue =
-  | { kind: "literal"; value: unknown }
-  | { kind: "reference"; selector: ValueSelector; missingPolicy: MissingValuePolicy; coerce?: "string" }
-  | { kind: "template"; segments: TemplateSegment[] }
-  | { kind: "expression"; root: ExpressionNode };
-export type OutputProjectionField = {
-  value: DynamicValue;
-  schema: unknown;
-  sensitive: boolean;
-};
-export type OutputProjection = Record<string, Record<string, OutputProjectionField>>;
+  | { kind: "template"; segments: InputTemplateSegment[] }
+  | { kind: "array"; items: InputBinding[] }
+  | { kind: "object"; fields: Record<string, InputBinding> };
+export type ReferenceBinding = Extract<InputBinding, { kind: "reference" }>;
+export type TemplateBinding = Extract<InputBinding, { kind: "template" }>;
+export type ConditionOperator = "eq" | "ne" | "gt" | "gte" | "lt" | "lte" | "in" | "contains" | "not_contains" | "ends_with" | "starts_with" | "matches" | "is_empty" | "is_not_empty";
+export type ConditionSpec = { left: InputBinding; operator: ConditionOperator; right?: InputBinding };
 export type DefinitionConnection = {
   id: string;
   sourceNodeId: string;
@@ -264,7 +248,7 @@ export type ContextWrite = {
     | "max"
     | "compare_and_set";
   path: string;
-  value: DynamicValue;
+  value: InputBinding;
 };
 export type WorkflowOutput = {
   schema: unknown;
@@ -272,22 +256,20 @@ export type WorkflowOutput = {
   sensitive: boolean;
 };
 export type ExitParameters = {
-  outputs: Record<string, DynamicValue>;
-  errorOutputs: Record<string, DynamicValue>;
+  outputs: Record<string, InputBinding>;
+  errorOutputs: Record<string, InputBinding>;
 };
-export type EndErrorStrategy = "fail_fast" | "collect";
+export type WorkflowCompletion = "first_return" | "all_complete";
 export type WorkflowErrorEnd = {
-  strategy: EndErrorStrategy;
-  collectWindowMs: number;
   outputs: Record<string, WorkflowOutput>;
 };
 export type WorkflowStart = {
   inputs: unknown;
   contexts: Record<string, ContextDefinition>;
 };
-export type WorkflowEnd = { outputs: Record<string, WorkflowOutput>; error: WorkflowErrorEnd };
+export type WorkflowEnd = { completion: WorkflowCompletion; outputs: Record<string, WorkflowOutput>; error: WorkflowErrorEnd };
 export type WorkflowDefinition = {
-  schemaVersion: "7.0";
+  schemaVersion: "8.0";
   start: WorkflowStart;
   nodes: DefinitionNode[];
   connections: DefinitionConnection[];
@@ -305,14 +287,7 @@ export type EditorDocument = {
     collapsed?: boolean;
   }>;
   boundaryLayouts: Array<{ boundary: "start"; x: number; y: number }>;
-  bindingLayouts: Array<{ bindingId: string; x: number; y: number }>;
   edges: Array<{ edgeId: string; labelPosition?: number }>;
-  bindingEdges: Array<{
-    edgeId: string;
-    sourceBindingId: string;
-    targetNodeId: string;
-    targetSlot: string;
-  }>;
   annotations: Array<{
     id: string;
     text: string;
@@ -338,23 +313,12 @@ export type ActionNodeData = {
   typeVersion: number;
   label: string;
   key: string;
+  parentId?: string;
   parameters: Record<string, unknown>;
-  outputProjection: OutputProjection;
   contextWrites: ContextWrite[];
   resourceReferences: ResourceReference[];
   settings: Record<string, unknown>;
   disabled: boolean;
-};
-export type BindingNodeData = {
-  editorKind: "binding";
-  bindingId: string;
-  bindingRole?: string;
-  resourceType: ResourceType;
-  resourceId?: string;
-  resourceVersionId?: string | null;
-  resourceName?: string;
-  operation: "use" | "read" | "write";
-  label: string;
 };
 export type GroupNodeData = {
   editorKind: "group";
@@ -387,6 +351,25 @@ export type BoundaryNodeData = {
   boundary: "start";
   label: string;
 };
+/** View-only projection of a loop_over_items node that owns body children. */
+export type LoopContainerNodeData = {
+  editorKind: "loop-container";
+  loopId: string;
+  label: string;
+  parallelism: number;
+  childCount: number;
+  boundaryLinks: Array<{ id: string; kind: "entry" | "main" | "error"; source: { x: number; y: number }; target: { x: number; y: number } }>;
+};
+/** Edit-only iteration entry chip: never serialized into the Definition. */
+export type IterationChipNodeData = {
+  editorKind: "iteration-chip";
+  loopId: string;
+};
+/** Edit-only iteration exit chip: body sinks converge here in the editor only. */
+export type IterationEndNodeData = {
+  editorKind: "iteration-end";
+  loopId: string;
+};
 export type ExitNodeData = {
   editorKind: "exit";
   key: string;
@@ -394,18 +377,30 @@ export type ExitNodeData = {
   protected: boolean;
   parameters: ExitParameters;
 };
-export type StudioNodeData = ActionNodeData | BindingNodeData | ExitNodeData;
-export type StudioNode = Node<StudioNodeData, "manifest" | "attachment" | "exit">;
+export type StudioNodeData = ActionNodeData | ExitNodeData;
+export type StudioNode = Node<StudioNodeData, "manifest" | "exit">;
 export type CanvasNodeData =
-  StudioNodeData | GroupNodeData | AnnotationNodeData | BoundaryNodeData;
+  | StudioNodeData
+  | GroupNodeData
+  | AnnotationNodeData
+  | BoundaryNodeData
+  | LoopContainerNodeData
+  | IterationChipNodeData
+  | IterationEndNodeData;
 export type CanvasNode = Node<
   CanvasNodeData,
-  "manifest" | "attachment" | "exit" | "group" | "annotation" | "boundary"
+  | "manifest"
+  | "exit"
+  | "group"
+  | "annotation"
+    | "boundary"
+    | "loop-container"
+    | "iteration-chip"
+    | "iteration-end"
 >;
 export type StudioEdgeData = {
-  edgeKind: "execution" | "binding";
+  edgeKind: "execution";
   order?: number;
-  targetSlot?: string;
   sourcePortKind?: PortKind;
   runtimeStatus?: string;
 };
@@ -432,6 +427,7 @@ export type ResourceOption = {
   status?: string;
   accessState?: "authorized" | "grantable" | "requestable" | "pending" | "rejected" | "unavailable";
   pendingRequestId?: string | null;
+  manifest?: NodeManifest;
   requirements?: Array<{
     resourceType: string;
     resourceId: string;
@@ -460,7 +456,9 @@ export type ReferenceEntry = {
   label: string;
   path: string;
   selector?: ValueSelector;
+  sourceNodeType?: string;
   type?: string;
+  schema?: JsonSchemaProperty;
   cardinality?: "zero_or_one" | "exactly_one" | "many" | "zero_or_many";
   nullable?: boolean;
   sensitive?: boolean;
@@ -481,9 +479,7 @@ export type ReferenceCatalog = Record<
 export const emptyEditorDocument = (): EditorDocument => ({
   nodeLayouts: [],
   boundaryLayouts: [],
-  bindingLayouts: [],
   edges: [],
-  bindingEdges: [],
   annotations: [],
   groups: [],
   viewport: { x: 0, y: 0, zoom: 1 },

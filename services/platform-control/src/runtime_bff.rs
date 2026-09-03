@@ -4,7 +4,7 @@ use agentx_runtime_contracts::{
     ApplyReceiptV1, ContentHash, DELEGATION_TOKEN_TTL_SECONDS, ExecutionCheckpointV1,
     ExecutionCollectionPageV1, ExecutionCommandV1, ExecutionDetailV1, ExecutionEventPageV1,
     ExecutionNodeV1, ExecutionRuntimeDetailsV1, ExecutionSearchPageV1, ExecutionSearchRequestV1,
-    ExecutionSessionModeV1, ExecutionWaitV1, PartialExecutionModeV1, RuntimeCommandApplyRequestV1,
+    ExecutionSessionModeV1, PartialExecutionModeV1, RuntimeCommandApplyRequestV1,
     SideEffectResolutionV1, content_hash, issue_delegation_token, now_unix,
 };
 use axum::{
@@ -34,7 +34,6 @@ pub fn routes() -> Router<ControlApiState> {
         .route("/api/v1/executions/{id}/nodes", get(get_nodes))
         .route("/api/v1/executions/{id}/nodes/{node_id}", get(get_node))
         .route("/api/v1/executions/{id}/events", get(get_events))
-        .route("/api/v1/executions/{id}/waits", get(get_waits))
         .route("/api/v1/executions/{id}/checkpoints", get(get_checkpoints))
         .route(
             "/api/v1/executions/{id}/runtime-details",
@@ -386,8 +385,6 @@ async fn search_executions(
             "api_key",
             "webhook",
             "schedule",
-            "poll",
-            "lifecycle",
             "debug",
             "evaluation",
             "fork",
@@ -401,7 +398,6 @@ async fn search_executions(
             "created",
             "queued",
             "running",
-            "waiting",
             "waiting_approval",
             "suspended",
             "succeeded",
@@ -618,34 +614,6 @@ async fn get_events(
 struct ExecutionEventQuery {
     after: Option<u64>,
     limit: Option<u32>,
-}
-
-async fn get_waits(
-    State(state): State<ControlApiState>,
-    actor: Actor,
-    Path(id): Path<Uuid>,
-) -> ApiResult<Json<Value>> {
-    actor.require("execution:view")?;
-    let page: ExecutionCollectionPageV1<ExecutionWaitV1> = runtime_execution_get(
-        &state,
-        &actor,
-        id,
-        "execution_waits",
-        &format!("/internal/runtime/v1/query/executions/{id}/waits"),
-    )
-    .await?;
-    let items = page
-        .items
-        .into_iter()
-        .map(|wait| {
-            json!({
-                "id":wait.wait_id,"executionId":id,"nodeExecutionId":wait.node_execution_id,
-                "waitKind":wait.wait_kind,"status":wait.status,"wakeAt":wait.wake_at.and_then(rfc3339),
-                "timeoutAt":wait.timeout_at.and_then(rfc3339),"authenticationMode":"signed","resumeUrl":null
-            })
-        })
-        .collect::<Vec<_>>();
-    Ok(Json(json!({"items":items})))
 }
 
 async fn get_checkpoints(

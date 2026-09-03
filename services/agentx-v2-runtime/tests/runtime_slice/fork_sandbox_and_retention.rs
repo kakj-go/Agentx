@@ -534,6 +534,7 @@ async fn agent_worker_runs_a_bounded_tool_loop_and_persists_usage(fixture: &Fixt
         provider: "openai_compatible".into(),
         endpoint: format!("{endpoint}/model"),
         model: "fixture-model".into(),
+        context_window: 128_000,
         price: agentx_runtime_contracts::RuntimeModelPriceV1 {
             version_id: "price:1".into(),
             currency: "USD".into(),
@@ -571,6 +572,7 @@ async fn agent_worker_runs_a_bounded_tool_loop_and_persists_usage(fixture: &Fixt
         node_version: 1,
         run_index: 0,
         iteration_index: 0,
+        timeout_ms: 30_000,
         node_parameters: json!({
             "budget":{"maxIterations":3,"maxModelCalls":3,"maxTokens":100,"maxCostMicros":100},
             "_agent":{
@@ -580,7 +582,7 @@ async fn agent_worker_runs_a_bounded_tool_loop_and_persists_usage(fixture: &Fixt
                 "stableAgentNodeKey":"agent-fixture",
                 "sessionPolicy":"invocation",
                 "model":{"resourceId":model_id.to_string(),"resourceVersionId":"model:1"},
-                "canvasAttachments":[],"coreTools":[],"followUpInputs":[{"messageId":"follow-up-1","role":"user","content":"continue","toolCalls":[],"toolCallId":null,"isError":false}]
+                "attachments":[],"coreTools":[],"followUpInputs":[{"messageId":"follow-up-1","role":"user","content":"continue","toolCalls":[],"toolCallId":null,"isError":false}]
             }
         }),
         per_item_parameters: vec![],
@@ -614,7 +616,7 @@ async fn agent_worker_runs_a_bounded_tool_loop_and_persists_usage(fixture: &Fixt
         Some("AGENT_CORE_CONTRACT_UNSUPPORTED")
     );
     let mut attachment_claim = claim.clone();
-    attachment_claim.node_parameters["_agent"]["canvasAttachments"] =
+    attachment_claim.node_parameters["_agent"]["attachments"] =
         json!([{"resourceType":"mcp_tool"}]);
     let rejected_attachment = worker.execute(&attachment_claim).await;
     assert_eq!(
@@ -724,6 +726,7 @@ async fn application_session_agent_restores_context_across_executions(fixture: &
         provider: "openai_compatible".into(),
         endpoint: "https://provider.example.test/model".into(),
         model: "fixture-model".into(),
+        context_window: 128_000,
         price: agentx_runtime_contracts::RuntimeModelPriceV1 {
             version_id: "price:1".into(),
             currency: "USD".into(),
@@ -761,13 +764,14 @@ async fn application_session_agent_restores_context_across_executions(fixture: &
             node_version: 1,
             run_index: 0,
             iteration_index: 0,
+            timeout_ms: 30_000,
             node_parameters: json!({
                 "budget":{"maxIterations":2,"maxModelCalls":2,"maxTokens":100,"maxCostMicros":100},
                 "_agent":{
                     "contractVersion":"1.1","bundleHash":"session-bundle","definitionHash":"session-definition",
                     "stableAgentNodeKey":"session-agent","sessionPolicy":"application_session",
                     "model":{"resourceId":model_id.to_string(),"resourceVersionId":"model:1"},
-                    "canvasAttachments":[],"coreTools":[]
+                    "attachments":[],"coreTools":[]
                 }
             }),
             per_item_parameters: vec![],
@@ -803,121 +807,6 @@ async fn application_session_agent_restores_context_across_executions(fixture: &
         .unwrap();
     assert!(entries.iter().any(|message| message["content"] == "session-prompt-0"));
     assert!(entries.iter().any(|message| message["content"] == "session-prompt-1"));
-}
-
-async fn skill_worker_loads_and_verifies_the_runtime_object_closure(fixture: &Fixture) {
-    let entrypoint_id = Uuid::now_v7();
-    let program = agentx_runtime_contracts::RuntimeSkillProgramV2 {
-        schema_version: 2,
-        skill_version_id: entrypoint_id,
-        instructions: "Return the immutable Skill result".into(),
-        assets: vec![],
-        dependencies: vec![],
-    };
-    let bytes = agentx_runtime_contracts::canonical_bytes(&program).unwrap();
-    let raw_hash = format!("sha256:{:x}", Sha256::digest(&bytes));
-    let object = RuntimeObjectReferenceV1 {
-        storage_domain: StorageDomain::Runtime,
-        tenant_id: fixture.tenant_id,
-        object_id: entrypoint_id,
-        content_hash: agentx_runtime_contracts::ContentHash::parse(&raw_hash).unwrap(),
-        size_bytes: bytes.len() as u64,
-        media_type: "application/vnd.agentx.skill-program.v2+json".into(),
-        object_key: format!(
-            "runtime/{}/{}/{}",
-            fixture.tenant_id,
-            entrypoint_id,
-            raw_hash.trim_start_matches("sha256:")
-        ),
-    };
-    persist_upload(
-        &fixture.state,
-        RuntimeObjectUploadMetadataV1 {
-            api_version: 1,
-            idempotency_key: format!("skill:{entrypoint_id}"),
-            tenant_id: fixture.tenant_id,
-            object_id: entrypoint_id,
-            content_hash: object.content_hash.clone(),
-            size_bytes: object.size_bytes,
-            media_type: object.media_type.clone(),
-        },
-        Bytes::from(bytes),
-    )
-    .await
-    .unwrap();
-    let configuration = agentx_runtime_contracts::RuntimeResourceConfigurationV1::Skill {
-        entrypoint_object_id: entrypoint_id,
-        entrypoint_content_hash: object.content_hash.clone(),
-        dependency_object_ids: vec![],
-        dependencies: vec![],
-    };
-    let skill_binding_id = Uuid::now_v7();
-    let attempt_id = Uuid::now_v7();
-    let claim = agentx_v2_runtime::engine::ClaimedWorkerAttempt {
-        lease: agentx_runtime_contracts::WorkerAttemptLeaseV1 {
-            protocol_version: 1,
-            attempt_id,
-            worker_id: Uuid::now_v7(),
-            fencing_token: 1,
-            locked_until: OffsetDateTime::now_utc() + time::Duration::seconds(30),
-        },
-        task: agentx_runtime_contracts::WorkerTaskV1 {
-            protocol_version: 1,
-            task_id: Uuid::now_v7(),
-            tenant_id: fixture.tenant_id,
-            execution_id: Uuid::now_v7(),
-            node_execution_id: Uuid::now_v7(),
-            attempt_id,
-            capability: agentx_node_protocol::NodeCapability::Skill,
-            bundle_id: Uuid::now_v7(),
-            work_package_id: None,
-            state_version: 1,
-            compatibility_hash: agentx_runtime_contracts::content_hash(&json!({"skill":1}))
-                .unwrap(),
-            deadline_at: OffsetDateTime::now_utc() + time::Duration::seconds(30),
-        },
-        node_type: "skill".into(),
-        node_version: 1,
-        run_index: 0,
-        iteration_index: 0,
-        node_parameters: json!({"resourceId":skill_binding_id}),
-        per_item_parameters: vec![],
-        string_conversions: json!({"common":[],"perItem":[]}),
-        inputs: BTreeMap::from([(
-            "main".into(),
-            vec![agentx_node_protocol::Item {
-                json: json!({"message":"skill-input"}),
-                ..Default::default()
-            }],
-        )]),
-        resources: vec![agentx_runtime_contracts::RuntimeResourceBindingV1 {
-            resource_kind: agentx_runtime_contracts::RuntimeResourceKindV1::Skill,
-            resource_id: skill_binding_id,
-            resource_version: "skill:1".into(),
-            state_epoch: 1,
-            content_hash: agentx_runtime_contracts::content_hash(&configuration).unwrap(),
-            configuration,
-            object_ids: vec![entrypoint_id],
-        }],
-        context: json!({}),
-    };
-    let worker = test_worker(fixture, StubWorkerMode::Reject);
-    let output = worker.execute(&claim).await;
-    assert_eq!(
-        output.status,
-        WorkerResultStatusV1::Succeeded,
-        "skill failed: {:?} {:?}",
-        output.error_code,
-        output.error_message
-    );
-    assert_eq!(
-        output.outputs["main"][0].json,
-        json!({
-            "text":"Return the immutable Skill result",
-            "structuredOutput":{"input":{"message":"skill-input"}},
-            "files":[],
-        })
-    );
 }
 
 async fn sandbox_manager_is_fenced_and_idempotent(fixture: &Fixture) {
@@ -968,7 +857,7 @@ async fn sandbox_manager_is_fenced_and_idempotent(fixture: &Fixture) {
                     } else {
                         (
                             axum::http::StatusCode::OK,
-                            "data: {\"type\":\"stdout\",\"text\":\"ok\"}\n\ndata: {\"type\":\"result\",\"exit_code\":0}\n\n",
+                            "data: {\"type\":\"stdout\",\"text\":\"ok\\n__AGENTX_RESULT__eyJvayI6dHJ1ZX0=\"}\n\ndata: {\"type\":\"result\",\"exit_code\":0}\n\n",
                         )
                     }
                 }
@@ -1042,7 +931,7 @@ async fn sandbox_manager_is_fenced_and_idempotent(fixture: &Fixture) {
             object_ids: vec![],
         },
         input: json!({"code":"print('ok')"}),
-        parameters: json!({"runner":"shell","source":"printf ok"}),
+        parameters: json!({"runner":"shell","inputs":{},"source":"printf ok; printf '{\"ok\":true}' > \"$AGENTX_OUTPUT_PATH\"","outputSchema":{"type":"object"},"networkPolicy":{"mode":"deny","destinations":[]}}),
     };
     let manager_state = agentx_v2_runtime::sandbox::SandboxManagerState {
         pool: fixture.state.pool.clone(),
@@ -1177,7 +1066,7 @@ async fn sandbox_manager_is_fenced_and_idempotent(fixture: &Fixture) {
     let mut abandoned_request = request.clone();
     abandoned_request.attempt_id = abandoned_attempt_id;
     abandoned_request.idempotency_key = format!("sandbox:execute:{abandoned_attempt_id}");
-    abandoned_request.parameters = json!({"runner":"shell","source":"printf takeover"});
+    abandoned_request.parameters = json!({"runner":"shell","inputs":{},"source":"printf takeover; printf '{\"ok\":true}' > \"$AGENTX_OUTPUT_PATH\"","outputSchema":{"type":"object"},"networkPolicy":{"mode":"deny","destinations":[]}});
     let abandoned_manager = manager.clone();
     let abandoned_payload = abandoned_request.clone();
     let abandoned =
@@ -1259,7 +1148,7 @@ async fn sandbox_manager_is_fenced_and_idempotent(fixture: &Fixture) {
     failed.attempt_id = failed_attempt_id;
     failed.idempotency_key = format!("sandbox:execute:{failed_attempt_id}");
     failed.input = json!({"fail":true});
-    failed.parameters = json!({"runner":"shell","source":"exit 1"});
+    failed.parameters = json!({"runner":"shell","inputs":{},"source":"exit 1","outputSchema":{"type":"object"},"networkPolicy":{"mode":"deny","destinations":[]}});
     let failed_response = sandbox_request(manager, &failed).await;
     assert_eq!(
         failed_response.status(),
@@ -1727,7 +1616,7 @@ async fn retention_dry_run_reference_block_and_object_sweep_are_fenced(fixture: 
     assert_eq!(retried.get::<u32, _>("attempt_count"), 2);
 }
 
-async fn trigger_claim_takeover_and_provider_failure_are_fenced(pool: &MySqlPool) {
+async fn trigger_claim_takeover_is_fenced(pool: &MySqlPool) {
     let tenant_id = Uuid::now_v7();
     let application_id = Uuid::now_v7();
     let binding_id = Uuid::now_v7();
@@ -1735,19 +1624,21 @@ async fn trigger_claim_takeover_and_provider_failure_are_fenced(pool: &MySqlPool
     let specification = RuntimeTriggerSpecV1 {
         schema_version: 1,
         trigger_id: binding_id,
-        trigger_name: "Poll source".into(),
+        trigger_name: "Schedule source".into(),
         application_id,
-        node_id: "poll-source".into(),
+        node_id: "schedule-source".into(),
         revision: 1,
-        configuration_hash: agentx_runtime_contracts::content_hash(&json!({"poll":"v1"})).unwrap(),
+        configuration_hash: agentx_runtime_contracts::content_hash(&json!({"schedule":"v1"})).unwrap(),
         enabled: true,
-        configuration: RuntimeTriggerConfigurationV1::Poll {
-            interval_seconds: 60,
-            provider_endpoint: "http://127.0.0.1:1/unavailable".into(),
+        configuration: RuntimeTriggerConfigurationV1::Schedule {
+            cron_expression: "*/5 * * * *".into(),
+            timezone: "UTC".into(),
+            misfire_policy: agentx_runtime_contracts::ScheduleMisfirePolicyV1::FireOnce,
+            grace_seconds: 60,
             input: json!({}),
         },
     };
-    sqlx::query("INSERT INTO trigger_bindings(id,tenant_id,application_id,application_deployment_id,bundle_id,workflow_version_id,node_id,configuration_revision,configuration_hash,trigger_kind,configuration_json,status,next_poll_at) VALUES(?,?,?,?,?,?,?,?,?,'poll',?,'active',UTC_TIMESTAMP(6))")
+    sqlx::query("INSERT INTO trigger_bindings(id,tenant_id,application_id,application_deployment_id,bundle_id,workflow_version_id,node_id,configuration_revision,configuration_hash,trigger_kind,configuration_json,status,next_poll_at) VALUES(?,?,?,?,?,?,?,?,?,'schedule',?,'active',UTC_TIMESTAMP(6))")
         .bind(binding_id).bind(tenant_id).bind(application_id).bind(Uuid::now_v7()).bind(bundle_id).bind(Uuid::now_v7()).bind("poll-source").bind(1_u64).bind(specification.configuration_hash.as_str()).bind(serde_json::to_value(&specification).unwrap()).execute(pool).await.unwrap();
 
     let first_owner = Uuid::now_v7();
@@ -1780,30 +1671,4 @@ async fn trigger_claim_takeover_and_provider_failure_are_fenced(pool: &MySqlPool
             .await
             .is_err()
     );
-
-    let provider = StubTriggerProvider {
-        delay: Duration::ZERO,
-        response: Err("fixture unavailable".into()),
-    };
-    agentx_v2_runtime::trigger::execute_with_provider(pool, &current, &provider)
-        .await
-        .unwrap();
-    let row = sqlx::query("SELECT locked_by,cursor_value,last_error,next_poll_at>UTC_TIMESTAMP(6) retry_delayed FROM trigger_bindings WHERE id=?")
-        .bind(binding_id).fetch_one(pool).await.unwrap();
-    assert!(
-        row.try_get::<Option<Uuid>, _>("locked_by")
-            .unwrap()
-            .is_none()
-    );
-    assert!(
-        row.try_get::<Option<String>, _>("cursor_value")
-            .unwrap()
-            .is_none()
-    );
-    assert!(
-        row.try_get::<String, _>("last_error")
-            .unwrap()
-            .starts_with("POLL_PROVIDER_ERROR")
-    );
-    assert!(row.try_get::<bool, _>("retry_delayed").unwrap());
 }

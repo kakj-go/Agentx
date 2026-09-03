@@ -11,7 +11,7 @@ type CanvasRenderState = {
   bindingSummaries: Map<string, NodeBindingSummary[]>
   occupiedHandlesByNodeId: Map<string, string>
   zoomTier: CanvasZoomTier
-  onQuickAdd?: (nodeId: string, handleId: string, mode: 'output' | 'binding') => void
+  onQuickAdd?: (nodeId: string, handleId: string, manifestPortName?: string) => void
   onSourceHover?: (nodeId: string, handleId: string, active: boolean) => void
 }
 
@@ -23,4 +23,4 @@ export function syncCanvasRenderState(value: CanvasRenderState) {
   useCanvasRenderStore.setState(value)
 }
 
-export const canvasZoomTier = (zoom: number): CanvasZoomTier => zoom < 0.35 ? 'minimal' : zoom < 0.65 ? 'compact' : 'full'
+export const canvasZoomTier = (zoom: number): CanvasZoomTier => zoom < 0.25 ? 'minimal' : zoom < 0.5 ? 'compact' : 'full'

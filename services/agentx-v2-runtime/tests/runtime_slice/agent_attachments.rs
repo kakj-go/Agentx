@@ -196,6 +196,7 @@ async fn agent_attachment_revocation_is_tool_scoped(fixture: &Fixture) {
         provider: "openai_compatible".into(),
         endpoint: "https://provider.example.test/model".into(),
         model: "authorization-fixture".into(),
+        context_window: 128_000,
         price: agentx_runtime_contracts::RuntimeModelPriceV1 {
             version_id: "price:authorization".into(),
             currency: "USD".into(),
@@ -233,13 +234,14 @@ async fn agent_attachment_revocation_is_tool_scoped(fixture: &Fixture) {
         node_version: 1,
         run_index: 0,
         iteration_index: 0,
+        timeout_ms: 30_000,
         node_parameters: json!({
             "budget":{"maxIterations":3,"maxModelCalls":3,"maxTokens":100,"maxCostMicros":100},
             "_agent":{
                 "contractVersion":"1.1","bundleHash":"attachment-bundle","definitionHash":"attachment-definition",
                 "stableAgentNodeKey":"attachment-agent","sessionPolicy":"invocation",
                 "model":{"resourceId":model_id.to_string(),"resourceVersionId":"model:authorization"},
-                "canvasAttachments":[{"resourceType":"mcp_tool"}],"coreTools":[],
+                "attachments":[{"resourceType":"mcp_tool"}],"coreTools":[],
                 "attachmentRegistry":registry
             }
         }),

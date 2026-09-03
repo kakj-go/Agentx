@@ -23,7 +23,10 @@ fn is_public_host(url: &Url) -> bool {
         return false;
     }
     url.host_str().is_some_and(|host| {
-        let host = host.trim_matches(['[', ']']).trim_end_matches('.').to_ascii_lowercase();
+        let host = host
+            .trim_matches(['[', ']'])
+            .trim_end_matches('.')
+            .to_ascii_lowercase();
         host.contains('.')
             && !host.ends_with(".svc")
             && !host.ends_with(".svc.cluster.local")
@@ -39,24 +42,36 @@ fn is_public_wss(url: &Url) -> bool {
 /// POSTs a provider bootstrap request. Public HTTPS endpoints go through the
 /// managed egress proxy when configured; cluster fixtures and test URL
 /// overrides post directly.
-pub(crate) async fn provider_post_json(url: &str, body: &serde_json::Value, tenant_id: Uuid, request_id: Uuid) -> Result<serde_json::Value> {
+pub(crate) async fn provider_post_json(
+    url: &str,
+    body: &serde_json::Value,
+    tenant_id: Uuid,
+    request_id: Uuid,
+) -> Result<serde_json::Value> {
     let parsed = Url::parse(url)?;
-    if is_public_host(&parsed) {
-        if let Ok(client) = crate::egress::ProviderHttpClient::from_env(agentx_runtime_contracts::EgressRole::WorkflowRuntime) {
-            let response = client
-                .post(url, crate::egress::EgressRequestContext::request(tenant_id, request_id), std::time::Duration::from_secs(10))
-                .map_err(|error| anyhow::anyhow!("provider bootstrap request was rejected: {error}"))?
-                .json(body)
-                .send()
-                .await
-                .map_err(|error| anyhow::anyhow!("provider bootstrap request failed: {error}"))?;
-            let response = response.error_for_status().map_err(|error| anyhow::anyhow!("provider bootstrap request failed: {error}"))?;
-            return Ok(response.json().await?);
-        }
-    }
-    let response = reqwest::Client::builder().timeout(std::time::Duration::from_secs(10)).build()?
-        .post(url).json(body).send().await
-        .and_then(|response| response.error_for_status())
+    let client = if is_public_host(&parsed) {
+        crate::egress::ProviderHttpClient::from_env(
+            agentx_runtime_contracts::EgressRole::WorkflowRuntime,
+        )
+        .map_err(|error| anyhow::anyhow!("managed provider egress is unavailable: {error}"))?
+    } else {
+        crate::egress::ProviderHttpClient::for_internal_provider(
+            agentx_runtime_contracts::EgressRole::WorkflowRuntime,
+        )?
+    };
+    let response = client
+        .post(
+            url,
+            crate::egress::EgressRequestContext::request(tenant_id, request_id),
+            std::time::Duration::from_secs(10),
+        )
+        .map_err(|error| anyhow::anyhow!("provider bootstrap request was rejected: {error}"))?
+        .json(body)
+        .send()
+        .await
+        .map_err(|error| anyhow::anyhow!("provider bootstrap request failed: {error}"))?;
+    let response = response
+        .error_for_status()
         .map_err(|error| anyhow::anyhow!("provider bootstrap request failed: {error}"))?;
     Ok(response.json().await?)
 }
@@ -74,29 +89,41 @@ fn ensure_crypto_provider() {
     });
 }
 
-pub(crate) async fn dial_websocket(url: &str, tenant_id: Uuid, request_id: Uuid) -> Result<ProviderWebSocket> {
+pub(crate) async fn dial_websocket(
+    url: &str,
+    tenant_id: Uuid,
+    request_id: Uuid,
+) -> Result<ProviderWebSocket> {
     // rustls needs a process-level CryptoProvider for every TLS path,
     // including tokio-tungstenite's internal connect_async.
     ensure_crypto_provider();
     let parsed = Url::parse(url)?;
     if is_public_wss(&parsed) {
-        if let Ok(client) = crate::egress::ProviderHttpClient::from_env(agentx_runtime_contracts::EgressRole::WorkflowRuntime) {
-            let tunnel = client
-                .open_public_websocket_tunnel(&parsed, crate::egress::EgressRequestContext::request(tenant_id, request_id))
-                .await?;
-            let roots = tokio_rustls::rustls::RootCertStore { roots: webpki_roots::TLS_SERVER_ROOTS.to_vec() };
-            let config = tokio_rustls::rustls::ClientConfig::builder()
-                .with_root_certificates(roots)
-                .with_no_client_auth();
-            let request = parsed.as_str().into_client_request()?;
-            let (socket, _) = tokio_tungstenite::client_async_tls_with_config(
-                request,
-                tunnel,
-                None,
-                Some(Connector::Rustls(std::sync::Arc::new(config))),
-            ).await?;
-            return Ok(socket);
-        }
+        let client = crate::egress::ProviderHttpClient::from_env(
+            agentx_runtime_contracts::EgressRole::WorkflowRuntime,
+        )
+        .map_err(|error| anyhow::anyhow!("managed provider egress is unavailable: {error}"))?;
+        let tunnel = client
+            .open_public_websocket_tunnel(
+                &parsed,
+                crate::egress::EgressRequestContext::request(tenant_id, request_id),
+            )
+            .await?;
+        let roots = tokio_rustls::rustls::RootCertStore {
+            roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
+        };
+        let config = tokio_rustls::rustls::ClientConfig::builder()
+            .with_root_certificates(roots)
+            .with_no_client_auth();
+        let request = parsed.as_str().into_client_request()?;
+        let (socket, _) = tokio_tungstenite::client_async_tls_with_config(
+            request,
+            tunnel,
+            None,
+            Some(Connector::Rustls(std::sync::Arc::new(config))),
+        )
+        .await?;
+        return Ok(socket);
     }
     let (socket, _) = tokio_tungstenite::connect_async(url).await?;
     Ok(socket)
@@ -124,28 +151,47 @@ pub async fn claim(pool: &MySqlPool, owner: Uuid, limit: i64) -> Result<Vec<Stre
     for id in ids {
         let updated = sqlx::query("UPDATE webhook_bindings SET locked_by=?,locked_until=DATE_ADD(UTC_TIMESTAMP(6),INTERVAL 30 SECOND),heartbeat_at=UTC_TIMESTAMP(6),fencing_token=fencing_token+1,connection_status='pending',connection_error=NULL WHERE id=? AND status='active' AND channel_mode='stream' AND (locked_until IS NULL OR locked_until<=UTC_TIMESTAMP(6))")
             .bind(owner).bind(id).execute(&mut *tx).await?;
-        if updated.rows_affected() == 1 { claimed.push(id); }
+        if updated.rows_affected() == 1 {
+            claimed.push(id);
+        }
     }
     let mut claims = Vec::new();
     for id in claimed {
         let row = match sqlx::query("SELECT w.id,w.tenant_id,w.application_id,w.provider_type,w.secret_ref_json,w.input_mapping_json,w.fixed_inputs_json,w.configuration_revision,w.fencing_token,CAST(JSON_UNQUOTE(JSON_EXTRACT(t.configuration_json,'$.triggerName')) AS CHAR(255)) trigger_name FROM webhook_bindings w JOIN trigger_bindings t ON t.tenant_id=w.tenant_id AND t.id=w.id WHERE w.id=? AND w.locked_by=? AND w.locked_until>UTC_TIMESTAMP(6)")
             .bind(id).bind(owner).fetch_optional(&mut *tx).await? { Some(row) => row, None => continue };
-        let provider = match row.try_get::<Option<String>, _>("provider_type")?.as_deref().unwrap_or("agentx") {
+        let provider = match row
+            .try_get::<Option<String>, _>("provider_type")?
+            .as_deref()
+            .unwrap_or("agentx")
+        {
             "dingtalk" => WebhookProviderV1::Dingtalk,
             "feishu" => WebhookProviderV1::Feishu,
-            other => { tracing::warn!(provider = other, "Stream binding has an unsupported provider"); continue; }
+            other => {
+                tracing::warn!(
+                    provider = other,
+                    "Stream binding has an unsupported provider"
+                );
+                continue;
+            }
         };
         claims.push(StreamClaim {
             binding_id: row.try_get("id")?,
             tenant_id: row.try_get("tenant_id")?,
             application_id: row.try_get("application_id")?,
             provider,
-            trigger_name: row.try_get::<Option<String>, _>("trigger_name")?.unwrap_or_default(),
+            trigger_name: row
+                .try_get::<Option<String>, _>("trigger_name")?
+                .unwrap_or_default(),
             configuration_revision: row.try_get("configuration_revision")?,
             secret_ref: serde_json::from_value(row.try_get("secret_ref_json")?)?,
-            input_mappings: row.try_get::<Option<serde_json::Value>, _>("input_mapping_json")?
-                .map(serde_json::from_value).transpose()?.unwrap_or_default(),
-            fixed_inputs: row.try_get::<Option<serde_json::Value>, _>("fixed_inputs_json")?.unwrap_or(serde_json::json!({})),
+            input_mappings: row
+                .try_get::<Option<serde_json::Value>, _>("input_mapping_json")?
+                .map(serde_json::from_value)
+                .transpose()?
+                .unwrap_or_default(),
+            fixed_inputs: row
+                .try_get::<Option<serde_json::Value>, _>("fixed_inputs_json")?
+                .unwrap_or(serde_json::json!({})),
             owner,
             fencing_token: row.try_get("fencing_token")?,
         });
@@ -160,13 +206,22 @@ pub async fn heartbeat(pool: &MySqlPool, claim: &StreamClaim) -> Result<bool, sq
     Ok(changed.rows_affected() == 1)
 }
 
-pub async fn release(pool: &MySqlPool, claim: &StreamClaim, status: &str) -> Result<(), sqlx::Error> {
-    sqlx::query("UPDATE webhook_bindings SET locked_by=NULL,locked_until=NULL,heartbeat_at=NULL,connection_status=? WHERE id=? AND locked_by=? AND fencing_token=?")
+pub async fn release(
+    pool: &MySqlPool,
+    claim: &StreamClaim,
+    status: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE webhook_bindings SET locked_by=NULL,locked_until=NULL,heartbeat_at=NULL,connection_status=? WHERE id=? AND locked_by=? AND fencing_token=? AND locked_until>UTC_TIMESTAMP(6)")
         .bind(status).bind(claim.binding_id).bind(claim.owner).bind(claim.fencing_token).execute(pool).await?;
     Ok(())
 }
 
-pub async fn update_status(pool: &MySqlPool, claim: &StreamClaim, status: &str, error: Option<&str>) -> Result<(), sqlx::Error> {
+pub async fn update_status(
+    pool: &MySqlPool,
+    claim: &StreamClaim,
+    status: &str,
+    error: Option<&str>,
+) -> Result<(), sqlx::Error> {
     sqlx::query("UPDATE webhook_bindings SET connection_status=?,connection_error=?,last_connected_at=IF(?='connected',UTC_TIMESTAMP(6),last_connected_at) WHERE id=? AND locked_by=? AND fencing_token=?")
         .bind(status).bind(error).bind(status).bind(claim.binding_id).bind(claim.owner).bind(claim.fencing_token).execute(pool).await?;
     Ok(())
@@ -175,9 +230,11 @@ pub async fn update_status(pool: &MySqlPool, claim: &StreamClaim, status: &str, 
 async fn binding_current(pool: &MySqlPool, claim: &StreamClaim) -> Result<bool> {
     let row = sqlx::query("SELECT status,channel_mode,configuration_revision FROM webhook_bindings WHERE tenant_id=? AND id=?")
         .bind(claim.tenant_id).bind(claim.binding_id).fetch_optional(pool).await?;
-    Ok(matches!(row, Some(row) if row.try_get::<String,_>("status")? == "active"
+    Ok(
+        matches!(row, Some(row) if row.try_get::<String,_>("status")? == "active"
         && row.try_get::<String,_>("channel_mode")? == "stream"
-        && row.try_get::<u64,_>("configuration_revision")? == claim.configuration_revision))
+        && row.try_get::<u64,_>("configuration_revision")? == claim.configuration_revision),
+    )
 }
 
 /// Role entry point, hosted by the workflow-runtime `stream` role.
@@ -187,10 +244,13 @@ pub async fn stream_loop(
     lifecycle: agentx_service_kit::ServiceLifecycle,
     progress: agentx_service_kit::RoleProgressWatchdog,
 ) -> Result<()> {
-    let vault = crate::vault::RuntimeVault::from_env().context("stream role requires Vault access")?;
+    let vault =
+        crate::vault::RuntimeVault::from_env().context("stream role requires Vault access")?;
     let mut running: HashMap<Uuid, tokio::task::JoinHandle<()>> = HashMap::new();
     loop {
-        if lifecycle.is_draining() { break; }
+        if lifecycle.is_draining() {
+            break;
+        }
         progress.progress();
         for claim in claim(&pool, owner, 50).await? {
             tracing::info!(binding = %claim.binding_id, provider = ?claim.provider, "Stream channel claimed");
@@ -198,7 +258,12 @@ pub async fn stream_loop(
             let vault = vault.clone();
             let lifecycle = lifecycle.clone();
             let binding_id = claim.binding_id;
-            running.insert(binding_id, tokio::spawn(async move { run_binding(pool, vault, lifecycle, claim).await; }));
+            running.insert(
+                binding_id,
+                tokio::spawn(async move {
+                    run_binding(pool, vault, lifecycle, claim).await;
+                }),
+            );
         }
         running.retain(|_, handle| !handle.is_finished());
         tokio::select! {
@@ -206,7 +271,9 @@ pub async fn stream_loop(
             _ = tokio::time::sleep(Duration::from_secs(5)) => {}
         }
     }
-    for (_, handle) in running.drain() { handle.abort(); }
+    for (_, handle) in running.drain() {
+        handle.abort();
+    }
     Ok(())
 }
 
@@ -275,9 +342,19 @@ pub async fn channel_status(
     headers: axum::http::HeaderMap,
     axum::extract::Query(query): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> Result<axum::Json<serde_json::Value>, crate::error::RuntimeError> {
-    let tenant_id: Uuid = query.get("tenantId").and_then(|value| value.parse().ok()).ok_or(crate::error::RuntimeError::InvalidRequest("TENANT_REQUIRED", "tenantId is required".into()))?;
-    let application_id: Option<Uuid> = query.get("applicationId").and_then(|value| value.parse().ok());
-    let claims = state.trust.delegation(&headers, tenant_id, "runtime.channels.status")?;
+    let tenant_id: Uuid = query
+        .get("tenantId")
+        .and_then(|value| value.parse().ok())
+        .ok_or(crate::error::RuntimeError::InvalidRequest(
+            "TENANT_REQUIRED",
+            "tenantId is required".into(),
+        ))?;
+    let application_id: Option<Uuid> = query
+        .get("applicationId")
+        .and_then(|value| value.parse().ok());
+    let claims = state
+        .trust
+        .delegation(&headers, tenant_id, "runtime.channels.status")?;
     if let Some(application_id) = application_id {
         if !claims.tenant_wide && !claims.application_ids.contains(&application_id) {
             return Err(crate::error::RuntimeError::Unauthorized);
@@ -302,7 +379,9 @@ async fn run_provider(pool: &MySqlPool, claim: &StreamClaim, secret: &[u8]) -> R
     match claim.provider {
         WebhookProviderV1::Dingtalk => dingtalk_stream::run(pool, claim, secret).await,
         WebhookProviderV1::Feishu => feishu_ws::run(pool, claim, secret).await,
-        other => Err(anyhow::anyhow!("provider {other:?} does not support stream mode")),
+        other => Err(anyhow::anyhow!(
+            "provider {other:?} does not support stream mode"
+        )),
     }
 }
 
@@ -312,10 +391,23 @@ mod tests {
 
     #[test]
     fn only_public_tls_hosts_take_the_egress_path() {
-        assert!(is_public_host(&Url::parse("https://api.dingtalk.com/v1.0/gateway/connections/open").unwrap()));
-        assert!(is_public_host(&Url::parse("wss://wss-open-connection.dingtalk.com:443/connect").unwrap()));
-        assert!(!is_public_host(&Url::parse("ws://127.0.0.1:9000/connect").unwrap()), "test overrides dial directly");
-        assert!(!is_public_host(&Url::parse("ws://mock-gateway.agentx-deps.svc/connect").unwrap()), "cluster fixtures dial directly");
-        assert!(!is_public_host(&Url::parse("http://api.dingtalk.com/v1").unwrap()), "plain HTTP is never treated as a public provider endpoint");
+        assert!(is_public_host(
+            &Url::parse("https://api.dingtalk.com/v1.0/gateway/connections/open").unwrap()
+        ));
+        assert!(is_public_host(
+            &Url::parse("wss://wss-open-connection.dingtalk.com:443/connect").unwrap()
+        ));
+        assert!(
+            !is_public_host(&Url::parse("ws://127.0.0.1:9000/connect").unwrap()),
+            "test overrides dial directly"
+        );
+        assert!(
+            !is_public_host(&Url::parse("ws://mock-gateway.agentx-deps.svc/connect").unwrap()),
+            "cluster fixtures dial directly"
+        );
+        assert!(
+            !is_public_host(&Url::parse("http://api.dingtalk.com/v1").unwrap()),
+            "plain HTTP is never treated as a public provider endpoint"
+        );
     }
 }

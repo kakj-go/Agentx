@@ -125,12 +125,6 @@ export interface components {
                 SessionVersionPolicyV1: "pinned" | "follow_deployment" | "manual_upgrade";
             };
         };
-        /** WaitResumeRequestV1 */
-        WaitResumeRequest: {
-            outputPort?: string | null;
-            /** @default null */
-            payload: unknown;
-        };
     };
     responses: never;
     parameters: never;

@@ -15,8 +15,8 @@ spec:
   selector: { app.kubernetes.io/name: agentx-egress-gateway }
   ports:
     - name: sandbox-proxy
-      port: 3129
+      port: {{ $access.port }}
       targetPort: sandbox-proxy
       {{- if eq $access.mode "nodePort" }}
-      nodePort: {{ regexFind "[0-9]+$" $access.endpoint | int }}
+      nodePort: {{ $access.port }}
       {{- end }}

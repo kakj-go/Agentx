@@ -1,15 +1,12 @@
 use std::{collections::BTreeMap, sync::Arc};
 
-use agentx_domain::{ExecutionId, NodeExecutionId, TenantId};
-use agentx_node_protocol::{
-    ExecutionMode, GroupedInput, Item, NODE_PROTOCOL_VERSION, NodeActionRequest, NodeActionResult,
-    NodeCapability, ResolvedParameters, TraceContext,
-};
+use agentx_node_protocol::{Item, NodeCapability};
 use agentx_runtime_contracts::{
     ContentHash, RuntimeObjectReferenceV1, RuntimeResourceBindingV1,
-    RuntimeResourceConfigurationV1, RuntimeResourceKindV1, RuntimeSkillProgramV2, StorageDomain,
-    WorkerResultStatusV1, WorkerResultV1,
+    RuntimeResourceConfigurationV1, RuntimeResourceKindV1, StorageDomain, WorkerResultStatusV1,
+    WorkerResultV1,
 };
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use bytes::Bytes;
 use object_store::{ObjectStore, path::Path as ObjectPath};
 use reqwest::{StatusCode, header::HeaderMap};
@@ -30,6 +27,8 @@ use crate::{
 
 #[path = "worker_runtime_agent_attachments.rs"]
 mod agent_attachments;
+#[path = "worker_runtime_agent_budget.rs"]
+mod agent_budget;
 #[path = "worker_runtime_agent_core.rs"]
 mod agent_core;
 #[path = "worker_runtime_agent_model.rs"]
@@ -238,14 +237,16 @@ impl RuntimeWorker {
         match claim.task.capability {
             NodeCapability::Builtin => self.execute_builtin(claim),
             NodeCapability::DeclarativeHttp => self.execute_declarative_http(claim).await,
-            NodeCapability::RemoteAction => self.execute_remote_action(claim).await,
             NodeCapability::Agent => self.execute_agent_core(claim).await,
-            NodeCapability::Model
-            | NodeCapability::McpTool
+            NodeCapability::Model | NodeCapability::Sandbox => self.execute_resource(claim).await,
+            NodeCapability::McpTool
             | NodeCapability::Rag
             | NodeCapability::Memory
-            | NodeCapability::Skill
-            | NodeCapability::Sandbox => self.execute_resource(claim).await,
+            | NodeCapability::Skill => WorkerExecution::failed(
+                "RESOURCE_CAPABILITY_NODE_REMOVED",
+                "This capability is executable only through an Agent resource slot",
+                false,
+            ),
         }
     }
 
@@ -407,47 +408,21 @@ impl RuntimeWorker {
                 false,
             );
         };
-        match &binding.configuration {
-            RuntimeResourceConfigurationV1::Skill {
-                entrypoint_object_id,
-                dependency_object_ids,
-                ..
-            } => {
-                self.execute_skill(claim, binding, *entrypoint_object_id, dependency_object_ids)
-                    .await
+        let input = if expected_kind == RuntimeResourceKindV1::Model {
+            match self.model_input(claim).await {
+                Ok(input) => input,
+                Err(error) => {
+                    return WorkerExecution::failed(
+                        "MODEL_PROMPT_OBJECT_INVALID",
+                        error.to_string(),
+                        false,
+                    );
+                }
             }
-            RuntimeResourceConfigurationV1::Composite { .. } => WorkerExecution::failed(
-                "COMPOSITE_REQUIRES_COORDINATOR",
-                "Composite nodes are executed as child Executions by Workflow Runtime",
-                false,
-            ),
-            RuntimeResourceConfigurationV1::Credential { .. } => WorkerExecution::failed(
-                "CREDENTIAL_IS_NOT_EXECUTABLE",
-                "Credential bindings may only authorize another Runtime call",
-                false,
-            ),
-            _ => {
-                let input = if expected_kind == RuntimeResourceKindV1::Model {
-                    match self.model_input(claim).await {
-                        Ok(input) => input,
-                        Err(error) => {
-                            return WorkerExecution::failed(
-                                "MODEL_PROMPT_OBJECT_INVALID",
-                                error.to_string(),
-                                false,
-                            );
-                        }
-                    }
-                } else if expected_kind == RuntimeResourceKindV1::Mcp
-                    && claim.node_type == "mcp_tool"
-                {
-                    mcp_arguments(&claim.node_parameters)
-                } else {
-                    first_input(claim).unwrap_or(Value::Null)
-                };
-                self.execute_provider_call(claim, binding, input, 0).await
-            }
-        }
+        } else {
+            first_input(claim).unwrap_or(Value::Null)
+        };
+        self.execute_provider_call(claim, binding, input, 0).await
     }
 
     async fn model_input(&self, claim: &ClaimedWorkerAttempt) -> anyhow::Result<Value> {
@@ -470,69 +445,6 @@ impl RuntimeWorker {
             "prompt": prompt,
             "target": target,
             "promptObjectId": prompt_object_id,
-        }))
-    }
-
-    async fn execute_skill(
-        &self,
-        claim: &ClaimedWorkerAttempt,
-        binding: &RuntimeResourceBindingV1,
-        entrypoint_object_id: Uuid,
-        dependency_object_ids: &[Uuid],
-    ) -> WorkerExecution {
-        if !binding.object_ids.contains(&entrypoint_object_id)
-            || dependency_object_ids
-                .iter()
-                .any(|object_id| !binding.object_ids.contains(object_id))
-        {
-            return WorkerExecution::failed(
-                "SKILL_OBJECT_CLOSURE_INVALID",
-                "Skill entrypoint or dependency is outside the immutable Binding closure",
-                false,
-            );
-        }
-        for object_id in binding.object_ids.iter().copied() {
-            if let Err(error) = self
-                .load_runtime_object(claim.task.tenant_id, object_id)
-                .await
-            {
-                return WorkerExecution::failed("SKILL_OBJECT_INVALID", error.to_string(), false);
-            }
-        }
-        let entrypoint = match self
-            .load_runtime_object(claim.task.tenant_id, entrypoint_object_id)
-            .await
-            .and_then(|bytes| {
-                serde_json::from_slice::<RuntimeSkillProgramV2>(&bytes).map_err(anyhow::Error::from)
-            }) {
-            Ok(entrypoint) => entrypoint,
-            Err(error) => {
-                return WorkerExecution::failed(
-                    "SKILL_ENTRYPOINT_INVALID",
-                    error.to_string(),
-                    false,
-                );
-            }
-        };
-        let mut declared = entrypoint
-            .assets
-            .iter()
-            .map(|asset| asset.object_id)
-            .collect::<Vec<_>>();
-        declared.sort_unstable();
-        let mut expected = dependency_object_ids.to_vec();
-        expected.sort_unstable();
-        if declared != expected || entrypoint.instructions.trim().is_empty() {
-            return WorkerExecution::failed(
-                "SKILL_OBJECT_CLOSURE_INVALID",
-                "Skill program dependencies do not match the signed Binding closure",
-                false,
-            );
-        }
-        WorkerExecution::succeeded(json!({
-            "text":entrypoint.instructions,
-            "structuredOutput":{"input":first_input(claim)},
-            "files":[],
         }))
     }
 
@@ -570,158 +482,28 @@ impl RuntimeWorker {
     }
 
     async fn execute_declarative_http(&self, claim: &ClaimedWorkerAttempt) -> WorkerExecution {
-        let Some(endpoint) = claim
-            .node_parameters
-            .get("url")
-            .or_else(|| claim.node_parameters.get("endpoint"))
-            .and_then(Value::as_str)
-        else {
-            return WorkerExecution::failed(
-                "HTTP_ENDPOINT_MISSING",
-                "Declarative HTTP node requires a frozen endpoint",
-                false,
-            );
-        };
-        let request = declarative_http_request(&claim.node_parameters, first_input(claim));
+        let (endpoint, request) =
+            match declarative_http_request(&claim.node_parameters, first_input(claim)) {
+                Ok(value) => value,
+                Err(message) => {
+                    return WorkerExecution::failed("HTTP_CONFIGURATION_INVALID", message, false);
+                }
+            };
+        let credential = claim
+            .resources
+            .iter()
+            .find(|binding| matches!(binding.resource_kind, RuntimeResourceKindV1::Credential));
         self.call_http(
             claim,
             "http",
-            endpoint,
+            &endpoint,
             request,
             0,
             None,
             "authorization",
-            None,
+            credential,
         )
         .await
-    }
-
-    async fn execute_remote_action(&self, claim: &ClaimedWorkerAttempt) -> WorkerExecution {
-        let Some(endpoint) = claim
-            .node_parameters
-            .get("endpoint")
-            .or_else(|| claim.node_parameters.get("url"))
-            .and_then(Value::as_str)
-        else {
-            return WorkerExecution::failed(
-                "REMOTE_NODE_ENDPOINT_MISSING",
-                "Remote Action requires a frozen Node Protocol endpoint",
-                false,
-            );
-        };
-        let inputs = claim
-            .inputs
-            .iter()
-            .enumerate()
-            .map(|(index, (port, items))| GroupedInput {
-                port: port.clone(),
-                branch_index: index as u32,
-                items: items.clone(),
-            })
-            .collect::<Vec<_>>();
-        let request = NodeActionRequest {
-            protocol_version: NODE_PROTOCOL_VERSION.into(),
-            node_type: claim.node_type.clone(),
-            node_version: claim.node_version,
-            tenant_id: TenantId::from_uuid(claim.task.tenant_id),
-            workflow_version_id: None,
-            execution_id: ExecutionId::from_uuid(claim.task.execution_id),
-            node_execution_id: NodeExecutionId::from_uuid(claim.task.node_execution_id),
-            attempt_id: claim.task.attempt_id,
-            run_index: claim.run_index,
-            iteration_index: claim.iteration_index,
-            mode: ExecutionMode::Production,
-            inputs,
-            parameters: ResolvedParameters {
-                common: claim.node_parameters.clone(),
-                per_item: claim.per_item_parameters.clone(),
-            },
-            artifact_handles: Vec::new(),
-            credential_handles: Vec::new(),
-            idempotency_key: claim.task.attempt_id.to_string(),
-            deadline: claim.task.deadline_at,
-            cancellation_url: None,
-            trace_context: TraceContext {
-                trace_id: claim.task.execution_id.to_string(),
-                span_id: claim.task.attempt_id.to_string(),
-                trace_flags: None,
-            },
-        };
-        let request = match serde_json::to_value(request) {
-            Ok(request) => request,
-            Err(error) => {
-                return WorkerExecution::failed(
-                    "REMOTE_NODE_REQUEST_INVALID",
-                    error.to_string(),
-                    false,
-                );
-            }
-        };
-        let response = self
-            .call_http(
-                claim,
-                "remote_action",
-                &format!(
-                    "{}/agentx/node/v1/actions/execute",
-                    endpoint.trim_end_matches('/')
-                ),
-                request,
-                0,
-                None,
-                "authorization",
-                None,
-            )
-            .await;
-        if response.status != WorkerResultStatusV1::Succeeded {
-            return response;
-        }
-        let Some(payload) = response
-            .outputs
-            .get("main")
-            .and_then(|items| items.first())
-            .map(|item| item.json.clone())
-        else {
-            return WorkerExecution::failed(
-                "REMOTE_NODE_RESPONSE_INVALID",
-                "Remote Node returned no protocol response",
-                false,
-            );
-        };
-        let result = match serde_json::from_value::<NodeActionResult>(payload) {
-            Ok(NodeActionResult::Completed { outputs, .. }) => WorkerExecution {
-                status: WorkerResultStatusV1::Succeeded,
-                outputs: outputs
-                    .into_iter()
-                    .enumerate()
-                    .map(|(index, items)| {
-                        (
-                            if index == 0 {
-                                "main".into()
-                            } else {
-                                format!("main:{index}")
-                            },
-                            items,
-                        )
-                    })
-                    .collect(),
-                error_code: None,
-                error_message: None,
-            },
-            Ok(NodeActionResult::Failed { error }) => {
-                WorkerExecution::failed(&error.code, error.message, false)
-            }
-            Ok(NodeActionResult::Suspended { resume, checkpoint }) => {
-                WorkerExecution::suspended(json!({"resume": resume, "checkpoint": checkpoint}))
-            }
-            Err(error) => {
-                WorkerExecution::failed("REMOTE_NODE_RESPONSE_INVALID", error.to_string(), false)
-            }
-        };
-        if result.status == WorkerResultStatusV1::Succeeded {
-            tool_execution_output(result)
-        } else {
-            result
-        }
     }
 
     async fn execute_provider_call(
@@ -731,12 +513,19 @@ impl RuntimeWorker {
         input: Value,
         call_index: u32,
     ) -> WorkerExecution {
+        let structured_model = claim.node_type == "model"
+            && claim
+                .node_parameters
+                .get("responseMode")
+                .and_then(Value::as_str)
+                == Some("json_schema");
         if let RuntimeResourceConfigurationV1::Model {
             provider,
             endpoint,
             model,
             price,
             credential,
+            ..
         } = &binding.configuration
             && provider == "openai_compatible"
         {
@@ -754,7 +543,14 @@ impl RuntimeWorker {
                     Some(binding),
                 )
                 .await;
-            return openai_execution_output(execution);
+            return openai_execution_output(execution, &claim.node_parameters);
+        }
+        if structured_model {
+            return WorkerExecution::failed(
+                "MODEL_STRUCTURED_OUTPUT_UNSUPPORTED",
+                "The selected model provider does not support native JSON Schema responses",
+                false,
+            );
         }
         let (kind, endpoint, request, secret, secret_header) = match &binding.configuration {
             RuntimeResourceConfigurationV1::Model {
@@ -910,7 +706,7 @@ impl RuntimeWorker {
                         Some(binding),
                     )
                     .await;
-                return sandbox_execution_output(execution);
+                return sandbox_execution_output(execution, &claim.node_parameters);
             }
             _ => {
                 return WorkerExecution::failed(
@@ -1063,7 +859,9 @@ impl RuntimeWorker {
             Ok(None) => {}
             Err(result) => return result,
         }
+        let mut endpoint = endpoint.to_owned();
         let mut headers = HeaderMap::new();
+        let mut secret_redactions = Vec::new();
         headers.insert(
             "Idempotency-Key",
             reqwest::header::HeaderValue::from_str(&idempotency_key)
@@ -1118,30 +916,85 @@ impl RuntimeWorker {
                     .await;
             };
             match vault.read(reference).await {
-                Ok(value) => match reqwest::header::HeaderValue::from_bytes(
-                    &provider_secret_header(&value, secret_header),
-                ) {
-                    Ok(value) => {
-                        headers.insert(
-                            reqwest::header::HeaderName::from_static(secret_header),
-                            value,
-                        );
+                Ok(value) => {
+                    secret_redactions.extend(secret_fragments(&value));
+                    let header_secret = provider_secret_header(&value, secret_header);
+                    secret_redactions.push(header_secret.clone());
+                    match reqwest::header::HeaderValue::from_bytes(&header_secret) {
+                        Ok(value) => {
+                            headers.insert(
+                                reqwest::header::HeaderName::from_static(secret_header),
+                                value,
+                            );
+                        }
+                        Err(_) => {
+                            return self
+                                .fail_call(
+                                    call_id,
+                                    "VAULT_SECRET_INVALID",
+                                    "Vault value is not a valid authorization header",
+                                    false,
+                                )
+                                .await;
+                        }
                     }
-                    Err(_) => {
-                        return self
-                            .fail_call(
-                                call_id,
-                                "VAULT_SECRET_INVALID",
-                                "Vault value is not a valid authorization header",
-                                false,
-                            )
-                            .await;
-                    }
-                },
+                }
                 Err(error) => {
                     return self
                         .fail_call(call_id, "VAULT_UNAVAILABLE", error.to_string(), false)
                         .await;
+                }
+            }
+        }
+        if kind == "http"
+            && let Some(RuntimeResourceBindingV1 {
+                configuration:
+                    RuntimeResourceConfigurationV1::Credential {
+                        credential_type,
+                        secret,
+                        ..
+                    },
+                ..
+            }) = binding
+        {
+            let Some(vault) = &self.vault else {
+                return self
+                    .fail_call(
+                        call_id,
+                        "VAULT_UNAVAILABLE",
+                        "Runtime Vault is not configured",
+                        false,
+                    )
+                    .await;
+            };
+            let value = match vault.read(secret).await {
+                Ok(value) => value,
+                Err(error) => {
+                    return self
+                        .fail_call(call_id, "VAULT_UNAVAILABLE", error.to_string(), false)
+                        .await;
+                }
+            };
+            secret_redactions.extend(secret_fragments(&value));
+            let endpoint_before_credential = endpoint.clone();
+            let headers_before_credential = headers.clone();
+            if let Err(message) = apply_http_credential(
+                &mut endpoint,
+                &mut headers,
+                credential_type,
+                &value,
+                request.get("apiKeyPlacement"),
+            ) {
+                return self
+                    .fail_call(call_id, "HTTP_CREDENTIAL_INVALID", message, false)
+                    .await;
+            }
+            if endpoint != endpoint_before_credential {
+                secret_redactions.push(endpoint.as_bytes().to_vec());
+            }
+            for (name, value) in &headers {
+                if headers_before_credential.get(name) != Some(value) {
+                    secret_redactions.push(value.as_bytes().to_vec());
                 }
             }
         }
@@ -1165,9 +1018,9 @@ impl RuntimeWorker {
                     .get("method")
                     .and_then(Value::as_str)
                     .unwrap_or("GET"),
-                endpoint,
+                &endpoint,
                 context,
-                std::time::Duration::from_secs(300),
+                std::time::Duration::from_millis(claim.timeout_ms),
                 headers,
                 (!matches!(
                     request.get("method").and_then(Value::as_str),
@@ -1176,16 +1029,16 @@ impl RuntimeWorker {
                 .then(|| request.get("body").unwrap_or(&Value::Null)),
             ),
             RuntimeHttpTransport::Provider => self.provider.post_json(
-                endpoint,
+                &endpoint,
                 context,
-                std::time::Duration::from_secs(300),
+                std::time::Duration::from_millis(claim.timeout_ms),
                 headers,
                 &request,
             ),
             RuntimeHttpTransport::SandboxManager => self.provider.post_sandbox_manager_json(
-                endpoint,
+                &endpoint,
                 context,
-                std::time::Duration::from_secs(300),
+                std::time::Duration::from_millis(claim.timeout_ms),
                 headers,
                 &request,
             ),
@@ -1195,7 +1048,12 @@ impl RuntimeWorker {
             Ok(response) => response,
             Err(WorkerProviderError::Denied(message)) => {
                 return self
-                    .fail_call(call_id, "PROVIDER_ENDPOINT_DENIED", message, false)
+                    .fail_call(
+                        call_id,
+                        "PROVIDER_ENDPOINT_DENIED",
+                        redact_secret_text(&message, &secret_redactions),
+                        false,
+                    )
                     .await;
             }
             Err(WorkerProviderError::Request {
@@ -1211,7 +1069,7 @@ impl RuntimeWorker {
                         } else {
                             "PROVIDER_UNAVAILABLE"
                         },
-                        message,
+                        redact_secret_text(&message, &secret_redactions),
                         unknown,
                     )
                     .await;
@@ -1223,11 +1081,42 @@ impl RuntimeWorker {
             .get("x-request-id")
             .and_then(|value| value.to_str().ok())
             .map(str::to_owned);
-        let mut payload = match serde_json::from_slice::<Value>(&response.body) {
+        let content_type = response
+            .headers
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or("application/octet-stream")
+            .split(';')
+            .next()
+            .unwrap_or("application/octet-stream")
+            .trim()
+            .to_owned();
+        let response_body = redact_secret_bytes(&response.body, &secret_redactions);
+        let binary_response = kind == "http"
+            && content_type != "application/json"
+            && !content_type.ends_with("+json")
+            && !content_type.starts_with("text/");
+        let binary_artifact = if binary_response {
+            crate::trace_artifact::externalize_http_binary(
+                &self.pool,
+                &self.objects,
+                claim,
+                call_id,
+                response_body.clone(),
+                &content_type,
+            )
+            .await
+        } else {
+            None
+        };
+        let mut payload = match serde_json::from_slice::<Value>(&response_body) {
+            Ok(value) if !binary_response => value,
+            Ok(_) if binary_response => Value::Null,
             Ok(value) => value,
-            Err(_error) if kind == "http" => {
-                Value::String(String::from_utf8_lossy(&response.body).into_owned())
+            Err(_error) if kind == "http" && !binary_response => {
+                Value::String(String::from_utf8_lossy(&response_body).into_owned())
             }
+            _ if binary_response => Value::Null,
             Err(error) => {
                 return self
                     .fail_call(
@@ -1249,7 +1138,11 @@ impl RuntimeWorker {
                 )
                 .await;
         }
-        let raw_provider_response = payload.clone();
+        let raw_provider_response = if binary_response {
+            json!({"binary":true,"contentType":content_type,"sizeBytes":response_body.len()})
+        } else {
+            payload.clone()
+        };
         let (input_tokens, output_tokens, cost_micros, cost_currency) =
             if let Some(RuntimeResourceBindingV1 {
                 configuration: RuntimeResourceConfigurationV1::Model { price, .. },
@@ -1270,14 +1163,18 @@ impl RuntimeWorker {
                 let (input, output, cost) = provider_usage_detail(&payload);
                 (input, output, cost, None)
             };
-        let response_artifact_id = crate::trace_artifact::externalize_runtime_call_response(
-            &self.pool,
-            &self.objects,
-            claim,
-            call_id,
-            &raw_provider_response,
-        )
-        .await;
+        let response_artifact_id = if let Some(artifact) = &binary_artifact {
+            Some(artifact.object_id)
+        } else {
+            crate::trace_artifact::externalize_runtime_call_response(
+                &self.pool,
+                &self.objects,
+                claim,
+                call_id,
+                &raw_provider_response,
+            )
+            .await
+        };
         if matches!(kind, "sandbox" | "rag" | "memory")
             && let Some(artifact_id) = response_artifact_id
         {
@@ -1295,13 +1192,24 @@ impl RuntimeWorker {
                     )
                 })
                 .filter_map(|(name, value)| {
-                    value
-                        .to_str()
-                        .ok()
-                        .map(|value| (name.as_str().to_owned(), Value::String(value.to_owned())))
+                    value.to_str().ok().map(|value| {
+                        (
+                            name.as_str().to_owned(),
+                            Value::String(redact_secret_text(value, &secret_redactions)),
+                        )
+                    })
                 })
                 .collect::<serde_json::Map<_, _>>();
-            payload = json!({"statusCode":status.as_u16(),"headers":response_headers,"body":payload,"files":[]});
+            let files = binary_artifact.as_ref().map(|artifact| {
+                let sha256 = artifact.content_hash.as_str().trim_start_matches("sha256:");
+                json!([{"artifactId":artifact.object_id,"fileName":"response.bin","contentType":artifact.media_type,"sizeBytes":artifact.size_bytes,"sha256":sha256}])
+            }).unwrap_or_else(|| json!([]));
+            let body = if binary_response {
+                String::new()
+            } else {
+                String::from_utf8_lossy(&response_body).into_owned()
+            };
+            payload = json!({"statusCode":status.as_u16(),"headers":response_headers,"body":body,"files":files});
         }
         if let Err(error) = sqlx::query(
             "UPDATE runtime_calls SET status='succeeded',provider_request_id=?,response_json=?,response_artifact_id=?,input_tokens=?,output_tokens=?,cost_micros=?,cost_currency=?,ended_at=UTC_TIMESTAMP(6) WHERE id=? AND status='sent'",
@@ -1630,9 +1538,9 @@ fn capability_resource_kind(capability: &NodeCapability) -> RuntimeResourceKindV
         NodeCapability::Rag => RuntimeResourceKindV1::Rag,
         NodeCapability::Memory => RuntimeResourceKindV1::Memory,
         NodeCapability::Sandbox => RuntimeResourceKindV1::SandboxProfile,
-        NodeCapability::Builtin
-        | NodeCapability::DeclarativeHttp
-        | NodeCapability::RemoteAction => RuntimeResourceKindV1::Credential,
+        NodeCapability::Builtin | NodeCapability::DeclarativeHttp => {
+            RuntimeResourceKindV1::Credential
+        }
     }
 }
 
@@ -1658,19 +1566,221 @@ fn first_input(claim: &ClaimedWorkerAttempt) -> Option<Value> {
         .map(|item| item.json.clone())
 }
 
-fn mcp_arguments(parameters: &Value) -> Value {
-    parameters
-        .get("arguments")
-        .cloned()
-        .unwrap_or_else(|| json!({}))
+fn declarative_http_request(
+    parameters: &Value,
+    input: Option<Value>,
+) -> Result<(String, Value), String> {
+    let endpoint = parameters
+        .get("url")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "HTTP url must resolve to a string".to_owned())?;
+    let mut endpoint =
+        reqwest::Url::parse(endpoint).map_err(|error| format!("HTTP url is invalid: {error}"))?;
+    if let Some(query) = parameters.get("query").and_then(Value::as_array) {
+        let mut pairs = endpoint.query_pairs_mut();
+        for entry in query {
+            let name = entry
+                .get("name")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "HTTP query name is required".to_owned())?;
+            let value = entry.get("value").map(http_value_text).unwrap_or_default();
+            pairs.append_pair(name, &value);
+        }
+    }
+    let mut headers = serde_json::Map::new();
+    if let Some(entries) = parameters.get("headers").and_then(Value::as_array) {
+        for entry in entries {
+            let name = entry
+                .get("name")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "HTTP header name is required".to_owned())?;
+            headers.insert(
+                name.into(),
+                Value::String(entry.get("value").map(http_value_text).unwrap_or_default()),
+            );
+        }
+    }
+    Ok((
+        endpoint.to_string(),
+        json!({
+            "method":parameters.get("method").and_then(Value::as_str).unwrap_or("GET"),
+            "headers":headers,
+            "body":parameters.get("body").cloned().unwrap_or_else(|| input.unwrap_or(Value::Null)),
+            "apiKeyPlacement":parameters.get("apiKeyPlacement").cloned().unwrap_or(Value::Null),
+        }),
+    ))
 }
 
-fn declarative_http_request(parameters: &Value, input: Option<Value>) -> Value {
-    json!({
-        "method":parameters.get("method").and_then(Value::as_str).unwrap_or("GET"),
-        "headers":parameters.get("headers").cloned().unwrap_or_else(|| json!({})),
-        "body":parameters.get("body").cloned().unwrap_or_else(|| input.unwrap_or(Value::Null)),
-    })
+fn http_value_text(value: &Value) -> String {
+    value
+        .as_str()
+        .map(str::to_owned)
+        .unwrap_or_else(|| value.to_string())
+}
+
+fn secret_fragments(secret: &[u8]) -> Vec<Vec<u8>> {
+    fn collect(value: &Value, fragments: &mut Vec<Vec<u8>>) {
+        match value {
+            Value::String(value) if !value.is_empty() => fragments.push(value.as_bytes().to_vec()),
+            Value::Array(values) => values.iter().for_each(|value| collect(value, fragments)),
+            Value::Object(values) => values.values().for_each(|value| collect(value, fragments)),
+            _ => {}
+        }
+    }
+    let mut fragments = (!secret.is_empty())
+        .then(|| secret.to_vec())
+        .into_iter()
+        .collect::<Vec<_>>();
+    if let Ok(value) = serde_json::from_slice::<Value>(secret) {
+        collect(&value, &mut fragments);
+    }
+    fragments.sort();
+    fragments.dedup();
+    fragments
+}
+
+fn redact_secret_text(value: &str, secrets: &[Vec<u8>]) -> String {
+    String::from_utf8_lossy(&redact_secret_bytes(value.as_bytes(), secrets)).into_owned()
+}
+
+fn redact_secret_bytes(value: &[u8], secrets: &[Vec<u8>]) -> Vec<u8> {
+    const REDACTED: &[u8] = b"[REDACTED]";
+    let mut output = value.to_vec();
+    for secret in secrets.iter().filter(|secret| !secret.is_empty()) {
+        let mut next = Vec::with_capacity(output.len());
+        let mut offset = 0;
+        while offset < output.len() {
+            if output[offset..].starts_with(secret) {
+                next.extend_from_slice(REDACTED);
+                offset += secret.len();
+            } else {
+                next.push(output[offset]);
+                offset += 1;
+            }
+        }
+        output = next;
+    }
+    output
+}
+
+fn apply_http_credential(
+    endpoint: &mut String,
+    headers: &mut HeaderMap,
+    credential_type: &str,
+    secret: &[u8],
+    api_key_placement: Option<&Value>,
+) -> Result<(), String> {
+    match credential_type {
+        "bearer" => insert_http_header(
+            headers,
+            "authorization",
+            &format!(
+                "Bearer {}",
+                std::str::from_utf8(secret).map_err(|_| "Bearer credential is not UTF-8")?
+            ),
+        ),
+        "basic" => {
+            let value: Value = serde_json::from_slice(secret)
+                .map_err(|_| "Basic credential must be a JSON object")?;
+            let username = value
+                .get("username")
+                .and_then(Value::as_str)
+                .ok_or("Basic credential username is missing")?;
+            let password = value
+                .get("password")
+                .and_then(Value::as_str)
+                .ok_or("Basic credential password is missing")?;
+            insert_http_header(
+                headers,
+                "authorization",
+                &format!(
+                    "Basic {}",
+                    BASE64_STANDARD.encode(format!("{username}:{password}"))
+                ),
+            )
+        }
+        "api_key" => {
+            let placement = api_key_placement
+                .and_then(Value::as_object)
+                .ok_or("apiKeyPlacement is required for an API Key credential")?;
+            let location = placement
+                .get("in")
+                .and_then(Value::as_str)
+                .ok_or("apiKeyPlacement.in is required")?;
+            let name = placement
+                .get("name")
+                .and_then(Value::as_str)
+                .ok_or("apiKeyPlacement.name is required")?;
+            let value =
+                std::str::from_utf8(secret).map_err(|_| "API Key credential is not UTF-8")?;
+            if location == "header" {
+                insert_http_header(headers, name, value)
+            } else if location == "query" {
+                append_http_query(endpoint, name, value)
+            } else {
+                Err("apiKeyPlacement.in must be header or query".into())
+            }
+        }
+        "custom_json" => {
+            let value: Value = serde_json::from_slice(secret)
+                .map_err(|_| "Custom HTTP credential must be JSON")?;
+            let object = value
+                .as_object()
+                .ok_or("Custom HTTP credential must be an object")?;
+            if let Some(headers_value) = object.get("headers") {
+                let values = headers_value
+                    .as_object()
+                    .ok_or("Custom HTTP credential headers must be an object")?;
+                for (name, value) in values {
+                    insert_http_header(
+                        headers,
+                        name,
+                        value
+                            .as_str()
+                            .ok_or("Custom credential header values must be strings")?,
+                    )?;
+                }
+            }
+            if let Some(query_value) = object.get("query") {
+                let values = query_value
+                    .as_object()
+                    .ok_or("Custom HTTP credential query must be an object")?;
+                for (name, value) in values {
+                    append_http_query(
+                        endpoint,
+                        name,
+                        value
+                            .as_str()
+                            .ok_or("Custom credential query values must be strings")?,
+                    )?;
+                }
+            }
+            if object
+                .keys()
+                .any(|key| !matches!(key.as_str(), "headers" | "query"))
+            {
+                return Err("Custom HTTP credential only accepts headers and query".into());
+            }
+            Ok(())
+        }
+        _ => Err("Credential type is not supported by the HTTP node".into()),
+    }
+}
+
+fn insert_http_header(headers: &mut HeaderMap, name: &str, value: &str) -> Result<(), String> {
+    let name = reqwest::header::HeaderName::from_bytes(name.as_bytes())
+        .map_err(|_| "Credential header name is invalid")?;
+    let value = reqwest::header::HeaderValue::from_str(value)
+        .map_err(|_| "Credential header value is invalid")?;
+    headers.insert(name, value);
+    Ok(())
+}
+
+fn append_http_query(endpoint: &mut String, name: &str, value: &str) -> Result<(), String> {
+    let mut url = reqwest::Url::parse(endpoint).map_err(|_| "HTTP endpoint is invalid")?;
+    url.query_pairs_mut().append_pair(name, value);
+    *endpoint = url.to_string();
+    Ok(())
 }
 
 fn successful_value(execution: &WorkerExecution) -> Option<Value> {

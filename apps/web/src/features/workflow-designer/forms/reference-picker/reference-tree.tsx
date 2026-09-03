@@ -2,9 +2,10 @@ import { ChevronDown, ChevronRight, CircleAlert } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { sourceNodeColor } from './reference-color'
 import type { ReferenceEntry } from './reference-types'
 
-export function ReferenceTree({ entries, selected, onSelect, expandable = false }: { entries: ReferenceEntry[]; selected?: string; onSelect: (entry: ReferenceEntry) => void; expandable?: boolean }) {
+export function ReferenceTree({ entries, selected, onSelect, expandable = false, grouped = false }: { entries: ReferenceEntry[]; selected?: string; onSelect: (entry: ReferenceEntry) => void; expandable?: boolean; grouped?: boolean }) {
   const { t } = useTranslation()
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set())
   const activate = (entry: ReferenceEntry, toggleOnly = false) => {
@@ -19,7 +20,20 @@ export function ReferenceTree({ entries, selected, onSelect, expandable = false 
       return next
     })
   }
-  return <div className="h-[calc(100%-40px)] min-h-0 overflow-y-auto p-1">{entries.map((entry) => <TreeRow entry={entry} expanded={expanded} key={entry.id} onActivate={activate} recommendedLabel={t('studio.references.recommended')} selected={selected} />)}</div>
+  return <div className="h-[calc(100%-40px)] min-h-0 overflow-y-auto p-1">{entries.map((entry) => grouped
+    ? <SourceNodeGroup entry={entry} expanded={expanded} key={entry.id} onActivate={activate} recommendedLabel={t('studio.references.recommended')} selected={selected} />
+    : <TreeRow entry={entry} expanded={expanded} key={entry.id} onActivate={activate} recommendedLabel={t('studio.references.recommended')} selected={selected} />)}</div>
+}
+
+function SourceNodeGroup({ entry, expanded, selected, onActivate, recommendedLabel }: { entry: ReferenceEntry; expanded: Set<string>; selected?: string; onActivate: (entry: ReferenceEntry, toggleOnly?: boolean) => void; recommendedLabel: string }) {
+  return <>
+    <div className="flex h-8 items-center gap-2 rounded px-2 text-[11px] font-semibold" data-testid={`reference-group-${entry.label}`}>
+      <span className="size-2 shrink-0 rounded-full" style={{ backgroundColor: sourceNodeColor(entry.sourceNodeType) }} />
+      <span className="min-w-0 flex-1 truncate">{entry.label}</span>
+      <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-normal text-muted-foreground">{entry.children.length}</span>
+    </div>
+    {entry.children.map((child) => <TreeRow depth={1} entry={child} expanded={expanded} key={child.id} onActivate={onActivate} recommendedLabel={recommendedLabel} selected={selected} />)}
+  </>
 }
 
 function TreeRow({ entry, expanded, selected, onActivate, recommendedLabel, depth = 0 }: { entry: ReferenceEntry; expanded: Set<string>; selected?: string; onActivate: (entry: ReferenceEntry, toggleOnly?: boolean) => void; recommendedLabel: string; depth?: number }) {
@@ -29,9 +43,13 @@ function TreeRow({ entry, expanded, selected, onActivate, recommendedLabel, dept
   return <>
     <button
       aria-expanded={branch ? open : undefined}
+      aria-disabled={entry.disabledReason && !branch ? true : undefined}
       className={`flex h-8 w-full items-center gap-2 rounded pr-2 text-left text-xs ${entry.disabledReason ? 'cursor-not-allowed text-muted-foreground/60' : selected === entry.id ? 'bg-primary/10 text-primary' : 'text-foreground hover:bg-muted'}`}
-      disabled={Boolean(entry.disabledReason)}
-      onClick={(event) => onActivate(entry, Boolean((event.target as Element).closest('[data-tree-toggle]')))}
+      disabled={Boolean(entry.disabledReason && !branch)}
+      onClick={(event) => {
+        const toggle = Boolean((event.target as Element).closest('[data-tree-toggle]')) || Boolean(entry.disabledReason && branch)
+        onActivate(entry, toggle)
+      }}
       style={{ paddingLeft: 8 + depth * 16 }}
       title={entry.disabledReason}
       type="button"

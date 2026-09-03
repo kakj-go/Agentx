@@ -263,7 +263,18 @@ impl AgentCore {
                 BudgetDecision::Continue => {}
             }
             let strategy = CompactionStrategy::new(input.model_context_window);
-            if projected_tokens >= strategy.threshold_tokens() && compaction_needed(&state) {
+            let compactable_tokens: u64 = projected
+                .iter()
+                .filter(|message| {
+                    message.message_id != "system-prompt"
+                        && !message.message_id.starts_with("external-context:")
+                })
+                .map(estimate_message_tokens)
+                .sum();
+            if projected_tokens >= strategy.threshold_tokens()
+                && compactable_tokens > strategy.keep_recent_tokens()
+                && compaction_needed(&state)
+            {
                 match compact(
                     input,
                     &registry,
@@ -316,11 +327,12 @@ impl AgentCore {
                         .zip(current_operation_id)
                         .is_some_and(|(retry, current)| retry == current)
                     {
-                        return terminal(
+                        return terminal_turn_failure(
                             state_port,
                             events,
                             state,
                             input.fencing_token,
+                            turn,
                             TerminalReasonV1::ContextOverflow,
                         );
                     }
@@ -336,11 +348,12 @@ impl AgentCore {
                     )
                     .is_err()
                     {
-                        return terminal(
+                        return terminal_turn_failure(
                             state_port,
                             events,
                             state,
                             input.fencing_token,
+                            turn,
                             TerminalReasonV1::ContextOverflow,
                         );
                     }
@@ -356,11 +369,12 @@ impl AgentCore {
                         }
                         Err(error) => {
                             let reason = model_terminal_reason(&error);
-                            return terminal(
+                            return terminal_turn_failure(
                                 state_port,
                                 events,
                                 state,
                                 input.fencing_token,
+                                turn,
                                 reason,
                             );
                         }
@@ -368,7 +382,14 @@ impl AgentCore {
                 }
                 Err(error) => {
                     let reason = model_terminal_reason(&error);
-                    return terminal(state_port, events, state, input.fencing_token, reason);
+                    return terminal_turn_failure(
+                        state_port,
+                        events,
+                        state,
+                        input.fencing_token,
+                        turn,
+                        reason,
+                    );
                 }
             };
             budget.charge_model(projected_tokens, estimated_text_tokens(&response.content));
@@ -408,11 +429,12 @@ impl AgentCore {
                     let result = match result {
                         Ok(result) => result,
                         Err(ToolPortError::OutcomeUnknown(_)) => {
-                            return terminal(
+                            return terminal_turn_failure(
                                 state_port,
                                 events,
                                 state,
                                 input.fencing_token,
+                                turn,
                                 TerminalReasonV1::OutcomeUnknown,
                             );
                         }
@@ -441,34 +463,47 @@ impl AgentCore {
                     commit(state_port, &mut state, input.fencing_token)?;
                     events.publish(CoreEventV1::MessageAdded { message_id })?;
                     if result.terminate {
-                        return terminal(
+                        return terminal_turn_failure(
                             state_port,
                             events,
                             state,
                             input.fencing_token,
+                            turn,
                             TerminalReasonV1::ToolError,
                         );
                     }
                 }
                 drain_queue(&mut state.steering_queue, &mut state.messages);
                 commit(state_port, &mut state, input.fencing_token)?;
-                events.publish(CoreEventV1::TurnEnded { turn })?;
+                events.publish(CoreEventV1::TurnEnded {
+                    turn,
+                    is_error: false,
+                })?;
                 continue;
             }
 
             if !state.steering_queue.is_empty() {
                 drain_queue(&mut state.steering_queue, &mut state.messages);
                 commit(state_port, &mut state, input.fencing_token)?;
-                events.publish(CoreEventV1::TurnEnded { turn })?;
+                events.publish(CoreEventV1::TurnEnded {
+                    turn,
+                    is_error: false,
+                })?;
                 continue;
             }
             if !state.follow_up_queue.is_empty() {
                 drain_queue(&mut state.follow_up_queue, &mut state.messages);
                 commit(state_port, &mut state, input.fencing_token)?;
-                events.publish(CoreEventV1::TurnEnded { turn })?;
+                events.publish(CoreEventV1::TurnEnded {
+                    turn,
+                    is_error: false,
+                })?;
                 continue;
             }
-            events.publish(CoreEventV1::TurnEnded { turn })?;
+            events.publish(CoreEventV1::TurnEnded {
+                turn,
+                is_error: false,
+            })?;
             return terminal(
                 state_port,
                 events,
@@ -629,6 +664,12 @@ where
                 clock,
             );
             commit_model_state(state_port, state, input.fencing_token)?;
+            events
+                .publish(CoreEventV1::ModelSettled {
+                    operation_id,
+                    is_error: true,
+                })
+                .map_err(|error| ModelPortError::Effect(error.to_string()))?;
             return Err(error);
         }
     };
@@ -639,7 +680,10 @@ where
     );
     commit_model_state(state_port, state, input.fencing_token)?;
     events
-        .publish(CoreEventV1::ModelSettled { operation_id })
+        .publish(CoreEventV1::ModelSettled {
+            operation_id,
+            is_error: false,
+        })
         .map_err(|error| ModelPortError::Effect(error.to_string()))?;
     Ok(response)
 }
@@ -729,6 +773,13 @@ where
                 clock,
             );
             commit_tool_state(state_port, state, input.fencing_token)?;
+            events
+                .publish(CoreEventV1::ToolSettled {
+                    operation_id,
+                    tool_name: call.name.clone(),
+                    is_error: true,
+                })
+                .map_err(|error| ToolPortError::Effect(error.to_string()))?;
             return Err(error);
         }
     };
@@ -881,87 +932,40 @@ fn estimate_message_tokens(msg: &AgentMessageV1) -> u64 {
     content_tokens + tool_tokens + 4 // +4 for message overhead
 }
 
-/// 基于 token 预算智能选择保留的消息（Pi Agent 风格）
-///
-/// 策略：
-/// 1. 从最新消息往前遍历
-/// 2. 保留完整对话单元（user + assistant + tool_result）
-/// 3. 在 token 预算内尽可能多保留
-/// 4. 至少保留最后 1 条 user 消息（即使超预算）
+/// Retains a contiguous suffix of complete user turns. A tool response cannot
+/// be retained without the assistant call that precedes it. Oversized turns
+/// are represented by the summary instead of being reinserted over budget.
 fn select_retained_tail(
     messages: &[AgentMessageV1],
     keep_recent_tokens: u64,
 ) -> Vec<AgentMessageV1> {
-    let mut retained = Vec::new();
+    if messages.is_empty() {
+        return Vec::new();
+    }
+    let mut boundaries = vec![0];
+    boundaries.extend(
+        messages
+            .iter()
+            .enumerate()
+            .skip(1)
+            .filter(|(_, message)| message.role == MessageRole::User)
+            .map(|(index, _)| index),
+    );
+    boundaries.push(messages.len());
+    let mut retained_start = messages.len();
     let mut token_budget = keep_recent_tokens;
-
-    // 从最新消息往前遍历
-    for msg in messages.iter().rev() {
-        let msg_tokens = estimate_message_tokens(msg);
-
-        // 策略 1: 如果是第一条消息（最新）且是 user，强制保留
-        if retained.is_empty() && msg.role == MessageRole::User {
-            retained.insert(0, msg.clone());
-            token_budget = token_budget.saturating_sub(msg_tokens);
-            continue;
+    for turn in boundaries.windows(2).rev() {
+        let tokens: u64 = messages[turn[0]..turn[1]]
+            .iter()
+            .map(estimate_message_tokens)
+            .sum();
+        if tokens > token_budget {
+            break;
         }
-
-        // 策略 2: 检查预算
-        if msg_tokens > token_budget && !retained.is_empty() {
-            break; // 预算耗尽，停止
-        }
-
-        // 策略 3: 保留完整对话单元
-        match msg.role {
-            MessageRole::User => {
-                retained.insert(0, msg.clone());
-                token_budget = token_budget.saturating_sub(msg_tokens);
-            }
-            MessageRole::Assistant => {
-                // 如果有 tool_call，检查后续是否有对应的 tool_result
-                if !msg.tool_calls.is_empty() {
-                    let has_results = retained.iter().any(|m| {
-                        m.role == MessageRole::ToolResult
-                            && msg.tool_calls.iter().any(|tc| {
-                                Some(&tc.call_id) == m.tool_call_id.as_ref()
-                            })
-                    });
-                    if has_results {
-                        retained.insert(0, msg.clone());
-                        token_budget = token_budget.saturating_sub(msg_tokens);
-                    } else {
-                        break; // 不完整的单元，停止
-                    }
-                } else {
-                    retained.insert(0, msg.clone());
-                    token_budget = token_budget.saturating_sub(msg_tokens);
-                }
-            }
-            MessageRole::ToolResult => {
-                // Tool result 只在对应的 assistant 被保留时保留
-                let has_assistant = retained.iter().any(|m| {
-                    m.role == MessageRole::Assistant
-                        && m.tool_calls.iter().any(|tc| {
-                            Some(&tc.call_id) == msg.tool_call_id.as_ref()
-                        })
-                });
-                if has_assistant {
-                    retained.insert(0, msg.clone());
-                    token_budget = token_budget.saturating_sub(msg_tokens);
-                }
-            }
-            _ => {}
-        }
+        token_budget -= tokens;
+        retained_start = turn[0];
     }
-
-    // 确保至少保留最后 1 条 user 消息
-    if !retained.iter().any(|m| m.role == MessageRole::User) {
-        if let Some(last_user) = messages.iter().rev().find(|m| m.role == MessageRole::User) {
-            retained = vec![last_user.clone()];
-        }
-    }
-
-    retained
+    messages[retained_start..].to_vec()
 }
 
 fn compaction_needed(state: &AgentSessionStateV1) -> bool {
@@ -993,7 +997,19 @@ fn apply_compaction_snapshot(
     };
 
     let strategy = CompactionStrategy::new(model_context_window);
-    let retained_tail = select_retained_tail(&state.messages, strategy.keep_recent_tokens());
+    let mut retained_tail = select_retained_tail(&state.messages, strategy.keep_recent_tokens());
+    if !state.messages.is_empty() && retained_tail.len() == state.messages.len() {
+        // An overflow-triggered compaction must replace at least one turn;
+        // retaining the whole history cannot represent a summarized prefix.
+        let next_turn = state
+            .messages
+            .iter()
+            .enumerate()
+            .skip(1)
+            .find(|(_, message)| message.role == MessageRole::User)
+            .map_or(state.messages.len(), |(index, _)| index);
+        retained_tail = state.messages[next_turn..].to_vec();
+    }
 
     let retained_start = state.messages.len().saturating_sub(retained_tail.len());
 
@@ -1132,6 +1148,24 @@ fn terminal<S: StatePort, E: EventPort>(
         terminal_reason: reason,
         state,
     })
+}
+
+/// Terminal exit from inside an open turn. The turn span must close with an
+/// error status before the run settles, otherwise the trace keeps a dangling
+/// "Agent turn" span in the running state forever.
+fn terminal_turn_failure<S: StatePort, E: EventPort>(
+    state_port: &mut S,
+    events: &mut E,
+    state: AgentSessionStateV1,
+    fencing_token: u64,
+    turn: u32,
+    reason: TerminalReasonV1,
+) -> Result<AgentRunResultV1, AgentCoreError> {
+    events.publish(CoreEventV1::TurnEnded {
+        turn,
+        is_error: true,
+    })?;
+    terminal(state_port, events, state, fencing_token, reason)
 }
 
 fn estimated_text_tokens(text: &str) -> u64 {

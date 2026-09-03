@@ -195,7 +195,9 @@ async fn main() -> Result<()> {
             move |progress| {
                 let pool = pool.clone();
                 let lifecycle = role_lifecycle.clone();
-                async move { agentx_v2_runtime::stream::stream_loop(pool, owner, lifecycle, progress).await }
+                async move {
+                    agentx_v2_runtime::stream::stream_loop(pool, owner, lifecycle, progress).await
+                }
             },
         ));
     }
@@ -610,7 +612,7 @@ async fn recovery_loop(
             return Ok(());
         }
         let started = std::time::Instant::now();
-        agentx_v2_runtime::enqueue_due_waits(&pool, owner, 100).await?;
+        agentx_v2_runtime::enqueue_due_approval_timeouts(&pool, owner, 100).await?;
         agentx_v2_runtime::composite_execution::enqueue_overdue(&pool, 100).await?;
         let woken =
             agentx_v2_runtime::agent_session_queue::wake_pending_sessions(&pool, 100).await?;

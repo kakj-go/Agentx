@@ -1,13 +1,35 @@
 from __future__ import annotations
 
 import subprocess
+import time
 import uuid
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import httpx
 import pytest
 
 from tests.e2e.support import run
+
+ADMIN_USERNAME = "admin"
+ADMIN_PASSWORD = "agentx-e2e-admin-password"  # noqa: S105 -- fixed disposable E2E credential
+
+
+def _wait_for_runtime_dispatch_quiet(installed_agentx: dict[str, str]) -> None:
+    """Keep the restart test independent from dispatch work left by earlier E2E cases."""
+    deadline = time.monotonic() + 60
+    state = "unknown"
+    while time.monotonic() < deadline:
+        state = _runtime_mysql(
+            installed_agentx,
+            "SELECT CONCAT("
+            "(SELECT COUNT(*) FROM execution_outbox WHERE status='pending' AND message_type='dispatch_node' AND available_at<=UTC_TIMESTAMP(6)),"
+            "':',(SELECT COUNT(*) FROM node_attempts WHERE status IN ('queued','running')));",
+        )
+        if state == "0:0":
+            return
+        time.sleep(0.5)
+    raise AssertionError(f"Runtime dispatch did not become quiet before Loop recovery test: {state}")
 
 
 @pytest.mark.cluster
@@ -20,6 +42,300 @@ def test_runtime_workloads_are_available(installed_agentx: dict[str, str]) -> No
             check=True,
             shell=False,
         )
+
+
+@pytest.mark.cluster
+@pytest.mark.runtime
+def test_loop_checkpoint_recovers_after_workflow_runtime_restart(
+    installed_agentx: dict[str, str],
+    e2e_providers: dict[str, str],
+    service_urls: dict[str, str],
+    run_id: str,
+) -> None:
+    """Restart the coordinator with active Loop rounds and verify ordered completion."""
+    with httpx.Client(base_url=service_urls["web"], timeout=60) as client:
+        token = _access_token(client)
+        headers = {"Authorization": f"Bearer {token}"}
+        _wait_for_runtime_dispatch_quiet(installed_agentx)
+        created = client.post(
+            "/api/v1/workflows",
+            headers=headers,
+            json={
+                "name": f"plan5-loop-recovery-{run_id}",
+                "description": "Loop checkpoint restart E2E",
+                "visibility": "company",
+            },
+        )
+        created.raise_for_status()
+        workflow_id = created.json()["id"]
+        draft = client.get(f"/api/v1/workflows/{workflow_id}/draft", headers=headers)
+        draft.raise_for_status()
+        draft_payload = draft.json()
+
+        dynamic_input = {
+            "kind": "reference",
+            "selector": {
+                "namespace": "inputs",
+                "run": {"kind": "current"},
+                "item": {"kind": "current"},
+                "path": ["items"],
+            },
+            "missingPolicy": {"kind": "error"},
+        }
+        loop_value = {
+            "kind": "reference",
+            "selector": {
+                "namespace": "loop",
+                "run": {"kind": "current"},
+                "item": {"kind": "current"},
+                "path": ["item", "value"],
+            },
+            "missingPolicy": {"kind": "error"},
+        }
+
+        def node(
+            node_id: str,
+            node_type: str,
+            parameters: dict[str, Any],
+            *,
+            parent_id: str | None = None,
+            settings: dict[str, Any] | None = None,
+        ) -> dict[str, Any]:
+            value: dict[str, Any] = {
+                "id": node_id,
+                "key": node_id,
+                "type": node_type,
+                "typeVersion": 1,
+                "name": node_id,
+                "disabled": False,
+                "parameters": parameters,
+                "contextWrites": [],
+                "resourceReferences": [],
+                "settings": settings or {},
+            }
+            if parent_id is not None:
+                value["parentId"] = parent_id
+            return value
+
+        definition = {
+            "schemaVersion": "8.0",
+            "start": {
+                "inputs": {
+                    "type": "object",
+                    "properties": {
+                        "items": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {"value": {"type": "number"}},
+                                "required": ["value"],
+                                "additionalProperties": False,
+                            },
+                        }
+                    },
+                    "required": ["items"],
+                    "additionalProperties": False,
+                },
+                "contexts": {},
+            },
+            "nodes": [
+                node(
+                    "loop",
+                    "loop_over_items",
+                    {
+                        "input": dynamic_input,
+                        "outputSelector": {
+                            "kind": "reference",
+                            "selector": {
+                                "namespace": "outputs",
+                                "sourceNodeId": "collect",
+                                "port": "main",
+                                "run": {"kind": "current"},
+                                "item": {"kind": "current"},
+                                "path": [],
+                            },
+                            "missingPolicy": {"kind": "error"},
+                        },
+                        "parallelism": 2,
+                        "errorMode": "terminate",
+                    },
+                ),
+                node(
+                    "slow",
+                    "declarative_http",
+                    {
+                        "method": "GET",
+                        "url": {
+                            "kind": "template",
+                            "segments": [
+                                {"kind": "text", "text": f"{e2e_providers['echo_mcp']}/v1/plan5/delay"}
+                            ],
+                        },
+                        "query": [],
+                        "headers": [],
+                    },
+                    parent_id="loop",
+                    settings={"timeoutMs": 30_000},
+                ),
+                node(
+                    "collect",
+                    "set",
+                    {"values": {"kind": "object", "fields": {"value": loop_value}}, "keepOnlySet": True},
+                    parent_id="loop",
+                ),
+                {
+                    **node("exit", "exit", {"outputs": {}, "errorOutputs": {}}),
+                    "protected": True,
+                },
+            ],
+            "connections": [
+                {
+                    "id": "start-loop",
+                    "sourceNodeId": "__start__",
+                    "sourceHandle": "main",
+                    "targetNodeId": "loop",
+                    "targetHandle": "main",
+                    "order": 0,
+                },
+                {
+                    "id": "slow-collect",
+                    "sourceNodeId": "slow",
+                    "sourceHandle": "main",
+                    "targetNodeId": "collect",
+                    "targetHandle": "main",
+                    "order": 0,
+                },
+                {
+                    "id": "loop-exit",
+                    "sourceNodeId": "loop",
+                    "sourceHandle": "main",
+                    "targetNodeId": "exit",
+                    "targetHandle": "main",
+                    "order": 0,
+                },
+            ],
+            "end": {"completion": "first_return", "outputs": {}, "error": {"outputs": {}}},
+            "settings": {"executionOrder": "deterministic", "activationBudget": 100},
+        }
+        saved = client.put(
+            f"/api/v1/workflows/{workflow_id}/draft",
+            headers={**headers, "Idempotency-Key": f"plan5-loop-draft-{run_id}"},
+            json={
+                "expectedRevision": draft_payload["revision"],
+                "definition": definition,
+                "editorDocument": draft_payload["editorDocument"],
+            },
+        )
+        assert saved.status_code == 200, saved.text
+        revision = saved.json()["revision"]
+        input_items = [{"value": value} for value in range(8)]
+        execution_id = ""
+        checkpoint_rows = "0"
+        checkpoint_total = "0"
+        runtime_state = ""
+        node_states = "none"
+        execution: dict[str, Any] = {"status": "not_started"}
+        for dispatch_attempt in range(2):
+            started = client.post(
+                f"/api/v1/workflows/{workflow_id}/debug-executions",
+                headers=headers,
+                json={
+                    "expectedRevision": revision,
+                    "mode": "full",
+                    "targetNodeId": None,
+                    "input": {"items": input_items},
+                    "context": {},
+                    "overlayIds": [],
+                    "sideEffectDecisions": {},
+                    "idempotencyKey": f"plan5-loop-recovery-{run_id}-{dispatch_attempt}",
+                },
+            )
+            assert started.status_code == 202, started.text
+            execution_id = started.json()["executionId"]
+            checkpoint_deadline = time.monotonic() + 30
+            while time.monotonic() < checkpoint_deadline:
+                checkpoint_rows = _runtime_mysql(
+                    installed_agentx,
+                    "SELECT COUNT(*) FROM checkpoints "  # noqa: S608 -- execution_id is returned by Control in this test.
+                    f"WHERE execution_id=UUID_TO_BIN('{execution_id}') "
+                    "AND (payload_artifact_id IS NOT NULL OR "
+                    "JSON_LENGTH(JSON_EXTRACT(payload_json,'$.machine.pending_loops'))>0);",
+                )
+                active_rounds = _runtime_mysql(
+                    installed_agentx,
+                    "SELECT COUNT(*) FROM node_executions "  # noqa: S608 -- execution_id is returned by Control in this test.
+                    f"WHERE execution_id=UUID_TO_BIN('{execution_id}') "
+                    "AND node_id='slow' AND status IN ('ready','running');",
+                )
+                if int(checkpoint_rows) > 0 and int(active_rounds) > 0:
+                    break
+                execution_response = client.get(f"/api/v1/executions/{execution_id}", headers=headers)
+                execution_response.raise_for_status()
+                execution = execution_response.json()
+                if execution["status"] in {"succeeded", "failed", "cancelled", "timed_out"}:
+                    break
+                time.sleep(0.5)
+            checkpoint_total = _runtime_mysql(
+                installed_agentx,
+                "SELECT COUNT(*) FROM checkpoints "  # noqa: S608 -- execution_id is returned by Control in this test.
+                f"WHERE execution_id=UUID_TO_BIN('{execution_id}');",
+            )
+            runtime_state = _runtime_mysql(
+                installed_agentx,
+                "SELECT CONCAT(state_version,':',COALESCE(JSON_LENGTH(JSON_EXTRACT(machine_state_json,'$.pending_loops')),-1)) "  # noqa: S608 -- execution_id is returned by Control in this test.
+                "FROM execution_runtime_state "
+                f"WHERE execution_id=UUID_TO_BIN('{execution_id}');",
+            )
+            node_states = _runtime_mysql(
+                installed_agentx,
+                "SELECT COALESCE(GROUP_CONCAT(CONCAT(node_id,':',status) ORDER BY created_at SEPARATOR ','),'none') "  # noqa: S608 -- execution_id is returned by Control in this test.
+                "FROM node_executions "
+                f"WHERE execution_id=UUID_TO_BIN('{execution_id}');",
+            )
+            if int(checkpoint_rows) > 0:
+                break
+            if execution.get("status") == "failed" and node_states == "none" and dispatch_attempt == 0:
+                _wait_for_runtime_dispatch_quiet(installed_agentx)
+                continue
+            break
+        assert int(checkpoint_rows) > 0, (
+            "Loop did not persist an active pendingLoops checkpoint: "
+            f"execution={execution} checkpoints={checkpoint_total} state={runtime_state} nodes={node_states}"
+        )
+
+        namespace = installed_agentx["runtime_namespace"]
+        deployment_before = run(
+            ("kubectl", "-n", namespace, "get", "deployment/workflow-runtime", "-o", "json"),
+            timeout=60,
+        ).json()
+        run(
+            ("kubectl", "-n", namespace, "rollout", "restart", "deployment/workflow-runtime"),
+            timeout=60,
+        )
+        run(
+            (
+                "kubectl",
+                "-n",
+                namespace,
+                "rollout",
+                "status",
+                "deployment/workflow-runtime",
+                "--timeout=300s",
+            ),
+            timeout=330,
+        )
+        deployment_after = run(
+            ("kubectl", "-n", namespace, "get", "deployment/workflow-runtime", "-o", "json"),
+            timeout=60,
+        ).json()
+        assert deployment_after["metadata"]["generation"] > deployment_before["metadata"]["generation"]
+
+        execution = _wait_control_execution(client, headers, execution_id)
+        assert execution["status"] == "succeeded", execution
+        nodes = client.get(f"/api/v1/executions/{execution_id}/nodes", headers=headers)
+        nodes.raise_for_status()
+        loop_run = next(item for item in nodes.json()["items"] if item["nodeId"] == "loop")
+        assert loop_run["output"]["main"][0]["json"]["items"] == input_items
 
 
 def _runtime_mysql(installed_agentx: dict[str, str], query: str) -> str:
@@ -44,6 +360,50 @@ def _runtime_mysql(installed_agentx: dict[str, str], query: str) -> str:
 
 def _deadline(seconds: int = 120) -> str:
     return (datetime.now(UTC) + timedelta(seconds=seconds)).isoformat().replace("+00:00", "Z")
+
+
+def _access_token(client: httpx.Client) -> str:
+    status = client.get("/api/v1/bootstrap/status")
+    status.raise_for_status()
+    if status.json()["required"]:
+        response = client.post(
+            "/api/v1/bootstrap",
+            json={
+                "companyName": "Agentx plan5 E2E",
+                "adminUsername": ADMIN_USERNAME,
+                "adminDisplayName": "Agentx E2E Admin",
+                "password": ADMIN_PASSWORD,
+                "locale": "zh-CN",
+                "timezone": "Asia/Shanghai",
+            },
+        )
+    else:
+        response = client.post(
+            "/api/v1/auth/login",
+            json={"username": ADMIN_USERNAME, "password": ADMIN_PASSWORD},
+        )
+    response.raise_for_status()
+    return str(response.json()["accessToken"])
+
+
+def _wait_control_execution(
+    client: httpx.Client,
+    headers: dict[str, str],
+    execution_id: str,
+    timeout_seconds: int = 300,
+) -> dict[str, Any]:
+    deadline = time.monotonic() + timeout_seconds
+    latest: dict[str, Any] = {}
+    while time.monotonic() < deadline:
+        response = client.get(f"/api/v1/executions/{execution_id}", headers=headers)
+        if response.status_code == 200:
+            latest = response.json()
+            if latest["status"] in {"succeeded", "failed", "cancelled", "timed_out"}:
+                return latest
+        else:
+            latest = {"statusCode": response.status_code, "body": response.text}
+        time.sleep(1)
+    raise AssertionError(f"execution did not reach a terminal state: {latest}")
 
 
 def _proof(ids: dict[str, str], lease: dict[str, object], suffix: str) -> dict[str, object]:
@@ -176,9 +536,7 @@ def test_stdio_mcp_process_session_uses_real_opensandbox_and_cleans_up(
         assert lease["status"] == "running"
         assert started["providerSandboxId"]
 
-        def write(
-            suffix: str, frame: dict[str, object], replay_policy: str = "safe"
-        ) -> dict[str, object]:
+        def write(suffix: str, frame: dict[str, object], replay_policy: str = "safe") -> dict[str, object]:
             result = httpx.post(
                 f"{manager}/internal/runtime/v1/sandbox-process-sessions/{lease['processSessionId']}:write",
                 json={

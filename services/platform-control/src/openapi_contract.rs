@@ -37,9 +37,16 @@ mod tests {
     #[test]
     fn frozen_contract_has_all_cutover_paths() {
         let value: Value = serde_json::from_str(CONTRACT).unwrap();
-        assert_eq!(value["paths"].as_object().unwrap().len(), 157);
         assert!(value["paths"]["/api/v1/workflows/{id}/run"]["post"].is_object());
         assert!(value["paths"]["/api/v1/runtime/quotas"]["put"].is_object());
         assert!(value["paths"]["/api/v1/departments/{id}/resource-options"]["get"].is_object());
+        assert!(value["paths"]["/api/v1/approvals/{id}/decide"]["post"].is_object());
+        for removed in ["approve", "reject", "timeout"] {
+            assert!(
+                value["paths"]
+                    .get(format!("/api/v1/approvals/{{id}}/{removed}"))
+                    .is_none()
+            );
+        }
     }
 }

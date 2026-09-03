@@ -1,11 +1,8 @@
 use agentx_domain::NodeExecutionId;
 use agentx_runtime::{ExecutionMachine, ExpressionContext, ExpressionEngine, NodeActivation};
-use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-use rand::{RngCore, rngs::OsRng};
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
 use sqlx::{MySql, Transaction};
-use time::{OffsetDateTime, format_description::well_known::Rfc3339};
+use time::OffsetDateTime;
 use uuid::Uuid;
 
 use crate::{
@@ -53,6 +50,7 @@ pub(crate) async fn resolve_and_create(
             input: current.clone(),
             inputs: execution_input,
             outputs: load_output_namespace(tx, request.tenant_id, request.execution_id).await?,
+            loop_context: request.activation.loop_frame.clone().unwrap_or(Value::Null),
             contexts: request.context.clone(),
             execution: crate::execution_context::with_node(
                 crate::execution_context::load(tx, request.tenant_id, request.execution_id).await?,
@@ -146,44 +144,8 @@ async fn fail_parameter_resolution(
     Ok(())
 }
 
-pub async fn enqueue_due(pool: &sqlx::MySqlPool, owner: Uuid, limit: u32) -> RuntimeResult<u64> {
+pub async fn enqueue_due(pool: &sqlx::MySqlPool, _owner: Uuid, limit: u32) -> RuntimeResult<u64> {
     let mut tx = pool.begin().await?;
-    let rows = sqlx::query(
-        "SELECT id,tenant_id,execution_id,node_execution_id,resume_token_id,CASE WHEN wake_at IS NOT NULL AND wake_at<=UTC_TIMESTAMP(6) THEN 'resumed' ELSE 'timed_out' END wait_status FROM wait_subscriptions WHERE status='waiting' AND (locked_until IS NULL OR locked_until<=UTC_TIMESTAMP(6)) AND ((wake_at IS NOT NULL AND wake_at<=UTC_TIMESTAMP(6)) OR (timeout_at IS NOT NULL AND timeout_at<=UTC_TIMESTAMP(6))) ORDER BY COALESCE(wake_at,timeout_at),id LIMIT ? FOR UPDATE SKIP LOCKED",
-    )
-    .bind(limit.clamp(1, 100))
-    .fetch_all(&mut *tx)
-    .await?;
-    for row in &rows {
-        use sqlx::Row;
-        let wait_id: Uuid = row.try_get("id")?;
-        let tenant_id: Uuid = row.try_get("tenant_id")?;
-        let execution_id: Uuid = row.try_get("execution_id")?;
-        let node_execution_id: Uuid = row.try_get("node_execution_id")?;
-        let wait_status: String = row.try_get("wait_status")?;
-        let output_port = if wait_status == "resumed" {
-            "resumed"
-        } else {
-            "timed_out"
-        };
-        sqlx::query("UPDATE wait_subscriptions SET locked_by=?,locked_until=DATE_ADD(UTC_TIMESTAMP(6),INTERVAL 30 SECOND),fencing_token=fencing_token+1,heartbeat_at=UTC_TIMESTAMP(6) WHERE tenant_id=? AND id=? AND status='waiting'")
-            .bind(owner).bind(tenant_id).bind(wait_id).execute(&mut *tx).await?;
-        sqlx::query("INSERT IGNORE INTO runtime_commands(id,tenant_id,command_type,aggregate_type,aggregate_id,idempotency_key,payload_json,status) VALUES(?,?,'resume_wait','execution',?,?,?,'pending')")
-            .bind(crate::engine_names::deterministic_uuid(wait_id, b"due-wait-command"))
-            .bind(tenant_id)
-            .bind(execution_id.to_string())
-            .bind(format!("wait-due:{wait_id}"))
-            .bind(json!({
-                "waitId":wait_id,
-                "nodeExecutionId":node_execution_id,
-                "outputPort":output_port,
-                "waitStatus":wait_status,
-                "payload":{}
-            }))
-            .execute(&mut *tx).await?;
-        sqlx::query("UPDATE execution_resume_tokens SET status=IF(?='resumed','used','expired'),used_at=UTC_TIMESTAMP(6) WHERE tenant_id=? AND id=? AND status='active'")
-            .bind(&wait_status).bind(tenant_id).bind(row.try_get::<Uuid,_>("resume_token_id")?).execute(&mut *tx).await?;
-    }
     let approvals = sqlx::query(
         "SELECT id,tenant_id,execution_id,node_execution_id,request_payload_json FROM approval_tasks WHERE status IN ('pending','claimed') AND deadline_at<=UTC_TIMESTAMP(6) ORDER BY deadline_at,id LIMIT ? FOR UPDATE SKIP LOCKED",
     )
@@ -199,7 +161,7 @@ pub async fn enqueue_due(pool: &sqlx::MySqlPool, owner: Uuid, limit: u32) -> Run
         let input: Option<Value> = row.try_get("request_payload_json")?;
         sqlx::query("UPDATE approval_tasks SET status='timed_out',resume_status='pending',version=version+1,locked_by=NULL,locked_until=NULL WHERE tenant_id=? AND id=? AND status IN ('pending','claimed')")
             .bind(tenant_id).bind(task_id).execute(&mut *tx).await?;
-        sqlx::query("INSERT IGNORE INTO runtime_commands(id,tenant_id,command_type,aggregate_type,aggregate_id,idempotency_key,payload_json,status) VALUES(?,?,'resume_wait','execution',?,?,?,'pending')")
+        sqlx::query("INSERT IGNORE INTO runtime_commands(id,tenant_id,command_type,aggregate_type,aggregate_id,idempotency_key,payload_json,status) VALUES(?,?,'resume_execution','execution',?,?,?,'pending')")
             .bind(crate::engine_names::deterministic_uuid(task_id, b"approval-timeout-command"))
             .bind(tenant_id).bind(execution_id.to_string()).bind(format!("approval-timeout:{task_id}"))
             .bind(json!({"nodeExecutionId":node_execution_id,"outputPort":"timed_out","waitStatus":"timed_out","payload":approval_timeout_output(task_id,input.unwrap_or(Value::Null))}))
@@ -207,7 +169,7 @@ pub async fn enqueue_due(pool: &sqlx::MySqlPool, owner: Uuid, limit: u32) -> Run
         crate::event_export::enqueue_approval_event_from_task(&mut tx, tenant_id, task_id).await?;
     }
     tx.commit().await?;
-    Ok((rows.len() + approvals.len()) as u64)
+    Ok(approvals.len() as u64)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -257,9 +219,18 @@ pub(crate) async fn create(
             .and_then(Value::as_str)
             .map(str::to_owned);
         let request = Some(input.clone());
-        let (timeout_seconds, timeout_at) = approval_timeout(parameters)?;
+        let (timeout_microseconds, timeout_at) = approval_timeout(parameters)?;
+        // The button set is snapshotted with the task so later workflow edits
+        // can never desync a pending task from the branches it was created
+        // with; absent buttons default to the frozen approve/reject pair.
+        let buttons = parameters.get("buttons").cloned().unwrap_or_else(|| {
+            json!([
+                {"id":"approved","label":"Approve"},
+                {"id":"rejected","label":"Reject"}
+            ])
+        });
         sqlx::query(
-            "INSERT INTO approval_tasks(id,tenant_id,execution_id,node_execution_id,bundle_id,checkpoint_id,workflow_id,node_id,title,description,request_payload_json,status,resume_status,deadline_at,version) VALUES(?,?,?,?,?,?,?,?,?,?,?,'pending','not_requested',COALESCE(?,DATE_ADD(UTC_TIMESTAMP(6),INTERVAL ? SECOND)),1)",
+            "INSERT INTO approval_tasks(id,tenant_id,execution_id,node_execution_id,bundle_id,checkpoint_id,workflow_id,node_id,title,description,request_payload_json,buttons_json,status,resume_status,deadline_at,version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?, 'pending','not_requested',COALESCE(?,TIMESTAMPADD(MICROSECOND,?,UTC_TIMESTAMP(6))),1)",
         )
         .bind(task_id)
         .bind(tenant_id)
@@ -272,8 +243,9 @@ pub(crate) async fn create(
         .bind(&title)
         .bind(&description)
         .bind(&request)
+        .bind(&buttons)
         .bind(timeout_at)
-        .bind(timeout_seconds)
+        .bind(timeout_microseconds)
         .execute(&mut **tx)
         .await?;
         if let Some(candidate_id) = parameters
@@ -301,111 +273,29 @@ pub(crate) async fn create(
         )
         .await;
     } else {
-        let mut raw = [0_u8; 32];
-        OsRng.fill_bytes(&mut raw);
-        let token = URL_SAFE_NO_PAD.encode(raw);
-        let token_hash = format!("{:x}", Sha256::digest(token.as_bytes()));
-        let token_id = Uuid::now_v7();
-        let wait_id = Uuid::now_v7();
-        let kind = parameters
-            .get("kind")
-            .and_then(Value::as_str)
-            .unwrap_or("duration");
-        let resume_kind = if matches!(kind, "duration" | "datetime") {
-            "time"
-        } else if kind == "form" {
-            "form"
-        } else {
-            "webhook"
-        };
-        let duration_micros = parameters
-            .get("durationMs")
-            .and_then(Value::as_u64)
-            .unwrap_or(1_000)
-            .saturating_mul(1_000);
-        let resume_at = parameters
-            .get("resumeAt")
-            .and_then(Value::as_str)
-            .map(|value| OffsetDateTime::parse(value, &Rfc3339))
-            .transpose()
-            .map_err(|error| {
-                crate::error::RuntimeError::InvalidRequest("INVALID_WAIT_TIME", error.to_string())
-            })?;
-        let timeout_at = parameters
-            .get("timeoutAt")
-            .and_then(Value::as_str)
-            .map(|value| OffsetDateTime::parse(value, &Rfc3339))
-            .transpose()
-            .map_err(|error| {
-                crate::error::RuntimeError::InvalidRequest(
-                    "INVALID_WAIT_TIMEOUT",
-                    error.to_string(),
-                )
-            })?;
-        sqlx::query(
-            "INSERT INTO execution_resume_tokens(id,tenant_id,execution_id,node_execution_id,token_hash,resume_kind,status,response_json,expires_at) VALUES(?,?,?,?,?,?,'active',?,COALESCE(?,DATE_ADD(UTC_TIMESTAMP(6),INTERVAL 1 DAY)))",
-        )
-        .bind(token_id)
-        .bind(tenant_id)
-        .bind(execution_id)
-        .bind(node_execution_id.as_uuid())
-        .bind(token_hash)
-        .bind(resume_kind)
-        .bind(json!({"resumeToken":token,"waitId":wait_id}))
-        .bind(timeout_at.or(resume_at))
-        .execute(&mut **tx)
-        .await?;
-        let query = if kind == "duration" {
-            sqlx::query("INSERT INTO wait_subscriptions(id,tenant_id,execution_id,node_execution_id,bundle_id,checkpoint_id,state_version,resume_token_id,wait_kind,status,wake_at,timeout_at,authentication_mode,response_mode,payload_schema_json) VALUES(?,?,?,?,?,?,?,?,'duration','waiting',DATE_ADD(UTC_TIMESTAMP(6),INTERVAL ? MICROSECOND),?,'signed','accepted',?)")
-                .bind(wait_id).bind(tenant_id).bind(execution_id).bind(node_execution_id.as_uuid())
-                .bind(bundle_id).bind(checkpoint_id).bind(state_version).bind(token_id)
-                .bind(duration_micros).bind(timeout_at).bind(parameters.get("payloadSchema"))
-        } else {
-            sqlx::query("INSERT INTO wait_subscriptions(id,tenant_id,execution_id,node_execution_id,bundle_id,checkpoint_id,state_version,resume_token_id,wait_kind,status,wake_at,timeout_at,authentication_mode,response_mode,payload_schema_json) VALUES(?,?,?,?,?,?,?,?,?,'waiting',?,?,?,'accepted',?)")
-                .bind(wait_id).bind(tenant_id).bind(execution_id).bind(node_execution_id.as_uuid())
-                .bind(bundle_id).bind(checkpoint_id).bind(state_version).bind(token_id).bind(kind)
-                .bind(resume_at).bind(timeout_at).bind(parameters.get("authenticationMode").and_then(Value::as_str).unwrap_or("signed")).bind(parameters.get("payloadSchema"))
-        };
-        query.execute(&mut **tx).await?;
-        emit_wait_started(
-            tx,
-            tenant_id,
-            execution_id,
-            node_execution_id,
-            wait_id,
-            kind,
-            &node.name,
-            None,
-        )
-        .await;
-        sqlx::query(
-            "INSERT INTO bundle_references(id,tenant_id,bundle_id,reference_kind,owner_id) VALUES(?,?,?,'pending_wait',?)",
-        )
-        .bind(Uuid::now_v7())
-        .bind(tenant_id)
-        .bind(bundle_id)
-        .bind(wait_id)
-        .execute(&mut **tx)
-        .await?;
+        // `wait` is gone; approval is the only suspending builtin left, so an
+        // unknown suspend node type is a definition/registry mismatch.
+        return Err(RuntimeError::Internal(anyhow::anyhow!(
+            "node type {} cannot suspend",
+            node.node_type
+        )));
     }
     Ok(())
 }
 
-fn approval_timeout(parameters: &Value) -> RuntimeResult<(u64, Option<OffsetDateTime>)> {
-    let timeout_seconds = parameters
+fn approval_timeout(parameters: &Value) -> RuntimeResult<(Option<i64>, Option<OffsetDateTime>)> {
+    let timeout_microseconds = parameters
         .get("timeoutMs")
         .and_then(Value::as_u64)
-        .unwrap_or(86_400_000)
-        .div_ceil(1_000);
-    let timeout_at = parameters
-        .get("timeoutAt")
-        .and_then(Value::as_str)
-        .map(|value| OffsetDateTime::parse(value, &Rfc3339))
+        .map(|value| i64::try_from(value.saturating_mul(1_000)))
         .transpose()
-        .map_err(|error| {
-            RuntimeError::InvalidRequest("INVALID_APPROVAL_TIMEOUT", error.to_string())
+        .map_err(|_| {
+            RuntimeError::BadRequest(
+                agentx_runtime_contracts::RuntimePublishErrorCodeV1::BundleReferenceConflict,
+                "Approval timeoutMs is too large".into(),
+            )
         })?;
-    Ok((timeout_seconds, timeout_at))
+    Ok((timeout_microseconds, None))
 }
 
 fn approval_timeout_output(task_id: Uuid, input: Value) -> Value {
@@ -438,11 +328,7 @@ async fn emit_wait_started(
             agentx_runtime_contracts::TraceSpanKindV1::Node,
         )),
         agentx_runtime_contracts::TraceSpanKindV1::Wait,
-        if wait_kind == "approval" {
-            format!("Approval · {span_name}")
-        } else {
-            format!("Wait · {span_name}")
-        },
+        format!("Approval · {span_name}"),
         agentx_runtime_contracts::TraceEventKindV1::Started,
         "wait.started",
         "waiting",
@@ -463,13 +349,11 @@ mod tests {
     use super::{approval_timeout, approval_timeout_output};
 
     #[test]
-    fn approval_timeout_consumes_milliseconds_and_absolute_deadline() {
-        let (seconds, deadline) =
-            approval_timeout(&json!({"timeoutMs":1501,"timeoutAt":"2026-08-20T10:00:00Z"}))
-                .unwrap();
-        assert_eq!(seconds, 2);
-        assert_eq!(deadline.unwrap().unix_timestamp(), 1_787_220_000);
-        assert!(approval_timeout(&json!({"timeoutAt":"not-a-time"})).is_err());
+    fn approval_timeout_consumes_only_milliseconds() {
+        let (seconds, deadline) = approval_timeout(&json!({"timeoutMs":1501})).unwrap();
+        assert_eq!(seconds, Some(1_501_000));
+        assert_eq!(deadline, None);
+        assert_eq!(approval_timeout(&json!({})).unwrap(), (None, None));
     }
 
     #[test]

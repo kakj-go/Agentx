@@ -1,10 +1,11 @@
 use agentx_runtime_contracts::{
     ContentHash, EventExportPageV1, EventExportRequestV1, GovernanceSnapshotPageV1,
-    GovernanceSnapshotRequestV1, RuntimeApprovalCandidateKindV1, RuntimeApprovalCandidateV1,
-    RuntimeEvaluationCaseResultV1, RuntimeEvaluationMetricsV1, RuntimeEvaluationReportV1,
-    RuntimeEvaluationRuleResultV1, RuntimeEventPayloadV1, RuntimeGovernanceObjectKindV1,
-    RuntimeGovernanceSnapshotItemV1, RuntimeGovernanceSnapshotPayloadV1,
-    RuntimeIntegrationEventEnvelopeV1, RuntimeRetentionItemV1, content_hash,
+    GovernanceSnapshotRequestV1, RuntimeApprovalButtonV1, RuntimeApprovalCandidateKindV1,
+    RuntimeApprovalCandidateV1, RuntimeEvaluationCaseResultV1, RuntimeEvaluationMetricsV1,
+    RuntimeEvaluationReportV1, RuntimeEvaluationRuleResultV1, RuntimeEventPayloadV1,
+    RuntimeGovernanceObjectKindV1, RuntimeGovernanceSnapshotItemV1,
+    RuntimeGovernanceSnapshotPayloadV1, RuntimeIntegrationEventEnvelopeV1, RuntimeRetentionItemV1,
+    content_hash,
 };
 use axum::{
     Json,
@@ -404,7 +405,7 @@ async fn approval_snapshot(
     after: Option<Uuid>,
     limit: usize,
 ) -> RuntimeResult<Vec<RuntimeGovernanceSnapshotItemV1>> {
-    let rows = sqlx::query("SELECT id,version,last_event_cursor,projection_deleted,execution_id,workflow_id,node_id,title,description,request_payload_json,status,resume_status,claimed_by,deadline_at,decision_receipt_json FROM approval_tasks WHERE tenant_id=? AND last_event_cursor<=? AND (? IS NULL OR id>?) ORDER BY id LIMIT ?")
+    let rows = sqlx::query("SELECT id,version,last_event_cursor,projection_deleted,execution_id,workflow_id,node_id,title,description,request_payload_json,buttons_json,status,resume_status,claimed_by,deadline_at,decision_receipt_json FROM approval_tasks WHERE tenant_id=? AND last_event_cursor<=? AND (? IS NULL OR id>?) ORDER BY id LIMIT ?")
         .bind(tenant).bind(upper).bind(after).bind(after).bind(limit as u32).fetch_all(&state.pool).await?;
     let mut items = Vec::with_capacity(rows.len());
     for row in rows {
@@ -422,6 +423,7 @@ async fn approval_snapshot(
                 title: row.try_get("title")?,
                 description: row.try_get("description")?,
                 request: row.try_get("request_payload_json")?,
+                buttons: approval_buttons(row.try_get("buttons_json")?)?,
                 status: row.try_get("status")?,
                 resume_status: row.try_get("resume_status")?,
                 claimed_by: row.try_get("claimed_by")?,
@@ -548,6 +550,10 @@ async fn approval_candidates_from_pool(
             })
         })
         .collect()
+}
+
+fn approval_buttons(value: Value) -> RuntimeResult<Vec<RuntimeApprovalButtonV1>> {
+    serde_json::from_value(value).map_err(|error| RuntimeError::Internal(error.into()))
 }
 
 async fn load_evaluation_report_from_pool(
@@ -713,7 +719,7 @@ pub(crate) async fn enqueue_approval_event_from_task(
     tenant_id: Uuid,
     task_id: Uuid,
 ) -> RuntimeResult<Uuid> {
-    let row = sqlx::query("SELECT execution_id,workflow_id,node_id,title,description,request_payload_json,status,resume_status,claimed_by,deadline_at,version,decision_receipt_json FROM approval_tasks WHERE tenant_id=? AND id=?")
+    let row = sqlx::query("SELECT execution_id,workflow_id,node_id,title,description,request_payload_json,buttons_json,status,resume_status,claimed_by,deadline_at,version,decision_receipt_json FROM approval_tasks WHERE tenant_id=? AND id=?")
         .bind(tenant_id)
         .bind(task_id)
         .fetch_one(&mut **tx)
@@ -740,6 +746,7 @@ pub(crate) async fn enqueue_approval_event_from_task(
             title: row.try_get("title")?,
             description: row.try_get("description")?,
             request: row.try_get("request_payload_json")?,
+            buttons: approval_buttons(row.try_get("buttons_json")?)?,
             status,
             resume_status: row.try_get("resume_status")?,
             claimed_by,

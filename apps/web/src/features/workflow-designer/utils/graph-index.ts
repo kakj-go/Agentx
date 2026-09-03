@@ -1,9 +1,9 @@
-import type { BindingSlot, NodeManifest, NodePort, StudioEdge, StudioNode } from '../model/types'
+import type { NodeManifest, NodePort, StudioEdge, StudioNode } from '../model/types'
 
 export type IndexedPort = {
-  direction: 'input' | 'output' | 'binding'
+  direction: 'input' | 'output'
   nodeId: string
-  port: NodePort | BindingSlot
+  port: NodePort
 }
 
 export type NodeBindingSummary = { role: string; resourceType: string; label: string }
@@ -52,9 +52,7 @@ export class IncrementalGraphIndex {
         this.addNodePorts(node, manifests)
         this.nodePortSignatures.set(node.id, signature)
       }
-      if (node.data.editorKind === 'binding' && (!previous || nodeBindingSignature(previous) !== nodeBindingSignature(node))) {
-        for (const edge of this.edgeRefs.values()) if (edge.source === node.id && edge.data?.edgeKind === 'binding') this.rebuildBindingSummary(edge.target)
-      }
+      this.rebuildBindingSummary(node)
     }
 
     const nextEdgeIds = new Set(edges.map((edge) => edge.id))
@@ -85,23 +83,18 @@ export class IncrementalGraphIndex {
 
   private addNodePorts(node: StudioNode, manifests: Map<string, NodeManifest>) {
     const keys: string[] = []
-    if (node.data.editorKind === 'binding') {
-      const key = portHandleKey(node.id, 'output', 'resource')
-      this.value.portByHandle.set(key, { direction: 'output', nodeId: node.id, port: { name: 'resource', kind: 'main', required: false, variadic: true } })
-      keys.push(key)
-    } else if (node.data.editorKind === 'exit') {
+    if (node.data.editorKind === 'exit') {
       keys.push(this.addPort(node.id, 'input', { name: 'main', kind: 'main', required: false, variadic: true }))
       keys.push(this.addPort(node.id, 'input', { name: 'error', kind: 'error', required: false, variadic: true }))
     } else {
       const manifest = manifests.get(`${node.data.nodeType}@${node.data.typeVersion}`)
       for (const port of manifest?.inputPorts ?? []) keys.push(this.addPort(node.id, 'input', port))
       for (const port of manifest?.outputPorts ?? []) keys.push(this.addPort(node.id, 'output', port))
-      for (const slot of manifest?.bindingSlots.filter((candidate) => candidate.placement === 'canvas') ?? []) keys.push(this.addPort(node.id, 'binding', slot, `binding:${slot.name}`))
     }
     this.nodePortKeys.set(node.id, keys)
   }
 
-  private addPort(nodeId: string, direction: IndexedPort['direction'], port: NodePort | BindingSlot, handle = port.name) {
+  private addPort(nodeId: string, direction: IndexedPort['direction'], port: NodePort, handle = port.name) {
     const key = portHandleKey(nodeId, direction, handle)
     this.value.portByHandle.set(key, { direction, nodeId, port })
     return key
@@ -111,7 +104,6 @@ export class IncrementalGraphIndex {
     this.edgeRefs.set(edge.id, edge)
     append(this.value.edgesBySourcePort, portKey(edge.source, edge.sourceHandle), edge)
     append(this.value.edgesByTargetPort, portKey(edge.target, edge.targetHandle), edge)
-    if (edge.data?.edgeKind === 'binding') this.rebuildBindingSummary(edge.target)
   }
 
   private removeEdge(id: string) {
@@ -121,19 +113,16 @@ export class IncrementalGraphIndex {
     this.edgeSignatures.delete(id)
     remove(this.value.edgesBySourcePort, portKey(edge.source, edge.sourceHandle), id)
     remove(this.value.edgesByTargetPort, portKey(edge.target, edge.targetHandle), id)
-    if (edge.data?.edgeKind === 'binding') this.rebuildBindingSummary(edge.target)
   }
 
-  private rebuildBindingSummary(nodeId: string) {
-    const summaries: NodeBindingSummary[] = []
-    for (const edge of this.edgeRefs.values()) {
-      if (edge.data?.edgeKind !== 'binding' || edge.target !== nodeId) continue
-      const binding = this.value.nodeById.get(edge.source)
-      if (binding?.data.editorKind !== 'binding') continue
-      summaries.push({ role: edge.data.targetSlot ?? binding.data.bindingRole ?? 'resource', resourceType: binding.data.resourceType, label: binding.data.resourceName ?? binding.data.label })
-    }
-    if (summaries.length) this.value.bindingSummaryByNodeId.set(nodeId, summaries)
-    else this.value.bindingSummaryByNodeId.delete(nodeId)
+  /** Attachment slots live on the node itself: references with a bindingRole are the badge row. */
+  private rebuildBindingSummary(node: StudioNode) {
+    if (node.data.editorKind !== 'action') return
+    const summaries = node.data.resourceReferences.flatMap((reference) => reference.bindingRole
+      ? [{ role: reference.bindingRole, resourceType: reference.resourceType, label: reference.resourceId }]
+      : [])
+    if (summaries.length) this.value.bindingSummaryByNodeId.set(node.id, summaries)
+    else this.value.bindingSummaryByNodeId.delete(node.id)
   }
 }
 
@@ -148,29 +137,20 @@ export function occupiedHandlesByNodeId(index: GraphIndex) {
     const edge = edges[0]
     if (edge?.sourceHandle) appendHandle(handles, edge.source, edge.sourceHandle)
   }
-  for (const edges of index.edgesByTargetPort.values()) {
-    const edge = edges[0]
-    if (edge?.data?.edgeKind === 'binding' && edge.targetHandle) appendHandle(handles, edge.target, edge.targetHandle)
-  }
   return new Map([...handles].map(([nodeId, values]) => [nodeId, [...values].sort().join('\u0001')]))
 }
 
 export function resolveIndexedPort(index: GraphIndex, nodeId: string, handle: string | null | undefined, direction: IndexedPort['direction']) {
   const exact = index.portByHandle.get(portHandleKey(nodeId, direction, handle))
   if (exact || !handle) return exact
-  const declared = handle.startsWith('main:') ? 'main' : handle.startsWith('case:') ? 'case' : undefined
+  const declared = handle.startsWith('main:') ? 'main' : handle.startsWith('case:') ? 'case' : handle.startsWith('decision:') ? 'decision' : undefined
   return declared ? index.portByHandle.get(portHandleKey(nodeId, direction, declared)) : undefined
 }
 
 function nodePortSignature(node: StudioNode, manifests: Map<string, NodeManifest>) {
-  if (node.data.editorKind === 'binding') return `binding:${node.data.resourceType}`
   if (node.data.editorKind === 'exit') return 'exit'
   const manifest = manifests.get(`${node.data.nodeType}@${node.data.typeVersion}`)
-  return JSON.stringify([node.data.editorKind, node.data.nodeType, node.data.typeVersion, manifest?.inputPorts.map((port) => [port.name, port.kind, port.variadic]), manifest?.outputPorts.map((port) => [port.name, port.kind, port.variadic]), manifest?.bindingSlots.map((slot) => [slot.name, slot.resourceType, slot.placement, slot.multiple])])
-}
-
-function nodeBindingSignature(node: StudioNode) {
-  return node.data.editorKind === 'binding' ? `${node.data.resourceType}:${node.data.bindingRole}:${node.data.resourceName}:${node.data.label}` : ''
+  return JSON.stringify([node.data.editorKind, node.data.nodeType, node.data.typeVersion, manifest?.inputPorts.map((port) => [port.name, port.kind, port.variadic]), manifest?.outputPorts.map((port) => [port.name, port.kind, port.variadic])])
 }
 
 function edgeSignature(edge: StudioEdge) {

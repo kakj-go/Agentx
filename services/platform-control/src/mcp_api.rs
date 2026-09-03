@@ -759,7 +759,6 @@ async fn load_config(state: &ControlApiState, tenant: Uuid, id: Uuid) -> ApiResu
         .await?
         .ok_or_else(|| ApiError::not_found("MCP server"))?;
     let mut reference = ResourceReference {
-        binding_id: None,
         binding_role: None,
         resource_type: ResourceType::McpServer,
         resource_id: id,
@@ -785,7 +784,6 @@ async fn load_config(state: &ControlApiState, tenant: Uuid, id: Uuid) -> ApiResu
     } = &transport
     {
         let mut reference = ResourceReference {
-            binding_id: None,
             binding_role: None,
             resource_type: ResourceType::SandboxProfile,
             resource_id: runtime_sandbox.resource_id,

@@ -843,7 +843,7 @@ fn dependency_ids(definition: &WorkflowDefinition) -> ApiResult<Vec<Uuid>> {
     definition
         .nodes
         .iter()
-        .filter(|node| node.node_type == "sub_workflow" || node.node_type.starts_with("workflow."))
+        .filter(|node| node.node_type == "sub_workflow")
         .map(|node| {
             node.parameters
                 .get("workflowVersionId")
@@ -1305,6 +1305,7 @@ async fn load_model_binding(
         provider: row.try_get("provider_type")?,
         endpoint: row.try_get("endpoint")?,
         model: row.try_get("model_name")?,
+        context_window: 128_000,
         price: agentx_runtime_contracts::RuntimeModelPriceV1 {
             version_id: row.try_get::<Uuid, _>("price_version_id")?.to_string(),
             currency: row.try_get("currency")?,
@@ -1789,13 +1790,13 @@ mod debug_plan_tests {
 
     fn compiled() -> agentx_runtime_contracts::CompiledWorkflowV1 {
         let definition: WorkflowDefinition = serde_json::from_value(json!({
-            "schemaVersion":"7.0",
+            "schemaVersion":"8.0",
             "start":{"inputs":{"type":"object","additionalProperties":true},"contexts":{}},
             "nodes":[
-                {"id":"root","key":"root","type":"no_op","typeVersion":1,"name":"Root","disabled":false,"parameters":{},"outputProjection":{},"contextWrites":[],"resourceReferences":[],"settings":{}},
-                {"id":"target","key":"target","type":"no_op","typeVersion":1,"name":"Target","disabled":false,"parameters":{},"outputProjection":{},"contextWrites":[],"resourceReferences":[],"settings":{}},
-                {"id":"tail","key":"tail","type":"no_op","typeVersion":1,"name":"Tail","disabled":false,"parameters":{},"outputProjection":{},"contextWrites":[],"resourceReferences":[],"settings":{}},
-                {"id":"__exit__","key":"__exit__","type":"exit","typeVersion":1,"name":"End","disabled":false,"protected":true,"parameters":{"outputs":{},"errorOutputs":{}},"outputProjection":{},"contextWrites":[],"resourceReferences":[],"settings":{}}
+                {"id":"root","key":"root","type":"set","typeVersion":1,"name":"Root","disabled":false,"parameters":{},"contextWrites":[],"resourceReferences":[],"settings":{}},
+                {"id":"target","key":"target","type":"set","typeVersion":1,"name":"Target","disabled":false,"parameters":{},"contextWrites":[],"resourceReferences":[],"settings":{}},
+                {"id":"tail","key":"tail","type":"set","typeVersion":1,"name":"Tail","disabled":false,"parameters":{},"contextWrites":[],"resourceReferences":[],"settings":{}},
+                {"id":"__exit__","key":"__exit__","type":"exit","typeVersion":1,"name":"End","disabled":false,"protected":true,"parameters":{"outputs":{},"errorOutputs":{}},"contextWrites":[],"resourceReferences":[],"settings":{}}
             ],
             "connections":[
                 {"id":"start-root","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"root","targetHandle":"main","order":0},

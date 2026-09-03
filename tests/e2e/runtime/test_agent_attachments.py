@@ -1,3 +1,6 @@
+# ruff: noqa: S608
+# This Kubernetes E2E module queries only its isolated test database with fixture identifiers.
+
 from __future__ import annotations
 
 import copy
@@ -132,9 +135,7 @@ def _access_token(client: httpx.Client) -> tuple[str, dict[str, Any]]:
     response.raise_for_status()
     payload = response.json()
     token = payload["accessToken"]
-    me = client.get(
-        "/api/v1/auth/me", headers={"Authorization": f"Bearer {token}"}
-    )
+    me = client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {token}"})
     me.raise_for_status()
     return token, me.json()
 
@@ -157,11 +158,7 @@ def _fixture_job(
     pod_spec.pop("initContainers", None)
     pod_spec.pop("terminationGracePeriodSeconds", None)
     pod_spec["restartPolicy"] = "Never"
-    container = next(
-        copy.deepcopy(item)
-        for item in pod_spec["containers"]
-        if item["name"] == "platform-control"
-    )
+    container = next(copy.deepcopy(item) for item in pod_spec["containers"] if item["name"] == "platform-control")
     for field in (
         "args",
         "lifecycle",
@@ -174,9 +171,7 @@ def _fixture_job(
     container["name"] = "fixture"
     container["command"] = ["/usr/local/bin/agentx-p3-fixture"]
     overrides = {
-        "AGENTX_V2_FIXTURE_DEPENDENCIES_NAMESPACE": installed_agentx[
-            "dependencies_namespace"
-        ],
+        "AGENTX_V2_FIXTURE_DEPENDENCIES_NAMESPACE": installed_agentx["dependencies_namespace"],
         # Scope immutable fixture object/version IDs by scenario.  A single
         # E2E install runs several scenarios sequentially; reusing the same
         # Skill object ID after retention has collected it is intentionally
@@ -193,9 +188,9 @@ def _fixture_job(
         overrides["AGENTX_V2_FIXTURE_SESSION_POLICY"] = session_policy
     if fixture_env:
         overrides.update(fixture_env)
-    container["env"] = [
-        item for item in container.get("env", []) if item["name"] not in overrides
-    ] + [{"name": name, "value": value} for name, value in overrides.items()]
+    container["env"] = [item for item in container.get("env", []) if item["name"] not in overrides] + [
+        {"name": name, "value": value} for name, value in overrides.items()
+    ]
     pod_spec["containers"] = [container]
     name = f"p3-04-{job_suffix}-{run_id}"
     labels = copy.deepcopy(deployment["spec"]["template"]["metadata"]["labels"])
@@ -237,25 +232,35 @@ def _run_fixture_job(
             input_text=json.dumps(job),
             timeout=60,
         )
-        waited = run(
-            (
-                "kubectl",
-                "-n",
-                namespace,
-                "wait",
-                "--for=condition=complete",
-                f"job/{name}",
-                "--timeout=300s",
-            ),
-            check=False,
-            timeout=330,
-        )
+        deadline = time.monotonic() + 300
+        job_status = None
+        completed = False
+        while time.monotonic() < deadline:
+            job_status = run(
+                ("kubectl", "-n", namespace, "get", f"job/{name}", "-o", "json"),
+                check=False,
+                timeout=60,
+            )
+            if job_status.returncode == 0:
+                conditions = job_status.json().get("status", {}).get("conditions", [])
+                terminal = next(
+                    (
+                        condition
+                        for condition in conditions
+                        if condition.get("status") == "True" and condition.get("type") in {"Complete", "Failed"}
+                    ),
+                    None,
+                )
+                if terminal:
+                    completed = terminal["type"] == "Complete"
+                    break
+            time.sleep(1)
         logs = run(
             ("kubectl", "-n", namespace, "logs", f"job/{name}"),
             check=False,
             timeout=60,
         )
-        if waited.returncode != 0 or logs.returncode != 0:
+        if not completed or logs.returncode != 0:
             describe = run(
                 ("kubectl", "-n", namespace, "describe", f"job/{name}"),
                 check=False,
@@ -263,7 +268,12 @@ def _run_fixture_job(
             )
             raise AssertionError(
                 "P3-04 Fixture Job failed:\n"
-                + redact(waited.stdout + waited.stderr + logs.stdout + logs.stderr + describe.stdout)
+                + redact(
+                    (job_status.stdout + job_status.stderr if job_status else "fixture job timed out\n")
+                    + logs.stdout
+                    + logs.stderr
+                    + describe.stdout
+                )
             )
         lines = [line for line in logs.stdout.splitlines() if line.strip().startswith("{")]
         assert lines, redact(logs.stdout)
@@ -288,9 +298,7 @@ def _run_fixture_job(
         )
 
 
-def _wait_execution(
-    client: httpx.Client, headers: dict[str, str], execution_id: str
-) -> dict[str, Any]:
+def _wait_execution(client: httpx.Client, headers: dict[str, str], execution_id: str) -> dict[str, Any]:
     deadline = time.monotonic() + 300
     latest: dict[str, Any] = {}
     while time.monotonic() < deadline:
@@ -310,21 +318,45 @@ def _wait_execution(
     raise AssertionError(f"execution did not reach a terminal state: {latest}")
 
 
-def _wait_trace(
-    client: httpx.Client, headers: dict[str, str], execution_id: str
-) -> dict[str, Any]:
+def _wait_trace(client: httpx.Client, headers: dict[str, str], execution_id: str) -> dict[str, Any]:
     deadline = time.monotonic() + 120
     latest = ""
     while time.monotonic() < deadline:
-        response = client.get(
-            f"/api/v1/executions/{execution_id}/trace?limit=1000", headers=headers
-        )
+        response = client.get(f"/api/v1/executions/{execution_id}/trace?limit=1000", headers=headers)
         latest = response.text
         if response.status_code == 200 and response.json().get("complete"):
             return response.json()
         assert response.status_code in {200, 202}, latest
         time.sleep(1)
     raise AssertionError(f"trace did not become complete: {latest}")
+
+
+def _assert_execution_succeeded(
+    installed_agentx: dict[str, str],
+    client: httpx.Client,
+    headers: dict[str, str],
+    execution: dict[str, Any],
+) -> None:
+    if execution["status"] == "succeeded":
+        return
+    details = client.get(f"/api/v1/executions/{execution['id']}/runtime-details", headers=headers)
+    diagnostic: object = details.text
+    if details.status_code == 200:
+        diagnostic = details.json()
+    call_errors = _runtime_mysql(
+        installed_agentx,
+        "SELECT COALESCE(JSON_ARRAYAGG(JSON_OBJECT("
+        "'callKind',call_kind,'status',status,'errorCode',error_code,'errorMessage',error_message)),JSON_ARRAY()) "
+        "FROM runtime_calls "
+        f"WHERE execution_id=UUID_TO_BIN('{execution['id']}') AND status IN ('failed','outcome_unknown');",
+    )
+    raise AssertionError(
+        json.dumps(
+            {"execution": execution, "runtimeDetails": diagnostic, "runtimeCallErrors": call_errors},
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+    )
 
 
 @pytest.mark.cluster
@@ -341,12 +373,8 @@ def test_agent_attachments_follow_the_published_workflow_main_chain(
         headers = {"Authorization": f"Bearer {token}"}
         environments = client.get("/api/v1/environments", headers=headers)
         environments.raise_for_status()
-        environment = next(
-            item for item in environments.json() if item["code"] == "development"
-        )
-        fixture = _run_fixture_job(
-            installed_agentx, run_id, me, environment["id"]
-        )
+        environment = next(item for item in environments.json() if item["code"] == "development")
+        fixture = _run_fixture_job(installed_agentx, run_id, me, environment["id"])
         assert fixture["tenantId"] == me["companyId"]
         assert fixture["environmentId"] == environment["id"]
 
@@ -361,21 +389,15 @@ def test_agent_attachments_follow_the_published_workflow_main_chain(
         assert started.status_code == 202, started.text
         execution_id = started.json()["executionId"]
         execution = _wait_execution(client, headers, execution_id)
-        assert execution["status"] == "succeeded", json.dumps(
-            execution, ensure_ascii=False, sort_keys=True
-        )
+        _assert_execution_succeeded(installed_agentx, client, headers, execution)
 
-        nodes = client.get(
-            f"/api/v1/executions/{execution_id}/nodes", headers=headers
-        )
+        nodes = client.get(f"/api/v1/executions/{execution_id}/nodes", headers=headers)
         nodes.raise_for_status()
         agent = next(item for item in nodes.json()["items"] if item["nodeId"] == "agent")
         assert agent["status"] == "succeeded", agent
         assert "skill_context=true" in json.dumps(agent["output"])
 
-        details = client.get(
-            f"/api/v1/executions/{execution_id}/runtime-details", headers=headers
-        )
+        details = client.get(f"/api/v1/executions/{execution_id}/runtime-details", headers=headers)
         details.raise_for_status()
         calls = details.json()["calls"]
         assert sum(call["callKind"] == "model" for call in calls) == 2
@@ -384,7 +406,7 @@ def test_agent_attachments_follow_the_published_workflow_main_chain(
 
         registry_json = _runtime_mysql(
             installed_agentx,
-            "SELECT JSON_EXTRACT(w.payload_json,'$.agentBundle.agents[0].attachmentRegistry') "  # noqa: S608 -- query interpolates a Runtime-generated UUID
+            "SELECT JSON_EXTRACT(w.payload_json,'$.agentBundle.agents[0].attachmentRegistry') "
             "FROM runtime_work_packages w JOIN workflow_executions e ON e.work_package_id=w.id "
             f"WHERE e.id=UUID_TO_BIN('{execution_id}');",
         )
@@ -398,9 +420,7 @@ def test_agent_attachments_follow_the_published_workflow_main_chain(
         assert len(registry["authorizationEvidence"]) >= 4
 
         trace = _wait_trace(client, headers, execution_id)
-        span_names = {
-            (span["spanName"], span["status"]) for span in trace["spans"]
-        }
+        span_names = {(span["spanName"], span["status"]) for span in trace["spans"]}
         assert ("Agent run", "succeeded") in span_names
         assert ("Agent model operation", "succeeded") in span_names
         assert ("Agent tool operation", "succeeded") in span_names

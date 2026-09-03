@@ -5,9 +5,10 @@ const translations = {
   "approve": "通过",
   "reject": "拒绝",
   "release": "释放",
-  "confirmReject": "确认拒绝该审批？",
   "approvalUpdated": "审批状态已更新",
   "resumeStatus": "恢复状态",
+  "decision": "决策结果",
+  "reason": "理由（可选）",
   "request": "审批请求",
   "actionHistory": "动作记录",
   "trace": "查看 Trace",
@@ -21,10 +22,10 @@ const translations = {
     "not_requested": "未请求恢复", "pending": "等待恢复", "succeeded": "已恢复", "blocked_runtime": "Runtime 阻塞", "failed": "恢复失败"
   },
   "statuses": {
-    "pending": "待领取", "claimed": "处理中", "approved": "已通过", "rejected": "已拒绝", "cancelled": "已取消", "timed_out": "已超时"
+    "pending": "待领取", "claimed": "处理中", "decided": "已决策", "cancelled": "已取消", "timed_out": "已超时"
   },
   "actionTypes": {
-    "claim": "领取", "release": "释放", "reassign": "转交", "approve": "通过", "reject": "拒绝", "cancel": "取消", "timeout": "超时"
+    "claim": "领取", "release": "释放", "reassign": "转交", "decide": "决策", "cancel": "取消", "timeout": "超时"
   },
   "auditActions": {
     "created": "创建申请", "submitted": "提交申请", "approved": "通过", "rejected": "拒绝", "cancelled": "取消", "review_approved": "部门会签通过", "review_rejected": "部门会签拒绝"

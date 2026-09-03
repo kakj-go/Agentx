@@ -14,12 +14,12 @@ use agentx_domain::WorkflowDefinition;
 use agentx_runtime_contracts::{
     ActivateDeploymentRequestV1, ActivationManifestV1, AdmissionStatusV1, AdmissionTargetV1,
     ApiKeyAdmissionV1, ApplicationRouteAdmissionV1, ApplyChatMappingRequestV1,
-    ApprovalDecisionValueV1, CancelWorkPackageRequestV1, ChatMappingV1, CommandEnvelopeV1,
+    ApprovalActionValueV1, CancelWorkPackageRequestV1, ChatMappingV1, CommandEnvelopeV1,
     ControlRole, CreateSessionRequestV1, DelegationClaimsV1, DisableDeploymentRequestV1,
     ExecuteWorkPackageRequestV1, ExecutionSearchRequestV1, InvocationResponseV1,
     MessagePartInputV1, MessageRequestV1, MessageResponseV1, Plane, PrepareBundleRequestV1,
     PrepareWorkPackageRequestV1, PublishReceiptStatusV1, RollbackDeploymentRequestV1,
-    RuntimeAdmissionCommandV1, RuntimeApprovalDecisionV1, RuntimeAuthorizationSnapshotV1,
+    RuntimeAdmissionCommandV1, RuntimeApprovalActionV1, RuntimeAuthorizationSnapshotV1,
     RuntimeCallPurposeV1, RuntimeEventPayloadV1, RuntimeGrantStateV1, RuntimeObjectReferenceV1,
     RuntimeObjectUploadMetadataV1, RuntimePolicyV1, RuntimeResourceKindV1,
     RuntimeRetentionDataTypeV1, RuntimeRetentionPolicyV1, RuntimeTriggerConfigurationV1,
@@ -51,7 +51,6 @@ use agentx_v2_runtime::{
         get_execution, get_execution_artifact, get_execution_runtime_details, search_executions,
     },
     retention::run_once as run_retention_once,
-    trigger::{TriggerProvider, TriggerProviderResponse},
     worker_runtime::{RuntimeWorker, WorkerProvider, WorkerProviderError, WorkerProviderResponse},
 };
 use axum::{
@@ -98,11 +97,6 @@ struct Fixture {
     api_key: String,
 }
 
-struct StubTriggerProvider {
-    delay: Duration,
-    response: Result<TriggerProviderResponse, String>,
-}
-
 enum StubWorkerMode {
     Reject,
     Agent(Arc<std::sync::atomic::AtomicUsize>),
@@ -140,14 +134,10 @@ impl WorkerProvider for StubWorkerProvider {
                 ));
             }
             StubWorkerMode::Evaluator => json!({
-                "text":"{\"passed\":true,\"score\":0.95,\"reason\":\"fixture accepted the target output\",\"usage\":{\"tokens\":7,\"costMicros\":23}}",
-                "reasoningContent":null,
-                "structuredOutput":{"passed":true,"score":0.95,"reason":"fixture accepted the target output","usage":{"tokens":7,"costMicros":23}},
-                "citations":[],
-                "files":[],
-                "usage":{"inputTokens":0,"outputTokens":7,"totalTokens":7,"costMicros":23},
-                "finishReason":"stop",
-                "partial":false
+                "id":"fixture-evaluator-response",
+                "object":"chat.completion",
+                "choices":[{"index":0,"message":{"role":"assistant","content":"{\"passed\":true,\"score\":0.95,\"reason\":\"fixture accepted the target output\",\"usage\":{\"tokens\":7,\"costMicros\":23}}"},"finish_reason":"stop"}],
+                "usage":{"prompt_tokens":0,"completion_tokens":7,"total_tokens":7}
             }),
             StubWorkerMode::Agent(calls) if endpoint.ends_with("/chat/completions") => {
                 let index = calls.fetch_add(1, Ordering::SeqCst);
@@ -243,21 +233,6 @@ fn test_worker(fixture: &Fixture, mode: StubWorkerMode) -> RuntimeWorker {
         fixture.state.objects.clone(),
         Arc::new(StubWorkerProvider { mode }),
     )
-}
-
-#[async_trait::async_trait]
-impl TriggerProvider for StubTriggerProvider {
-    async fn post_json(
-        &self,
-        _endpoint: &str,
-        _context: agentx_v2_runtime::egress::EgressRequestContext,
-        _timeout: Duration,
-        _idempotency_key: Option<&str>,
-        _input: &Value,
-    ) -> Result<TriggerProviderResponse, String> {
-        tokio::time::sleep(self.delay).await;
-        self.response.clone()
-    }
 }
 
 include!("runtime_slice/publish_and_suspension.rs");

@@ -1768,9 +1768,9 @@ fn bearer_headers(token: String) -> HeaderMap {
 
 fn definition() -> WorkflowDefinition {
     serde_json::from_value(json!({
-        "schemaVersion":"7.0",
+        "schemaVersion":"8.0",
         "start":{"inputs":{"type":"object","properties":{"message":{"type":"string"}},"required":["message"],"additionalProperties":false},"contexts":{}},
-        "nodes":[{"id":"pass","key":"pass","type":"no_op","typeVersion":1,"name":"Pass","parameters":{},"settings":{"retryOnFail":true,"maxTries":2,"waitBetweenTriesMs":5},"outputProjection":{},"contextWrites":[],"resourceReferences":[]},{"id":"exit","key":"exit","type":"exit","typeVersion":1,"name":"End","disabled":false,"protected":true,"parameters":{"outputs":{"message":{"kind":"reference","selector":{"namespace":"outputs","sourceNodeId":"pass","port":"main","run":{"kind":"current"},"item":{"kind":"current"},"path":["message"]},"missingPolicy":{"kind":"error"}}},"errorOutputs":{}},"outputProjection":{},"contextWrites":[],"resourceReferences":[],"settings":{}}],
+        "nodes":[{"id":"pass","key":"pass","type":"set","typeVersion":1,"name":"Pass","parameters":{},"settings":{"retryOnFail":true,"maxTries":2,"waitBetweenTriesMs":5},"contextWrites":[],"resourceReferences":[]},{"id":"exit","key":"exit","type":"exit","typeVersion":1,"name":"End","disabled":false,"protected":true,"parameters":{"outputs":{"message":{"kind":"reference","selector":{"namespace":"outputs","sourceNodeId":"pass","port":"main","run":{"kind":"current"},"item":{"kind":"current"},"path":["message"]},"missingPolicy":{"kind":"error"}}},"errorOutputs":{}},"contextWrites":[],"resourceReferences":[],"settings":{}}],
         "connections":[
             {"id":"start-pass","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"pass","targetHandle":"main","order":0},
             {"id":"pass-end","sourceNodeId":"pass","sourceHandle":"main","targetNodeId":"exit","targetHandle":"main","order":0}
@@ -1783,7 +1783,7 @@ fn definition() -> WorkflowDefinition {
 
 fn composite_definition(child_version_id: Uuid) -> WorkflowDefinition {
     serde_json::from_value(json!({
-        "schemaVersion":"7.0",
+        "schemaVersion":"8.0",
         "start":{"inputs":{"type":"object","properties":{"message":{"type":"string"}},"required":["message"],"additionalProperties":false},"contexts":{}},
         "nodes":[{
             "id":"child",
@@ -1791,14 +1791,14 @@ fn composite_definition(child_version_id: Uuid) -> WorkflowDefinition {
             "type":"sub_workflow",
             "typeVersion":1,
             "name":"Child",
-            "parameters":{"workflowVersionId":child_version_id},
-            "outputProjection":{},
+            "parameters":{"workflowVersionId":child_version_id,"inputs":{"kind":"object","fields":{"message":{"kind":"reference","selector":{"namespace":"inputs","run":{"kind":"current"},"item":{"kind":"current"},"path":["message"]},"missingPolicy":{"kind":"error"}}}}},
+
             "contextWrites":[],
             "resourceReferences":[]
         },{
             "id":"exit","key":"exit","type":"exit","typeVersion":1,"name":"End","disabled":false,"protected":true,
             "parameters":{"outputs":{"message":{"kind":"reference","selector":{"namespace":"outputs","sourceNodeId":"child","port":"main","run":{"kind":"current"},"item":{"kind":"current"},"path":["message"]},"missingPolicy":{"kind":"error"}}},"errorOutputs":{}},
-            "outputProjection":{},"contextWrites":[],"resourceReferences":[],"settings":{}
+            "contextWrites":[],"resourceReferences":[],"settings":{}
         }],
         "connections":[
             {"id":"start-child","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"child","targetHandle":"main","order":0},

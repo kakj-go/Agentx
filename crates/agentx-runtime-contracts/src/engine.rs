@@ -207,6 +207,7 @@ pub enum RuntimeResourceConfigurationV1 {
         provider: String,
         endpoint: String,
         model: String,
+        context_window: u64,
         price: RuntimeModelPriceV1,
         credential: Option<crate::VaultSecretReferenceV1>,
     },
@@ -243,6 +244,7 @@ pub enum RuntimeResourceConfigurationV1 {
         dependencies: Vec<RuntimeSkillDependencyV2>,
     },
     Credential {
+        credential_type: String,
         secret: crate::VaultSecretReferenceV1,
         allowed_operations: BTreeSet<String>,
     },
@@ -277,7 +279,7 @@ pub struct RuntimeModelPriceV1 {
 pub enum SandboxEgressModeV1 {
     #[default]
     None,
-    PublicHttps,
+    TcpProxy,
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
@@ -790,23 +792,19 @@ pub struct RuntimeQuotaPolicyV1 {
     pub enabled: bool,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ApprovalDecisionValueV1 {
-    Approved,
-    Rejected,
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ApprovalActionValueV1 {
     Claim,
     Release,
     Reassign,
-    Approve,
-    Reject,
     Cancel,
     Timeout,
+    /// A canvas-defined approval button: resumes the workflow on the
+    /// `decision:<id>` output port and persists the button id as the decision.
+    Decide {
+        decision_id: String,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
@@ -818,16 +816,6 @@ pub struct RuntimeApprovalActionV1 {
     pub actor_id: Uuid,
     pub target_user_id: Option<Uuid>,
     pub input: Option<Value>,
-}
-
-#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct RuntimeApprovalDecisionV1 {
-    pub task_id: Uuid,
-    pub task_version: u64,
-    pub decision: ApprovalDecisionValueV1,
-    pub decided_by: Uuid,
-    pub reason: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
@@ -877,6 +865,13 @@ pub enum RuntimeApprovalCandidateKindV1 {
 pub struct RuntimeApprovalCandidateV1 {
     pub candidate_type: RuntimeApprovalCandidateKindV1,
     pub candidate_id: Uuid,
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RuntimeApprovalButtonV1 {
+    pub id: String,
+    pub label: String,
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
@@ -975,6 +970,7 @@ pub enum RuntimeEventPayloadV1 {
         title: String,
         description: Option<String>,
         request: Option<Value>,
+        buttons: Vec<RuntimeApprovalButtonV1>,
         status: String,
         resume_status: String,
         claimed_by: Option<Uuid>,

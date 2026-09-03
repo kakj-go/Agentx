@@ -1,26 +1,24 @@
-import { AlertTriangle, Plus, Trash2 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { AlertTriangle, Pencil, Plus, Trash2 } from "lucide-react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import type { LexicalEditor } from "lexical";
 
 import { Button } from "../../../shared/ui/button";
 import { Input } from "../../../shared/ui/input";
 import { Select } from "../../../shared/ui/select";
-import { Textarea } from "../../../shared/ui/textarea";
 import type {
   JsonSchemaProperty,
   ReferenceCatalog,
   ReferenceNamespace,
   ResourceOption,
   UiField,
-  DynamicValue,
-  ReferenceEntry,
+  ConditionOperator,
+  ConditionSpec,
+  InputBinding,
   ValueSelector,
 } from "../model/types";
+import { selectorsEqual } from "../model/selector";
 import { CodeEditor } from "./code-editor";
-import { ExpressionBuilder } from "./expression-builder";
-import { ReferencePicker } from "./reference-picker/reference-picker";
-import { insertVariable, selectorDisplayLabel, VariableTokenEditor } from "./variable-token-editor";
+import { asReferenceBinding, asInputBinding, ReferenceInput, TemplateInput, SmartInput } from "./binding-inputs";
 import { RequiredLabel } from "./required-label";
 
 const EMPTY_JSON_OBJECT = {};
@@ -67,8 +65,7 @@ export function ParameterField({
     !ui?.visibleWhen ||
     parameters[ui.visibleWhen.field] === ui.visibleWhen.equals;
   const control = ui?.control;
-  const textReferenceEnabled =
-    Boolean(referenceCatalog) && Boolean(schema["x-agentx-dynamicValue"]);
+  const bindingEnabled = Boolean(referenceCatalog) && Boolean(schema["x-agentx-binding"]);
   useEffect(() => {
     onValidityChange?.(control ? SUPPORTED_CONTROLS.has(control) : false);
   }, [control, onValidityChange]);
@@ -136,47 +133,35 @@ export function ParameterField({
         value={value === undefined ? "" : String(value)}
       />,
     );
-  if (control === "textarea")
+  if (["template", "textarea", "prompt"].includes(control))
     return field(
-      <NativeReferenceControl
+      <TemplateInput
+        allowedNamespaces={allowedNamespaces(schema)}
         catalog={referenceCatalog}
-        enabled={textReferenceEnabled}
-        multiline
+        multiline={control !== "template" || Boolean(schema.multiline)}
         onChange={onChange}
-        schema={schema}
-        value={value}
+        value={asInputBinding(value)}
       />,
     );
-  if (control === "prompt")
+  if (control === "reference")
     return field(
-      <NativeReferenceControl
+      <ReferenceInput
+        allowedNamespaces={allowedNamespaces(schema)}
         catalog={referenceCatalog}
-        enabled={textReferenceEnabled}
-        multiline
-        multilineClassName="min-h-40"
+        expectedSchema={schema}
         onChange={onChange}
-        schema={schema}
-        value={value}
+        value={asReferenceBinding(value)}
       />,
     );
-  if (control === "expression")
-    return field(
-      <ExpressionReferenceControl
-        catalog={referenceCatalog}
-        enabled={textReferenceEnabled}
-        onChange={onChange}
-        schema={schema}
-        value={value}
-        workflowId={workflowId}
-      />,
-    );
-  if (control === "json")
+  if (control === "value")
+    return field(<SmartInput allowedNamespaces={allowedNamespaces(schema)} catalog={referenceCatalog} expectedSchema={schema} onChange={onChange} value={asInputBinding(value)} />);
+  if (["structured", "json", "schema_editor", "kv_builder", "sort_builder", "api_key_placement"].includes(control))
     return field(
       <StructuredJsonControl
         catalog={referenceCatalog}
-        enabled={textReferenceEnabled}
+        enabled={bindingEnabled}
         fallback={
-          schema.type === "array" ? EMPTY_JSON_ARRAY : EMPTY_JSON_OBJECT
+          schemaHasType(schema, "array") ? EMPTY_JSON_ARRAY : EMPTY_JSON_OBJECT
         }
         onChange={onChange}
         onValidityChange={onValidityChange}
@@ -197,159 +182,17 @@ export function ParameterField({
       />,
     );
   if (control === "collection")
-    return field(<CollectionControl catalog={referenceCatalog} enabled={textReferenceEnabled} itemSchema={schema.items} name={name} onChange={onChange} value={value} />);
+    return field(<CollectionControl catalog={referenceCatalog} enabled={bindingEnabled} itemSchema={schema.items} name={name} onChange={onChange} value={value} />);
   if (control === "fixed_collection")
-    return field(<FixedCollectionControl catalog={referenceCatalog} enabled={textReferenceEnabled} onChange={onChange} value={value} />);
+    return field(<FixedCollectionControl catalog={referenceCatalog} enabled={bindingEnabled} onChange={onChange} value={value} />);
   if (control === "mapper")
-    return field(<MapperControl catalog={referenceCatalog} enabled={textReferenceEnabled} onChange={onChange} value={value} />);
-  return field(
-    <NativeReferenceControl
-      catalog={referenceCatalog}
-      enabled={textReferenceEnabled}
-      onChange={onChange}
-      schema={schema}
-      value={value}
-    />,
-  );
-}
-
-function NativeReferenceControl({
-  value,
-  multiline,
-  multilineClassName,
-  enabled,
-  catalog,
-  schema,
-  onChange,
-}: {
-  value: unknown;
-  multiline?: boolean;
-  multilineClassName?: string;
-  enabled?: boolean;
-  catalog?: ReferenceCatalog;
-  schema: JsonSchemaProperty;
-  onChange: (value: unknown) => void;
-}) {
-  const dynamic = asDynamicValue(value);
-  const editor = useRef<LexicalEditor | null>(null);
-  const changeDynamic = (next: DynamicValue) => {
-    if (next.kind === "reference") return onChange({ ...next, coerce: schema.type === "string" ? "string" : undefined });
-    if (next.kind !== "literal") return onChange(next);
-    onChange({ kind: "literal", value: coerceLiteral(next.value, schema.type) } satisfies DynamicValue);
-  };
-  const insert = (selector: ValueSelector) => {
-    if (editor.current) insertVariable(editor.current, selector, selectorDisplayLabel(selector, catalog));
-    else onChange({ kind: "reference", selector, missingPolicy: { kind: "error" }, coerce: schema.type === "string" ? "string" : undefined } satisfies DynamicValue);
-  };
-  if (!enabled) {
-    const literal = dynamic.kind === "literal" ? String(dynamic.value ?? "") : "";
-    return multiline
-      ? <Textarea className={multilineClassName} onChange={(event) => onChange(event.target.value)} value={literal} />
-      : <Input onChange={(event) => onChange(event.target.value)} value={literal} />;
-  }
-  if (dynamic.kind === "expression") return <ExpressionBuilder allowed={allowedNamespaces(schema)} catalog={catalog} onChange={(root) => onChange({ kind: "expression", root } satisfies DynamicValue)} value={dynamic.root} />;
-  return (
-    <ReferenceControl
-      allowed={allowedNamespaces(schema)}
-      catalog={catalog}
-      enabled={enabled}
-      expectedType={schema.type}
-      onInsert={insert}
-    >
-      <VariableTokenEditor catalog={catalog} multiline={multiline} onChange={changeDynamic} onEditorReady={(next) => { editor.current = next; }} value={dynamic} />
-    </ReferenceControl>
-  );
-}
-
-function ExpressionReferenceControl({
-  value,
-  enabled,
-  catalog,
-  schema,
-  workflowId,
-  onChange,
-}: {
-  value: unknown;
-  enabled?: boolean;
-  catalog?: ReferenceCatalog;
-  schema: JsonSchemaProperty;
-  workflowId?: string;
-  onChange: (value: unknown) => void;
-}) {
+    return field(<MapperControl catalog={referenceCatalog} enabled={bindingEnabled} onChange={onChange} schema={schema} value={value} />);
+  if (control === "condition_builder")
+    return field(<ConditionBuilderControl catalog={referenceCatalog} onChange={onChange} value={value} />);
+  if (control === "buttons_editor")
+    return field(<ButtonsEditorControl onChange={onChange} value={value} />);
   void workflowId;
-  if (!enabled) return <NativeReferenceControl catalog={catalog} enabled={false} onChange={onChange} schema={schema} value={value} />;
-  const dynamic = asDynamicValue(value);
-  const root = dynamic.kind === "expression"
-    ? dynamic.root
-    : dynamic.kind === "reference"
-      ? { kind: "reference", selector: dynamic.selector, missingPolicy: dynamic.missingPolicy } as const
-      : { kind: "literal", value: dynamic.kind === "literal" ? dynamic.value : "" } as const;
-  return <ExpressionBuilder allowed={allowedNamespaces(schema)} catalog={catalog} onChange={(next) => onChange({ kind: "expression", root: next } satisfies DynamicValue)} value={root} />;
-}
-
-export function DynamicValueControl({ value, onChange, catalog, allowed = ["inputs", "outputs", "contexts"], expectedType = "string", multiline = false }: { value: DynamicValue; onChange: (value: DynamicValue) => void; catalog?: ReferenceCatalog; allowed?: ReferenceNamespace[]; expectedType?: string; multiline?: boolean }) {
-  return <NativeReferenceControl catalog={catalog} enabled multiline={multiline} onChange={(next) => onChange(asDynamicValue(next))} schema={{ type: expectedType, "x-agentx-dynamicValue": { modes: ["literal", "reference", "template", "expression"], allowedNamespaces: allowed, acceptedCardinality: ["single"], missingPolicies: ["error", "null", "default", "omit"], recursive: false } }} value={value} />;
-}
-
-export function ReferenceControl({
-  children,
-  enabled,
-  catalog,
-  allowed,
-  expectedType,
-  onInsert,
-}: {
-  children: React.ReactNode;
-  enabled?: boolean;
-  catalog?: ReferenceCatalog;
-  allowed: ReferenceNamespace[];
-  expectedType?: string;
-  onInsert: (value: ValueSelector, entry: ReferenceEntry) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const anchor = useRef<HTMLDivElement>(null);
-  const suppressFocusOpen = useRef(false);
-  const releaseTimer = useRef<number>();
-  useEffect(() => () => {
-    if (releaseTimer.current !== undefined) window.clearTimeout(releaseTimer.current);
-  }, []);
-  if (!enabled || !catalog) return children;
-  const insertAndClose = (value: ValueSelector, entry: ReferenceEntry) => {
-    suppressFocusOpen.current = true;
-    onInsert(value, entry);
-    setOpen(false);
-    releaseTimer.current = window.setTimeout(() => {
-      suppressFocusOpen.current = false;
-    }, 0);
-  };
-  return (
-    <div className="relative" onClickCapture={() => setOpen(true)} onFocusCapture={() => { if (!suppressFocusOpen.current) setOpen(true); }} ref={anchor}>
-      {children}
-      <ReferencePicker
-        allowedNamespaces={allowed}
-        catalog={catalog}
-        expectedType={expectedType}
-        onInsert={insertAndClose}
-        onOpenChange={setOpen}
-        open={open}
-        anchorRef={anchor}
-      />
-    </div>
-  );
-}
-
-function asDynamicValue(value: unknown): DynamicValue {
-  if (value && typeof value === "object" && "kind" in value && ["literal", "reference", "template", "expression"].includes(String((value as { kind: unknown }).kind))) return value as DynamicValue;
-  return { kind: "literal", value };
-}
-
-function coerceLiteral(value: unknown, type?: string): unknown {
-  if (typeof value !== "string") return value;
-  if (type === "number" || type === "integer") {
-    return value.trim() === "" ? undefined : Number(value);
-  }
-  if (type === "boolean") return value === "true";
-  return value;
+  return field(<Input onChange={(event) => onChange(event.target.value)} value={value === undefined || value === null ? "" : String(value)} />);
 }
 
 function CodeControl({
@@ -412,8 +255,15 @@ export type StructuredFieldLocalization = {
 
 function ObjectBuilder({ schema, value, onChange, catalog, enabled, path, localization }: { schema: JsonSchemaProperty; value: unknown; onChange: (value: unknown) => void; catalog?: ReferenceCatalog; enabled?: boolean; path: string; localization?: StructuredFieldLocalization }) {
   const { t } = useTranslation();
-  if (!schema.type) return <AnyJsonValueBuilder catalog={catalog} enabled={enabled} localization={localization} onChange={onChange} path={path} schema={schema} value={value} />;
-  const type = schema.type;
+  if (enabled) return <SmartInput allowedNamespaces={allowedNamespaces(schema)} catalog={catalog} expectedSchema={schema} onChange={onChange} value={asInputBinding(value)} />;
+  if (!schema.type) {
+    const inferred = jsonValueType(value);
+    if (enabled && (inferred === "object" || inferred === "array")) {
+      return <ObjectBuilder catalog={catalog} enabled localization={localization} onChange={onChange} path={path} schema={inferred === "object" ? { type: "object", additionalProperties: {} } : { type: "array", items: {} }} value={value} />;
+    }
+    return <AnyJsonValueBuilder catalog={catalog} enabled={enabled} localization={localization} onChange={onChange} path={path} schema={schema} value={value} />;
+  }
+  const type = primarySchemaType(schema);
   if (type === 'object') {
     const current = value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
     const properties = schema.properties ?? {};
@@ -431,8 +281,8 @@ function ObjectBuilder({ schema, value, onChange, catalog, enabled, path, locali
     return <div className="space-y-2" data-testid="json-array">{items.map((item, index) => <div className="space-y-1 rounded-md border border-border/60 p-2" data-testid="json-array-item" key={index}><div className="flex items-center justify-between"><span className="text-[10px] text-muted-foreground">#{index + 1}</span><Button aria-label={t('studio.remove', { index: index + 1 })} onClick={() => onChange(items.filter((_, currentIndex) => currentIndex !== index))} size="icon" variant="ghost"><Trash2 className="size-3.5" /></Button></div><ObjectBuilder catalog={catalog} enabled={enabled} localization={localization} onChange={(next) => onChange(items.map((current, currentIndex) => currentIndex === index ? next : current))} path={`${path}[]`} schema={schema.items ?? {}} value={item} /></div>)}<Button aria-label={t('studio.addItem')} onClick={() => onChange([...items, defaultForSchema(schema.items)])} size="sm" variant="secondary"><Plus className="size-3.5" />{t('studio.addItem')}</Button></div>;
   }
   const label = localization?.label(path) ?? schema.title ?? humanize(path.split('.').at(-1)?.replace('[]', '') ?? path);
-  const dynamicEnabled = Boolean(enabled || schema["x-agentx-dynamicValue"]);
-  if (dynamicEnabled) return <NativeReferenceControl catalog={catalog} enabled onChange={onChange} schema={{ ...schema, "x-agentx-dynamicValue": schema["x-agentx-dynamicValue"] ?? { modes: ["literal", "reference"], allowedNamespaces: ["inputs", "outputs", "contexts", "execution", "item", "loop"], acceptedCardinality: ["single"], missingPolicies: ["error", "null", "default", "omit"], recursive: false } }} value={value} />;
+  const bindingEnabled = Boolean(enabled || schema["x-agentx-binding"]);
+  if (bindingEnabled) return <SmartInput allowedNamespaces={allowedNamespaces(schema)} catalog={catalog} expectedSchema={schema} onChange={onChange} value={asInputBinding(value)} />;
   if (type === 'boolean') return <label className="flex items-center gap-2 text-xs"><input checked={Boolean(value)} className="size-4 accent-primary" onChange={(event) => onChange(event.target.checked)} type="checkbox" />{label}</label>;
   if (schema.enum?.length) return <Select aria-label={label} className="w-full" onValueChange={(next) => onChange(schema.enum?.find((option) => String(option) === next) ?? next)} options={schema.enum.map((option) => ({ value: String(option), label: localization?.enumLabel(path, String(option)) ?? String(option) }))} value={value === undefined ? "" : String(value)} />;
   return <Input aria-label={label || t('studio.value')} min={schema.minimum} onChange={(event) => onChange(type === 'number' || type === 'integer' ? Number(event.target.value) : event.target.value)} placeholder={localization?.placeholder(path)} type={type === 'number' || type === 'integer' ? 'number' : 'text'} value={value === undefined || value === null ? '' : String(value)} />;
@@ -440,6 +290,7 @@ function ObjectBuilder({ schema, value, onChange, catalog, enabled, path, locali
 
 function AnyJsonValueBuilder({ schema, value, onChange, catalog, enabled, path = "value", localization }: { schema: JsonSchemaProperty; value: unknown; onChange: (value: unknown) => void; catalog?: ReferenceCatalog; enabled?: boolean; path?: string; localization?: StructuredFieldLocalization }) {
   const { t } = useTranslation();
+  if (enabled || schema["x-agentx-binding"]) return <SmartInput allowedNamespaces={allowedNamespaces(schema)} catalog={catalog} expectedSchema={schema} onChange={onChange} value={asInputBinding(value)} />;
   const type = jsonValueType(value);
   const typedSchema = { ...schema, type: type === 'null' ? 'string' : type } as JsonSchemaProperty;
   return <div className="space-y-1" data-testid="json-any-value"><Select aria-label={t('studio.jsonValueType')} className="w-full min-w-0" onValueChange={(next) => onChange(defaultForSchema({ type: next }))} options={JSON_VALUE_TYPES.map((item) => ({ value: item, label: t(`studio.schemaTypes.${item}`, item) }))} value={type === 'null' ? 'string' : type} /><ObjectBuilder catalog={catalog} enabled={enabled} localization={localization} onChange={onChange} path={path} schema={typedSchema} value={value === null || value === undefined ? defaultForSchema(typedSchema) : value} /></div>;
@@ -455,11 +306,11 @@ function jsonValueType(value: unknown): string {
   return 'string';
 }
 
-function isDynamicLiteral(value: unknown): value is Extract<DynamicValue, { kind: 'literal' }> {
+function isDynamicLiteral(value: unknown): value is Extract<InputBinding, { kind: 'literal' }> {
   return Boolean(value && typeof value === 'object' && (value as { kind?: unknown }).kind === 'literal' && 'value' in value);
 }
 
-function defaultForSchema(schema?: JsonSchemaProperty): unknown { if (schema?.default !== undefined) return schema.default; if (schema?.type === 'object') return {}; if (schema?.type === 'array') return []; if (schema?.type === 'boolean') return false; if (schema?.type === 'number' || schema?.type === 'integer') return 0; return ''; }
+function defaultForSchema(schema?: JsonSchemaProperty): unknown { if (schema?.default !== undefined) return schema.default; if (schemaHasType(schema, 'object')) return {}; if (schemaHasType(schema, 'array')) return []; if (schemaHasType(schema, 'boolean')) return false; if (schemaHasType(schema, 'number') || schemaHasType(schema, 'integer')) return 0; return ''; }
 
 function CollectionControl({
   value,
@@ -530,13 +381,12 @@ function FixedCollectionControl({
   onChange: (value: Record<string, unknown>) => void;
 }) {
   const { t } = useTranslation();
-  const entries = Object.entries(
-    value && typeof value === "object" && !Array.isArray(value)
-      ? (value as Record<string, unknown>)
-      : {},
-  );
+  const binding = asInputBinding(value);
+  const fields = binding.kind === "object" ? binding.fields : {};
+  const entries = Object.entries(fields);
+  const emit = (next: Record<string, unknown>) => onChange({ kind: "object", fields: next } as unknown as Record<string, unknown>);
   const replace = (index: number, key: string, next: unknown) =>
-    onChange(
+    emit(
       Object.fromEntries(
         entries.map(([currentKey, currentValue], current) =>
           current === index ? [key, next] : [currentKey, currentValue],
@@ -548,7 +398,7 @@ function FixedCollectionControl({
       {entries.map(([key, item], index) => (
         <div
           className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_32px] gap-2"
-          key={`${key}-${index}`}
+          key={index}
         >
           <Input
             aria-label={t("studio.key")}
@@ -559,7 +409,7 @@ function FixedCollectionControl({
           <Button
             aria-label={t("studio.removeField", { key })}
             onClick={() =>
-              onChange(
+              emit(
                 Object.fromEntries(
                   entries.filter((_, current) => current !== index),
                 ),
@@ -574,9 +424,9 @@ function FixedCollectionControl({
       ))}
       <Button
         onClick={() =>
-          onChange({
+          emit({
             ...Object.fromEntries(entries),
-            [`field${entries.length + 1}`]: "",
+            [`field${entries.length + 1}`]: { kind: "literal", value: "" },
           })
         }
         size="sm"
@@ -594,26 +444,53 @@ function MapperControl({
   catalog,
   enabled,
   onChange,
+  schema,
 }: {
   value: unknown;
   catalog?: ReferenceCatalog;
   enabled?: boolean;
   onChange: (value: Record<string, unknown>) => void;
+  schema: JsonSchemaProperty;
 }) {
   const { t } = useTranslation();
-  const entries = Object.entries(
-    value && typeof value === "object" && !Array.isArray(value)
-      ? (value as Record<string, unknown>)
-      : {},
-  );
+  const binding = asInputBinding(value);
+  const fields = binding.kind === "object" ? binding.fields : {};
+  const entries = Object.entries(fields);
+  const emit = (next: Record<string, unknown>) => onChange({ kind: "object", fields: next } as unknown as Record<string, unknown>);
   const replace = (index: number, key: string, next: unknown) =>
-    onChange(
+    emit(
       Object.fromEntries(
         entries.map(([currentKey, currentValue], current) =>
           current === index ? [key, next] : [currentKey, currentValue],
         ),
       ),
     );
+  const shape = mapperSchemaShape(schema);
+  const dynamicValueSchema = schema["x-agentx-binding"]
+    ? { "x-agentx-binding": schema["x-agentx-binding"] }
+    : {};
+  if (shape) {
+    const current = Object.fromEntries(entries);
+    const unknown = entries.filter(([name]) => !shape.properties[name]);
+    const set = (name: string, next: unknown) => emit({ ...current, [name]: next });
+    return (
+      <div className="space-y-2" data-testid="mapper-control">
+        {Object.entries(shape.properties).map(([name, property]) => (
+          <div className="grid grid-cols-[120px_minmax(0,1fr)] items-start gap-2" data-field-path={`inputs.${name}`} key={name}>
+            <span className="pt-2 text-xs text-muted-foreground"><RequiredLabel required={shape.required.has(name)}>{property.title ?? name}</RequiredLabel></span>
+            <AnyJsonValueBuilder catalog={catalog} enabled={enabled} onChange={(next) => set(name, next)} schema={shape.binding ? { ...property, "x-agentx-binding": shape.binding } : property} value={current[name]} />
+          </div>
+        ))}
+        {unknown.map(([name, item]) => (
+          <div className="grid grid-cols-[120px_minmax(0,1fr)_32px] gap-2 border-l-2 border-danger pl-2" key={name}>
+            <span className="pt-2 text-xs text-danger">{name}</span>
+            <AnyJsonValueBuilder catalog={catalog} enabled={enabled} onChange={(next) => set(name, next)} schema={{}} value={item} />
+            <Button aria-label={t("studio.removeField", { key: name })} onClick={() => emit(Object.fromEntries(entries.filter(([key]) => key !== name)))} size="icon" variant="ghost"><Trash2 className="size-3.5" /></Button>
+          </div>
+        ))}
+      </div>
+    );
+  }
   return (
     <div className="space-y-2" data-testid="mapper-control">
       {entries.map(([key, item], index) => (
@@ -626,11 +503,11 @@ function MapperControl({
             onChange={(event) => replace(index, event.target.value, item)}
             value={key}
           />
-          <AnyJsonValueBuilder catalog={catalog} enabled={enabled} onChange={(next) => replace(index, key, next)} schema={{}} value={item} />
+          <AnyJsonValueBuilder catalog={catalog} enabled={enabled} onChange={(next) => replace(index, key, next)} schema={dynamicValueSchema} value={item} />
           <Button
             aria-label={t("studio.removeField", { key })}
             onClick={() =>
-              onChange(
+              emit(
                 Object.fromEntries(
                   entries.filter((_, current) => current !== index),
                 ),
@@ -645,9 +522,9 @@ function MapperControl({
       ))}
       <Button
         onClick={() =>
-          onChange({
+          emit({
             ...Object.fromEntries(entries),
-            [`field${entries.length + 1}`]: "",
+            [`field${entries.length + 1}`]: { kind: "literal", value: "" },
           })
         }
         size="sm"
@@ -658,6 +535,231 @@ function MapperControl({
       </Button>
     </div>
   );
+}
+
+type ConditionRow = { condition?: unknown; label?: string };
+type ConditionGroup = { id?: string; name?: string; conditions?: ConditionRow[]; logicalOp?: string };
+
+function ConditionBuilderControl({
+  value,
+  catalog,
+  onChange,
+}: {
+  value: unknown;
+  catalog?: ReferenceCatalog;
+  onChange: (value: unknown) => void;
+}) {
+  const { t } = useTranslation();
+  const [renaming, setRenaming] = useState<string>();
+  const logicalOpOptions = [
+    { value: "and", label: t("studio.conditionBuilder.and") },
+    { value: "or", label: t("studio.conditionBuilder.or") },
+  ];
+  const renderRows = (
+    rows: ConditionRow[],
+    updateRows: (rows: ConditionRow[]) => void,
+    key: string,
+    logicalOp: string,
+    updateLogicalOp: (value: string) => void,
+  ) => (
+    <div className="space-y-1.5">
+      {rows.map((row, index) => <div key={`${key}-${index}`}>
+        {index > 0 && <div className="my-1 flex items-center gap-2"><span className="h-px flex-1 bg-border" /><Select aria-label={t("studio.conditionBuilder.logicalOp")} className="h-7 w-[76px]" onValueChange={updateLogicalOp} options={logicalOpOptions} value={logicalOp} /><span className="h-px flex-1 bg-border" /></div>}
+        <div className="flex items-start gap-2">
+          <div className="min-w-0 flex-1"><ConditionRowEditor catalog={catalog} onChange={(condition) => updateRows(rows.map((current, currentIndex) => currentIndex === index ? { ...current, condition } : current))} value={row.condition} /></div>
+          <Button aria-label={t("studio.conditionBuilder.removeCondition")} onClick={() => updateRows(rows.filter((_, currentIndex) => currentIndex !== index))} size="icon" variant="ghost"><Trash2 className="size-3.5" /></Button>
+        </div>
+      </div>)}
+      <Button aria-label={t("studio.conditionBuilder.addCondition")} onClick={() => updateRows([...rows, { condition: defaultComparisonCondition() }])} size="sm" variant="ghost"><Plus className="size-3.5" />{t("studio.conditionBuilder.addCondition")}</Button>
+    </div>
+  );
+  if (Array.isArray(value)) {
+    const branches = value as ConditionGroup[];
+    const updateBranch = (index: number, patch: Partial<ConditionGroup>) => onChange(branches.map((branch, currentIndex) => currentIndex === index ? { ...branch, ...patch } : branch));
+    return <div className="space-y-2" data-testid="condition-builder">
+      {branches.map((branch, index) => {
+        const rows = Array.isArray(branch.conditions) ? branch.conditions : [];
+        const branchId = branch.id ?? String(index);
+        return <div className="rounded-md border border-border/70 p-2" data-testid={`condition-branch-${index}`} key={branchId}>
+          <div className="mb-2 flex h-8 items-center gap-2">
+            <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">{index === 0 ? t("studio.conditionBuilder.if") : `${t("studio.conditionBuilder.elseIf")} ${index}`}</span>
+            {renaming === branchId
+              ? <Input autoFocus aria-label={t("studio.inspector.name")} className="h-8 min-w-0 flex-1" onBlur={() => setRenaming(undefined)} onChange={(event) => updateBranch(index, { name: event.target.value })} value={branch.name ?? ""} />
+              : <span className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground">{branch.name || t("studio.conditionBuilder.defaultBranchName", { index: index + 1 })}</span>}
+            <Button aria-label={t("studio.conditionBuilder.renameBranch")} onClick={() => setRenaming(branchId)} size="icon" variant="ghost"><Pencil className="size-3.5" /></Button>
+            {branches.length > 1 && <Button aria-label={t("studio.conditionBuilder.removeBranch")} onClick={() => onChange(branches.filter((_, currentIndex) => currentIndex !== index))} size="icon" variant="ghost"><Trash2 className="size-3.5" /></Button>}
+          </div>
+          {renderRows(rows, (conditions) => updateBranch(index, { conditions }), branchId, branch.logicalOp ?? "and", (logicalOp) => updateBranch(index, { logicalOp }))}
+        </div>;
+      })}
+      <Button aria-label={t("studio.conditionBuilder.addBranch")} onClick={() => onChange([...branches, { id: nextConditionId(branches), name: "", conditions: [{ condition: defaultComparisonCondition() }], logicalOp: "and" }])} size="sm" variant="secondary"><Plus className="size-3.5" />{t("studio.conditionBuilder.addBranch")}</Button>
+    </div>;
+  }
+  const group = value && typeof value === "object" ? value as ConditionGroup : {};
+  const rows = Array.isArray(group.conditions) ? group.conditions : [];
+  return <div className="space-y-2 rounded-md border border-border/70 p-2" data-testid="condition-builder">
+    <span className="text-[10px] font-medium text-muted-foreground">{t("studio.conditionBuilder.conditions")}</span>
+    {renderRows(rows, (conditions) => onChange({ ...group, conditions }), "conditions", group.logicalOp ?? "and", (logicalOp) => onChange({ ...group, logicalOp }))}
+  </div>;
+}
+
+function nextConditionId(branches: ConditionGroup[]) {
+  const taken = new Set(branches.map((branch) => branch.id));
+  let id = `case_${crypto.randomUUID()}`;
+  while (taken.has(id)) id = `case_${crypto.randomUUID()}`;
+  return id;
+}
+
+function mapperSchemaShape(schema: JsonSchemaProperty) {
+  const candidate = (schema as JsonSchemaProperty & { allOf?: JsonSchemaProperty[] }).allOf?.find((item) => item.properties) ?? schema;
+  if (!candidate.properties || !Object.keys(candidate.properties).length) return undefined;
+  return {
+    properties: candidate.properties,
+    required: new Set(candidate.required ?? []),
+    binding: schema["x-agentx-binding"]?.recursive ? schema["x-agentx-binding"] : undefined,
+  };
+}
+
+type EditorButton = { id?: string; label?: string };
+
+function ButtonsEditorControl({
+  value,
+  onChange,
+}: {
+  value: unknown;
+  onChange: (value: unknown) => void;
+}) {
+  const { t } = useTranslation();
+  const record = value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+  const buttons = Array.isArray(value)
+    ? (value as EditorButton[])
+    : Array.isArray(record.buttons)
+      ? (record.buttons as EditorButton[])
+      : [];
+  const update = (next: EditorButton[]) =>
+    onChange(Array.isArray(value) ? next : { ...record, buttons: next });
+  const replace = (index: number, patch: Partial<EditorButton>) =>
+    update(buttons.map((button, currentIndex) => currentIndex === index ? { ...button, ...patch } : button));
+  return (
+    <div className="space-y-2" data-testid="buttons-editor">
+      {buttons.map((button, index) => (
+        <div className="grid grid-cols-[minmax(0,1fr)_32px] gap-2" key={button.id ?? index}>
+          <Input
+            aria-label={t("studio.buttonsEditor.buttonLabel")}
+            onChange={(event) => replace(index, { label: event.target.value })}
+            value={button.label ?? ""}
+          />
+          <Button
+            aria-label={t("studio.buttonsEditor.removeButton")}
+            onClick={() => update(buttons.filter((_, currentIndex) => currentIndex !== index))}
+            size="icon"
+            variant="ghost"
+          >
+            <Trash2 className="size-3.5" />
+          </Button>
+        </div>
+      ))}
+      <Button aria-label={t("studio.buttonsEditor.addButton")} onClick={() => update([...buttons, { id: nextButtonId(buttons), label: "" }])} size="sm" variant="secondary">
+        <Plus className="size-3.5" />
+        {t("studio.buttonsEditor.addButton")}
+      </Button>
+    </div>
+  );
+}
+
+function nextButtonId(buttons: EditorButton[]) {
+  const taken = new Set(buttons.map((button) => button.id));
+  let id = `decision_${crypto.randomUUID()}`;
+  while (taken.has(id)) id = `decision_${crypto.randomUUID()}`;
+  return id;
+}
+
+function ConditionRowEditor({
+  value,
+  catalog,
+  onChange,
+}: {
+  value: unknown;
+  catalog?: ReferenceCatalog;
+  onChange: (value: ConditionSpec) => void;
+}) {
+  const { t } = useTranslation();
+  const condition = asConditionSpec(value);
+  const leftSchema = inputBindingSchema(condition.left, catalog);
+  const operators = operatorsForSchema(leftSchema);
+  const unary = condition.operator === "is_empty" || condition.operator === "is_not_empty";
+  const update = (patch: Partial<ConditionSpec>) => onChange({ ...condition, ...patch });
+  return (
+    <div className={`grid gap-2 ${unary ? "grid-cols-[minmax(0,1fr)_112px]" : "grid-cols-[minmax(0,1fr)_92px_minmax(0,1fr)]"}`} data-testid="condition-comparison-row">
+      <SmartInput allowedNamespaces={["inputs", "outputs", "contexts", "execution", "item", "loop"]} catalog={catalog} onChange={(left) => update({ left })} value={condition.left} />
+      <Select
+        aria-label={t("studio.conditionBuilder.operator")}
+        className="h-9"
+        onValueChange={(operator) => update({ operator: operator as ConditionOperator })}
+        options={operators.map((operator) => ({ value: operator, label: conditionOperatorLabel(operator) }))}
+        value={operators.includes(condition.operator) ? condition.operator : "eq"}
+      />
+      {!unary && <SmartInput allowedNamespaces={["inputs", "outputs", "contexts", "execution", "item", "loop"]} catalog={catalog} expectedSchema={leftSchema} onChange={(right) => update({ right })} value={condition.right ?? { kind: "literal", value: "" }} />}
+    </div>
+  );
+}
+
+function defaultComparisonCondition(): ConditionSpec {
+  return { left: { kind: "literal", value: "" }, operator: "eq", right: { kind: "literal", value: "" } };
+}
+
+function conditionOperatorLabel(operator: ConditionOperator) {
+  return ({ eq: "=", ne: "≠", gt: ">", gte: "≥", lt: "<", lte: "≤", in: "IN", contains: "包含", not_contains: "不包含", starts_with: "开头为", ends_with: "结尾为", matches: "匹配", is_empty: "为空", is_not_empty: "不为空" })[operator];
+}
+
+function asConditionSpec(value: unknown): ConditionSpec {
+  if (value && typeof value === "object" && "left" in value && "operator" in value) return value as ConditionSpec;
+  return defaultComparisonCondition();
+}
+
+function operatorsForSchema(schema?: JsonSchemaProperty): ConditionOperator[] {
+  const type = primarySchemaType(schema ?? {});
+  if (type === "string") return ["eq", "ne", "contains", "not_contains", "starts_with", "ends_with", "matches", "is_empty", "is_not_empty"];
+  if (type === "number" || type === "integer") return ["eq", "ne", "gt", "gte", "lt", "lte", "is_empty", "is_not_empty"];
+  if (type === "array") return ["contains", "not_contains", "is_empty", "is_not_empty"];
+  if (type === "object") return ["is_empty", "is_not_empty"];
+  if (type === "boolean") return ["eq", "ne"];
+  return ["eq", "ne", "is_empty", "is_not_empty"];
+}
+
+function inputBindingSchema(binding: InputBinding, catalog?: ReferenceCatalog): JsonSchemaProperty | undefined {
+  switch (binding.kind) {
+    case "reference": return referenceSchema(catalog, binding.selector);
+    case "template": return { type: "string" };
+    case "array": return { type: "array" };
+    case "object": return { type: "object" };
+    case "literal": {
+      if (binding.value === null) return undefined;
+      if (Array.isArray(binding.value)) return { type: "array" };
+      if (typeof binding.value === "number") return { type: Number.isInteger(binding.value) ? "integer" : "number" };
+      if (typeof binding.value === "boolean") return { type: "boolean" };
+      if (typeof binding.value === "object") return { type: "object" };
+      return { type: "string" };
+    }
+  }
+}
+
+function referenceSchema(catalog: ReferenceCatalog | undefined, selector: ValueSelector): JsonSchemaProperty | undefined {
+  const visit = (entries: import("../model/types").ReferenceEntry[]): JsonSchemaProperty | undefined => {
+    for (const entry of entries) {
+      if (entry.selector && selectorsEqual(entry.selector, selector)) return entry.schema;
+      const child = visit(entry.children);
+      if (child) return child;
+    }
+    return undefined;
+  };
+  for (const entries of Object.values(catalog ?? {})) {
+    const found = visit(entries ?? []);
+    if (found) return found;
+  }
+  return undefined;
 }
 
 function UnsupportedControl({
@@ -718,9 +820,7 @@ const codeLanguage = (runner: unknown) =>
     ? "javascript"
     : runner === "shell"
       ? "shell"
-      : runner === "browser"
-        ? "typescript"
-        : "python";
+      : "python";
 const inferredUnit = (name: string) => {
   if (name.endsWith("Ms")) return "milliseconds";
   if (name.includes("Tokens")) return "tokens";
@@ -736,8 +836,10 @@ const selectOption = (item: unknown, localizedLabel?: string) =>
   "label" in item
     ? { value: String(item.value), label: localizedLabel ?? String(item.label) }
     : { value: String(item), label: localizedLabel ?? String(item) };
+const schemaHasType = (schema: JsonSchemaProperty | undefined, type: string) => schema?.type === type || Array.isArray(schema?.type) && schema.type.includes(type);
+const primarySchemaType = (schema: JsonSchemaProperty) => Array.isArray(schema.type) ? schema.type.find((type) => type !== "null") ?? schema.type[0] : schema.type;
 const allowedNamespaces = (schema: JsonSchemaProperty): ReferenceNamespace[] =>
-  (schema["x-agentx-dynamicValue"]?.allowedNamespaces ?? ["inputs", "outputs", "contexts"]).filter(
+  (schema["x-agentx-binding"]?.allowedNamespaces ?? ["inputs", "outputs", "contexts"]).filter(
     (namespace): namespace is ReferenceNamespace =>
       namespace === "inputs" ||
       namespace === "outputs" ||
@@ -756,8 +858,19 @@ export const SUPPORTED_CONTROLS = new Set([
   "collection",
   "fixed_collection",
   "mapper",
-  "expression",
+  "reference",
+  "value",
+  "template",
+  "structured",
   "prompt",
   "json",
   "code",
+  "condition_builder",
+  "buttons_editor",
+  "schema_editor",
+  "json5_example",
+  "network_policy",
+  "kv_builder",
+  "sort_builder",
+  "api_key_placement",
 ]);

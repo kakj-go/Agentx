@@ -32,7 +32,7 @@ async function createWorkflow(page: Page, token: string, nodeCount: number) {
 
 function syntheticDraft(base: Draft, nodeCount: number) {
   const nodes = Array.from({ length: nodeCount }, (_, index) => ({
-    id: `perf-${index}`, type: 'no_op', typeVersion: 1, name: `No Operation ${index}`, disabled: false,
+    id: `perf-${index}`, type: 'set', typeVersion: 1, name: `Pass Through ${index}`, disabled: false,
     parameters: {}, resourceReferences: [], settings: {},
   }))
   const connections = nodes.slice(0, -1).map((value, index) => ({
@@ -41,7 +41,7 @@ function syntheticDraft(base: Draft, nodeCount: number) {
   return {
     ...base,
     updatedAt: new Date().toISOString(),
-    definition: { schemaVersion: '3.0', nodes, connections, settings: { executionOrder: 'deterministic', activationBudget: 10_000 } },
+    definition: { schemaVersion: '8.0', nodes, connections, settings: { executionOrder: 'deterministic', activationBudget: 10_000 } },
     editorDocument: {
       nodeLayouts: nodes.map((value, index) => ({ nodeId: value.id, x: 80 + (index % 50) * 150, y: 80 + Math.floor(index / 50) * 150 })),
       bindingLayouts: [], edges: connections.map((value) => ({ edgeId: value.id })), bindingEdges: [], annotations: [], groups: [],
@@ -132,11 +132,11 @@ test('Workflow canvas meets the 500 and 1000 node interaction budgets', async ({
   test.slow()
   const token = await login(page)
   const catalog = await request<CatalogPage>(page, token, '/node-definitions?pageSize=100')
-  const noOperation = catalog.items.find((item) => item.nodeType === 'no_op' && item.version === 1)
-  expect(noOperation).toBeTruthy()
-  const detail = await request<Record<string, unknown>>(page, token, '/node-definitions/no_op/versions/1')
-  await page.route('**/api/v1/node-definitions?pageSize=100', (route) => route.fulfill({ json: { items: [noOperation] } }))
-  await page.route('**/api/v1/node-definitions/no_op/versions/1', (route) => route.fulfill({ json: detail }))
+  const setNode = catalog.items.find((item) => item.nodeType === 'set' && item.version === 1)
+  expect(setNode).toBeTruthy()
+  const detail = await request<Record<string, unknown>>(page, token, '/node-definitions/set/versions/1')
+  await page.route('**/api/v1/node-definitions?pageSize=100', (route) => route.fulfill({ json: { items: [setNode] } }))
+  await page.route('**/api/v1/node-definitions/set/versions/1', (route) => route.fulfill({ json: detail }))
   const metrics = [await benchmark(page, token, 500), await benchmark(page, token, 1_000)]
   const evidence = JSON.stringify(metrics, null, 2)
   const evidencePath = testInfo.outputPath('workflow-canvas-performance.json')

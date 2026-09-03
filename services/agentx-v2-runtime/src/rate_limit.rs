@@ -111,7 +111,6 @@ fn caller_key(request: &Request<Body>) -> String {
         .get(AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
         .or_else(|| request.uri().path().strip_prefix("/webhooks/"))
-        .or_else(|| request.uri().path().strip_prefix("/waits/"))
         .unwrap_or("anonymous");
     format!("{:x}", Sha256::digest(identity.as_bytes()))
 }

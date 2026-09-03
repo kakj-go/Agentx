@@ -7,7 +7,7 @@ type StudioDraft = {
   definition: {
     nodes: Array<{ id: string; key: string; type: string; name: string; protected?: boolean; parameters: Record<string, unknown> }>
     connections: Array<{ id: string; sourceNodeId: string; targetNodeId: string; targetHandle: string }>
-    end: { outputs: Record<string, { schema: { type: string }; required: boolean }> }
+    end: { completion: 'first_return' | 'all_complete'; outputs: Record<string, { schema: { type: string }; required: boolean }> }
   }
 }
 
@@ -47,8 +47,11 @@ async function createWorkflow(page: Page, name: string) {
   await dialog.getByLabel('工作流名称').fill(name)
   await dialog.getByLabel('描述').fill('Multi Exit Kubernetes E2E')
   await dialog.getByRole('button', { name: '保存' }).click()
-  await expect(page).toHaveURL(/\/workflows\/[0-9a-f-]+\/editor$/)
-  return page.url().split('/').at(-2) as string
+  await expect(page).toHaveURL(/\/workflows\/[0-9a-f-]+$/)
+  const workflowId = page.url().split('/').at(-1) as string
+  await page.locator(`a[href="/workflows/${workflowId}/editor"]`).click()
+  await expect(page).toHaveURL(new RegExp(`/workflows/${workflowId}/editor$`))
+  return workflowId
 }
 
 async function connect(page: Page, source: Locator, sourceHandle: string, target: Locator, targetHandle: string) {
@@ -71,6 +74,10 @@ async function connect(page: Page, source: Locator, sourceHandle: string, target
   await page.mouse.move(toBox!.x + toBox!.width / 2, toBox!.y + toBox!.height / 2, { steps: 12 })
   await page.waitForTimeout(75)
   await page.mouse.up()
+  if (await edges.count() === edgeCount) {
+    await from.click({ force: true })
+    await to.click({ force: true })
+  }
   await expect(edges).toHaveCount(edgeCount + 1)
 }
 
@@ -97,7 +104,7 @@ async function saveAndReadDraft(page: Page, token: string, workflowId: string) {
 
 async function setStartQuestionInput(page: Page) {
   await page.getByTestId('workflow-start').click()
-  const panel = page.getByTestId('workflow-interface-panel')
+  const panel = page.getByTestId('start-panel')
   await expect(panel).toBeVisible()
   await panel.getByRole('button', { name: /添加字段|Add field/ }).first().click()
   const dialog = page.getByRole('dialog', { name: /添加字段|Add field/ })
@@ -122,8 +129,12 @@ test('multi exit workflow keeps one shared contract with per-node mappings', asy
   await page.keyboard.press('Delete')
   await expect(page.getByTestId('exit-node-exit')).toBeVisible()
 
+  const initialEdge = page.locator('.react-flow__edge').first()
+  await initialEdge.click({ force: true })
+  await page.keyboard.press('Delete')
+  await expect(page.locator('.react-flow__edge')).toHaveCount(0)
+
   // add a second, removable exit from the palette
-  await page.getByTestId('node-creator-trigger').click()
   await page.getByTestId('palette-exit').click()
   await expect(page.getByTestId('exit-panel')).toBeVisible()
   await page.getByTestId('exit-panel').getByRole('button', { name: /^(关闭|Close)$/ }).first().click()
@@ -135,11 +146,16 @@ test('multi exit workflow keeps one shared contract with per-node mappings', asy
   const start = page.getByTestId('workflow-start')
   const initialExit = page.getByTestId('exit-node-exit')
   async function addSet() {
-    await page.getByTestId('node-creator-trigger').click()
+    await expect(page.getByTestId('node-creator')).toBeVisible()
     await page.getByRole('textbox', { name: '搜索节点' }).fill('set')
     await page.getByTestId('palette-action-set').click()
+    const selected = page.locator('.react-flow__node.selected').first()
+    await expect(selected).toBeVisible()
+    const testId = await selected.locator('[data-testid^="studio-node-"]').getAttribute('data-testid')
+    expect(testId).toBeTruthy()
+    const added = page.getByTestId(testId!)
     await page.getByTestId('node-details-view').getByRole('button', { name: /^(关闭|Close)$/ }).first().click()
-    return page.locator('.react-flow__node[type="manifest"]').filter({ hasText: /Set/i }).last()
+    return added
   }
   const firstSet = await addSet()
   const secondSet = await addSet()
@@ -155,39 +171,33 @@ test('multi exit workflow keeps one shared contract with per-node mappings', asy
   await panel.getByRole('button', { name: /添加字段|Add field/ }).first().click()
   const dialog = page.getByRole('dialog', { name: /输出字段|Output field/ })
   await dialog.getByLabel(/输出名称|Output name/).fill('answer')
-  await dialog.getByLabel(/必填|Required/).check()
   await dialog.getByRole('button', { name: /保存|Save/ }).click()
   await expect(panel.getByTestId('exit-mapping-answer')).toBeVisible()
   await chooseInputsReference(page, panel.getByTestId('exit-mapping-answer'))
+  await panel.getByTestId('completion-all_complete').click()
   await panel.getByRole('button', { name: /^(关闭|Close)$/ }).first().click()
 
   await secondExit.click()
   const secondPanel = page.getByTestId('exit-panel')
   await expect(secondPanel).toBeVisible()
-  await chooseInputsReference(page, secondPanel.getByTestId('exit-mapping-answer'))
+  await expect(secondPanel.getByTestId('exit-mapping-answer')).toBeVisible()
   await secondPanel.getByRole('button', { name: /^(关闭|Close)$/ }).first().click()
 
   const { definition } = await saveAndReadDraft(page, token, workflowId)
   const exitNodes = definition.nodes.filter((node) => node.type === 'exit')
+  const primaryExit = exitNodes.find((node) => node.key === 'exit')
+  const manualExit = exitNodes.find((node) => node.key === 'exit_2')
   expect(exitNodes).toHaveLength(2)
   expect(exitNodes.map((node) => node.protected ?? false).sort()).toEqual([false, true])
-  for (const node of exitNodes) {
-    const outputs = (node.parameters as { outputs?: Record<string, unknown> }).outputs ?? {}
-    expect(outputs).toHaveProperty('answer')
-  }
+  expect(primaryExit?.parameters.outputs).toHaveProperty('answer')
+  expect(manualExit?.parameters.outputs ?? {}).not.toHaveProperty('answer')
   const exitIds = new Set(exitNodes.map((node) => node.id))
   expect(definition.connections.some((connection) => exitIds.has(connection.targetNodeId) && connection.targetHandle === 'main')).toBe(true)
-  expect(definition.end.outputs.answer).toMatchObject({ schema: { type: 'string' }, required: true })
+  expect(definition.end.completion).toBe('all_complete')
+  expect(definition.end.outputs.answer).toMatchObject({ schema: { type: 'string' }, required: false })
 
-  // the manually added exit can be removed; the protected one cannot
-  await secondExit.click()
-  await page.keyboard.press('Delete')
-  await expect(secondExit).toHaveCount(0)
-  await expect(initialExit).toBeVisible()
-
-  // the remaining exit materializes the workflow output from the start input
-  await saveAndReadDraft(page, token, workflowId)
-  page.once('dialog', (dialog) => dialog.accept())
+  // Both exits arrive, but only the first maps the optional field. The output
+  // keeps one slot per reached Exit in Definition order.
   const runResponse = page.waitForResponse((response) => response.url().includes('/debug-executions') && response.request().method() === 'POST')
   await page.locator('header').getByRole('button', { name: '运行', exact: true }).click()
   const parameters = page.getByRole('dialog', { name: /运行工作流|调试输入|Run workflow|Debug input/ })
@@ -195,6 +205,18 @@ test('multi exit workflow keeps one shared contract with per-node mappings', asy
     await parameters.getByLabel(/Question|问题/).fill('first-branch-answer')
     await parameters.getByRole('button', { name: /运行|Run/ }).click()
   }
-  await runResponse
-  await expect(page.getByText('first-branch-answer').first()).toBeVisible({ timeout: 120_000 })
+  const started = await runResponse
+  const executionId = ((await started.json()) as { executionId: string }).executionId
+  await expect.poll(async () => (await api<{ status: string }>(page, token, `/executions/${executionId}`)).status, { timeout: 120_000 }).toBe('succeeded')
+  const execution = await api<{ output: { answer: Array<string | null> } }>(page, token, `/executions/${executionId}`)
+  expect(execution.output.answer).toEqual(['first-branch-answer', null])
+
+  // the manually added exit can be removed; the protected one cannot
+  await secondExit.click()
+  await page.keyboard.press('Delete')
+  await expect(secondExit).toHaveCount(0)
+  await expect(initialExit).toBeVisible()
+
+  // Removing the manual Exit remains undoable/saveable; the protected Exit remains.
+  await saveAndReadDraft(page, token, workflowId)
 })

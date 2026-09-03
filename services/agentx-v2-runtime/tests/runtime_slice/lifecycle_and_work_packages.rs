@@ -1,79 +1,3 @@
-#[tokio::test]
-async fn lifecycle_response_from_an_old_revision_cannot_create_an_invocation() {
-    let container = GenericImage::new("mysql", "8.4")
-        .with_exposed_port(3306.tcp())
-        .with_wait_for(WaitFor::message_on_stderr("ready for connections"))
-        .with_env_var("MYSQL_DATABASE", "agentx_runtime")
-        .with_env_var("MYSQL_USER", "agentx")
-        .with_env_var("MYSQL_PASSWORD", "agentx-test-password")
-        .with_env_var("MYSQL_ROOT_PASSWORD", "agentx-root-password")
-        .start()
-        .await
-        .unwrap();
-    let port = container.get_host_port_ipv4(3306.tcp()).await.unwrap();
-    let pool = connect_with_retry(port).await;
-    agentx_runtime_infrastructure::migrate_runtime_mysql(&pool)
-        .await
-        .unwrap();
-    let endpoint = "https://provider.example.test/lifecycle".to_owned();
-    let tenant_id = Uuid::now_v7();
-    let application_id = Uuid::now_v7();
-    let bundle_id = Uuid::now_v7();
-    let binding_id = Uuid::now_v7();
-    let specification = RuntimeTriggerSpecV1 {
-        schema_version: 1,
-        trigger_id: binding_id,
-        trigger_name: "Lifecycle activation".into(),
-        application_id,
-        node_id: "remote:lifecycle:activate".into(),
-        revision: 1,
-        configuration_hash: agentx_runtime_contracts::content_hash(&json!({"revision":1})).unwrap(),
-        enabled: true,
-        configuration: RuntimeTriggerConfigurationV1::Lifecycle {
-            operation: agentx_runtime_contracts::LifecycleOperationV1::Activate,
-            provider_endpoint: endpoint,
-            input: json!({"operation":"activate"}),
-        },
-    };
-    sqlx::query("INSERT INTO trigger_bindings(id,tenant_id,application_id,application_deployment_id,bundle_id,workflow_version_id,node_id,configuration_revision,configuration_hash,trigger_kind,configuration_json,status,next_poll_at) VALUES(?,?,?,?,?,?,?,?,?,'lifecycle',?,'active',UTC_TIMESTAMP(6))")
-        .bind(binding_id).bind(tenant_id).bind(application_id).bind(Uuid::now_v7()).bind(bundle_id).bind(Uuid::now_v7()).bind(&specification.node_id).bind(1_u64).bind(specification.configuration_hash.as_str()).bind(serde_json::to_value(&specification).unwrap()).execute(&pool).await.unwrap();
-    let claim = agentx_v2_runtime::trigger::claim(&pool, Uuid::now_v7(), 1)
-        .await
-        .unwrap()
-        .pop()
-        .unwrap();
-    let execute_pool = pool.clone();
-    let provider = Arc::new(StubTriggerProvider {
-        delay: Duration::from_millis(100),
-        response: Ok(TriggerProviderResponse {
-            success: true,
-            status: "200 OK".into(),
-            cursor: None,
-            body: json!({"accepted":true,"state":{"active":true}}),
-        }),
-    });
-    let task = tokio::spawn(async move {
-        agentx_v2_runtime::trigger::execute_with_provider(&execute_pool, &claim, provider.as_ref())
-            .await
-    });
-    tokio::time::sleep(std::time::Duration::from_millis(25)).await;
-    sqlx::query("UPDATE trigger_bindings SET configuration_revision=2 WHERE id=?")
-        .bind(binding_id)
-        .execute(&pool)
-        .await
-        .unwrap();
-    assert!(task.await.unwrap().is_err());
-    let invocations: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM application_invocations WHERE tenant_id=? AND caller_id=?",
-    )
-    .bind(tenant_id)
-    .bind(binding_id)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    assert_eq!(invocations, 0);
-}
-
 async fn authentication_failures_do_not_write_receipts(fixture: &Fixture) {
     let before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM publish_receipts")
         .fetch_one(&fixture.state.pool)
@@ -721,9 +645,10 @@ async fn evaluation_work_package_creates_cases_converges_and_cancels_atomically(
             }))
             .unwrap(),
             configuration: agentx_runtime_contracts::RuntimeResourceConfigurationV1::Model {
-                provider: "fixture".into(),
+                provider: "openai_compatible".into(),
                 endpoint,
                 model: "evaluator-fixture".into(),
+                context_window: 128_000,
                 price: agentx_runtime_contracts::RuntimeModelPriceV1 {
                     version_id: "price:1".into(),
                     currency: "USD".into(),

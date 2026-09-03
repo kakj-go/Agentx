@@ -1,4 +1,3 @@
-mod builtin_catalog;
 mod compiler;
 mod expression;
 mod input;

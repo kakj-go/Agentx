@@ -312,16 +312,16 @@ async fn api_first_control_closure_uses_empty_schema_and_public_routes() {
     .await;
     assert_eq!(status, 200, "workflow draft response: {draft}");
     let definition = json!({
-        "schemaVersion":"7.0",
+        "schemaVersion":"8.0",
         "start":{"inputs":{"type":"object","additionalProperties":true},"contexts":{}},
         "nodes":[{
-            "id":"root","key":"root","type":"no_op","typeVersion":1,"name":"Root",
-            "disabled":false,"parameters":{},"outputProjection":{},"contextWrites":[],
+            "id":"root","key":"root","type":"set","typeVersion":1,"name":"Root",
+            "disabled":false,"parameters":{},"contextWrites":[],
             "resourceReferences":[],"settings":{}
         },{
             "id":"exit","key":"exit","type":"exit","typeVersion":1,"name":"End",
             "disabled":false,"protected":true,"parameters":{"outputs":{},"errorOutputs":{}},
-            "outputProjection":{},"contextWrites":[],"resourceReferences":[],"settings":{}
+            "contextWrites":[],"resourceReferences":[],"settings":{}
         }],
         "connections":[
             {"id":"start-root","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"root","targetHandle":"main","order":0},
@@ -676,18 +676,18 @@ async fn api_first_control_closure_uses_empty_schema_and_public_routes() {
     .await;
     assert_eq!(status, 200, "resource draft response: {resource_draft}");
     let resource_definition = json!({
-        "schemaVersion":"7.0",
+        "schemaVersion":"8.0",
         "start":{"inputs":{"type":"object","additionalProperties":true},"contexts":{}},
         "nodes":[{
-            "id":"credential-node","key":"credential_node","type":"no_op","typeVersion":1,
-            "name":"Credential Node","disabled":false,"parameters":{},"outputProjection":{},
+            "id":"credential-node","key":"credential_node","type":"set","typeVersion":1,
+            "name":"Credential Node","disabled":false,"parameters":{},
             "contextWrites":[],"settings":{},"resourceReferences":[{
                 "resourceType":"credential","resourceId":credential_id,"operation":"use"
             }]
         },{
             "id":"exit","key":"exit","type":"exit","typeVersion":1,"name":"End",
             "disabled":false,"protected":true,"parameters":{"outputs":{},"errorOutputs":{}},
-            "outputProjection":{},"contextWrites":[],"resourceReferences":[],"settings":{}
+            "contextWrites":[],"resourceReferences":[],"settings":{}
         }],
         "connections":[
             {"id":"start-node","sourceNodeId":"__start__","sourceHandle":"main","targetNodeId":"credential-node","targetHandle":"main","order":0},

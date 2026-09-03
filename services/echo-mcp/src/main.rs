@@ -3,6 +3,7 @@ use std::{env, net::SocketAddr};
 use axum::{
     Json as AxumJson, Router,
     body::Body,
+    extract::OriginalUri,
     http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -109,6 +110,11 @@ async fn main() -> anyhow::Result<()> {
         )
         .route("/v1/chat/completions", post(chat_completions))
         .route("/v1/embeddings", post(embeddings))
+        .route("/v1/plan5/items", post(plan5_items))
+        .route("/v1/plan5/delay", get(plan5_delay))
+        .route("/v1/plan5/binary", get(plan5_binary))
+        .route("/v1/plan5/request", get(plan5_request))
+        .route("/v1/plan5/maybe-fail", get(plan5_maybe_fail))
         .route("/v2/runtime/model", post(v2_runtime_model))
         .route("/v2/runtime/mcp", post(v2_runtime_mcp))
         .nest_service("/mcp", service);
@@ -122,6 +128,65 @@ async fn main() -> anyhow::Result<()> {
         })
         .await?;
     Ok(())
+}
+
+async fn plan5_items(headers: HeaderMap, AxumJson(body): AxumJson<Value>) -> AxumJson<Value> {
+    AxumJson(json!({
+        "headers": {
+            "x-plan5-secret": headers
+                .get("x-plan5-secret")
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or_default()
+        },
+        "json": body
+    }))
+}
+
+async fn plan5_delay() -> AxumJson<Value> {
+    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+    AxumJson(json!({"completed": true}))
+}
+
+async fn plan5_binary() -> Response {
+    (
+        [
+            (header::CONTENT_TYPE, "application/octet-stream"),
+            (
+                header::CONTENT_DISPOSITION,
+                "attachment; filename=plan5-fixture.bin",
+            ),
+        ],
+        vec![0_u8, 1, 2, 3, 0x7f, 0x80, 0xfe, 0xff],
+    )
+        .into_response()
+}
+
+async fn plan5_request(OriginalUri(uri): OriginalUri, headers: HeaderMap) -> AxumJson<Value> {
+    let header = |name: &str| {
+        headers
+            .get(name)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+            .to_owned()
+    };
+    AxumJson(json!({
+        "authorization": header("authorization"),
+        "x-api-key": header("x-api-key"),
+        "x-custom-auth": header("x-custom-auth"),
+        "query": uri.query().unwrap_or_default(),
+    }))
+}
+
+async fn plan5_maybe_fail(OriginalUri(uri): OriginalUri) -> Response {
+    let query = uri.query().unwrap_or_default();
+    if query.split('&').any(|pair| pair == "fail=true") {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            AxumJson(json!({"failed": true})),
+        )
+            .into_response();
+    }
+    AxumJson(json!({"failed": false})).into_response()
 }
 
 async fn v2_runtime_model(headers: HeaderMap, AxumJson(request): AxumJson<Value>) -> Response {
@@ -302,8 +367,20 @@ async fn chat_completions(headers: HeaderMap, AxumJson(request): AxumJson<Value>
                 .and_then(Value::as_str)
                 .is_some_and(|content| content.contains("immutable V2-04 Skill result"))
     });
-    let tool = request
-        .pointer("/tools/0/function/name")
+    let tools = request.get("tools").and_then(Value::as_array);
+    let find_tool = |name: &str| {
+        tools.and_then(|items| {
+            items.iter().find_map(|candidate| {
+                let candidate_name = candidate
+                    .pointer("/function/name")
+                    .and_then(Value::as_str)?;
+                (candidate_name == name).then_some(candidate_name)
+            })
+        })
+    };
+    let tool = tools
+        .and_then(|items| items.first())
+        .and_then(|candidate| candidate.pointer("/function/name"))
         .and_then(Value::as_str);
     let latest_user_content = messages
         .iter()
@@ -322,7 +399,7 @@ async fn chat_completions(headers: HeaderMap, AxumJson(request): AxumJson<Value>
                 tools.iter().find_map(|candidate| {
                     (candidate.pointer("/function/name").and_then(Value::as_str)
                         == Some("memory_write"))
-                    .then(|| "memory_write")
+                    .then_some("memory_write")
                 })
             })
             .or(tool)
@@ -334,12 +411,12 @@ async fn chat_completions(headers: HeaderMap, AxumJson(request): AxumJson<Value>
                 tools.iter().find_map(|candidate| {
                     (candidate.pointer("/function/name").and_then(Value::as_str)
                         == Some("memory_recall"))
-                    .then(|| "memory_recall")
+                    .then_some("memory_recall")
                 })
             })
             .or(tool)
     } else {
-        tool
+        find_tool("echo").or(tool)
     };
     let tool_call = selected_tool
         .filter(|_| requested_loop || tool_messages == 0)
@@ -350,7 +427,16 @@ async fn chat_completions(headers: HeaderMap, AxumJson(request): AxumJson<Value>
                     "metadata":{"fixture":true}
                 }),
                 "memory_recall" => json!({"query":"p3-subject-memory","topK":5}),
-                _ => json!({"text":"m5-tool-result"}),
+                _ => tools
+                    .and_then(|tools| {
+                        tools.iter().find(|candidate| {
+                            candidate.pointer("/function/name").and_then(Value::as_str)
+                                == Some(name)
+                        })
+                    })
+                    .and_then(|candidate| candidate.pointer("/function/parameters"))
+                    .map(schema_example)
+                    .unwrap_or_else(|| json!({"text":"m5-tool-result"})),
             };
             json!({
                 "id": format!("m5-call-{tool_messages}"),
@@ -363,20 +449,25 @@ async fn chat_completions(headers: HeaderMap, AxumJson(request): AxumJson<Value>
     } else {
         "stop"
     };
-    let content =
-        tool_call
-            .is_none()
-            .then_some(if agent_purpose == "compaction" && p3_overflow_requested {
-                "P3_OVERFLOW_COMPACTED"
+    let structured_content = request
+        .pointer("/response_format/json_schema/schema")
+        .map(schema_example)
+        .and_then(|value| serde_json::to_string(&value).ok());
+    let content = tool_call.is_none().then(|| {
+        structured_content.unwrap_or_else(|| {
+            if agent_purpose == "compaction" && p3_overflow_requested {
+                "P3_OVERFLOW_COMPACTED".into()
             } else if agent_purpose == "compaction" {
-                "P3_THRESHOLD_COMPACTED"
+                "P3_THRESHOLD_COMPACTED".into()
             } else if kakj_identity {
-                "你好，我叫 kakj。"
+                "你好，我叫 kakj。".into()
             } else if p3_skill_context {
-                "P3-04 Agent attachment completed; skill_context=true"
+                "P3-04 Agent attachment completed; skill_context=true".into()
             } else {
-                "M5 Agent completed after the MCP tool result"
-            });
+                "M5 Agent completed after the MCP tool result".into()
+            }
+        })
+    });
     let usage = json!({"prompt_tokens": 24 + tool_messages, "completion_tokens": if tool_call.is_some() { 12 } else { 9 }, "total_tokens": 45 + tool_messages});
     if request
         .get("stream")
@@ -416,15 +507,54 @@ async fn chat_completions(headers: HeaderMap, AxumJson(request): AxumJson<Value>
     AxumJson(response).into_response()
 }
 
+fn schema_example(schema: &Value) -> Value {
+    if let Some(value) = schema.get("const") {
+        return value.clone();
+    }
+    if let Some(value) = schema
+        .get("enum")
+        .and_then(Value::as_array)
+        .and_then(|values| values.first())
+    {
+        return value.clone();
+    }
+    match schema.get("type").and_then(Value::as_str) {
+        Some("object") => Value::Object(
+            schema
+                .get("properties")
+                .and_then(Value::as_object)
+                .into_iter()
+                .flatten()
+                .map(|(name, property)| (name.clone(), schema_example(property)))
+                .collect(),
+        ),
+        Some("array") => Value::Array(vec![]),
+        Some("number" | "integer") => json!(1),
+        Some("boolean") => json!(true),
+        Some("null") => Value::Null,
+        _ => Value::String("structured-value".into()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{chat_completions, embeddings};
+    use super::{chat_completions, embeddings, schema_example};
     use axum::{
         Json,
         http::{HeaderMap, HeaderValue, header},
         response::IntoResponse,
     };
-    use serde_json::json;
+    use serde_json::{Value, json};
+
+    #[test]
+    fn structured_response_fixture_materializes_the_declared_object_shape() {
+        assert_eq!(
+            schema_example(
+                &json!({"type":"object","properties":{"answer":{"type":"string"},"count":{"type":"integer"}}})
+            ),
+            json!({"answer":"structured-value","count":1})
+        );
+    }
 
     #[tokio::test]
     async fn model_fixture_requires_auth_and_completes_after_tool_output() {
@@ -437,6 +567,41 @@ mod tests {
         );
         let response = chat_completions(headers, Json(json!({"messages":[{"role":"tool","content":"ok"}],"tools":[{"function":{"name":"echo"}}]}))).await.into_response();
         assert_eq!(response.status(), 200);
+    }
+
+    #[tokio::test]
+    async fn model_fixture_prefers_echo_and_generates_arguments_from_its_schema() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer m5-model-secret"),
+        );
+        let response = chat_completions(
+            headers,
+            Json(json!({
+                "messages":[{"role":"user","content":"use the attachment"}],
+                "tools":[
+                    {"function":{"name":"read","parameters":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false}}},
+                    {"function":{"name":"echo","parameters":{"type":"object","properties":{"text":{"type":"string"}},"required":["text"],"additionalProperties":false}}}
+                ]
+            })),
+        )
+        .await
+        .into_response();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let value: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            value.pointer("/choices/0/message/tool_calls/0/function/name"),
+            Some(&json!("echo"))
+        );
+        let arguments = value
+            .pointer("/choices/0/message/tool_calls/0/function/arguments")
+            .and_then(Value::as_str)
+            .and_then(|value| serde_json::from_str::<Value>(value).ok())
+            .unwrap();
+        assert_eq!(arguments, json!({"text":"structured-value"}));
     }
 
     #[tokio::test]

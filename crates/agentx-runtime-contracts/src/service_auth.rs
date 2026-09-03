@@ -1,5 +1,6 @@
 use std::collections::{BTreeSet, HashMap};
 
+use ipnet::IpNet;
 use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, encode};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -44,7 +45,28 @@ pub enum EgressRole {
 #[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EgressMode {
-    PublicHttps,
+    TcpProxy,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct EgressPortRangeV1 {
+    pub from: u16,
+    pub to: u16,
+}
+
+impl EgressPortRangeV1 {
+    #[must_use]
+    pub fn contains(&self, port: u16) -> bool {
+        self.from <= port && port <= self.to
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct EgressDestinationV1 {
+    pub target: String,
+    pub ports: Vec<EgressPortRangeV1>,
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
@@ -59,8 +81,8 @@ pub struct EgressConnectClaimsV1 {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub request_id: Option<Uuid>,
     pub egress_mode: EgressMode,
-    pub target_host: String,
-    pub target_port: u16,
+    pub destinations: Vec<EgressDestinationV1>,
+    pub policy_hash: ContentHash,
     pub iat: i64,
     pub exp: i64,
     pub jti: Uuid,
@@ -212,7 +234,7 @@ fn validate_egress_claims(
     let now = now_unix();
     if claims.iss != EGRESS_TOKEN_ISSUER
         || claims.aud != EGRESS_TOKEN_AUDIENCE
-        || claims.egress_mode != EgressMode::PublicHttps
+        || claims.egress_mode != EgressMode::TcpProxy
         || !allowed_roles.contains(&claims.role)
     {
         return Err(ServiceJwtError::RoleNotAllowed);
@@ -227,20 +249,56 @@ fn validate_egress_claims(
         return Err(ServiceJwtError::Invalid);
     }
     if let Some((host, port)) = expected_target {
-        let sandbox_wildcard = claims.role == EgressRole::Sandbox && claims.target_host == "*";
-        if claims.target_port != port
-            || (!sandbox_wildcard && !claims.target_host.eq_ignore_ascii_case(host))
+        if !claims
+            .destinations
+            .iter()
+            .any(|destination| destination_matches(destination, host, port))
         {
             return Err(ServiceJwtError::ScopeNotAllowed);
         }
     }
-    if claims.target_host.trim().is_empty()
-        || (claims.target_host == "*" && claims.role != EgressRole::Sandbox)
-        || claims.target_port == 0
+    if claims.destinations.is_empty()
+        || claims.destinations.len() > 32
+        || claims.destinations.iter().any(|destination| {
+            destination.target.trim().is_empty()
+                || destination.target.len() > 253
+                || destination.ports.is_empty()
+                || destination.ports.len() > 8
+                || destination
+                    .ports
+                    .iter()
+                    .any(|range| range.from == 0 || range.to == 0 || range.from > range.to)
+        })
+        || crate::content_hash(&claims.destinations).ok().as_ref() != Some(&claims.policy_hash)
     {
         return Err(ServiceJwtError::ScopeNotAllowed);
     }
     Ok(())
+}
+
+fn destination_matches(destination: &EgressDestinationV1, host: &str, port: u16) -> bool {
+    if !destination.ports.iter().any(|range| range.contains(port)) {
+        return false;
+    }
+    let expected = destination
+        .target
+        .trim()
+        .trim_end_matches('.')
+        .to_ascii_lowercase();
+    let actual = host
+        .trim()
+        .trim_matches(['[', ']'])
+        .trim_end_matches('.')
+        .to_ascii_lowercase();
+    if let Ok(network) = expected.parse::<IpNet>() {
+        return actual
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| network.contains(&ip));
+    }
+    if let Some(suffix) = expected.strip_prefix("*.") {
+        return actual.ends_with(&format!(".{suffix}")) && actual != suffix;
+    }
+    actual == expected
 }
 
 pub fn verify_user_access_token(
@@ -343,18 +401,54 @@ pub fn now_unix() -> i64 {
 mod tests {
     use std::collections::{BTreeSet, HashMap};
 
+    use crate::content_hash;
     use uuid::Uuid;
 
     use super::{
         ControlRole, DELEGATION_TOKEN_TTL_SECONDS, DelegationClaimsV1, EGRESS_TOKEN_AUDIENCE,
-        EGRESS_TOKEN_ISSUER, EgressConnectClaimsV1, EgressMode, EgressRole,
-        SERVICE_TOKEN_TTL_SECONDS, ServiceClaimsV1, issue_delegation_token,
-        issue_egress_connect_token, issue_service_token, verify_delegation_token,
-        verify_egress_connect_token, verify_service_token,
+        EGRESS_TOKEN_ISSUER, EgressConnectClaimsV1, EgressDestinationV1, EgressMode,
+        EgressPortRangeV1, EgressRole, SERVICE_TOKEN_TTL_SECONDS, ServiceClaimsV1,
+        destination_matches, issue_delegation_token, issue_egress_connect_token,
+        issue_service_token, verify_delegation_token, verify_egress_connect_token,
+        verify_service_token,
     };
 
     const PRIVATE_KEY: &[u8] = include_bytes!("../tests/fixtures/service-private.pem");
     const PUBLIC_KEY: &[u8] = include_bytes!("../tests/fixtures/service-public.pem");
+
+    fn destinations() -> Vec<EgressDestinationV1> {
+        vec![EgressDestinationV1 {
+            target: "api.example.com".into(),
+            ports: vec![EgressPortRangeV1 { from: 443, to: 443 }],
+        }]
+    }
+
+    #[test]
+    fn egress_destinations_match_domains_addresses_cidrs_and_port_ranges() {
+        let ports = vec![EgressPortRangeV1 {
+            from: 8_000,
+            to: 8_010,
+        }];
+        let matches = |target: &str, host: &str, port: u16| {
+            destination_matches(
+                &EgressDestinationV1 {
+                    target: target.into(),
+                    ports: ports.clone(),
+                },
+                host,
+                port,
+            )
+        };
+
+        assert!(matches("api.example.com", "API.EXAMPLE.COM.", 8_000));
+        assert!(matches("*.example.com", "db.internal.example.com", 8_010));
+        assert!(!matches("*.example.com", "example.com", 8_000));
+        assert!(!matches("*.example.com", "api.example.com", 8_011));
+        assert!(matches("10.24.0.0/16", "10.24.8.9", 8_005));
+        assert!(!matches("10.24.0.0/16", "10.25.8.9", 8_005));
+        assert!(matches("2001:db8:abcd::/48", "[2001:db8:abcd::7]", 8_005));
+        assert!(!matches("2001:db8:abcd::/48", "2001:db8:abce::7", 8_005));
+    }
 
     fn claims() -> ServiceClaimsV1 {
         ServiceClaimsV1 {
@@ -527,9 +621,9 @@ mod tests {
             tenant_id: Uuid::now_v7(),
             execution_id: Some(Uuid::now_v7()),
             request_id: None,
-            egress_mode: EgressMode::PublicHttps,
-            target_host: "api.example.com".into(),
-            target_port: 443,
+            egress_mode: EgressMode::TcpProxy,
+            destinations: destinations(),
+            policy_hash: content_hash(&destinations()).unwrap(),
             iat: now,
             exp: now + 60,
             jti: Uuid::now_v7(),
@@ -575,9 +669,9 @@ mod tests {
             tenant_id: Uuid::now_v7(),
             execution_id: None,
             request_id: Some(Uuid::now_v7()),
-            egress_mode: EgressMode::PublicHttps,
-            target_host: "api.example.com".into(),
-            target_port: 443,
+            egress_mode: EgressMode::TcpProxy,
+            destinations: destinations(),
+            policy_hash: content_hash(&destinations()).unwrap(),
             iat: now,
             exp: now + 61,
             jti: Uuid::now_v7(),
@@ -595,9 +689,9 @@ mod tests {
             tenant_id: Uuid::now_v7(),
             execution_id: Some(Uuid::now_v7()),
             request_id: None,
-            egress_mode: EgressMode::PublicHttps,
-            target_host: "api.example.com".into(),
-            target_port: 443,
+            egress_mode: EgressMode::TcpProxy,
+            destinations: destinations(),
+            policy_hash: content_hash(&destinations()).unwrap(),
             iat: now,
             exp: now + 60,
             jti: Uuid::now_v7(),
@@ -647,9 +741,9 @@ mod tests {
             tenant_id: Uuid::now_v7(),
             execution_id: None,
             request_id: Some(Uuid::now_v7()),
-            egress_mode: EgressMode::PublicHttps,
-            target_host: "api.example.com".into(),
-            target_port: 443,
+            egress_mode: EgressMode::TcpProxy,
+            destinations: destinations(),
+            policy_hash: content_hash(&destinations()).unwrap(),
             iat: now - 61,
             exp: now - 1,
             jti: Uuid::now_v7(),
@@ -689,9 +783,9 @@ mod tests {
             tenant_id: Uuid::now_v7(),
             execution_id: None,
             request_id: Some(Uuid::now_v7()),
-            egress_mode: EgressMode::PublicHttps,
-            target_host: "api.example.com".into(),
-            target_port: 443,
+            egress_mode: EgressMode::TcpProxy,
+            destinations: destinations(),
+            policy_hash: content_hash(&destinations()).unwrap(),
             iat: now,
             exp: now + 60,
             jti: Uuid::now_v7(),

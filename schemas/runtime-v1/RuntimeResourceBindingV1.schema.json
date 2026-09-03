@@ -191,6 +191,11 @@
         {
           "additionalProperties": false,
           "properties": {
+            "contextWindow": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
             "credential": {
               "anyOf": [
                 {
@@ -223,6 +228,7 @@
             "provider",
             "endpoint",
             "model",
+            "contextWindow",
             "price"
           ],
           "type": "object"
@@ -410,6 +416,9 @@
               "type": "array",
               "uniqueItems": true
             },
+            "credentialType": {
+              "type": "string"
+            },
             "kind": {
               "const": "credential",
               "type": "string"
@@ -420,6 +429,7 @@
           },
           "required": [
             "kind",
+            "credentialType",
             "secret",
             "allowedOperations"
           ],
@@ -553,7 +563,7 @@
     "SandboxEgressModeV1": {
       "enum": [
         "none",
-        "public_https"
+        "tcp_proxy"
       ],
       "type": "string"
     },

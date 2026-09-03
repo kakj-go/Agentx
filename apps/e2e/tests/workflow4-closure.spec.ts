@@ -18,11 +18,11 @@ type ExecutionPage = { items: Execution[] }
 type Approval = { id: string; executionId: string; status: string; version: number }
 type PageResponse<T> = { items: T[] }
 type Definition = {
-  schemaVersion: '6.0'
+  schemaVersion: '8.0'
   start: { inputs: Record<string, unknown>; contexts: Record<string, unknown> }
   nodes: Array<Record<string, unknown> & { id: string; key: string; type: string }>
   connections: Array<{ id: string; sourceNodeId: string; sourceHandle: string; targetNodeId: string; targetHandle: string; order: number }>
-  end: { outputs: Record<string, unknown>; error?: { strategy: 'fail_fast' | 'collect'; collectWindowMs: number; outputs: Record<string, unknown> } }
+  end: { completion?: 'first_return' | 'all_complete'; outputs: Record<string, unknown>; error?: { outputs: Record<string, unknown> } }
   settings: Record<string, unknown>
 }
 
@@ -73,7 +73,7 @@ function node(id: string, type: string, parameters: Record<string, unknown>, ext
     name: id,
     disabled: false,
     parameters,
-    outputProjection: {},
+
     contextWrites: [],
     resourceReferences: [],
     settings: {},
@@ -86,11 +86,10 @@ const reference = (namespace: 'inputs' | 'outputs' | 'contexts' | 'item', path: 
   selector: { namespace, sourceNodeId, port: sourceNodeId ? 'main' : undefined, run: { kind: 'current' }, item: { kind: 'current' }, path },
   missingPolicy: { kind: 'error' },
 })
-const template = (prefix: string, value: ReturnType<typeof reference>) => ({
-  kind: 'template',
-  segments: [{ kind: 'text', text: prefix }, { kind: 'reference', selector: value.selector, missingPolicy: value.missingPolicy }],
-})
+const textTemplate = (text: string) => ({ kind: 'template', segments: [{ kind: 'text', text }] })
 const literal = (value: unknown) => ({ kind: 'literal', value })
+const objectBinding = (fields: Record<string, unknown>) => ({ kind: 'object', fields })
+const arrayBinding = (items: unknown[]) => ({ kind: 'array', items })
 
 async function createWorkflow(page: Page, token: string, name: string, definition: Definition) {
   const workflow = await request<Workflow>(page, token, '/workflows', 'POST', {
@@ -184,31 +183,33 @@ const counterContext = {
 
 test('Workflow 5.0 closes Composite, Context, Package, Multipart and cancellation contracts', async ({ page }) => {
   const token = await login(page)
+  const actor = await request<{ id: string }>(page, token, '/auth/me')
   const suffix = Date.now()
   const environment = (await request<Environment[]>(page, token, '/environments')).find((value) => value.code === 'development')
   expect(environment).toBeTruthy()
 
   const childDefinition: Definition = {
-    schemaVersion: '6.0',
+    schemaVersion: '8.0',
     start: {
       inputs: { type: 'object', required: ['question'], properties: { question: { type: 'string' } }, additionalProperties: false },
       contexts: counterContext,
     },
-    nodes: [node('answer', 'set', { values: { answer: template('v1:', reference('inputs', ['question'])) }, keepOnlySet: true }, {
+    nodes: [node('answer', 'set', { values: objectBinding({ answer: literal('v1:hello') }), keepOnlySet: true }, {
       contextWrites: [{ operation: 'increment', path: 'counter', value: { kind: 'literal', value: 1 } }],
-    })],
+    }),
+      { id: 'exit', key: 'exit', type: 'exit', typeVersion: 1, name: 'End', disabled: false, protected: true, parameters: { outputs: { answer: reference('outputs', ['answer'], 'answer') }, errorOutputs: {} }, contextWrites: [], resourceReferences: [], settings: {} },
+    ],
     connections: [
       { id: 'start-answer', sourceNodeId: '__start__', sourceHandle: 'main', targetNodeId: 'answer', targetHandle: 'main', order: 0 },
-      { id: 'answer-end', sourceNodeId: 'answer', sourceHandle: 'main', targetNodeId: '__end__', targetHandle: 'main', order: 0 },
+      { id: 'answer-end', sourceNodeId: 'answer', sourceHandle: 'main', targetNodeId: 'exit', targetHandle: 'main', order: 0 },
     ],
-    end: { outputs: { answer: { value: reference('outputs', ['answer'], 'answer'), schema: { type: 'string' }, required: true, sensitive: false } } },
+    end: { outputs: { answer: { schema: { type: 'string' }, required: true, sensitive: false } } },
     settings: { executionOrder: 'deterministic' },
   }
   const child = await createWorkflow(page, token, `W4 Child ${suffix}`, childDefinition)
-  const childType = `workflow.${child.version.id.replaceAll('-', '')}`
 
   const parentDefinition: Definition = {
-    schemaVersion: '6.0',
+    schemaVersion: '8.0',
     start: {
       inputs: {
         type: 'object',
@@ -233,27 +234,26 @@ test('Workflow 5.0 closes Composite, Context, Package, Multipart and cancellatio
       contexts: counterContext,
     },
     nodes: [
-      node('child', childType, { workflowVersionId: child.version.id, inputs: { question: reference('inputs', ['question']) } }),
-      node('summary', 'set', { values: { answer: reference('outputs', ['answer'], 'child'), counter: reference('contexts', ['counter']) }, keepOnlySet: true }, {
-        outputProjection: {
-          main: {
-            answer_text: { value: reference('item', ['answer']), schema: { type: 'string' }, sensitive: false },
-            counter_value: { value: reference('item', ['counter']), schema: { type: 'number' }, sensitive: false },
-          },
-        },
-      }),
+      node('child', 'sub_workflow', { workflowVersionId: child.version.id, inputs: objectBinding({ question: reference('inputs', ['question']) }) }),
+      node('summary', 'set', { values: objectBinding({ answer: reference('outputs', ['answer'], 'child'), counter: reference('contexts', ['counter']) }), keepOnlySet: true }),
+      { id: 'exit', key: 'exit', type: 'exit', typeVersion: 1, name: 'End', disabled: false, protected: true, parameters: { outputs: {
+        answer: reference('outputs', ['answer'], 'summary'),
+        counter: reference('outputs', ['counter'], 'summary'),
+        attachments: reference('inputs', ['attachments']),
+        prefix: reference('inputs', ['prefix']),
+      }, errorOutputs: {} }, contextWrites: [], resourceReferences: [], settings: {} },
     ],
     connections: [
       { id: 'start-child', sourceNodeId: '__start__', sourceHandle: 'main', targetNodeId: 'child', targetHandle: 'main', order: 0 },
       { id: 'child-summary', sourceNodeId: 'child', sourceHandle: 'main', targetNodeId: 'summary', targetHandle: 'main', order: 0 },
-      { id: 'summary-end', sourceNodeId: 'summary', sourceHandle: 'main', targetNodeId: '__end__', targetHandle: 'main', order: 0 },
+      { id: 'summary-end', sourceNodeId: 'summary', sourceHandle: 'main', targetNodeId: 'exit', targetHandle: 'main', order: 0 },
     ],
     end: {
       outputs: {
-        answer: { value: reference('outputs', ['answer_text'], 'summary'), schema: { type: 'string' }, required: true, sensitive: false },
-        counter: { value: reference('outputs', ['counter_value'], 'summary'), schema: { type: 'number' }, required: true, sensitive: false },
-        attachments: { value: reference('inputs', ['attachments']), schema: { type: 'array' }, required: true, sensitive: false },
-        prefix: { value: reference('inputs', ['prefix']), schema: { type: 'string' }, required: true, sensitive: false },
+        answer: { schema: { type: 'string' }, required: true, sensitive: false },
+        counter: { schema: { type: 'number' }, required: true, sensitive: false },
+        attachments: { schema: { type: 'array' }, required: true, sensitive: false },
+        prefix: { schema: { type: 'string' }, required: true, sensitive: false },
       },
     },
     settings: { executionOrder: 'deterministic' },
@@ -261,7 +261,7 @@ test('Workflow 5.0 closes Composite, Context, Package, Multipart and cancellatio
   const parent = await createWorkflow(page, token, `W4 Parent ${suffix}`, parentDefinition)
 
   const childV2 = structuredClone(childDefinition)
-  ;(childV2.nodes[0].parameters as Record<string, unknown>).values = { answer: template('v2:', reference('inputs', ['question'])) }
+  ;(childV2.nodes[0].parameters as Record<string, unknown>).values = objectBinding({ answer: literal('v2:hello') })
   const secondChildVersion = await reviseWorkflow(page, token, child.workflow.id, childV2)
   expect(secondChildVersion.versionNumber).toBe(2)
 
@@ -322,61 +322,66 @@ test('Workflow 5.0 closes Composite, Context, Package, Multipart and cancellatio
     description: 'Cross-project package contract',
     visibility: 'company',
     package: exported,
-    resourceBindings: {},
   })
   const importedDraft = await request<Draft>(page, token, `/workflows/${imported.workflowId}/draft`)
-  expect(importedDraft.definition.schemaVersion).toBe('6.0')
-  expect(importedDraft.definition.nodes[0].type).toBe(childType)
+  expect(importedDraft.definition.schemaVersion).toBe('8.0')
+  expect(importedDraft.definition.nodes[0].type).toBe('sub_workflow')
 
   const recursiveDefinition = structuredClone(childV2)
-  recursiveDefinition.nodes = [node('parent', `workflow.${parent.version.id.replaceAll('-', '')}`, {
-    workflowVersionId: parent.version.id,
-    inputs: { question: reference('inputs', ['question']), attachments: [] },
-  })]
+  recursiveDefinition.nodes = [
+    node('parent', 'sub_workflow', {
+      workflowVersionId: parent.version.id,
+      inputs: objectBinding({ question: reference('inputs', ['question']), attachments: arrayBinding([]) }),
+    }),
+    { id: 'exit', key: 'exit', type: 'exit', typeVersion: 1, name: 'End', disabled: false, protected: true, parameters: { outputs: {}, errorOutputs: {} }, contextWrites: [], resourceReferences: [], settings: {} },
+  ]
   recursiveDefinition.connections = [
     { id: 'start-parent', sourceNodeId: '__start__', sourceHandle: 'main', targetNodeId: 'parent', targetHandle: 'main', order: 0 },
-    { id: 'parent-end', sourceNodeId: 'parent', sourceHandle: 'main', targetNodeId: '__end__', targetHandle: 'main', order: 0 },
+    { id: 'parent-end', sourceNodeId: 'parent', sourceHandle: 'main', targetNodeId: 'exit', targetHandle: 'main', order: 0 },
   ]
   recursiveDefinition.end.outputs = {}
   const recursiveDraft = await request<Draft>(page, token, `/workflows/${child.workflow.id}/draft`)
-  const savedRecursive = await request<Draft>(page, token, `/workflows/${child.workflow.id}/draft`, 'PUT', {
-    expectedRevision: recursiveDraft.revision,
-    definition: recursiveDefinition,
-    editorDocument: { ...recursiveDraft.editorDocument, nodeLayouts: [{ nodeId: 'parent', x: 120, y: 180 }], edges: [] },
-  })
-  const recursiveVersion = await page.request.post(`/api/v1/workflows/${child.workflow.id}/versions`, {
+  const recursiveSave = await page.request.put(`/api/v1/workflows/${child.workflow.id}/draft`, {
     headers: { Authorization: `Bearer ${token}` },
-    data: { draftRevision: savedRecursive.revision },
+    data: {
+      expectedRevision: recursiveDraft.revision,
+      definition: recursiveDefinition,
+      editorDocument: { ...recursiveDraft.editorDocument, nodeLayouts: [{ nodeId: 'parent', x: 120, y: 180 }], edges: [] },
+    },
   })
-  expect(recursiveVersion.status()).toBe(422)
-  expect(await recursiveVersion.json()).toMatchObject({ code: 'RECURSIVE_SUBWORKFLOW' })
+  expect(recursiveSave.status()).toBe(422)
+  expect(await recursiveSave.json()).toMatchObject({ code: 'RECURSIVE_SUBWORKFLOW' })
 
   const slowChildDefinition: Definition = {
-    schemaVersion: '6.0',
+    schemaVersion: '8.0',
     start: { inputs: { type: 'object', properties: {}, additionalProperties: false }, contexts: {} },
-    nodes: [node('wait', 'wait', { kind: 'duration', durationMs: 60_000 })],
+    nodes: [node('slow_approval', 'approval', { title: textTemplate('Slow Approval'), timeoutMs: 60_000, candidateUserId: actor.id }),
+      { id: 'exit', key: 'exit', type: 'exit', typeVersion: 1, name: 'End', disabled: false, protected: true, parameters: { outputs: {}, errorOutputs: {} }, contextWrites: [], resourceReferences: [], settings: {} },
+    ],
     connections: [
-      { id: 'start-wait', sourceNodeId: '__start__', sourceHandle: 'main', targetNodeId: 'wait', targetHandle: 'main', order: 0 },
-      { id: 'wait-end', sourceNodeId: 'wait', sourceHandle: 'resumed', targetNodeId: '__end__', targetHandle: 'main', order: 0 },
-      { id: 'wait-timeout-end', sourceNodeId: 'wait', sourceHandle: 'timed_out', targetNodeId: '__end__', targetHandle: 'main', order: 0 },
+      { id: 'start-approval', sourceNodeId: '__start__', sourceHandle: 'main', targetNodeId: 'slow_approval', targetHandle: 'main', order: 0 },
+      { id: 'approval-end', sourceNodeId: 'slow_approval', sourceHandle: 'decision:approved', targetNodeId: 'exit', targetHandle: 'main', order: 0 },
+      { id: 'approval-timeout-end', sourceNodeId: 'slow_approval', sourceHandle: 'timed_out', targetNodeId: 'exit', targetHandle: 'main', order: 0 },
     ],
     end: { outputs: {} },
     settings: { executionOrder: 'deterministic' },
   }
   const slowChild = await createWorkflow(page, token, `W4 Slow Child ${suffix}`, slowChildDefinition)
   const slowParentDefinition: Definition = {
-    schemaVersion: '6.0',
+    schemaVersion: '8.0',
     start: { inputs: { type: 'object', properties: {}, additionalProperties: false }, contexts: {} },
-    nodes: [node('slow_child', `workflow.${slowChild.version.id.replaceAll('-', '')}`, { workflowVersionId: slowChild.version.id, inputs: {} }, {
+    nodes: [node('slow_child', 'sub_workflow', { workflowVersionId: slowChild.version.id, inputs: objectBinding({}) }, {
       settings: { timeoutMs: 1_500, retryOnFail: false, maxTries: 1 },
-    })],
+    }),
+      { id: 'exit', key: 'exit', type: 'exit', typeVersion: 1, name: 'End', disabled: false, protected: true, parameters: { outputs: { status: literal('timeout-test') }, errorOutputs: {} }, contextWrites: [], resourceReferences: [], settings: {} },
+    ],
     connections: [
       { id: 'start-slow-child', sourceNodeId: '__start__', sourceHandle: 'main', targetNodeId: 'slow_child', targetHandle: 'main', order: 0 },
-      { id: 'slow-child-end', sourceNodeId: 'slow_child', sourceHandle: 'main', targetNodeId: '__end__', targetHandle: 'main', order: 0 },
+      { id: 'slow-child-end', sourceNodeId: 'slow_child', sourceHandle: 'main', targetNodeId: 'exit', targetHandle: 'main', order: 0 },
     ],
     end: {
       outputs: {
-        status: { value: { kind: 'literal', value: 'timeout-test' }, schema: { type: 'string' }, required: true, sensitive: false },
+        status: { schema: { type: 'string' }, required: true, sensitive: false },
       },
     },
     settings: { executionOrder: 'deterministic' },
@@ -398,36 +403,48 @@ test('Workflow 5.0 closes Composite, Context, Package, Multipart and cancellatio
   }, { timeout: 60_000 }).toBe('cancelled')
 })
 
-test('Workflow 5.0 declarative HTTP consumes request parameters and canonically converts its body for End', async ({ page }) => {
+test('Workflow 5.0 declarative HTTP consumes request parameters and returns its body as text', async ({ page }) => {
   const token = await login(page)
   const suffix = Date.now()
   const environment = (await request<Environment[]>(page, token, '/environments')).find((value) => value.code === 'development')!
   const definition: Definition = {
-    schemaVersion: '6.0',
+    schemaVersion: '8.0',
     start: { inputs: { type: 'object', properties: {}, additionalProperties: false }, contexts: {} },
     nodes: [node('http', 'declarative_http', {
-      method: literal('POST'),
-      url: literal(`${echoBaseUrl}/v1/chat/completions`),
-      headers: {
-        Authorization: literal('Bearer m5-model-secret'),
-        'Content-Type': literal('application/json'),
-      },
+      method: 'POST',
+      url: textTemplate(`${echoBaseUrl}/v1/chat/completions`),
+      query: [],
+      headers: [
+        { name: 'Authorization', value: textTemplate('Bearer m5-model-secret') },
+        { name: 'Content-Type', value: textTemplate('application/json') },
+      ],
       body: {
-        model: literal('contract-http'),
-        messages: [
-          { role: literal('system'), content: literal('Declarative HTTP contract') },
-          { role: literal('user'), content: literal('Return the fixture response') },
-        ],
+        kind: 'object',
+        fields: {
+          model: literal('contract-http'),
+          messages: {
+            kind: 'array',
+            items: [
+              { kind: 'object', fields: { role: literal('system'), content: literal('Declarative HTTP contract') } },
+              { kind: 'object', fields: { role: literal('user'), content: literal('Return the fixture response') } },
+            ],
+          },
+        },
       },
-    })],
+    }),
+      { id: 'exit', key: 'exit', type: 'exit', typeVersion: 1, name: 'End', disabled: false, protected: true, parameters: { outputs: {
+        status_code: reference('outputs', ['statusCode'], 'http'),
+        body_text: reference('outputs', ['body'], 'http'),
+      }, errorOutputs: {} }, contextWrites: [], resourceReferences: [], settings: {} },
+    ],
     connections: [
       { id: 'start-http', sourceNodeId: '__start__', sourceHandle: 'main', targetNodeId: 'http', targetHandle: 'main', order: 0 },
-      { id: 'http-end', sourceNodeId: 'http', sourceHandle: 'main', targetNodeId: '__end__', targetHandle: 'main', order: 0 },
+      { id: 'http-end', sourceNodeId: 'http', sourceHandle: 'main', targetNodeId: 'exit', targetHandle: 'main', order: 0 },
     ],
     end: {
       outputs: {
-        status_code: { value: reference('outputs', ['statusCode'], 'http'), schema: { type: 'integer' }, required: true, sensitive: false },
-        body_text: { value: reference('outputs', ['body'], 'http'), schema: { type: 'string' }, required: true, sensitive: false },
+        status_code: { schema: { type: 'integer' }, required: true, sensitive: false },
+        body_text: { schema: { type: 'string' }, required: true, sensitive: false },
       },
     },
     settings: { executionOrder: 'deterministic' },
@@ -453,16 +470,12 @@ test('Workflow 5.0 declarative HTTP consumes request parameters and canonically 
     contents: Array<{ eventId: string; kind: string; preview?: { records?: Array<{ targetPath: string; sourceType: string; mode: string; resultBytes: number }> } }>
     events: Array<{ eventId: string; attributes?: { diagnostic?: string; conversionCount?: number } }>
   }>(page, token, `/executions/${terminal.executionId}/trace/spans/${endBoundary!.spanId}`)
-  const conversion = endDetail.contents.find((content) => content.kind === 'conversion_record')
-  expect(conversion).toBeTruthy()
-  const conversionEvent = endDetail.events.find((event) => event.eventId === conversion!.eventId)
-  expect(conversionEvent?.attributes).toMatchObject({ diagnostic: 'string_conversion', conversionCount: 1 })
-  expect(conversion?.preview?.records).toEqual([
-    expect.objectContaining({ sourceType: 'object', mode: 'reference', resultBytes: (terminal.outputs?.body_text as string).length }),
-  ])
-  const conversionJson = JSON.stringify({ content: conversion, event: conversionEvent })
-  expect(conversionJson).not.toContain('m5-model-secret')
-  expect(conversionJson).not.toContain('M5 Agent completed after the MCP tool result')
+  expect(endDetail.contents.find((content) => content.kind === 'conversion_record')?.preview?.records).toContainEqual(expect.objectContaining({
+    sourceType: 'number', mode: 'schema:integer', targetPath: 'exit.exit.outputs.status_code',
+  }))
+  const endDetailJson = JSON.stringify(endDetail)
+  expect(endDetailJson).not.toContain('m5-model-secret')
+  expect(endDetailJson).toContain('M5 Agent completed after the MCP tool result')
 })
 
 test('Workflow 5.0 turns concurrent Session Context CAS conflicts into a terminal failure', async ({ page }) => {
@@ -471,7 +484,7 @@ test('Workflow 5.0 turns concurrent Session Context CAS conflicts into a termina
   const suffix = Date.now()
   const environment = (await request<Environment[]>(page, token, '/environments')).find((value) => value.code === 'development')!
   const definition: Definition = {
-    schemaVersion: '6.0',
+    schemaVersion: '8.0',
     start: {
       inputs: { type: 'object', properties: {}, additionalProperties: false },
       contexts: {
@@ -483,20 +496,21 @@ test('Workflow 5.0 turns concurrent Session Context CAS conflicts into a termina
     },
     nodes: [
       node('approval', 'approval', {
-        title: `W4 Session CAS barrier ${suffix}`,
+        title: textTemplate(`W4 Session CAS barrier ${suffix}`),
         timeoutMs: 300_000,
-        candidateUserId: literal(actor.id),
+        candidateUserId: actor.id,
       }),
-      node('write', 'set', { values: { counter: reference('contexts', ['session_counter']) }, keepOnlySet: true }, {
+      node('write', 'set', { values: objectBinding({ counter: reference('contexts', ['session_counter']) }), keepOnlySet: true }, {
         contextWrites: [{ operation: 'increment', path: 'session_counter', value: { kind: 'literal', value: 1 } }],
       }),
+      { id: 'exit', key: 'exit', type: 'exit', typeVersion: 1, name: 'End', disabled: false, protected: true, parameters: { outputs: { counter: reference('contexts', ['session_counter']) }, errorOutputs: {} }, contextWrites: [], resourceReferences: [], settings: {} },
     ],
     connections: [
       { id: 'start-approval', sourceNodeId: '__start__', sourceHandle: 'main', targetNodeId: 'approval', targetHandle: 'main', order: 0 },
-      { id: 'approval-write', sourceNodeId: 'approval', sourceHandle: 'approved', targetNodeId: 'write', targetHandle: 'main', order: 0 },
-      { id: 'write-end', sourceNodeId: 'write', sourceHandle: 'main', targetNodeId: '__end__', targetHandle: 'main', order: 0 },
+      { id: 'approval-write', sourceNodeId: 'approval', sourceHandle: 'decision:approved', targetNodeId: 'write', targetHandle: 'main', order: 0 },
+      { id: 'write-end', sourceNodeId: 'write', sourceHandle: 'main', targetNodeId: 'exit', targetHandle: 'main', order: 0 },
     ],
-    end: { outputs: { counter: { value: reference('contexts', ['session_counter']), schema: { type: 'number' }, required: true, sensitive: false } } },
+    end: { outputs: { counter: { schema: { type: 'number' }, required: true, sensitive: false } } },
     settings: { executionOrder: 'parallel' },
   }
   const workflow = await createWorkflow(page, token, `W4 Session CAS ${suffix}`, definition)
@@ -520,7 +534,7 @@ test('Workflow 5.0 turns concurrent Session Context CAS conflicts into a termina
   }, { timeout: 180_000, intervals: [250, 500, 1_000, 2_000] }).toBeTruthy()
   for (const approval of approvals) {
     const claimed = await request<Approval>(page, token, `/approvals/${approval.id}/claim`, 'POST', { version: approval.version })
-    await request<Approval>(page, token, `/approvals/${approval.id}/approve`, 'POST', { version: claimed.version, input: null })
+    await request<Approval>(page, token, `/approvals/${approval.id}/decide`, 'POST', { version: claimed.version, decisionId: 'approved', reason: null, idempotencyKey: crypto.randomUUID() })
   }
   const terminals = await Promise.all([waitInvocation(page, application.apiKey, first.id), waitInvocation(page, application.apiKey, second.id)])
   expect(terminals.map((value) => value.status).sort()).toEqual(['completed', 'failed'])
@@ -532,29 +546,27 @@ test('Workflow 5.0 propagates fail-fast, collected and Composite End errors', as
   const suffix = Date.now()
   const environment = (await request<Environment[]>(page, token, '/environments')).find((value) => value.code === 'development')!
   const terminalOutput = {
-    reported_code: { value: reference('item', ['code']), schema: { type: 'string' }, required: true, sensitive: false },
+    reported_code: { schema: { type: 'string' }, required: true, sensitive: false },
   }
-  const normalOutput = {
-    success: { value: reference('outputs', [], 'normal'), schema: { type: 'object' }, required: true, sensitive: false },
-  }
-  const errorDefinition = (strategy: 'fail_fast' | 'collect', codes: string[]): Definition => ({
-    schemaVersion: '6.0',
+  // Wiring is the policy: each failure node wires its error port to the exit
+  // error port, which routes the failure item and fails the execution.
+  const errorDefinition = (codes: string[]): Definition => ({
+    schemaVersion: '8.0',
     start: { inputs: { type: 'object', properties: {}, additionalProperties: false }, contexts: {} },
     nodes: [
-      node('normal', 'no_op', {}),
-      ...codes.map((code, index) => node(`failure_${index}`, 'stop_and_error', { code, message: `${code} message` }, {
-        settings: { onError: 'continue_error_output' },
+      ...codes.map((_, index) => node(`failure_${index}`, 'declarative_http', {
+        method: 'GET', url: textTemplate('https://127.0.0.1/blocked'), query: [], headers: [],
       })),
+      { id: 'exit', key: 'exit', type: 'exit', typeVersion: 1, name: 'End', disabled: false, protected: true, parameters: { outputs: {}, errorOutputs: { reported_code: reference('item', ['code']) } }, contextWrites: [], resourceReferences: [], settings: {} },
     ],
     connections: [
-      { id: 'start-normal', sourceNodeId: '__start__', sourceHandle: 'main', targetNodeId: 'normal', targetHandle: 'main', order: 0 },
-      { id: 'normal-end', sourceNodeId: 'normal', sourceHandle: 'main', targetNodeId: '__end__', targetHandle: 'main', order: 0 },
       ...codes.flatMap((_, index) => [
-        { id: `start-failure-${index}`, sourceNodeId: '__start__', sourceHandle: 'main', targetNodeId: `failure_${index}`, targetHandle: 'main', order: index + 1 },
-        { id: `failure-${index}-end`, sourceNodeId: `failure_${index}`, sourceHandle: 'error', targetNodeId: '__end__', targetHandle: 'error', order: index },
+        { id: `start-failure-${index}`, sourceNodeId: '__start__', sourceHandle: 'main', targetNodeId: `failure_${index}`, targetHandle: 'main', order: index },
+        { id: `failure-${index}-main-end`, sourceNodeId: `failure_${index}`, sourceHandle: 'main', targetNodeId: 'exit', targetHandle: 'main', order: index },
+        { id: `failure-${index}-end`, sourceNodeId: `failure_${index}`, sourceHandle: 'error', targetNodeId: 'exit', targetHandle: 'error', order: index },
       ]),
     ],
-    end: { outputs: normalOutput, error: { strategy, collectWindowMs: 2_000, outputs: terminalOutput } },
+    end: { completion: 'first_return', outputs: {}, error: { outputs: terminalOutput } },
     settings: { executionOrder: 'parallel' },
   })
 
@@ -568,41 +580,35 @@ test('Workflow 5.0 propagates fail-fast, collected and Composite End errors', as
     return { workflow, terminal: await waitInvocation(page, application.apiKey, invocation.id) }
   }
 
-  const failFast = await invokeFailure('Fail Fast', errorDefinition('fail_fast', ['FAIL_FAST']))
-  expect(failFast.terminal).toMatchObject({
-    status: 'failed',
-    error: { primaryError: { code: 'FAIL_FAST' }, outputs: { reported_code: 'FAIL_FAST' } },
-  })
+  const failFast = await invokeFailure('Fail Fast', errorDefinition(['FAIL_FAST']))
+  expect(failFast.terminal.status).toBe('failed')
+  const failFastCode = failFast.terminal.error?.primaryError?.code
+  expect(failFastCode).toEqual(expect.any(String))
+  expect(failFast.terminal.error?.outputs?.reported_code).toBe(failFastCode)
 
-  const collected = await invokeFailure('Collect', errorDefinition('collect', ['COLLECT_A', 'COLLECT_B']))
-  expect(collected.terminal.status).toBe('failed')
-  expect(collected.terminal.error?.errors).toHaveLength(2)
-  expect((collected.terminal.error?.errors as Array<{ code: string }>).map((error) => error.code).sort()).toEqual(['COLLECT_A', 'COLLECT_B'])
-  expect(collected.terminal.error?.outputs?.reported_code).toBe(collected.terminal.error?.primaryError?.code)
 
-  const child = await createWorkflow(page, token, `W4 Error Child ${suffix}`, errorDefinition('fail_fast', ['CHILD_FAILED']))
-  const childType = `workflow.${child.version.id.replaceAll('-', '')}`
+  const child = await createWorkflow(page, token, `W4 Error Child ${suffix}`, errorDefinition(['CHILD_FAILED']))
   const parentDefinition: Definition = {
-    schemaVersion: '6.0',
+    schemaVersion: '8.0',
     start: { inputs: { type: 'object', properties: {}, additionalProperties: false }, contexts: {} },
-    nodes: [node('child', childType, { workflowVersionId: child.version.id, inputs: {} }, {
-      settings: { onError: 'continue_error_output' },
-    })],
+    nodes: [
+      node('child', 'sub_workflow', { workflowVersionId: child.version.id, inputs: objectBinding({}) }),
+      { id: 'exit', key: 'exit', type: 'exit', typeVersion: 1, name: 'End', disabled: false, protected: true, parameters: { outputs: {}, errorOutputs: { reported_code: reference('item', ['code']) } }, contextWrites: [], resourceReferences: [], settings: {} },
+    ],
     connections: [
       { id: 'start-child', sourceNodeId: '__start__', sourceHandle: 'main', targetNodeId: 'child', targetHandle: 'main', order: 0 },
-      { id: 'child-main-end', sourceNodeId: 'child', sourceHandle: 'main', targetNodeId: '__end__', targetHandle: 'main', order: 0 },
-      { id: 'child-error-end', sourceNodeId: 'child', sourceHandle: 'error', targetNodeId: '__end__', targetHandle: 'error', order: 0 },
+      { id: 'child-main-end', sourceNodeId: 'child', sourceHandle: 'main', targetNodeId: 'exit', targetHandle: 'main', order: 0 },
+      { id: 'child-error-end', sourceNodeId: 'child', sourceHandle: 'error', targetNodeId: 'exit', targetHandle: 'error', order: 0 },
     ],
     end: {
-      outputs: {
-        success: { value: reference('outputs', ['success'], 'child'), schema: { type: 'object' }, required: true, sensitive: false },
-      },
-      error: { strategy: 'fail_fast', collectWindowMs: 5_000, outputs: terminalOutput },
+      completion: 'first_return',
+      outputs: {},
+      error: { outputs: terminalOutput },
     },
     settings: { executionOrder: 'parallel' },
   }
   const parent = await invokeFailure('Composite Error', parentDefinition)
-  expect(parent.terminal).toMatchObject({ status: 'failed', error: { primaryError: { code: 'CHILD_FAILED' } } })
+  expect(parent.terminal).toMatchObject({ status: 'failed', error: { primaryError: { code: expect.any(String) } } })
   const parentExecution = await waitExecution(page, token, parent.terminal.executionId!, ['failed'])
   const executions = await request<ExecutionPage>(page, token, '/executions?limit=100')
   expect(executions.items).toContainEqual(expect.objectContaining({ parentExecutionId: parentExecution.id, status: 'failed' }))

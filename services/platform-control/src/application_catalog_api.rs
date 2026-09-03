@@ -126,6 +126,16 @@ async fn create_application(
     let mut tx = state.pool.begin().await?;
     sqlx::query("INSERT INTO applications(id,tenant_id,workflow_id,name,slug,description,visibility,owner_user_id,owner_department_id) VALUES(?,?,?,?,?,?,?,?,?)")
         .bind(id).bind(actor.tenant_id).bind(input.workflow_id).bind(name).bind(&slug).bind(input.description).bind(input.visibility).bind(actor.user_id).bind(actor.department_id).execute(&mut *tx).await.map_err(map_slug_error)?;
+    // Runtime activations start at epoch 1. Persist the same baseline when the
+    // Application is created so the first later admission change is allocated
+    // as 2 and can never collide with an already-active Deployment route.
+    sqlx::query(
+        "INSERT INTO admission_epochs(tenant_id,application_id,current_epoch) VALUES(?,?,1)",
+    )
+    .bind(actor.tenant_id)
+    .bind(id)
+    .execute(&mut *tx)
+    .await?;
     let payload = json!({"applicationId":id,"workflowId":input.workflow_id});
     let hash = agentx_runtime_contracts::content_hash(&payload).map_err(ApiError::internal)?;
     sqlx::query("INSERT INTO outbox(id,tenant_id,event_type,aggregate_type,aggregate_id,payload_json,status,request_hash,idempotency_key) VALUES(?,?,?,?,?,?,'pending',?,?)")

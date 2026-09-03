@@ -11,12 +11,17 @@ import { create } from "zustand";
 
 import type {
   ActionNodeData,
-  BindingNodeData,
   ExitNodeData,
   StudioDocument,
   StudioEdge,
   StudioNode,
 } from "../model/types";
+import { isIterationChipId, loopIdOfIterationChip } from "../utils/connections";
+import {
+  LOOP_CONTAINER_MIN_HEIGHT,
+  LOOP_CONTAINER_MIN_WIDTH,
+  LOOP_CONTAINER_PADDING,
+} from "../utils/layout";
 import {
   applyHistoryPatch,
   createHistoryPatch,
@@ -72,16 +77,7 @@ type EditorState = DocumentSlice &
       handles: { input: string; output: string },
       position: { x: number; y: number },
     ) => string | undefined;
-    addBinding: (
-      data: BindingNodeData,
-      position?: { x: number; y: number },
-    ) => string;
     addExit: (position?: { x: number; y: number }) => string;
-    addConnectedBinding: (
-      data: BindingNodeData,
-      target: { nodeId: string; handleId: string },
-      position: { x: number; y: number },
-    ) => string;
     addAnnotation: (position?: { x: number; y: number }, text?: string) => void;
     updateAnnotation: (
       id: string,
@@ -104,11 +100,13 @@ type EditorState = DocumentSlice &
     select: (id?: string) => void;
     updateNode: (
       id: string,
-      data: Partial<ActionNodeData> | Partial<BindingNodeData> | Partial<ExitNodeData>,
+      data: Partial<ActionNodeData> | Partial<ExitNodeData>,
     ) => void;
+    updateLoopFrame: (id: string, frame: { x: number; y: number; width: number; height: number }) => void;
     setStart: (start: StudioDocument["start"] | ((current: StudioDocument["start"]) => StudioDocument["start"])) => void;
     setEnd: (end: StudioDocument["end"] | ((current: StudioDocument["end"]) => StudioDocument["end"])) => void;
     updateBoundaryPosition: (boundary: "start", position: { x: number; y: number }) => void;
+    detachFromContainer: (nodeId: string) => void;
     removeSelected: () => void;
     setViewport: (viewport: Viewport) => void;
     replaceNodes: (nodes: StudioNode[]) => void;
@@ -162,7 +160,7 @@ const documentSlice = (): DocumentSlice => ({
   },
   nodes: [],
   edges: [],
-  end: { outputs: {}, error: { strategy: "fail_fast", collectWindowMs: 5000, outputs: {} } },
+  end: { completion: "first_return", outputs: {}, error: { outputs: { } } },
   boundaryLayouts: [{ boundary: "start", x: 40, y: 220 }],
   viewport: { x: 0, y: 0, zoom: 1 },
   annotations: [],
@@ -178,6 +176,98 @@ const interactionSlice = (): InteractionSlice => ({
   edgeReconnectRequest: undefined,
 });
 const historySlice = (): HistorySlice => ({ past: [], future: [] });
+
+const nodeParentId = (node: StudioNode) =>
+  node.data.editorKind === "action" ? node.data.parentId : undefined;
+
+/** Size estimate for a freshly dropped child before React Flow measures it. */
+const CHILD_SIZE_ESTIMATE = { width: 240, height: 140 };
+
+/** Keeps the container frame large enough to hold its body children. */
+function growContainers(nodes: StudioNode[]): StudioNode[] {
+  const loops = new Map<string, StudioNode>();
+  for (const node of nodes)
+    if (node.data.editorKind === "action" && node.data.nodeType === "loop_over_items")
+      loops.set(node.id, node);
+  if (!loops.size) return nodes;
+  const required = new Map<string, { width: number; height: number }>();
+  for (const node of nodes) {
+    const parentId = nodeParentId(node);
+    if (!parentId || !loops.get(parentId)) continue;
+    const width = node.width ?? node.measured?.width ?? CHILD_SIZE_ESTIMATE.width;
+    const height = node.height ?? node.measured?.height ?? CHILD_SIZE_ESTIMATE.height;
+    const bounds = required.get(parentId) ?? { width: 0, height: 0 };
+    bounds.width = Math.max(bounds.width, node.position.x + width);
+    bounds.height = Math.max(bounds.height, node.position.y + height);
+    required.set(parentId, bounds);
+  }
+  let changed = false;
+  const grown = nodes.map((node) => {
+    const bounds = required.get(node.id);
+    if (!bounds || !loops.has(node.id)) return node;
+    const width = Math.max(node.width ?? LOOP_CONTAINER_MIN_WIDTH, bounds.width + LOOP_CONTAINER_PADDING.right, LOOP_CONTAINER_MIN_WIDTH);
+    const height = Math.max(node.height ?? LOOP_CONTAINER_MIN_HEIGHT, bounds.height + LOOP_CONTAINER_PADDING.bottom, LOOP_CONTAINER_MIN_HEIGHT);
+    if (width === node.width && height === node.height) return node;
+    changed = true;
+    return { ...node, width, height };
+  });
+  return changed ? grown : nodes;
+}
+
+/**
+ * Children of deleted loop nodes lose their membership but keep their absolute
+ * position (store positions of parented nodes are container-relative).
+ */
+function releaseContainerChildren(
+  nodes: StudioNode[],
+  loopOrigins: Map<string, { x: number; y: number }>,
+): StudioNode[] {
+  if (!loopOrigins.size) return nodes;
+  return nodes.map((node) => {
+    const parentId = nodeParentId(node);
+    const origin = parentId ? loopOrigins.get(parentId) : undefined;
+    if (!origin || node.data.editorKind !== "action") return node;
+    return {
+      ...node,
+      position: { x: node.position.x + origin.x, y: node.position.y + origin.y },
+      data: { ...node.data, parentId: undefined },
+    };
+  });
+}
+
+function loopOriginsOf(nodes: StudioNode[], removedIds: Set<string>) {
+  const origins = new Map<string, { x: number; y: number }>();
+  for (const node of nodes)
+    if (removedIds.has(node.id) && node.data.editorKind === "action" && node.data.nodeType === "loop_over_items")
+      origins.set(node.id, node.position);
+  return origins;
+}
+
+function matchesDynamicPortNode(data: ActionNodeData) {
+  return data.nodeType === "if" || data.nodeType === "approval" || data.nodeType === "merge";
+}
+
+function isDynamicOutputHandle(handle: string | null | undefined) {
+  return Boolean(handle?.startsWith("case:") || handle?.startsWith("decision:"));
+}
+
+function dynamicOutputHandles(data: ActionNodeData) {
+  if (data.nodeType === "if") {
+    const cases = Array.isArray(data.parameters.cases) ? data.parameters.cases : [];
+    return new Set(cases.flatMap((branch) => branch && typeof branch === "object" && typeof (branch as { id?: unknown }).id === "string" ? [`case:${(branch as { id: string }).id}`] : []));
+  }
+  const configured = Array.isArray(data.parameters.buttons) ? data.parameters.buttons : [];
+  const buttons = configured.length ? configured : [{ id: "approved" }, { id: "rejected" }];
+  return new Set(buttons.flatMap((button) => button && typeof button === "object" && typeof (button as { id?: unknown }).id === "string" ? [`decision:${(button as { id: string }).id}`] : []));
+}
+
+function mergeInputHandleValid(data: ActionNodeData, handle: string | null | undefined) {
+  if (data.nodeType !== "merge") return true;
+  const mode = data.parameters.mode ?? "append";
+  return mode === "append"
+    ? handle === "main" || Boolean(handle?.startsWith("main:"))
+    : handle === "left" || handle === "right";
+}
 
 export const useEditorStore = create<EditorState>((set) => ({
   ...documentSlice(),
@@ -216,13 +306,33 @@ export const useEditorStore = create<EditorState>((set) => ({
       const documentChange = guarded.some(
         (change) => change.type !== "select" && change.type !== "dimensions",
       );
-      const nodes = applyNodeChanges(guarded, state.nodes);
+      const resizedLoopFrames = new Map(
+        guarded.flatMap((change) => {
+          if (change.type !== "dimensions" || !state.gestureSnapshot) return [];
+          const node = state.nodes.find((candidate) => candidate.id === change.id);
+          if (node?.data.editorKind !== "action" || node.data.nodeType !== "loop_over_items") return [];
+          return [[change.id, change.dimensions] as const];
+        }),
+      );
+      const removedIds = new Set(
+        guarded
+          .filter((change) => change.type === "remove")
+          .map((change) => change.id),
+      );
+      const loopOrigins = loopOriginsOf(state.nodes, removedIds);
+      const nodes = releaseContainerChildren(
+        applyNodeChanges(guarded, state.nodes).map((node) => {
+          const dimensions = resizedLoopFrames.get(node.id);
+          return dimensions ? { ...node, width: dimensions.width, height: dimensions.height } : node;
+        }),
+        loopOrigins,
+      );
       return structural
         ? {
             ...commit(state, { nodes }),
             graphRevision: state.graphRevision + 1,
           }
-        : { nodes, dirty: state.dirty || documentChange };
+        : { nodes, dirty: state.dirty || documentChange || resizedLoopFrames.size > 0 };
     }),
   onEdgesChange: (changes) =>
     set((state) => {
@@ -267,8 +377,16 @@ export const useEditorStore = create<EditorState>((set) => ({
     })),
   clearEdgeReconnectRequest: () => set({ edgeReconnectRequest: undefined }),
   clearEdgeInsertRequest: () => set({ edgeInsertRequest: undefined }),
-  connect: (connection, data, replaceEdgeId) =>
+  connect: (rawConnection, data, replaceEdgeId) =>
     set((state) => {
+      // Chip handles are edit-only anchors: loop→body edges live on the loop node.
+      const chipSource =
+        rawConnection.source && isIterationChipId(rawConnection.source)
+          ? loopIdOfIterationChip(rawConnection.source)
+          : undefined;
+      const connection = chipSource
+        ? { ...rawConnection, source: chipSource, sourceHandle: "main" as string | null }
+        : rawConnection;
       const sourceId = connection.source ?? "";
       const nodes =
         data?.sourcePortKind === "error"
@@ -280,7 +398,6 @@ export const useEditorStore = create<EditorState>((set) => ({
                       ...node.data,
                       settings: {
                         ...node.data.settings,
-                        onError: "continue_error_output",
                       },
                     },
                   }
@@ -300,13 +417,21 @@ export const useEditorStore = create<EditorState>((set) => ({
         graphRevision: state.graphRevision + 1,
       };
     }),
-  reconnectEdge: (edgeId, connection) =>
+  reconnectEdge: (edgeId, rawConnection) =>
     set((state) => {
       const edge = state.edges.find((candidate) => candidate.id === edgeId);
-      if (!edge || !connection.source || !connection.target) return state;
+      if (!edge || !rawConnection.source || !rawConnection.target) return state;
+      const connection =
+        isIterationChipId(rawConnection.source)
+          ? {
+              ...rawConnection,
+              source: loopIdOfIterationChip(rawConnection.source),
+              sourceHandle: "main" as string | null,
+            }
+          : rawConnection;
       const sourcePortKind = connection.sourceHandle === "error" ? "error" : "main";
       const nodes = sourcePortKind === "error"
-        ? state.nodes.map((node) => node.id === connection.source && node.data.editorKind === "action" ? { ...node, data: { ...node.data, settings: { ...node.data.settings, onError: "continue_error_output" } } } : node)
+        ? state.nodes.map((node) => node.id === connection.source && node.data.editorKind === "action" ? { ...node, data: { ...node.data, settings: { ...node.data.settings } } } : node)
         : state.nodes;
       return {
         ...commit(state, {
@@ -343,7 +468,7 @@ export const useEditorStore = create<EditorState>((set) => ({
       };
       return {
         ...commit(state, {
-          nodes: [
+          nodes: growContainers([
             ...state.nodes.map((node) => ({ ...node, selected: false })),
             {
               id,
@@ -352,7 +477,7 @@ export const useEditorStore = create<EditorState>((set) => ({
               data,
               selected: true,
             },
-          ],
+          ]),
         }),
         graphRevision: state.graphRevision + 1,
         selectedId: id,
@@ -389,7 +514,6 @@ export const useEditorStore = create<EditorState>((set) => ({
                       ...node.data,
                       settings: {
                         ...node.data.settings,
-                        onError: "continue_error_output",
                       },
                     },
                   }
@@ -399,10 +523,10 @@ export const useEditorStore = create<EditorState>((set) => ({
       return {
         ...commit(state, {
           selectedId: id,
-          nodes: [
+          nodes: growContainers([
             ...sourceNodes.map((node) => ({ ...node, selected: false })),
             { id, type: "manifest", position, data, selected: true },
-          ],
+          ]),
           edges: [...state.edges, edge],
         }),
         graphRevision: state.graphRevision + 1,
@@ -460,32 +584,6 @@ export const useEditorStore = create<EditorState>((set) => ({
     });
     return inserted ? id : undefined;
   },
-  addBinding: (data, position) => {
-    const id = `binding:${data.bindingId}`;
-    set((state) => {
-      const count = state.nodes.filter(
-        (node) => node.data.editorKind === "binding",
-      ).length;
-      const nextPosition = position ?? { x: 80 + count * 210, y: 410 };
-      return {
-        ...commit(state, {
-          nodes: [
-            ...state.nodes.map((node) => ({ ...node, selected: false })),
-            {
-              id,
-              type: "attachment",
-              position: nextPosition,
-              data,
-              selected: true,
-            },
-          ],
-        }),
-        graphRevision: state.graphRevision + 1,
-        selectedId: id,
-      };
-    });
-    return id;
-  },
   addExit: (position) => {
     const id = crypto.randomUUID();
     set((state) => {
@@ -507,35 +605,6 @@ export const useEditorStore = create<EditorState>((set) => ({
             ...state.nodes.map((node) => ({ ...node, selected: false })),
             { id, type: "exit", position: nextPosition, data, selected: true },
           ],
-        }),
-        graphRevision: state.graphRevision + 1,
-        selectedId: id,
-      };
-    });
-    return id;
-  },
-  addConnectedBinding: (data, target, position) => {
-    const id = `binding:${data.bindingId}`;
-    set((state) => {
-      const edge: StudioEdge = {
-        id: crypto.randomUUID(),
-        source: id,
-        sourceHandle: "resource",
-        target: target.nodeId,
-        targetHandle: target.handleId,
-        type: "studio",
-        data: {
-          edgeKind: "binding",
-          targetSlot: target.handleId.replace(/^binding:/, ""),
-        },
-      };
-      return {
-        ...commit(state, {
-          nodes: [
-            ...state.nodes.map((node) => ({ ...node, selected: false })),
-            { id, type: "attachment", position, data, selected: true },
-          ],
-          edges: [...state.edges, edge],
         }),
         graphRevision: state.graphRevision + 1,
         selectedId: id,
@@ -633,13 +702,17 @@ export const useEditorStore = create<EditorState>((set) => ({
   select: (selectedId) => set({ selectedId }),
   updateNode: (id, data) =>
     set((state) => {
+      const current = state.nodes.find((node) => node.id === id);
+      const nextData = current?.data.editorKind === "action"
+        ? ({ ...current.data, ...data } as ActionNodeData)
+        : undefined;
+      const dynamicPortsChanged = Boolean(nextData && "parameters" in data && matchesDynamicPortNode(nextData));
       const graphChanged =
         "nodeType" in data ||
         "typeVersion" in data ||
-        "resourceType" in data ||
-        "bindingRole" in data ||
-        "resourceName" in data ||
-        "label" in data;
+        "resourceReferences" in data ||
+        "label" in data ||
+        dynamicPortsChanged;
       const nextNodes = state.nodes.map((node) => {
         if (node.id === id)
           return {
@@ -648,12 +721,31 @@ export const useEditorStore = create<EditorState>((set) => ({
           };
         return node;
       });
+      const validHandles = nextData && dynamicPortsChanged && nextData.nodeType !== "merge" ? dynamicOutputHandles(nextData) : undefined;
+      const nextEdges = state.edges.filter((edge) => {
+        if (validHandles && edge.source === id && isDynamicOutputHandle(edge.sourceHandle) && !validHandles.has(edge.sourceHandle!)) return false;
+        if (nextData && dynamicPortsChanged && edge.target === id && !mergeInputHandleValid(nextData, edge.targetHandle)) return false;
+        return true;
+      });
       return {
         ...commit(state, {
           graphRevision: state.graphRevision + Number(graphChanged),
           nodes: nextNodes,
+          edges: nextEdges,
         }),
       };
+    }),
+  updateLoopFrame: (id, frame) =>
+    set((state) => {
+      const current = state.nodes.find((node) => node.id === id);
+      if (current?.data.editorKind !== "action" || current.data.nodeType !== "loop_over_items") return state;
+      const nodes = state.nodes.map((node) => node.id === id ? {
+        ...node,
+        position: { x: frame.x, y: frame.y },
+        width: frame.width,
+        height: frame.height,
+      } : node);
+      return { nodes, dirty: true };
     }),
   setStart: (start) => set((state) => commit(state, { start: typeof start === "function" ? start(state.start) : start })),
   setEnd: (end) => set((state) => commit(state, { end: typeof end === "function" ? end(state.end) : end })),
@@ -667,6 +759,30 @@ export const useEditorStore = create<EditorState>((set) => ({
       return state.gestureSnapshot
         ? { boundaryLayouts, dirty: true }
         : commit(state, { boundaryLayouts });
+    }),
+  detachFromContainer: (nodeId) =>
+    set((state) => {
+      const node = state.nodes.find((candidate) => candidate.id === nodeId);
+      const parentId = node && nodeParentId(node);
+      const parent = parentId
+        ? state.nodes.find((candidate) => candidate.id === parentId)
+        : undefined;
+      if (!node || !parent) return state;
+      const nodes = state.nodes.map((candidate) =>
+        candidate.id === nodeId && candidate.data.editorKind === "action"
+          ? {
+              ...candidate,
+              position: {
+                x: parent.position.x + candidate.position.x,
+                y: parent.position.y + candidate.position.y,
+              },
+              data: { ...candidate.data, parentId: undefined },
+            }
+          : candidate,
+      );
+      return state.gestureSnapshot
+        ? { nodes, dirty: true }
+        : commit(state, { nodes });
     }),
   removeSelected: () =>
     set((state) => {
@@ -695,10 +811,14 @@ export const useEditorStore = create<EditorState>((set) => ({
           ids.delete(node.id);
         }
       }
+      const loopOrigins = loopOriginsOf(state.nodes, ids);
       return ids.size
         ? {
             ...commit(state, {
-              nodes: state.nodes.filter((node) => !ids.has(node.id)),
+              nodes: releaseContainerChildren(
+                state.nodes.filter((node) => !ids.has(node.id)),
+                loopOrigins,
+              ),
               edges: state.edges.filter(
                 (edge) => !ids.has(edge.source) && !ids.has(edge.target),
               ),
@@ -722,8 +842,10 @@ export const useEditorStore = create<EditorState>((set) => ({
     })),
   alignSelected: (direction) =>
     set((state) => {
+      // Container children use parent-relative positions; they never align with free nodes.
       const selected = state.nodes.filter(
-        (node) => node.selected || node.id === state.selectedId,
+        (node) =>
+          (node.selected || node.id === state.selectedId) && !nodeParentId(node),
       );
       if (selected.length < 2) return state;
       const value = Math.min(
@@ -800,10 +922,10 @@ export const useEditorStore = create<EditorState>((set) => ({
   paste: (nodes, edges) =>
     set((state) => ({
       ...commit(state, {
-        nodes: [
+        nodes: growContainers([
           ...state.nodes.map((node) => ({ ...node, selected: false })),
           ...nodes,
-        ],
+        ]),
         edges: [
           ...state.edges.map((edge) => ({ ...edge, selected: false })),
           ...edges,

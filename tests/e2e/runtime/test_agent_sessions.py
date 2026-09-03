@@ -1,3 +1,6 @@
+# ruff: noqa: S608
+# This Kubernetes E2E module queries only its isolated test database with API and fixture identifiers.
+
 from __future__ import annotations
 
 import json
@@ -11,8 +14,8 @@ from tests.e2e.runtime.test_agent_attachments import (
     WORKFLOW_ID,
     _access_token,
     _run_fixture_job,
-    _wait_admission_outbox,
     _runtime_mysql,
+    _wait_admission_outbox,
     _wait_execution,
 )
 
@@ -39,9 +42,7 @@ def _wait_application_deployment(
     deadline = time.monotonic() + 300
     latest: dict[str, Any] = {}
     while time.monotonic() < deadline:
-        response = client.get(
-            f"/api/v1/applications/{application_id}/deployments", headers=headers
-        )
+        response = client.get(f"/api/v1/applications/{application_id}/deployments", headers=headers)
         response.raise_for_status()
         latest = next(
             (item for item in response.json() if item["id"] == deployment_id),
@@ -50,13 +51,9 @@ def _wait_application_deployment(
         if latest.get("status") == "active":
             return latest
         if latest.get("status") == "rejected":
-            raise AssertionError(
-                f"application deployment rejected: {json.dumps(latest, ensure_ascii=False)}"
-            )
+            raise AssertionError(f"application deployment rejected: {json.dumps(latest, ensure_ascii=False)}")
         time.sleep(1)
-    raise AssertionError(
-        f"application deployment did not become active: {json.dumps(latest, ensure_ascii=False)}"
-    )
+    raise AssertionError(f"application deployment did not become active: {json.dumps(latest, ensure_ascii=False)}")
 
 
 def _publish_application_deployment(
@@ -98,15 +95,11 @@ def _publish_application_deployment(
     raise AssertionError(f"application deployment did not converge: {last_error}")
 
 
-def _wait_gateway_invocation(
-    client: httpx.Client, headers: dict[str, str], invocation_id: str
-) -> dict[str, Any]:
+def _wait_gateway_invocation(client: httpx.Client, headers: dict[str, str], invocation_id: str) -> dict[str, Any]:
     deadline = time.monotonic() + 300
     latest: dict[str, Any] = {}
     while time.monotonic() < deadline:
-        response = client.get(
-            f"/gateway/v1/invocations/{invocation_id}", headers=headers
-        )
+        response = client.get(f"/gateway/v1/invocations/{invocation_id}", headers=headers)
         response.raise_for_status()
         latest = response.json()
         if latest.get("status") in {"completed", "failed", "cancelled", "timed_out"}:
@@ -114,9 +107,7 @@ def _wait_gateway_invocation(
                 latest["status"] = "succeeded"
             return latest
         time.sleep(1)
-    raise AssertionError(
-        f"gateway invocation did not reach a terminal state: {json.dumps(latest, ensure_ascii=False)}"
-    )
+    raise AssertionError(f"gateway invocation did not reach a terminal state: {json.dumps(latest, ensure_ascii=False)}")
 
 
 @pytest.mark.cluster
@@ -163,13 +154,13 @@ def test_p305_invocation_sessions_are_isolated_and_entries_are_durable(
 
         rows = _runtime_mysql(
             installed_agentx,
-            "SELECT JSON_ARRAYAGG(JSON_OBJECT(" 
-            "'sessionKey',session_key,'nodeKey',stable_agent_node_key," 
-            "'sessionId',session_id,'updatedAt',DATE_FORMAT(updated_at,'%Y-%m-%dT%H:%i:%s.%fZ')," 
-            "'entryCount',(SELECT COUNT(*) FROM agent_session_entries e " 
-            "WHERE e.tenant_id=r.tenant_id AND e.session_key=r.session_key " 
-            "AND e.stable_agent_node_key=r.stable_agent_node_key))) " 
-            "FROM agent_session_registers r " 
+            "SELECT JSON_ARRAYAGG(JSON_OBJECT("
+            "'sessionKey',session_key,'nodeKey',stable_agent_node_key,"
+            "'sessionId',session_id,'updatedAt',DATE_FORMAT(updated_at,'%Y-%m-%dT%H:%i:%s.%fZ'),"
+            "'entryCount',(SELECT COUNT(*) FROM agent_session_entries e "
+            "WHERE e.tenant_id=r.tenant_id AND e.session_key=r.session_key "
+            "AND e.stable_agent_node_key=r.stable_agent_node_key))) "
+            "FROM agent_session_registers r "
             f"WHERE r.tenant_id=UUID_TO_BIN('{me['companyId']}') AND r.session_key LIKE 'invocation:%';",
         )
         invocation_items = json.loads(rows) if rows and rows != "null" else []
@@ -178,24 +169,18 @@ def test_p305_invocation_sessions_are_isolated_and_entries_are_durable(
         assert len(keys) == len(invocation_items), "invocation sessions must not share a key"
         assert all(item["entryCount"] >= 1 for item in invocation_items)
 
-        cleared = next(
-            item for item in invocation_items if first["id"] in item["sessionKey"]
-        )
+        cleared = next(item for item in invocation_items if first["id"] in item["sessionKey"])
         clear_request = {
             "sessionKey": cleared["sessionKey"],
             "stableAgentNodeKey": cleared["nodeKey"],
             "idempotencyKey": f"p3-05-session-clear-{run_id}",
         }
-        clear_response = client.post(
-            "/api/v1/agent-sessions/clear", headers=headers, json=clear_request
-        )
+        clear_response = client.post("/api/v1/agent-sessions/clear", headers=headers, json=clear_request)
         assert clear_response.status_code == 200, clear_response.text
         clear_receipt = clear_response.json()
         assert clear_receipt["clearedEntries"] >= 1, clear_receipt
 
-        replay = client.post(
-            "/api/v1/agent-sessions/clear", headers=headers, json=clear_request
-        )
+        replay = client.post("/api/v1/agent-sessions/clear", headers=headers, json=clear_request)
         assert replay.status_code == 200, replay.text
         assert replay.json() == clear_receipt
 
@@ -245,9 +230,7 @@ def test_p305_application_session_continues_across_gateway_executions(
         control_headers = {"Authorization": f"Bearer {token}"}
         environments = control.get("/api/v1/environments", headers=control_headers)
         environments.raise_for_status()
-        environment = next(
-            item for item in environments.json() if item["code"] == "development"
-        )
+        environment = next(item for item in environments.json() if item["code"] == "development")
         fixture = _run_fixture_job(
             installed_agentx,
             run_id,
@@ -286,6 +269,7 @@ def test_p305_application_session_continues_across_gateway_executions(
         )
         assert session_response.status_code == 201, session_response.text
         session_id = session_response.json()["id"]
+
         def invoke(index: int) -> dict[str, Any]:
             response = gateway.post(
                 f"/gateway/v1/applications/{application_slug}/invocations",
@@ -351,10 +335,17 @@ def test_p305_threshold_compaction_is_durable_and_accounted(
             me,
             environment["id"],
             job_suffix="threshold-compaction",
-            fixture_env={"AGENTX_V2_FIXTURE_COMPACTION_THRESHOLD": "1"},
+            fixture_env={
+                "AGENTX_V2_FIXTURE_COMPACTION_THRESHOLD": "512",
+                "AGENTX_V2_FIXTURE_MAX_TOTAL_TOKENS": "64000",
+                "AGENTX_V2_FIXTURE_SYSTEM_PROMPT": "P3_THRESHOLD_COMPACTION",
+                "AGENTX_V2_FIXTURE_USER_QUESTION": "context " * 400,
+            },
         )
         result = _run_agent(client, headers, "threshold-compaction")
-        assert result["status"] == "succeeded", result
+        assert result["status"] == "succeeded", {
+            key: result.get(key) for key in ("id", "status", "errorCode", "errorMessage", "output")
+        }
 
     execution_id = result["id"]
     calls = json.loads(
@@ -428,7 +419,13 @@ def test_p305_provider_overflow_compaction_retries_once(
     )
     calls.sort(key=lambda call: call["index"])
     model_calls = [call for call in calls if call["kind"] == "model"]
-    assert len(model_calls) == 3, calls
+    compaction_kind = _runtime_mysql(
+        installed_agentx,
+        "SELECT JSON_UNQUOTE(JSON_EXTRACT(register_json,'$.compaction.kind')) "
+        "FROM agent_session_registers "
+        f"WHERE session_key LIKE '%{execution_id}%' LIMIT 1;",
+    )
+    assert len(model_calls) == 3, {"calls": calls, "compactionKind": compaction_kind}
     assert model_calls[0]["status"] == "failed", calls
     assert sum(call["kind"] == "compaction" for call in calls) == 1, calls
     assert any(call["error"] == "PROVIDER_REJECTED" for call in model_calls)
@@ -522,9 +519,7 @@ def test_p305_subject_memory_write_recall_is_scoped_and_audited(
                 },
             )
             assert response.status_code == 202, response.text
-            return _wait_gateway_invocation(
-                gateway, {"Authorization": f"Bearer {api_key}"}, response.json()["id"]
-            )
+            return _wait_gateway_invocation(gateway, {"Authorization": f"Bearer {api_key}"}, response.json()["id"])
 
         first = invoke(1, "P3_MEMORY_WRITE", write_session_id)
         second = invoke(2, "P3_MEMORY_RECALL", recall_session_id)
@@ -562,11 +557,7 @@ def test_p305_subject_memory_write_recall_is_scoped_and_audited(
     audits = json.loads(audit_rows) if audit_rows and audit_rows.lower() != "null" else []
     assert {item["operation"] for item in audits} >= {"write", "recall"}
 
-    memory_version_id = next(
-        tool["resourceVersionId"]
-        for tool in registry["tools"]
-        if tool["name"] == "memory_recall"
-    )
+    memory_version_id = next(tool["resourceVersionId"] for tool in registry["tools"] if tool["name"] == "memory_recall")
     with httpx.Client(base_url=service_urls["web"], timeout=60) as control:
         clear_response = control.post(
             "/api/v1/agent-subject-memory/clear",
@@ -608,9 +599,7 @@ def test_p305_subject_memory_write_recall_is_scoped_and_audited(
             },
         )
         assert response.status_code == 202, response.text
-        third = _wait_gateway_invocation(
-            gateway, {"Authorization": f"Bearer {api_key}"}, response.json()["id"]
-        )
+        third = _wait_gateway_invocation(gateway, {"Authorization": f"Bearer {api_key}"}, response.json()["id"])
         assert third["status"] == "succeeded", third
 
     cleared_provider_effects = _runtime_mysql(

@@ -1,5 +1,5 @@
 use crate::{config::DeploymentConfig, process};
-use agentx_key_material::{generate, rsa_pair};
+use agentx_key_material::{generate_with_egress_tls_names, rsa_pair};
 use anyhow::{Context, Result, bail};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use rand::{Rng, distributions::Alphanumeric};
@@ -15,6 +15,18 @@ fn password() -> String {
         .take(48)
         .map(char::from)
         .collect()
+}
+
+fn egress_tls_names(config: &DeploymentConfig) -> Result<Vec<String>> {
+    let endpoint = config
+        .string("/global/network/egressGateway/sandboxAccess/endpoint")
+        .context("Sandbox egress endpoint is required")?;
+    let host = url::Url::parse(endpoint)
+        .context("Sandbox egress endpoint is invalid")?
+        .host_str()
+        .context("Sandbox egress endpoint has no host")?
+        .to_owned();
+    Ok(vec!["agentx-egress-gateway".into(), host])
 }
 
 async fn get_secret(namespace: &str, name: &str) -> Result<Option<Secret>> {
@@ -84,7 +96,7 @@ pub async fn ensure_local_secrets(config: &DeploymentConfig, targets: &[&str]) -
     if !selected.contains("dependencies") {
         bail!("generated-local targets require an installed authoritative Dependencies Secret");
     }
-    let material = generate()?;
+    let material = generate_with_egress_tls_names(egress_tls_names(config)?)?;
     let mut egress_public = BTreeMap::new();
     egress_public.insert(
         "runtime-gateway-current",
@@ -1049,6 +1061,17 @@ mod tests {
             assert_eq!(value.len(), 48);
             assert!(value.bytes().all(|byte| byte.is_ascii_alphanumeric()));
         }
+    }
+
+    #[test]
+    fn generated_egress_tls_names_include_the_configured_sandbox_endpoint() {
+        assert_eq!(
+            egress_tls_names(&local_config()).unwrap(),
+            vec![
+                "agentx-egress-gateway".to_owned(),
+                "host.docker.internal".to_owned(),
+            ]
+        );
     }
 
     #[test]

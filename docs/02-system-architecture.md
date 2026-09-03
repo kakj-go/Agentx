@@ -177,7 +177,7 @@ Draft Debug 和 Version Execution 只在来源解析阶段不同，后续共享�
 - 沙箱：OpenSandbox；本地 Docker Runtime + runc，Kubernetes Runtime；gVisor/Kata 或等价强隔离列为后续生产强化
 - 部署：Kubernetes、Kustomize；固定 Helm 只用于脚本管理的专用 ingress-nginx
 
-首期不发布 Rust、Python 或 JavaScript Node SDK。节点扩展通过版本化 Node Manifest、Node Action/Lifecycle API、OpenAPI/JSON Schema、接入文档和协议一致性 Fixture 完成；平台内部 Rust `NodeRunner` 只是 builtin Adapter。常规 REST 集成优先使用 declarative_http，复杂外部实现使用 remote_action，Python 与 JavaScript 自定义代码必须放在 OpenSandbox 内执行。Rust 侧基于固定版本的 OpenSandbox OpenAPI 维护内部 DTO 和普通 HTTP 调用，并手写 SSE、Endpoint、安全校验和错误映射；不把供应商 SDK 或 Sidecar 嵌入运行链路。
+首期不发布 Rust、Python 或 JavaScript Node SDK，也不开放外部可执行节点扩展面。内置执行节点由Rust Registry及版本化Node Manifest唯一声明；常规REST集成使用`declarative_http`，MCP/Skill/Knowledge/Memory作为Agent资源能力，Python/JavaScript/Shell自定义逻辑通过Code节点进入OpenSandbox。Rust侧基于固定版本的OpenSandbox API维护内部DTO、Endpoint、安全校验和错误映射，不把供应商SDK或Sidecar嵌入运行链路。
 
 ## 6. 一致性边界
 

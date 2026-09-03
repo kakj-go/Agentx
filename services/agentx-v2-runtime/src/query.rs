@@ -24,7 +24,7 @@ use crate::{
 pub use crate::query_authority::{
     ExecutionEventsQuery, get_execution, get_execution_artifact, get_execution_checkpoints,
     get_execution_events, get_execution_node, get_execution_nodes, get_execution_runtime_details,
-    get_execution_waits, get_invocation, search_executions, search_invocations,
+    get_invocation, search_executions, search_invocations,
 };
 
 pub async fn search_agent_sessions(

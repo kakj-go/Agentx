@@ -2,10 +2,10 @@ use std::{collections::BTreeMap, future::Future, sync::Arc};
 
 use agentx_runtime_contracts::{
     EGRESS_SANDBOX_TOKEN_MAX_TTL_SECONDS, EGRESS_TOKEN_AUDIENCE, EGRESS_TOKEN_ISSUER,
-    EgressConnectClaimsV1, EgressMode, EgressRole, RuntimeResourceBindingV1,
+    EgressConnectClaimsV1, EgressDestinationV1, EgressMode, EgressRole, RuntimeResourceBindingV1,
     RuntimeResourceConfigurationV1, SandboxEgressModeV1, ToolEffectRequestV1, ToolEffectResponseV1,
     WorkspaceAcquireRequestV1, WorkspaceAcquireResponseV1, WorkspaceLeaseStatusV1,
-    WorkspaceReleaseRequestV1, issue_egress_connect_token, now_unix,
+    WorkspaceReleaseRequestV1, content_hash, issue_egress_connect_token, now_unix,
 };
 use axum::{
     Json, Router,
@@ -27,6 +27,10 @@ use crate::error::{RuntimeError, RuntimeResult};
 
 const LEASE_SECONDS: u32 = 30;
 const EXECD_PORT: u16 = 44_772;
+const SANDBOX_EGRESS_CA_PATH: &str = "/tmp/agentx-egress-ca.pem";
+const SANDBOX_EGRESS_CA_MODE: u16 = 600;
+const SANDBOX_EGRESS_CA_CONTENT_TYPE: &str = "application/octet-stream";
+const SANDBOX_EGRESS_CA_METADATA_FILENAME: &str = "metadata.json";
 
 #[path = "sandbox_process.rs"]
 mod process;
@@ -409,12 +413,12 @@ async fn run_sandbox_operation(
             ),
             _ => unreachable!(),
         };
-    let requested_egress_mode = requested_egress_mode(&request.parameters)?;
-    if requested_egress_mode == SandboxEgressModeV1::PublicHttps
-        && *profile_egress_mode != SandboxEgressModeV1::PublicHttps
+    let (requested_egress_mode, _) = requested_egress_policy(&request.parameters)?;
+    if requested_egress_mode == SandboxEgressModeV1::TcpProxy
+        && *profile_egress_mode != SandboxEgressModeV1::TcpProxy
     {
         return Err(bad_request(
-            "Code node public HTTPS exceeds the Sandbox Profile network capability",
+            "Code node TCP proxy exceeds the Sandbox Profile network capability",
         ));
     }
     let labels = json!({
@@ -876,7 +880,7 @@ async fn create_provider_sandbox(
     metadata: BTreeMap<String, String>,
     idempotency_key: &str,
 ) -> Result<(Value, Option<String>), ProviderError> {
-    let proxy_target = if egress_mode == SandboxEgressModeV1::PublicHttps {
+    let proxy_target = if egress_mode == SandboxEgressModeV1::TcpProxy {
         let proxy = sandbox_proxy_url()?;
         let target = proxy.host_str().ok_or_else(|| ProviderError {
             message: "Sandbox egress proxy URL has no host".into(),
@@ -956,7 +960,7 @@ fn opensandbox_network_policy(
     proxy_target: Option<&str>,
 ) -> Value {
     let egress = match (egress_mode, proxy_target) {
-        (SandboxEgressModeV1::PublicHttps, Some(target)) => {
+        (SandboxEgressModeV1::TcpProxy, Some(target)) => {
             vec![json!({"action":"allow","target":target})]
         }
         _ => Vec::new(),
@@ -964,24 +968,44 @@ fn opensandbox_network_policy(
     json!({"defaultAction":"deny","egress":egress})
 }
 
-fn requested_egress_mode(parameters: &Value) -> RuntimeResult<SandboxEgressModeV1> {
-    match parameters
-        .get("egressMode")
-        .or_else(|| parameters.pointer("/networkPolicy/egressMode"))
+fn requested_egress_policy(
+    parameters: &Value,
+) -> RuntimeResult<(SandboxEgressModeV1, Vec<EgressDestinationV1>)> {
+    let policy = parameters.get("networkPolicy").and_then(Value::as_object);
+    let mode = policy
+        .and_then(|policy| policy.get("mode"))
         .and_then(Value::as_str)
-        .unwrap_or("none")
-    {
-        "none" => Ok(SandboxEgressModeV1::None),
-        "public_https" => Ok(SandboxEgressModeV1::PublicHttps),
+        .unwrap_or("deny");
+    let destinations = policy
+        .and_then(|policy| policy.get("destinations"))
+        .cloned()
+        .unwrap_or_else(|| json!([]));
+    let destinations =
+        serde_json::from_value::<Vec<EgressDestinationV1>>(destinations).map_err(|error| {
+            bad_request(&format!(
+                "Code node network destinations are invalid: {error}"
+            ))
+        })?;
+    match mode {
+        "deny" if destinations.is_empty() => Ok((SandboxEgressModeV1::None, destinations)),
+        "allowlist" if !destinations.is_empty() => {
+            Ok((SandboxEgressModeV1::TcpProxy, destinations))
+        }
+        "deny" => Err(bad_request(
+            "Code node deny network policy cannot contain destinations",
+        )),
+        "allowlist" => Err(bad_request(
+            "Code node allowlist network policy requires at least one destination",
+        )),
         _ => Err(bad_request(
-            "Code node egressMode must be none or public_https",
+            "Code node network mode must be deny or allowlist",
         )),
     }
 }
 
 fn sandbox_proxy_url() -> Result<reqwest::Url, ProviderError> {
     let value = std::env::var("AGENTX_EGRESS_SANDBOX_PROXY_URL").map_err(|_| ProviderError {
-        message: "AGENTX_EGRESS_SANDBOX_PROXY_URL is required for public HTTPS".into(),
+        message: "AGENTX_EGRESS_SANDBOX_PROXY_URL is required for TCP proxy access".into(),
         outcome_unknown: false,
     })?;
     let url = reqwest::Url::parse(&value).map_err(|error| ProviderError {
@@ -1019,6 +1043,15 @@ fn sandbox_proxy_environment(
         })?;
     let now = now_unix();
     let token_ttl = i64::from(ttl_seconds).clamp(1, EGRESS_SANDBOX_TOKEN_MAX_TTL_SECONDS);
+    let (_, destinations) =
+        requested_egress_policy(&request.parameters).map_err(|error| ProviderError {
+            message: error.to_string(),
+            outcome_unknown: false,
+        })?;
+    let policy_hash = content_hash(&destinations).map_err(|error| ProviderError {
+        message: format!("failed hashing Sandbox network policy: {error}"),
+        outcome_unknown: false,
+    })?;
     let claims = EgressConnectClaimsV1 {
         iss: EGRESS_TOKEN_ISSUER.into(),
         aud: EGRESS_TOKEN_AUDIENCE.into(),
@@ -1026,9 +1059,9 @@ fn sandbox_proxy_environment(
         tenant_id: request.tenant_id,
         execution_id: Some(request.execution_id),
         request_id: Some(request.attempt_id),
-        egress_mode: EgressMode::PublicHttps,
-        target_host: "*".into(),
-        target_port: 443,
+        egress_mode: EgressMode::TcpProxy,
+        destinations,
+        policy_hash,
         iat: now,
         exp: now + token_ttl,
         jti: Uuid::now_v7(),
@@ -1075,8 +1108,10 @@ async fn upload_sandbox_ca(
             outcome_unknown: false,
         })?;
     let metadata = serde_json::to_string(&json!({
-        "path":"/tmp/agentx-egress-ca.pem",
-        "mode":384
+        "path":SANDBOX_EGRESS_CA_PATH,
+        // Execd models Unix permissions as their octal digits (600), not the
+        // decimal value of Rust's 0o600 literal (384).
+        "mode":SANDBOX_EGRESS_CA_MODE
     }))
     .map_err(|error| ProviderError {
         message: error.to_string(),
@@ -1086,6 +1121,9 @@ async fn upload_sandbox_ca(
         .part(
             "metadata",
             reqwest::multipart::Part::text(metadata)
+                // Execd reads metadata from MultipartForm.File rather than
+                // MultipartForm.Value, so this part must carry a filename.
+                .file_name(SANDBOX_EGRESS_CA_METADATA_FILENAME)
                 .mime_str("application/json")
                 .map_err(|error| ProviderError {
                     message: error.to_string(),
@@ -1096,7 +1134,7 @@ async fn upload_sandbox_ca(
             "file",
             reqwest::multipart::Part::bytes(ca)
                 .file_name("agentx-egress-ca.pem")
-                .mime_str("application/x-pem-file")
+                .mime_str(SANDBOX_EGRESS_CA_CONTENT_TYPE)
                 .map_err(|error| ProviderError {
                     message: error.to_string(),
                     outcome_unknown: false,
@@ -1185,19 +1223,19 @@ async fn execute_provider_command(
         );
     }
     let mut envs = serde_json::Map::new();
-    if egress_mode == SandboxEgressModeV1::PublicHttps {
+    if egress_mode == SandboxEgressModeV1::TcpProxy {
         let (proxy, ca) = sandbox_proxy_environment(sandbox_request, ttl_seconds)?;
         envs.insert("HTTPS_PROXY".into(), Value::String(proxy.clone()));
-        envs.insert("https_proxy".into(), Value::String(proxy));
+        envs.insert("https_proxy".into(), Value::String(proxy.clone()));
+        envs.insert("HTTP_PROXY".into(), Value::String(proxy.clone()));
+        envs.insert("http_proxy".into(), Value::String(proxy.clone()));
+        envs.insert("AGENTX_TCP_PROXY_URL".into(), Value::String(proxy));
         envs.insert("NO_PROXY".into(), Value::String(String::new()));
         envs.insert("no_proxy".into(), Value::String(String::new()));
         if let Some(ca) = ca {
             upload_sandbox_ca(state, &endpoint, headers.clone(), ca).await?;
             for name in ["SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "NODE_EXTRA_CA_CERTS"] {
-                envs.insert(
-                    name.into(),
-                    Value::String("/tmp/agentx-egress-ca.pem".into()),
-                );
+                envs.insert(name.into(), Value::String(SANDBOX_EGRESS_CA_PATH.into()));
             }
         }
     }
@@ -1246,17 +1284,46 @@ async fn execute_provider_command(
             outcome_unknown: false,
         });
     }
+    let (stdout, structured_output) = extract_code_result(&stdout)?;
     Ok((
         json!({
             "stdout":stdout,
             "stderr":stderr,
             "exitCode":exit_code,
+            "structuredOutput":structured_output,
             "partial":false,
-            "downloadedArtifacts":[],
+            "files":[],
             "sandboxId":sandbox_id
         }),
         request_id,
     ))
+}
+
+fn extract_code_result(stdout: &str) -> Result<(String, Value), ProviderError> {
+    const MARKER: &str = "\n__AGENTX_RESULT__";
+    let Some((diagnostics, encoded)) = stdout.rsplit_once(MARKER) else {
+        return Err(ProviderError {
+            message: "Code did not produce the required structured output file".into(),
+            outcome_unknown: false,
+        });
+    };
+    let bytes = STANDARD
+        .decode(encoded.trim())
+        .map_err(|error| ProviderError {
+            message: format!("Code output is not valid base64: {error}"),
+            outcome_unknown: false,
+        })?;
+    let value: Value = serde_json::from_slice(&bytes).map_err(|error| ProviderError {
+        message: format!("Code output is not valid JSON: {error}"),
+        outcome_unknown: false,
+    })?;
+    if !value.is_object() {
+        return Err(ProviderError {
+            message: "Code output must be a JSON object".into(),
+            outcome_unknown: false,
+        });
+    }
+    Ok((diagnostics.to_owned(), value))
 }
 
 fn parse_command_stream(body: &str) -> Result<(String, String, i64), ProviderError> {
@@ -1310,8 +1377,17 @@ fn parse_command_stream(body: &str) -> Result<(String, String, i64), ProviderErr
                     .or_else(|| event.get("text"))
                     .and_then(Value::as_str)
                     .unwrap_or("OpenSandbox command failed");
+                let stderr = stderr.trim();
+                let message = if stderr.is_empty() {
+                    message.to_owned()
+                } else {
+                    format!(
+                        "{message}: {}",
+                        stderr.chars().take(2_000).collect::<String>()
+                    )
+                };
                 return Err(ProviderError {
-                    message: message.to_owned(),
+                    message,
                     outcome_unknown: false,
                 });
             }
@@ -1398,7 +1474,7 @@ fn sandbox_command(parameters: &Value, idempotency_key: &str) -> Result<String, 
     let runner = parameters
         .get("runner")
         .and_then(Value::as_str)
-        .unwrap_or("shell");
+        .unwrap_or("python");
     let source = parameters
         .get("source")
         .and_then(Value::as_str)
@@ -1406,11 +1482,41 @@ fn sandbox_command(parameters: &Value, idempotency_key: &str) -> Result<String, 
             message: "Sandbox code node requires parameters.source".into(),
             outcome_unknown: false,
         })?;
-    let encoded = STANDARD.encode(source.as_bytes());
-    let (path, executable) = match runner {
-        "python" => ("/tmp/agentx-v2.py", "python3"),
-        "javascript" | "browser" => ("/tmp/agentx-v2.js", "node"),
-        "shell" => ("/tmp/agentx-v2.sh", "sh"),
+    let inputs = parameters
+        .get("inputs")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    if !inputs.is_object() {
+        return Err(ProviderError {
+            message: "Code inputs must resolve to an object".into(),
+            outcome_unknown: false,
+        });
+    }
+    let input_encoded =
+        STANDARD.encode(serde_json::to_vec(&inputs).map_err(|error| ProviderError {
+            message: error.to_string(),
+            outcome_unknown: false,
+        })?);
+    let input_path = "/tmp/agentx-input.json";
+    let output_path = "/tmp/agentx-output.json";
+    let workspace_tool = parameters.get("workspaceTool").and_then(Value::as_str);
+    let (path, executable, program) = match runner {
+        "python" if workspace_tool.is_some() => ("/tmp/agentx-v2.py", "python3", source.to_owned()),
+        "python" => (
+            "/tmp/agentx-v2.py",
+            "python3",
+            format!(
+                "{source}\n\nif __name__ == '__main__':\n    import json, os\n    with open(os.environ['AGENTX_INPUT_PATH'], encoding='utf-8') as stream:\n        _agentx_inputs = json.load(stream)\n    _agentx_result = main(**_agentx_inputs)\n    with open(os.environ['AGENTX_OUTPUT_PATH'], 'w', encoding='utf-8') as stream:\n        json.dump(_agentx_result, stream, ensure_ascii=False)\n"
+            ),
+        ),
+        "javascript" => (
+            "/tmp/agentx-v2.js",
+            "node",
+            format!(
+                "{source}\n\n(async () => {{\n  const fs = require('fs');\n  const inputs = JSON.parse(fs.readFileSync(process.env.AGENTX_INPUT_PATH, 'utf8'));\n  const result = await main(inputs);\n  fs.writeFileSync(process.env.AGENTX_OUTPUT_PATH, JSON.stringify(result));\n}})().catch((error) => {{ console.error(error); process.exit(1); }});\n"
+            ),
+        ),
+        "shell" => ("/tmp/agentx-v2.sh", "sh", source.to_owned()),
         other => {
             return Err(ProviderError {
                 message: format!("unsupported Sandbox runner {other}"),
@@ -1418,26 +1524,16 @@ fn sandbox_command(parameters: &Value, idempotency_key: &str) -> Result<String, 
             });
         }
     };
-    let arguments = parameters
-        .get("arguments")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .map(|value| {
-            value
-                .as_str()
-                .map(shell_quote)
-                .ok_or_else(|| ProviderError {
-                    message: "Sandbox arguments must contain only strings".into(),
-                    outcome_unknown: false,
-                })
-        })
-        .collect::<Result<Vec<_>, _>>()?
-        .join(" ");
-    let invocation = if arguments.is_empty() {
-        format!("{executable} '{path}'")
+    let encoded = STANDARD.encode(program.as_bytes());
+    let invocation = if workspace_tool.is_some() {
+        // Agent Workspace tools are an internal Sandbox capability. Their
+        // generated Python emits one JSON object, which is promoted to the
+        // same structured output file used by public Code nodes.
+        format!("{executable} '{path}' > '{output_path}'")
     } else {
-        format!("{executable} '{path}' {arguments}")
+        format!(
+            "AGENTX_INPUT_PATH='{input_path}' AGENTX_OUTPUT_PATH='{output_path}' {executable} '{path}'"
+        )
     };
     let operation_hash = raw_hash(idempotency_key.as_bytes());
     Ok(format!(
@@ -1449,18 +1545,16 @@ fn sandbox_command(parameters: &Value, idempotency_key: &str) -> Result<String, 
              AGENTX_PID=$(cat \"${{AGENTX_STATE}}.lock/pid\" 2>/dev/null || true); \
              if [ -n \"$AGENTX_PID\" ] && ! kill -0 \"$AGENTX_PID\" 2>/dev/null; then rm -rf \"${{AGENTX_STATE}}.lock\"; else sleep 0.1; fi; \
            fi; \
-         done; \
-         if [ \"$AGENTX_ACQUIRED\" -eq 1 ]; then \
-           set +e; (printf '%s' '{encoded}' | base64 -d > '{path}' && {invocation}) > \"${{AGENTX_STATE}}.stdout.tmp\" 2> \"${{AGENTX_STATE}}.stderr.tmp\"; AGENTX_EXIT=$?; \
-           mv \"${{AGENTX_STATE}}.stdout.tmp\" \"${{AGENTX_STATE}}.stdout\"; mv \"${{AGENTX_STATE}}.stderr.tmp\" \"${{AGENTX_STATE}}.stderr\"; \
-           printf '%s' \"$AGENTX_EXIT\" > \"${{AGENTX_STATE}}.exit.tmp\"; mv \"${{AGENTX_STATE}}.exit.tmp\" \"${{AGENTX_STATE}}.exit\"; rm -rf \"${{AGENTX_STATE}}.lock\"; \
-         fi; \
-         cat \"${{AGENTX_STATE}}.stdout\"; cat \"${{AGENTX_STATE}}.stderr\" >&2; exit $(cat \"${{AGENTX_STATE}}.exit\")"
+          done; \
+          if [ \"$AGENTX_ACQUIRED\" -eq 1 ]; then \
+            rm -f '{output_path}'; printf '%s' '{input_encoded}' | base64 -d > '{input_path}'; \
+            set +e; (printf '%s' '{encoded}' | base64 -d > '{path}' && {invocation}) > \"${{AGENTX_STATE}}.stdout.tmp\" 2> \"${{AGENTX_STATE}}.stderr.tmp\"; AGENTX_EXIT=$?; \
+            mv \"${{AGENTX_STATE}}.stdout.tmp\" \"${{AGENTX_STATE}}.stdout\"; mv \"${{AGENTX_STATE}}.stderr.tmp\" \"${{AGENTX_STATE}}.stderr\"; if [ -f '{output_path}' ]; then mv '{output_path}' \"${{AGENTX_STATE}}.result\"; else rm -f \"${{AGENTX_STATE}}.result\"; fi; \
+            printf '%s' \"$AGENTX_EXIT\" > \"${{AGENTX_STATE}}.exit.tmp\"; mv \"${{AGENTX_STATE}}.exit.tmp\" \"${{AGENTX_STATE}}.exit\"; rm -rf \"${{AGENTX_STATE}}.lock\"; \
+          fi; \
+          cat \"${{AGENTX_STATE}}.stdout\"; if [ -f \"${{AGENTX_STATE}}.result\" ]; then printf '\n__AGENTX_RESULT__'; base64 < \"${{AGENTX_STATE}}.result\" | tr -d '\n'; fi; \
+          cat \"${{AGENTX_STATE}}.stderr\" >&2; exit $(cat \"${{AGENTX_STATE}}.exit\")"
     ))
-}
-
-fn shell_quote(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
 
 #[derive(Debug)]
@@ -1497,6 +1591,20 @@ async fn provider_json(
         outcome_unknown: true,
         message: error.to_string(),
     })?;
+    if !status.is_success() {
+        let payload = serde_json::from_slice::<Value>(&bytes).unwrap_or_else(|_| {
+            Value::String(
+                String::from_utf8_lossy(&bytes)
+                    .chars()
+                    .take(1_000)
+                    .collect(),
+            )
+        });
+        return Err(ProviderError {
+            outcome_unknown: false,
+            message: format!("OpenSandbox HTTP {status}: {payload}"),
+        });
+    }
     let payload = if bytes.is_empty() {
         Value::Null
     } else {
@@ -1505,12 +1613,6 @@ async fn provider_json(
             message: format!("invalid OpenSandbox JSON response: {error}"),
         })?
     };
-    if !status.is_success() {
-        return Err(ProviderError {
-            outcome_unknown: false,
-            message: format!("OpenSandbox HTTP {status}: {payload}"),
-        });
-    }
     Ok((payload, operation_id))
 }
 
@@ -1766,161 +1868,5 @@ fn conflict(message: &str) -> RuntimeError {
 }
 
 #[cfg(test)]
-mod tests {
-    use agentx_runtime_contracts::SandboxEgressModeV1;
-
-    use super::{
-        opensandbox_network_policy, parse_command_stream, sandbox_command, server_proxy_endpoint,
-    };
-    use serde_json::json;
-
-    #[test]
-    fn python_sandbox_command_uses_the_pinned_image_interpreter() {
-        let command = sandbox_command(
-            &json!({"runner":"python","source":"print('ok')"}),
-            "sandbox:test",
-        )
-        .unwrap();
-        assert!(command.contains("python3 '/tmp/agentx-v2.py'"));
-        assert!(!command.contains(" python '/tmp/agentx-v2.py'"));
-    }
-
-    #[test]
-    fn sandbox_command_consumes_arguments_and_browser_runner() {
-        let command = sandbox_command(
-            &json!({"runner":"browser","source":"console.log(process.argv)","arguments":["plain","a'b"]}),
-            "sandbox:arguments",
-        )
-        .unwrap();
-        assert!(command.contains("node '/tmp/agentx-v2.js' 'plain' 'a'\"'\"'b'"));
-    }
-
-    #[test]
-    fn opensandbox_policy_only_allows_the_dedicated_gateway_host() {
-        assert_eq!(
-            opensandbox_network_policy(
-                SandboxEgressModeV1::PublicHttps,
-                Some("egress.internal.example")
-            ),
-            json!({
-                "defaultAction":"deny",
-                "egress":[{"action":"allow","target":"egress.internal.example"}]
-            })
-        );
-        assert_eq!(
-            opensandbox_network_policy(SandboxEgressModeV1::None, None),
-            json!({"defaultAction":"deny","egress":[]})
-        );
-    }
-
-    #[test]
-    fn command_stream_accepts_the_pinned_execd_json_frames() {
-        let body = concat!(
-            "{\"type\":\"init\",\"text\":\"command-id\"}\n\n",
-            "{\"type\":\"stdout\",\"text\":\"m6-studio-ok\\n\"}\n\n",
-            "{\"type\":\"execution_complete\",\"execution_time\":2}\n\n"
-        );
-        let (stdout, stderr, exit_code) = parse_command_stream(body).unwrap();
-        assert_eq!(stdout, "m6-studio-ok\n");
-        assert!(stderr.is_empty());
-        assert_eq!(exit_code, 0);
-    }
-
-    #[test]
-    fn command_stream_accepts_spec_sse_and_rejects_incomplete_success() {
-        let (stdout, stderr, exit_code) = parse_command_stream(concat!(
-            "data: {\"type\":\"stdout\",\"text\":\"ok\"}\n\n",
-            "data: {\"type\":\"result\",\"exit_code\":0}\n\n"
-        ))
-        .unwrap();
-        assert_eq!((stdout.as_str(), stderr.as_str(), exit_code), ("ok", "", 0));
-
-        let error =
-            parse_command_stream("{\"type\":\"stdout\",\"text\":\"partial\"}\n").unwrap_err();
-        assert!(error.message.contains("without a terminal event"));
-        assert!(error.outcome_unknown);
-    }
-
-    #[test]
-    fn command_stream_reads_nested_execd_errors() {
-        let error = parse_command_stream(
-            "{\"type\":\"error\",\"error\":{\"ename\":\"ExitError\",\"evalue\":\"command failed\"}}\n",
-        )
-        .unwrap_err();
-        assert_eq!(error.message, "command failed");
-        assert!(!error.outcome_unknown);
-    }
-
-    #[test]
-    fn server_proxy_endpoint_adds_trailing_slash_and_rewrites_loopback_host() {
-        let endpoint = server_proxy_endpoint(
-            "http://host.docker.internal:18080",
-            "127.0.0.1:18080/v1/sandboxes/sbx-1/proxy/44772",
-            "sbx-1",
-        )
-        .unwrap();
-        assert_eq!(
-            endpoint.as_str(),
-            "http://host.docker.internal:18080/v1/sandboxes/sbx-1/proxy/44772/"
-        );
-        assert_eq!(
-            endpoint.join("command").unwrap().as_str(),
-            "http://host.docker.internal:18080/v1/sandboxes/sbx-1/proxy/44772/command"
-        );
-    }
-
-    #[test]
-    fn server_proxy_endpoint_accepts_the_exact_execd_path() {
-        let endpoint = server_proxy_endpoint(
-            "https://opensandbox.example.test",
-            "https://opensandbox.example.test/v1/sandboxes/sbx-1/proxy/44772/",
-            "sbx-1",
-        )
-        .unwrap();
-        assert_eq!(endpoint.path(), "/v1/sandboxes/sbx-1/proxy/44772/");
-    }
-
-    #[test]
-    fn server_proxy_endpoint_cannot_escape_the_lifecycle_origin() {
-        let error = server_proxy_endpoint(
-            "https://opensandbox.example.test",
-            "https://attacker.example.test/v1/sandboxes/sbx-1/proxy/",
-            "sbx-1",
-        )
-        .unwrap_err();
-        assert!(
-            error
-                .message
-                .contains("outside the lifecycle provider origin")
-        );
-
-        let error = server_proxy_endpoint(
-            "https://opensandbox.example.test:8443",
-            "https://opensandbox.example.test:9443/v1/sandboxes/sbx-1/proxy/",
-            "sbx-1",
-        )
-        .unwrap_err();
-        assert!(
-            error
-                .message
-                .contains("outside the lifecycle provider origin")
-        );
-    }
-
-    #[test]
-    fn server_proxy_endpoint_rejects_path_and_query_injection() {
-        for endpoint in [
-            "https://opensandbox.example.test/v1/sandboxes/other/proxy/",
-            "https://opensandbox.example.test/v1/sandboxes/sbx-1/proxy/",
-            "https://opensandbox.example.test/v1/sandboxes/sbx-1/proxy/22/",
-            "https://opensandbox.example.test/v1/sandboxes/sbx-1/proxy/command/",
-            "https://opensandbox.example.test/v1/sandboxes/sbx-1/proxy/?target=metadata",
-        ] {
-            assert!(
-                server_proxy_endpoint("https://opensandbox.example.test", endpoint, "sbx-1")
-                    .is_err(),
-                "endpoint should be rejected: {endpoint}"
-            );
-        }
-    }
-}
+#[path = "sandbox_tests.rs"]
+mod tests;

@@ -106,8 +106,8 @@ function mergeEdgeInteraction(value: StudioEdge, current?: StudioEdge): StudioEd
 
 function nodeStructure(node: StudioNode) {
   return node.data.editorKind === 'action'
-    ? `${node.data.editorKind}:${node.data.nodeType}:${node.data.typeVersion}`
-    : `${node.data.editorKind}:${'resourceType' in node.data ? `${node.data.resourceType}:${node.data.bindingRole}:${node.data.resourceName}:${node.data.label}` : 'label' in node.data ? node.data.label : ''}`
+    ? `action:${node.data.nodeType}:${node.data.typeVersion}`
+    : `exit:${node.data.label}`
 }
 
 function equal(left: unknown, right: unknown) {

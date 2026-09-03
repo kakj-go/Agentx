@@ -1,4 +1,7 @@
-use agentx_runtime::{ActivationStatus, ExecutionMachine};
+use std::collections::BTreeMap;
+
+use agentx_node_protocol::Item;
+use agentx_runtime::{ActivationStatus, DeliveryKind, ExecutionMachine};
 use serde_json::Value;
 use sqlx::{MySql, Transaction};
 use uuid::Uuid;
@@ -85,6 +88,50 @@ pub(super) async fn persist_machine(
         .bind(serde_json::to_value(&delivery.items).map_err(|error| RuntimeError::Internal(error.into()))?)
         .execute(&mut **tx)
         .await?;
+    }
+    // The Loop worker first emits its input array to activate the body. The
+    // state machine later replaces that provisional value with the ordered
+    // aggregate selected from completed body rounds. Persist the aggregate as
+    // the Loop node's public output so node result views match downstream data.
+    for activation in machine.activations() {
+        if machine.workflow().nodes[activation.node_index]
+            .loop_body
+            .is_none()
+        {
+            continue;
+        }
+        let mut outputs = BTreeMap::<String, Vec<Item>>::new();
+        for delivery in machine
+            .deliveries()
+            .iter()
+            .filter(|delivery| delivery.source_node_execution_id == activation.id)
+        {
+            if let DeliveryKind::Data(items) = &delivery.kind {
+                let port = machine.workflow().connections[delivery.connection_index]
+                    .source_port
+                    .clone();
+                outputs.entry(port).or_insert_with(|| items.clone());
+            }
+        }
+        for delivery in machine
+            .end_deliveries()
+            .iter()
+            .filter(|delivery| delivery.source_node_execution_id == activation.id)
+        {
+            outputs
+                .entry(delivery.source_port.clone())
+                .or_insert_with(|| delivery.items.clone());
+        }
+        if outputs.is_empty() {
+            continue;
+        }
+        sqlx::query("UPDATE node_executions SET output_json=? WHERE tenant_id=? AND execution_id=? AND id=?")
+            .bind(serde_json::to_value(outputs).map_err(|error| RuntimeError::Internal(error.into()))?)
+            .bind(tenant_id)
+            .bind(execution_id)
+            .bind(activation.id.as_uuid())
+            .execute(&mut **tx)
+            .await?;
     }
     let machine_json =
         serde_json::to_value(machine).map_err(|error| RuntimeError::Internal(error.into()))?;

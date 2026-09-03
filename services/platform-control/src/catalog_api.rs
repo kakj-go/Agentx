@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::BTreeMap;
 
 use agentx_api_types::PageResponse;
 use agentx_node_protocol::NodeManifestVersion;
@@ -77,6 +77,8 @@ struct ProviderOption {
     value: String,
     label: String,
     description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    manifest: Option<Value>,
 }
 
 #[derive(Serialize)]
@@ -162,28 +164,79 @@ async fn list_provider_options(
     if !manifest.providers.iter().any(|value| value == &provider) {
         return Err(ApiError::not_found("Node option provider"));
     }
-    if provider != "workflow_versions" {
-        return Err(ApiError::unprocessable(
-            "NODE_PROVIDER_UNSUPPORTED",
-            format!("Provider '{provider}' is not available"),
-        ));
-    }
     let search = format!("%{}%", query.search.unwrap_or_default().trim());
     let limit = query.limit.unwrap_or(50).clamp(1, 100);
-    let rows = sqlx::query("SELECT v.id,v.version_number,w.name FROM workflow_versions v JOIN workflows w ON w.tenant_id=v.tenant_id AND w.id=v.workflow_id WHERE v.tenant_id=? AND w.status='active' AND (?='%%' OR w.name LIKE ?) AND (w.owner_user_id=? OR w.visibility='company' OR EXISTS(SELECT 1 FROM workflow_members wm WHERE wm.tenant_id=w.tenant_id AND wm.workflow_id=w.id AND wm.user_id=?)) ORDER BY w.name,v.version_number DESC LIMIT ?")
-        .bind(actor.tenant_id).bind(&search).bind(&search).bind(actor.user_id).bind(actor.user_id).bind(limit).fetch_all(&state.pool).await?;
-    let items = rows
-        .into_iter()
-        .map(|row| {
-            let version_number: u64 = row.try_get("version_number")?;
-            let name: String = row.try_get("name")?;
-            Ok(ProviderOption {
-                value: row.try_get::<Uuid, _>("id")?.to_string(),
-                label: format!("{name} · v{version_number}"),
-                description: Some(format!("Published workflow version {version_number}")),
-            })
-        })
-        .collect::<Result<_, sqlx::Error>>()?;
+    let items = match provider.as_str() {
+        "workflow_versions" => {
+            let rows = sqlx::query("SELECT v.id,v.workflow_id,v.version_number,v.definition_json,w.name FROM workflow_versions v JOIN workflows w ON w.tenant_id=v.tenant_id AND w.id=v.workflow_id WHERE v.tenant_id=? AND w.status='active' AND (?='%%' OR w.name LIKE ?) AND (w.owner_user_id=? OR w.visibility='company' OR EXISTS(SELECT 1 FROM workflow_members wm WHERE wm.tenant_id=w.tenant_id AND wm.workflow_id=w.id AND wm.user_id=?)) ORDER BY w.name,v.version_number DESC LIMIT ?")
+                .bind(actor.tenant_id).bind(&search).bind(&search).bind(actor.user_id).bind(actor.user_id).bind(limit).fetch_all(&state.pool).await?;
+            let definitions = rows
+                .iter()
+                .map(|row| {
+                    Ok((
+                        row.try_get::<Uuid, _>("id")?,
+                        serde_json::from_value::<agentx_domain::WorkflowDefinition>(
+                            row.try_get("definition_json")?,
+                        )
+                        .map_err(ApiError::internal)?,
+                    ))
+                })
+                .collect::<ApiResult<BTreeMap<_, _>>>()?;
+            let registry = agentx_bundle_builder::node_registry_with_composites(&definitions)
+                .map_err(ApiError::internal)?;
+            rows.into_iter()
+                .map(|row| {
+                    let version_id: Uuid = row.try_get("id")?;
+                    let workflow_id: Uuid = row.try_get("workflow_id")?;
+                    let version_number: u64 = row.try_get("version_number")?;
+                    let name: String = row.try_get("name")?;
+                    let node_type = format!("workflow.{}", version_id.simple());
+                    let mut manifest = registry
+                        .get(&node_type, 1)
+                        .expect("derived Workflow Version Manifest")
+                        .clone();
+                    manifest.display_name = format!("{name} · v{version_number}");
+                    if let Some(schema) = manifest.parameter_schema.as_object_mut() {
+                        schema.insert(
+                            "x-agentx-workflowId".into(),
+                            Value::String(workflow_id.to_string()),
+                        );
+                        schema.insert(
+                            "x-agentx-workflowVersionId".into(),
+                            Value::String(version_id.to_string()),
+                        );
+                        schema.insert("x-agentx-versionNumber".into(), Value::from(version_number));
+                    }
+                    Ok(ProviderOption {
+                        value: version_id.to_string(),
+                        label: format!("{name} · v{version_number}"),
+                        description: Some(format!("Published workflow version {version_number}")),
+                        manifest: Some(serde_json::to_value(manifest).map_err(ApiError::internal)?),
+                    })
+                })
+                .collect::<ApiResult<_>>()?
+        }
+        "users" => {
+            let rows = sqlx::query("SELECT id,display_name,username FROM users WHERE tenant_id=? AND status='active' AND (?='%%' OR display_name LIKE ? OR username LIKE ?) ORDER BY display_name,id LIMIT ?")
+                .bind(actor.tenant_id).bind(&search).bind(&search).bind(&search).bind(limit).fetch_all(&state.pool).await?;
+            rows.into_iter()
+                .map(|row| {
+                    Ok(ProviderOption {
+                        value: row.try_get::<Uuid, _>("id")?.to_string(),
+                        label: row.try_get("display_name")?,
+                        description: Some(format!("@{}", row.try_get::<String, _>("username")?)),
+                        manifest: None,
+                    })
+                })
+                .collect::<Result<_, sqlx::Error>>()?
+        }
+        _ => {
+            return Err(ApiError::unprocessable(
+                "NODE_PROVIDER_UNSUPPORTED",
+                format!("Provider '{provider}' is not available"),
+            ));
+        }
+    };
     Ok(Json(ProviderOptionsResponse { items }))
 }
 
@@ -191,25 +244,63 @@ async fn manifests_for_tenant(
     state: &ControlApiState,
     tenant: Uuid,
 ) -> ApiResult<Vec<(NodeManifestVersion, String)>> {
-    let rows = sqlx::query("SELECT v.manifest_json,v.manifest_hash FROM node_definitions d JOIN node_definition_versions v ON v.node_definition_id=d.id WHERE d.status='active' AND (d.tenant_id IS NULL OR d.tenant_id=?) ORDER BY d.tenant_id IS NULL,d.node_type,v.version_number")
+    let rows = sqlx::query("SELECT d.node_type,d.source_type,v.version_number,v.manifest_json,v.manifest_hash FROM node_definitions d JOIN node_definition_versions v ON v.node_definition_id=d.id WHERE d.status='active' AND (d.tenant_id IS NULL OR d.tenant_id=?) ORDER BY d.tenant_id IS NULL,d.node_type,v.version_number")
         .bind(tenant).fetch_all(&state.pool).await?;
+    let registry = NodeRegistry::m5_defaults();
     let mut result = Vec::new();
-    let mut seen = HashSet::new();
-    for row in rows {
-        let manifest: NodeManifestVersion =
-            serde_json::from_value(row.try_get("manifest_json")?).map_err(ApiError::internal)?;
-        if seen.insert((manifest.node_type.clone(), manifest.version)) {
-            result.push((manifest, row.try_get("manifest_hash")?));
-        }
+    for manifest in registry.studio_manifests() {
+        let value = serde_json::to_value(manifest).map_err(ApiError::internal)?;
+        let hash = agentx_domain::canonical_content_hash(&value).map_err(ApiError::internal)?;
+        result.push((manifest.clone(), hash));
     }
-    for manifest in NodeRegistry::m5_defaults().manifests() {
-        if seen.insert((manifest.node_type.clone(), manifest.version)) {
-            let value = serde_json::to_value(manifest).map_err(ApiError::internal)?;
-            let hash = agentx_domain::canonical_content_hash(&value).map_err(ApiError::internal)?;
-            result.push((manifest.clone(), hash));
-        }
+    for row in rows {
+        validate_registry_snapshot(
+            &registry,
+            row.try_get("source_type")?,
+            row.try_get("node_type")?,
+            row.try_get("version_number")?,
+            row.try_get("manifest_json")?,
+            row.try_get("manifest_hash")?,
+        )?;
     }
     Ok(result)
+}
+
+fn validate_registry_snapshot(
+    registry: &NodeRegistry,
+    source: &str,
+    node_type: &str,
+    version: u32,
+    value: Value,
+    stored_hash: &str,
+) -> ApiResult<()> {
+    let manifest: NodeManifestVersion =
+        serde_json::from_value(value.clone()).map_err(ApiError::internal)?;
+    let actual_hash = agentx_domain::canonical_content_hash(&value).map_err(ApiError::internal)?;
+    let expected = registry.get(node_type, version).ok_or_else(|| {
+        ApiError::unprocessable(
+            "NODE_MANIFEST_SNAPSHOT_DRIFT",
+            format!("Stored Manifest {node_type}@{version} has no Registry source"),
+        )
+    })?;
+    let expected_hash = agentx_domain::canonical_content_hash(
+        &serde_json::to_value(expected).map_err(ApiError::internal)?,
+    )
+    .map_err(ApiError::internal)?;
+    if source != "registry"
+        || manifest.node_type != node_type
+        || manifest.version != version
+        || stored_hash != actual_hash
+        || stored_hash != expected_hash
+    {
+        return Err(ApiError::unprocessable(
+            "NODE_MANIFEST_SNAPSHOT_DRIFT",
+            format!(
+                "Stored Manifest {node_type}@{version} does not match its Registry source and hash"
+            ),
+        ));
+    }
+    Ok(())
 }
 
 fn summary(manifest: NodeManifestVersion, manifest_hash: String) -> NodeDefinitionSummary {
@@ -227,5 +318,31 @@ fn summary(manifest: NodeManifestVersion, manifest_hash: String) -> NodeDefiniti
             .and_then(|value| value.as_str().map(ToOwned::to_owned))
             .unwrap_or_default(),
         manifest_hash,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn immutable_registry_snapshots_cannot_override_content_or_source() {
+        let registry = NodeRegistry::m5_defaults();
+        let value = serde_json::to_value(registry.get("set", 1).unwrap()).unwrap();
+        let hash = agentx_domain::canonical_content_hash(&value).unwrap();
+        assert!(
+            validate_registry_snapshot(&registry, "registry", "set", 1, value.clone(), &hash)
+                .is_ok()
+        );
+        let mut changed = value.clone();
+        changed["displayName"] = Value::String("tampered".into());
+        assert!(
+            validate_registry_snapshot(&registry, "registry", "set", 1, changed, &hash).is_err()
+        );
+        assert!(
+            validate_registry_snapshot(&registry, "remote", "set", 1, value.clone(), &hash)
+                .is_err()
+        );
+        assert!(validate_registry_snapshot(&registry, "registry", "set", 2, value, &hash).is_err());
     }
 }

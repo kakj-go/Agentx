@@ -12,78 +12,14 @@ use agentx_runtime_contracts::{
 use chrono::{DateTime, LocalResult, TimeZone, Utc};
 use chrono_tz::Tz;
 use cron::Schedule;
-use serde_json::Value;
 use sqlx::Row;
 use uuid::Uuid;
 
 use crate::{
-    egress::{EgressRequestContext, ProviderHttpClient},
     error::{RuntimeError, RuntimeResult},
     execution::{InvocationCaller, create_runtime_invocation_tx},
 };
 
-#[derive(Clone, Debug)]
-pub struct TriggerProviderResponse {
-    pub success: bool,
-    pub status: String,
-    pub cursor: Option<String>,
-    pub body: Value,
-}
-
-#[async_trait::async_trait]
-pub trait TriggerProvider: Send + Sync {
-    async fn post_json(
-        &self,
-        endpoint: &str,
-        context: EgressRequestContext,
-        timeout: Duration,
-        idempotency_key: Option<&str>,
-        input: &Value,
-    ) -> Result<TriggerProviderResponse, String>;
-}
-
-#[async_trait::async_trait]
-impl TriggerProvider for ProviderHttpClient {
-    async fn post_json(
-        &self,
-        endpoint: &str,
-        context: EgressRequestContext,
-        timeout: Duration,
-        idempotency_key: Option<&str>,
-        input: &Value,
-    ) -> Result<TriggerProviderResponse, String> {
-        let mut request = self
-            .post(endpoint, context, timeout)
-            .map_err(|error| error.to_string())?;
-        if let Some(idempotency_key) = idempotency_key {
-            request = request.header("Idempotency-Key", idempotency_key);
-        }
-        let response = request
-            .json(input)
-            .send()
-            .await
-            .map_err(|error| error.to_string())?;
-        let success = response.status().is_success();
-        let status = response.status().to_string();
-        let cursor = response
-            .headers()
-            .get("x-provider-cursor")
-            .and_then(|value| value.to_str().ok())
-            .map(str::to_owned);
-        let body = response
-            .json::<Value>()
-            .await
-            .map_err(|error| error.to_string())?;
-        Ok(TriggerProviderResponse {
-            success,
-            status,
-            cursor,
-            body,
-        })
-    }
-}
-
-#[derive(Clone, Debug)]
 pub struct TriggerClaim {
     pub binding_id: Uuid,
     pub tenant_id: Uuid,
@@ -104,7 +40,7 @@ pub async fn claim(
     limit: u32,
 ) -> RuntimeResult<Vec<TriggerClaim>> {
     let mut tx = pool.begin().await?;
-    let rows = sqlx::query("SELECT id FROM trigger_bindings WHERE status='active' AND trigger_kind IN ('schedule','poll','lifecycle') AND next_poll_at IS NOT NULL AND next_poll_at<=UTC_TIMESTAMP(6) AND (locked_until IS NULL OR locked_until<=UTC_TIMESTAMP(6)) ORDER BY next_poll_at,id LIMIT ? FOR UPDATE SKIP LOCKED")
+    let rows = sqlx::query("SELECT id FROM trigger_bindings WHERE status='active' AND trigger_kind IN ('schedule') AND next_poll_at IS NOT NULL AND next_poll_at<=UTC_TIMESTAMP(6) AND (locked_until IS NULL OR locked_until<=UTC_TIMESTAMP(6)) ORDER BY next_poll_at,id LIMIT ? FOR UPDATE SKIP LOCKED")
         .bind(limit.clamp(1,100)).fetch_all(&mut *tx).await?;
     let mut ids = Vec::with_capacity(rows.len());
     for row in rows {
@@ -171,27 +107,7 @@ pub async fn execute_with_heartbeat(
 }
 
 pub async fn execute(pool: &sqlx::MySqlPool, claim: &TriggerClaim) -> RuntimeResult<()> {
-    execute_inner(pool, claim, None).await
-}
-
-#[doc(hidden)]
-pub async fn execute_with_provider(
-    pool: &sqlx::MySqlPool,
-    claim: &TriggerClaim,
-    provider: &dyn TriggerProvider,
-) -> RuntimeResult<()> {
-    execute_inner(pool, claim, Some(provider)).await
-}
-
-async fn execute_inner(
-    pool: &sqlx::MySqlPool,
-    claim: &TriggerClaim,
-    injected_provider: Option<&dyn TriggerProvider>,
-) -> RuntimeResult<()> {
-    let (input, idempotency, cursor, next, lifecycle_response) = match &claim
-        .configuration
-        .configuration
-    {
+    let (input, idempotency, cursor, next) = match &claim.configuration.configuration {
         RuntimeTriggerConfigurationV1::Schedule {
             cron_expression,
             timezone,
@@ -218,126 +134,6 @@ async fn execute_inner(
                 format!("schedule:{}:{}", claim.binding_id, due.timestamp_micros()),
                 Some(cursor_instant.to_rfc3339()),
                 Some(next),
-                None,
-            )
-        }
-        RuntimeTriggerConfigurationV1::Poll {
-            interval_seconds,
-            provider_endpoint,
-            input,
-        } => {
-            let owned_provider;
-            let provider = if let Some(provider) = injected_provider {
-                provider
-            } else {
-                owned_provider = ProviderHttpClient::from_env(
-                    agentx_runtime_contracts::EgressRole::WorkflowRuntime,
-                )
-                .map_err(RuntimeError::Internal)?;
-                &owned_provider
-            };
-            let response = provider
-                .post_json(
-                    provider_endpoint,
-                    EgressRequestContext::request(claim.tenant_id, claim.binding_id),
-                    Duration::from_secs(10),
-                    None,
-                    input,
-                )
-                .await
-                .map_err(|error| error.to_string());
-            let response = match response {
-                Ok(response) => response,
-                Err(error) => {
-                    return fail(pool, claim, &format!("POLL_PROVIDER_ERROR: {error}")).await;
-                }
-            };
-            if !response.success {
-                return fail(pool, claim, "POLL_PROVIDER_ERROR").await;
-            }
-            let provider_cursor = response.cursor;
-            let payload = response.body;
-            if payload.get("accepted").and_then(Value::as_bool) == Some(false) {
-                return fail(pool, claim, "POLL_PROVIDER_REJECTED").await;
-            }
-            let state = payload.get("state").unwrap_or(&payload);
-            let stable = provider_cursor
-                .or_else(|| provider_identity(state))
-                .unwrap_or(
-                    agentx_runtime_contracts::content_hash(state)
-                        .map_err(|e| RuntimeError::Internal(e.into()))?
-                        .to_string(),
-                );
-            let invocation_input = state
-                .get("input")
-                .cloned()
-                .or_else(|| payload.get("input").cloned())
-                .unwrap_or_else(|| state.clone());
-            (
-                Some(invocation_input),
-                format!("poll:{}:{stable}", claim.binding_id),
-                Some(stable),
-                Some(
-                    mysql_now(pool).await?
-                        + chrono::Duration::seconds(i64::from(*interval_seconds)),
-                ),
-                None,
-            )
-        }
-        RuntimeTriggerConfigurationV1::Lifecycle {
-            operation,
-            provider_endpoint,
-            input,
-        } => {
-            let key = format!(
-                "lifecycle:{}:{}:{operation:?}",
-                claim.binding_id, claim.revision
-            );
-            let request_hash = agentx_runtime_contracts::content_hash(input)
-                .map_err(|error| RuntimeError::Internal(error.into()))?;
-            let existing = reserve_lifecycle_operation(pool, claim, &key, &request_hash).await?;
-            if existing.as_deref() == Some("completed") {
-                return complete(pool, claim, Some(format!("{operation:?}")), None).await;
-            }
-            let owned_provider;
-            let provider = if let Some(provider) = injected_provider {
-                provider
-            } else {
-                owned_provider = ProviderHttpClient::from_env(
-                    agentx_runtime_contracts::EgressRole::WorkflowRuntime,
-                )
-                .map_err(RuntimeError::Internal)?;
-                &owned_provider
-            };
-            let response = provider
-                .post_json(
-                    provider_endpoint,
-                    EgressRequestContext::request(claim.tenant_id, claim.binding_id),
-                    Duration::from_secs(10),
-                    Some(&key),
-                    input,
-                )
-                .await
-                .map_err(|error| error.to_string());
-            let response = match response {
-                Ok(response) => response,
-                Err(error) => {
-                    fail_lifecycle_operation(pool, claim, &key, &error).await?;
-                    return fail(pool, claim, &format!("LIFECYCLE_PROVIDER_ERROR: {error}")).await;
-                }
-            };
-            if !response.success {
-                fail_lifecycle_operation(pool, claim, &key, &format!("HTTP {}", response.status))
-                    .await?;
-                return fail(pool, claim, "LIFECYCLE_PROVIDER_ERROR").await;
-            }
-            let response_body = response.body;
-            (
-                Some(input.clone()),
-                key,
-                Some(format!("{operation:?}")),
-                None,
-                Some(response_body),
             )
         }
         RuntimeTriggerConfigurationV1::Webhook { .. } => {
@@ -362,8 +158,7 @@ async fn execute_inner(
             InvocationCaller {
                 caller_type: match claim.kind.as_str() {
                     "schedule" => "schedule",
-                    "poll" => "poll",
-                    _ => "lifecycle",
+                    _ => "webhook",
                 },
                 caller_id: claim.binding_id,
                 token_version: None,
@@ -379,76 +174,9 @@ async fn execute_inner(
         )
         .await?;
     }
-    if let Some(response) = lifecycle_response {
-        let changed = sqlx::query("UPDATE runtime_trigger_operations SET status='completed',response_json=?,last_error=NULL WHERE tenant_id=? AND binding_id=? AND configuration_revision=? AND idempotency_key=? AND status IN ('pending','processing')")
-            .bind(response).bind(claim.tenant_id).bind(claim.binding_id).bind(claim.revision).bind(&idempotency).execute(&mut *tx).await?;
-        if changed.rows_affected() != 1 {
-            return Err(lease_lost());
-        }
-    }
     complete_tx(&mut tx, claim, cursor, next).await?;
     tx.commit().await?;
     Ok(())
-}
-
-fn provider_identity(value: &Value) -> Option<String> {
-    ["eventId", "eventID", "idempotencyKey", "cursor", "id"]
-        .into_iter()
-        .find_map(|key| {
-            value.get(key).and_then(|value| match value {
-                Value::String(value) => Some(value.clone()),
-                Value::Number(value) => Some(value.to_string()),
-                _ => None,
-            })
-        })
-}
-
-async fn fail_lifecycle_operation(
-    pool: &sqlx::MySqlPool,
-    claim: &TriggerClaim,
-    key: &str,
-    message: &str,
-) -> RuntimeResult<()> {
-    let changed = sqlx::query("UPDATE runtime_trigger_operations o JOIN trigger_bindings b ON b.tenant_id=o.tenant_id AND b.id=o.binding_id AND b.configuration_revision=o.configuration_revision SET o.status='failed',o.last_error=? WHERE o.tenant_id=? AND o.binding_id=? AND o.configuration_revision=? AND o.idempotency_key=? AND o.status='processing' AND b.locked_by=? AND b.fencing_token=? AND b.locked_until>UTC_TIMESTAMP(6)")
-        .bind(message)
-        .bind(claim.tenant_id)
-        .bind(claim.binding_id)
-        .bind(claim.revision)
-        .bind(key)
-        .bind(claim.owner)
-        .bind(claim.fencing_token)
-        .execute(pool)
-        .await?;
-    if changed.rows_affected() != 1 {
-        return Err(lease_lost());
-    }
-    Ok(())
-}
-
-async fn reserve_lifecycle_operation(
-    pool: &sqlx::MySqlPool,
-    claim: &TriggerClaim,
-    key: &str,
-    request_hash: &agentx_runtime_contracts::ContentHash,
-) -> RuntimeResult<Option<String>> {
-    let mut tx = pool.begin().await?;
-    sqlx::query("INSERT IGNORE INTO runtime_trigger_operations(id,tenant_id,binding_id,configuration_revision,operation,idempotency_key,request_hash,status) VALUES(?,?,?,?,?,?,?,'pending')")
-        .bind(Uuid::now_v7()).bind(claim.tenant_id).bind(claim.binding_id).bind(claim.revision).bind(&claim.kind).bind(key).bind(request_hash.as_str()).execute(&mut *tx).await?;
-    let row = sqlx::query("SELECT request_hash,status FROM runtime_trigger_operations WHERE tenant_id=? AND binding_id=? AND configuration_revision=? AND idempotency_key=? FOR UPDATE")
-        .bind(claim.tenant_id).bind(claim.binding_id).bind(claim.revision).bind(key).fetch_one(&mut *tx).await?;
-    if row.try_get::<String, _>("request_hash")? != request_hash.as_str() {
-        return Err(RuntimeError::Conflict(
-            agentx_runtime_contracts::RuntimePublishErrorCodeV1::IdempotencyConflict,
-            "Lifecycle idempotency key identifies different input".into(),
-        ));
-    }
-    let status: String = row.try_get("status")?;
-    if status != "completed" {
-        sqlx::query("UPDATE runtime_trigger_operations SET status='processing' WHERE tenant_id=? AND binding_id=? AND configuration_revision=? AND idempotency_key=?")
-            .bind(claim.tenant_id).bind(claim.binding_id).bind(claim.revision).bind(key).execute(&mut *tx).await?;
-    }
-    tx.commit().await?;
-    Ok(Some(status))
 }
 
 async fn complete(
@@ -473,13 +201,6 @@ async fn complete_tx(
         next.and_then(|value| time::OffsetDateTime::from_unix_timestamp(value.timestamp()).ok());
     let changed=sqlx::query("UPDATE trigger_bindings SET cursor_value=COALESCE(?,cursor_value),last_poll_at=UTC_TIMESTAMP(6),next_poll_at=?,locked_by=NULL,locked_until=NULL,heartbeat_at=NULL,last_error=NULL WHERE id=? AND locked_by=? AND fencing_token=? AND locked_until>UTC_TIMESTAMP(6)")
         .bind(cursor).bind(next).bind(claim.binding_id).bind(claim.owner).bind(claim.fencing_token).execute(&mut **tx).await?;
-    if changed.rows_affected() != 1 {
-        return Err(lease_lost());
-    }
-    Ok(())
-}
-async fn fail(pool: &sqlx::MySqlPool, claim: &TriggerClaim, message: &str) -> RuntimeResult<()> {
-    let changed=sqlx::query("UPDATE trigger_bindings SET next_poll_at=DATE_ADD(UTC_TIMESTAMP(6),INTERVAL 10 SECOND),locked_by=NULL,locked_until=NULL,heartbeat_at=NULL,last_error=? WHERE id=? AND locked_by=? AND fencing_token=? AND locked_until>UTC_TIMESTAMP(6)").bind(message).bind(claim.binding_id).bind(claim.owner).bind(claim.fencing_token).execute(pool).await?;
     if changed.rows_affected() != 1 {
         return Err(lease_lost());
     }

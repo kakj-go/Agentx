@@ -109,60 +109,126 @@ button:disabled {
   fill: currentColor !important;
 }
 
-/* Studio nodes use a small, predictable shape vocabulary. */
+/* Studio nodes: Dify-style 240px white cards with colored icon chips. */
+.studio-inspector :is(input:not([type="checkbox"]), [role="combobox"]) {
+  min-width: 0;
+  height: 30px;
+  padding-inline: 8px;
+  font-size: 12px;
+}
+
+.studio-inspector textarea {
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.studio-inspector [data-testid="variable-token-editor"] {
+  min-height: 30px;
+}
+
+.studio-inspector [data-testid="variable-token-editor"] [contenteditable="true"]:not(.min-h-24) {
+  min-height: 30px;
+  padding-block: 3px;
+}
+
 .studio-node {
   border: 0;
   background: transparent;
   overflow: visible;
 }
 
-.studio-node-surface {
-  min-height: 100%;
-  border: 2px solid var(--ui-border-strong);
-  border-radius: 8px;
-  background: var(--ui-surface);
-  transition: border-color 120ms ease, background-color 120ms ease;
+/* demo2-style dot grid for the workflow canvas pane */
+.react-flow__pane {
+  background-image: radial-gradient(circle, rgba(115, 128, 150, 0.35) 1px, transparent 1px);
+  background-size: 20px 20px;
 }
 
-.studio-node-surface.studio-node-selected,
-.studio-node-attachment.studio-node-selected {
-  border-color: var(--ui-primary);
-  outline: 3px solid color-mix(in srgb, var(--ui-primary) 22%, transparent);
-  outline-offset: 2px;
-}
-
-.studio-node-surface.studio-node-running { border-color: var(--ui-warning); outline: 2px solid color-mix(in srgb, var(--ui-warning) 24%, transparent); }
-.studio-node-surface.studio-node-succeeded { border-color: var(--ui-success); }
-.studio-node-surface.studio-node-failed { border-color: var(--ui-danger); }
-
-.studio-node-agent .studio-node-surface {
-  background: color-mix(in srgb, var(--ui-primary) 4%, var(--ui-surface));
-}
-
-.studio-node-role-trigger .studio-node-surface { border-color: color-mix(in srgb, var(--ui-warning) 65%, var(--ui-border-strong)); }
-.studio-node-role-branch .studio-node-surface,
-.studio-node-role-loop .studio-node-surface,
-.studio-node-role-suspend .studio-node-surface { border-color: color-mix(in srgb, var(--ui-warning) 55%, var(--ui-border-strong)); }
-.studio-node-role-error_handler .studio-node-surface { border-color: color-mix(in srgb, var(--ui-danger) 65%, var(--ui-border-strong)); }
-
-.studio-node-attachment {
-  border: 0;
-}
-
-.studio-node-icon {
+.studio-card {
   border: 1px solid var(--ui-border);
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.06);
+  transition: box-shadow 150ms ease, border-color 150ms ease;
 }
 
-.studio-node-zoom-compact .studio-node-label,
+.studio-card:hover {
+  box-shadow: 0 6px 16px rgba(16, 24, 40, 0.12);
+}
+
+.studio-card.studio-node-selected {
+  border-color: var(--ui-primary);
+  outline: 3px solid color-mix(in srgb, var(--ui-primary) 15%, transparent);
+}
+
+.studio-card.studio-node-running { border-color: var(--ui-warning); }
+.studio-card.studio-node-succeeded { border-color: color-mix(in srgb, var(--ui-success) 55%, var(--ui-border)); }
+.studio-card.studio-node-failed { border-color: var(--ui-danger); }
+
+/* Branch rows (if cases / approval buttons / merge stacked inputs): demo2 .n-rows/.n-row. */
+.studio-card-rows {
+  border-top: 1px solid color-mix(in srgb, var(--ui-border) 55%, transparent);
+  flex: 1;
+}
+
+.studio-branch-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: 34px;
+  padding: 0 12px;
+  font-size: 11.5px;
+  color: var(--ui-foreground);
+}
+
+.studio-branch-row + .studio-branch-row {
+  border-top: 1px solid color-mix(in srgb, var(--ui-border) 55%, transparent);
+}
+
+.studio-branch-row-input {
+  height: 26px;
+  font-size: 10.5px;
+  color: var(--ui-muted-foreground);
+}
+
+.studio-branch-tag {
+  border-radius: 5px;
+  border: 1px solid transparent;
+  padding: 2px 5px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.studio-branch-tag-logic { color: #06b6d4; background: #ecfdff; border-color: #a5f0fc; }
+.studio-branch-tag-blue { color: #3b82f6; background: #eff6ff; border-color: #bfdbfe; }
+.studio-branch-tag-muted { color: var(--ui-muted-foreground); background: var(--ui-muted); border-color: var(--ui-border); }
+
+.studio-branch-badge {
+  border-radius: 4px;
+  border: 1px solid var(--ui-border);
+  padding: 2px 4px;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--ui-muted-foreground);
+}
+
+.studio-branch-sub {
+  color: var(--ui-muted-foreground);
+  font-size: 10.5px;
+}
+
+.studio-node-zoom-compact .studio-card-body,
 .studio-node-zoom-compact .studio-port-label,
 .studio-node-zoom-compact .studio-port-add,
-.studio-node-zoom-minimal .studio-node-label,
+.studio-node-zoom-compact .studio-branch-text,
+.studio-node-zoom-minimal .studio-card-body,
+.studio-node-zoom-minimal .studio-card-att,
+.studio-node-zoom-minimal .studio-card-title,
+.studio-node-zoom-minimal .studio-card-status,
 .studio-node-zoom-minimal .studio-port-label,
-.studio-node-zoom-minimal .studio-port-add {
+.studio-node-zoom-minimal .studio-port-add,
+.studio-node-zoom-minimal .studio-branch-text {
   display: none;
 }
-
-.studio-node-zoom-minimal .studio-node-icon { border: 0; background: transparent; }
 
 .studio-handle::before {
   content: '';
@@ -170,15 +236,25 @@ button:disabled {
   inset: -4px;
 }
 
+/* Dify-style vertical bar handles: muted by default, primary on hover. */
+.studio-handle-mark {
+  width: 3px;
+  height: 10px;
+  background: var(--ui-muted-foreground);
+  transition: transform 120ms ease, background-color 120ms ease;
+}
+
+.studio-handle:hover .studio-handle-mark {
+  background: var(--ui-primary);
+  transform: scale(1.4);
+}
+
 .studio-port-output .studio-handle-mark { background: var(--ui-primary); }
 .studio-port-input .studio-handle-mark { background: var(--ui-muted-foreground); }
 .studio-port-error .studio-handle-mark { background: var(--ui-danger); }
-.studio-port-binding .studio-handle-mark,
-.studio-port-model .studio-handle-mark { background: #8b5cf6; }
-.studio-port-mcp_tool .studio-handle-mark { background: #d97706; }
-.studio-port-memory .studio-handle-mark { background: #16a34a; }
-.studio-port-rag .studio-handle-mark { background: #0891b2; }
-.studio-port-skill .studio-handle-mark { background: #4f46e5; }
+.studio-boundary-port-success .studio-handle-mark { background: var(--ui-success); }
+.studio-boundary-port-primary .studio-handle-mark { background: var(--ui-primary); }
+.studio-boundary-port-danger .studio-handle-mark { background: var(--ui-danger); }
 
 .studio-port-label {
   opacity: 0;
@@ -412,4 +488,85 @@ button:disabled {
   outline: 2px solid var(--ui-primary);
   outline-offset: 4px;
   border-radius: 4px;
+}
+
+/* Loop container (demo2 .container): cyan translucent frame around the body sub-DAG. */
+.studio-loop-container {
+  border: 1.5px solid #a5f0fc;
+  background: rgba(6, 182, 212, 0.045);
+  border-radius: 16px;
+}
+
+.studio-loop-container.is-selected {
+  border-color: color-mix(in srgb, #06b6d4 75%, #a5f0fc);
+  box-shadow: 0 0 0 4px rgba(6, 182, 212, 0.12);
+}
+
+/* Iteration start chip (demo2 .chip-node): edit-only per-round fan-out anchor. */
+.studio-loop-chip {
+  width: 140px;
+  position: relative;
+  z-index: 4;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  background: var(--ui-surface);
+  border: 1px dashed #67e8f9;
+  border-radius: 10px;
+  padding: 0 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #0e7490;
+}
+
+.studio-loop-end-chip {
+  border-style: solid;
+  border-color: color-mix(in srgb, #06b6d4 55%, var(--ui-border));
+  height: 64px;
+  justify-content: flex-start;
+}
+
+.studio-loop-boundary-edge-main {
+  stroke: var(--ui-border-strong);
+  stroke-width: 2;
+}
+
+.studio-loop-boundary-edge-error {
+  stroke: var(--ui-danger);
+  stroke-dasharray: 7 5;
+  stroke-width: 2;
+}
+
+.studio-loop-resize-handle {
+  position: absolute;
+  width: 16px !important;
+  height: 16px !important;
+  border: 2px solid var(--ui-surface) !important;
+  border-radius: 4px !important;
+  background: var(--ui-primary) !important;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--ui-primary) 65%, transparent), 0 2px 5px rgba(15, 23, 42, 0.2);
+  opacity: 1;
+  pointer-events: auto;
+  z-index: 40;
+  transition: opacity 120ms ease;
+}
+
+.studio-loop-resize-handle.top { top: -8px; }
+.studio-loop-resize-handle.bottom { bottom: -8px; }
+.studio-loop-resize-handle.left { left: -8px; }
+.studio-loop-resize-handle.right { right: -8px; }
+.studio-loop-resize-handle.top.left,
+.studio-loop-resize-handle.bottom.right { cursor: nwse-resize; }
+.studio-loop-resize-handle.top.right,
+.studio-loop-resize-handle.bottom.left { cursor: nesw-resize; }
+
+.react-flow__node-iteration-chip {
+  width: 140px !important;
+  z-index: 4 !important;
+}
+
+.react-flow__node-iteration-end {
+  width: 140px !important;
+  z-index: 4 !important;
 }
