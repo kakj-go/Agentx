@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next'
 
 import { apiRequest } from '../../shared/api/client'
 import type { NodeExecution, TraceSpan, TraceSpanDetail } from '../../shared/api/types'
+import { useNodeNames } from '../workflow-designer/api/node-display'
 import { Badge } from '../../shared/ui/badge'
 import { cn } from '../../shared/lib/cn'
 import { formatCost } from '../../shared/lib/cost-format'
@@ -15,13 +16,14 @@ import { useExecutionTrace } from './use-trace'
 
 export function TraceNodeCard({ executionId, node, defaultExpanded = false, onNodeSelect, onDownloadArtifact }: { executionId: string; node: NodeExecution; defaultExpanded?: boolean; onNodeSelect?: (node: NodeExecution) => void; onDownloadArtifact?: (artifactId: string) => void }) {
   const { t } = useTranslation()
+  const { resolveNodeName } = useNodeNames()
   const [expanded, setExpanded] = useState(defaultExpanded)
   const elapsed = nodeDuration(node)
   const modelLike = /model|agent/i.test(`${node.nodeType} ${node.capability}`)
   return <article className={cn('relative ml-14 overflow-visible rounded-xl border border-border bg-surface transition-shadow', expanded && 'border-primary/35 shadow-sm')} data-testid="trace-node-card">
     <div className="absolute -left-14 top-3.5 flex w-12 justify-center"><span className="grid size-9 place-items-center rounded-lg border-4 border-surface bg-primary/10 text-primary shadow-[0_0_0_1px_var(--color-border)]">{modelLike ? <Bot className="size-4" /> : <Box className="size-4" />}</span></div>
     <button aria-expanded={expanded} className="grid w-full grid-cols-[minmax(160px,1fr)_auto_auto] items-center gap-4 px-4 py-3 text-left" onClick={() => { setExpanded((value) => !value); onNodeSelect?.(node) }} type="button">
-      <span className="min-w-0"><strong className="block truncate text-sm">{node.nodeName}</strong><small className="mt-0.5 block truncate text-[10px] text-muted-foreground">{node.nodeType} · {t('trace.runLabel', { run: node.runIndex, iteration: node.iterationIndex })} · {duration(elapsed)}{modelLike && node.costCurrency ? ` · ${formatCost(node.costMicros, node.costCurrency)}` : ''}</small></span>
+      <span className="min-w-0"><strong className="block truncate text-sm">{resolveNodeName(node.nodeName, node.nodeType)}</strong><small className="mt-0.5 block truncate text-[10px] text-muted-foreground">{node.nodeType} · {t('trace.runLabel', { run: node.runIndex, iteration: node.iterationIndex })} · {duration(elapsed)}{modelLike && node.costCurrency ? ` · ${formatCost(node.costMicros, node.costCurrency)}` : ''}</small></span>
       <Badge tone={statusTone(node.status)}>{t(`common.${node.status}`, { defaultValue: node.status })}</Badge>
       <ChevronDown className={cn('size-4 text-muted-foreground transition-transform', expanded && 'rotate-180')} />
     </button>
@@ -51,6 +53,7 @@ export function TraceNodeDetails({ executionId, node, active = true, onDownloadA
 
 function InternalSpans({ trace, details, onDownloadArtifact }: { trace: ReturnType<typeof useExecutionTrace>; details: Map<string, TraceSpanDetail>; onDownloadArtifact?: (artifactId: string) => void }) {
   const { t } = useTranslation()
+  const { resolveSpanName } = useNodeNames()
   const [open, setOpen] = useState<Set<string>>(new Set())
   if (trace.isLoading) return <DiagnosticMessage icon={<LoaderCircle className="size-3.5 animate-spin" />} text={t('trace.syncing')} />
   if (trace.isError) return <DiagnosticMessage icon={<AlertTriangle className="size-3.5" />} text={t('trace.diagnosticUnavailable')} tone="warning" />
@@ -62,7 +65,7 @@ function InternalSpans({ trace, details, onDownloadArtifact }: { trace: ReturnTy
     const depth = internalDepth(span, byId, nodeSpanIds)
     const detail = details.get(span.spanId)
     const expanded = open.has(span.spanId)
-    return <article className="relative rounded-lg border border-border bg-surface" key={span.spanId} style={{ marginLeft: depth * 14 }}><span className="absolute -left-[17px] top-4 w-4 border-t border-primary/25" /><button aria-expanded={expanded} className="grid w-full grid-cols-[minmax(150px,1fr)_auto_auto_auto] items-center gap-3 px-3 py-2 text-left" onClick={() => setOpen((current) => toggle(current, span.spanId))} type="button"><span className="min-w-0"><strong className="block truncate text-[11px]">{span.spanName}</strong><small className="text-[9px] text-muted-foreground">{t(`trace.kinds.${span.spanKind}`)}</small></span><Badge className="text-[9px]" tone={statusTone(span.status)}>{t(`common.${span.status}`, { defaultValue: span.status })}</Badge><span className="text-[9px] text-muted-foreground">{duration(span.durationMs)}</span><ChevronDown className={cn('size-3.5 text-muted-foreground transition-transform', expanded && 'rotate-180')} /></button>{expanded && <div className="border-t border-border p-3">{detail ? <TraceContents contents={detail.contents} onDownloadArtifact={onDownloadArtifact} /> : <p className="text-[10px] text-muted-foreground">{span.hasDetails ? t('trace.syncing') : t('trace.lifecycleOnly')}</p>}</div>}</article>
+    return <article className="relative rounded-lg border border-border bg-surface" key={span.spanId} style={{ marginLeft: depth * 14 }}><span className="absolute -left-[17px] top-4 w-4 border-t border-primary/25" /><button aria-expanded={expanded} className="grid w-full grid-cols-[minmax(150px,1fr)_auto_auto_auto] items-center gap-3 px-3 py-2 text-left" onClick={() => setOpen((current) => toggle(current, span.spanId))} type="button"><span className="min-w-0"><strong className="block truncate text-[11px]">{resolveSpanName(span.spanName)}</strong><small className="text-[9px] text-muted-foreground">{t(`trace.kinds.${span.spanKind}`)}</small></span><Badge className="text-[9px]" tone={statusTone(span.status)}>{t(`common.${span.status}`, { defaultValue: span.status })}</Badge><span className="text-[9px] text-muted-foreground">{duration(span.durationMs)}</span><ChevronDown className={cn('size-3.5 text-muted-foreground transition-transform', expanded && 'rotate-180')} /></button>{expanded && <div className="border-t border-border p-3">{detail ? <TraceContents contents={detail.contents} onDownloadArtifact={onDownloadArtifact} /> : <p className="text-[10px] text-muted-foreground">{span.hasDetails ? t('trace.syncing') : t('trace.lifecycleOnly')}</p>}</div>}</article>
   })}</div></>
 }
 

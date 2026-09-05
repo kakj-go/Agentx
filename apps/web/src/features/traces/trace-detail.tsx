@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next'
 
 import { apiRequest } from '../../shared/api/client'
 import type { TraceSpan, TraceSpanDetail as TraceSpanDetailValue } from '../../shared/api/types'
+import { useNodeNames } from '../workflow-designer/api/node-display'
 import { useLocaleFormat } from '../../shared/lib/locale-format'
 import { Badge } from '../../shared/ui/badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../shared/ui/tabs'
@@ -20,6 +21,7 @@ type Props = {
 
 export function TraceDetail({ executionId, span, onDownloadArtifact }: Props) {
   const { t } = useTranslation()
+  const { resolveSpanName } = useNodeNames()
   const [tab, setTab] = useState('overview')
   const detail = useQuery({
     queryKey: ['trace-span-detail', executionId, span?.spanId],
@@ -35,7 +37,7 @@ export function TraceDetail({ executionId, span, onDownloadArtifact }: Props) {
   return <aside className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden border-l border-border bg-surface max-[1120px]:border-l-0 max-[1120px]:border-t" data-testid="trace-detail">
     <div className="shrink-0 border-b border-border px-4 py-3">
       <div className="flex items-center justify-between gap-3"><span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{kindLabel(t, span.spanKind)}</span><Badge tone={statusTone(span.status)}>{statusLabel(t, span.status)}</Badge></div>
-      <h3 className="mt-2 truncate text-sm font-semibold">{span.spanName}</h3>
+      <h3 className="mt-2 truncate text-sm font-semibold">{resolveSpanName(span.spanName)}</h3>
       <p className="mt-1 truncate font-mono text-[9px] text-muted-foreground">{span.spanId}</p>
     </div>
     {detail.isLoading ? <div className="flex min-h-48 items-center justify-center gap-2 text-xs text-muted-foreground"><LoaderCircle className="size-4 animate-spin" />{t('trace.loadingDetail')}</div> : detail.isError ? <div className="grid min-h-48 place-items-center p-4 text-center text-xs text-warning"><span><AlertTriangle className="mx-auto mb-2 size-4" />{t('trace.diagnosticUnavailable')}</span></div> :

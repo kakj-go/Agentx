@@ -41,6 +41,7 @@ export function ParameterField({
   descriptionOverride,
   enumLabels,
   nestedLocalization,
+  unitOverride,
 }: {
   name: string;
   schema: JsonSchemaProperty;
@@ -58,6 +59,7 @@ export function ParameterField({
   descriptionOverride?: string;
   enumLabels?: Record<string, string>;
   nestedLocalization?: StructuredFieldLocalization;
+  unitOverride?: string;
 }) {
   const { t } = useTranslation();
   const label = labelOverride ?? ui?.label ?? schema.title ?? humanize(name);
@@ -72,13 +74,15 @@ export function ParameterField({
   if (!visible) return null;
   if (!control || !SUPPORTED_CONTROLS.has(control))
     return <UnsupportedControl label={label} control={control} />;
+  const unitKey = ui?.unit ?? inferredUnit(name);
+  const unit = unitOverride ?? (unitKey ? t(`studio.units.${unitKey}`, unitKey) : undefined);
   const field = (content: React.ReactNode) => (
     <Field
       error={error}
       label={label}
       required={required}
       testId={`parameter-${name}`}
-      unit={(() => { const value = ui?.unit ?? inferredUnit(name); return value ? t(`studio.units.${value}`, value) : undefined; })()}
+      unit={unit}
     >
       {content}
       {descriptionOverride && <p className="mt-1 text-[10px] text-muted-foreground">{descriptionOverride}</p>}
@@ -129,6 +133,7 @@ export function ParameterField({
             event.target.value === "" ? undefined : Number(event.target.value),
           )
         }
+        step={schema.type === "integer" ? 1 : "any"}
         type="number"
         value={value === undefined ? "" : String(value)}
       />,
@@ -825,7 +830,6 @@ const inferredUnit = (name: string) => {
   if (name.endsWith("Ms")) return "milliseconds";
   if (name.includes("Tokens")) return "tokens";
   if (name.includes("Calls") || name.includes("Iterations")) return "calls";
-  if (name.includes("CostMicros")) return "micros";
   if (name === "maxItems" || name === "batchSize") return "items";
   return undefined;
 };

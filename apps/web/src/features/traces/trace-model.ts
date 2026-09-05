@@ -2,9 +2,9 @@ import type { TraceSpan } from '../../shared/api/types'
 
 export type TraceRow = { span: TraceSpan; depth: number }
 
-export function buildTraceRows(spans: TraceSpan[], collapsed: Set<string>, search = '', kind = 'all', errorsOnly = false): TraceRow[] {
+export function buildTraceRows(spans: TraceSpan[], collapsed: Set<string>, search = '', kind = 'all', errorsOnly = false, displayName: (span: TraceSpan) => string = (span) => span.spanName): TraceRow[] {
   const byId = new Map(spans.map((span) => [span.spanId, span]))
-  const matching = new Set(spans.filter((span) => (kind === 'all' || span.spanKind === kind) && (!errorsOnly || isError(span.status)) && (!search || `${span.spanName} ${span.spanId} ${span.errorCode ?? ''} ${span.errorMessage ?? ''}`.toLowerCase().includes(search.toLowerCase()))).map((span) => span.spanId))
+  const matching = new Set(spans.filter((span) => (kind === 'all' || span.spanKind === kind) && (!errorsOnly || isError(span.status)) && (!search || `${span.spanName} ${displayName(span)} ${span.spanId} ${span.errorCode ?? ''} ${span.errorMessage ?? ''}`.toLowerCase().includes(search.toLowerCase()))).map((span) => span.spanId))
   if (search || kind !== 'all' || errorsOnly) for (const id of [...matching]) { let parent = byId.get(id)?.parentSpanId; while (parent && byId.has(parent)) { matching.add(parent); parent = byId.get(parent)?.parentSpanId } }
   const children = new Map<string | null, TraceSpan[]>()
   for (const span of spans) { if (!matching.has(span.spanId)) continue; const parent = span.parentSpanId && byId.has(span.parentSpanId) ? span.parentSpanId : null; const list = children.get(parent) ?? []; list.push(span); children.set(parent, list) }

@@ -13,6 +13,7 @@ import { ExitNode } from '../nodes/exit-node'
 import { canvasNodeMetrics, canvasNodeRole } from '../nodes/node-appearance'
 import { canvasZoomTier, syncCanvasRenderState } from '../store/canvas-render-store'
 import { useEditorStore } from '../store/editor-store'
+import { localizedNodeLabel } from '../model/manifest-localization'
 import { inspectConnection, isIterationEndId, isIterationChipId, iterationChipId, iterationEndId, normalizeIterationChip } from '../utils/connections'
 import { createGraphIndex, IncrementalGraphIndex, occupiedHandlesByNodeId, portKey } from '../utils/graph-index'
 import { proxyEdges } from '../utils/group-edges'
@@ -45,7 +46,7 @@ const NODE_TYPES = { manifest: ManifestNode, exit: ExitNode, annotation: Annotat
 const EDGE_TYPES = { studio: StudioEdgeComponent }
 
 export const WorkflowFlow = forwardRef<WorkflowFlowHandle, FlowProps>(function WorkflowFlow({ manifests, runtimeStatuses, onDropAction, onNodeOpen, onBoundaryOpen, onPaneClear, onQuickAdd }, ref) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const instance = useRef<ReactFlowInstance<CanvasNode, StudioEdge>>()
   const [connectionState, setConnectionState] = useState<ConnectionInteractionState>({ status: 'idle' })
   const editor = useEditorStore(useShallow((state) => ({
@@ -77,13 +78,13 @@ export const WorkflowFlow = forwardRef<WorkflowFlowHandle, FlowProps>(function W
   const containers = useMemo(() => indexContainers(nodes), [nodes])
   const renderedNodeCache = useRef(new Map<string, { source: StudioNode; manifest?: NodeManifest; frame: string; value: CanvasNode }>())
   const flowNodes = useMemo<CanvasNode[]>(() => [
-    ...materializeNodes(nodes.filter((node) => !collapsedByMember.has(node.id)), edges, manifests, containers, renderedNodeCache.current),
+    ...materializeNodes(nodes.filter((node) => !collapsedByMember.has(node.id)), edges, manifests, containers, renderedNodeCache.current, i18n.language),
     ...boundaryNodes(boundaryLayouts),
     ...annotations.map((annotation) => annotationNode(annotation, annotationActions)),
     ...groupViews.map((view) => groupNode(view, groupActions)),
     ...iterationChipNodes(containers),
     ...iterationEndNodes(containers),
-  ], [annotationActions, annotations, boundaryLayouts, collapsedByMember, containers, edges, groupActions, groupViews, manifests, nodes])
+  ], [annotationActions, annotations, boundaryLayouts, collapsedByMember, containers, edges, groupActions, groupViews, i18n.language, manifests, nodes])
   const renderedEdgeCache = useRef(new Map<string, { source: StudioEdge; sourceStatus?: string; targetStatus?: string; value: StudioEdge }>())
   const flowEdges = useMemo(() => materializeRuntimeEdges(proxyEdges(edges, collapsedByMember), runtimeStatuses, renderedEdgeCache.current), [collapsedByMember, edges, runtimeStatuses])
   const groupViewMap = useMemo(() => new Map(groupViews.map((view) => [view.id, view])), [groupViews])
@@ -394,7 +395,7 @@ function nodeMetrics(node: StudioNode, manifests: Map<string, NodeManifest>) {
   return { width: node.width ?? node.measured?.width ?? metrics.width, height: (node.height ?? node.measured?.height ?? metrics.height) + (metrics.labelBelow ? 28 : 0) }
 }
 
-function materializeNodes(nodes: StudioNode[], edges: StudioEdge[], manifests: Map<string, NodeManifest>, containers: Map<string, LoopContainerView>, cache: Map<string, { source: StudioNode; manifest?: NodeManifest; frame: string; value: CanvasNode }>) {
+function materializeNodes(nodes: StudioNode[], edges: StudioEdge[], manifests: Map<string, NodeManifest>, containers: Map<string, LoopContainerView>, cache: Map<string, { source: StudioNode; manifest?: NodeManifest; frame: string; value: CanvasNode }>, language: string) {
   const ids = new Set(nodes.map((node) => node.id))
   for (const id of cache.keys()) if (!ids.has(id)) cache.delete(id)
   return nodes.map((node) => {
@@ -405,16 +406,16 @@ function materializeNodes(nodes: StudioNode[], edges: StudioEdge[], manifests: M
     // Membership or container size changes must refresh projected parent/extent wiring.
     const childFrame = container ? container.children.map((child) => `${child.id}:${child.position.x}:${child.position.y}:${child.width ?? child.measured?.width ?? ''}:${child.height ?? child.measured?.height ?? ''}`).join('|') : ''
     const bodyEdges = container ? edges.filter((edge) => container.childIds.has(edge.source) || container.childIds.has(edge.target)).map((edge) => `${edge.id}:${edge.source}:${edge.sourceHandle}:${edge.target}:${edge.targetHandle}`).join('|') : ''
-    const frame = `${container ? `c${Math.round(loopContainerWidth(node))}x${Math.round(loopContainerHeight(node))}:${childFrame}:${bodyEdges}` : ''}|${parent ? `p${Math.round(loopContainerWidth(parent.loop))}x${Math.round(loopContainerHeight(parent.loop))}` : ''}`
+    const frame = `${language}|${container ? `c${Math.round(loopContainerWidth(node))}x${Math.round(loopContainerHeight(node))}:${childFrame}:${bodyEdges}` : ''}|${parent ? `p${Math.round(loopContainerWidth(parent.loop))}x${Math.round(loopContainerHeight(parent.loop))}` : ''}`
     const cached = cache.get(node.id)
     if (cached?.source === node && cached.manifest === manifest && cached.frame === frame) return cached.value
-    const value = projectCanvasNode(node, edges, manifests, manifest, container, parent)
+    const value = projectCanvasNode(node, edges, manifests, manifest, container, parent, language)
     cache.set(node.id, { source: node, manifest, frame, value })
     return value
   })
 }
 
-function projectCanvasNode(node: StudioNode, edges: StudioEdge[], manifests: Map<string, NodeManifest>, manifest: NodeManifest | undefined, container: LoopContainerView | undefined, parent: LoopContainerView | undefined): CanvasNode {
+function projectCanvasNode(node: StudioNode, edges: StudioEdge[], manifests: Map<string, NodeManifest>, manifest: NodeManifest | undefined, container: LoopContainerView | undefined, parent: LoopContainerView | undefined, language: string): CanvasNode {
   if (container) {
     const width = loopContainerWidth(node)
     const height = loopContainerHeight(node)
@@ -427,7 +428,7 @@ function projectCanvasNode(node: StudioNode, edges: StudioEdge[], manifests: Map
       initialWidth: width,
       initialHeight: height,
       dragHandle: '.drag-handle',
-      data: { editorKind: 'loop-container' as const, loopId: node.id, label: node.data.label, parallelism: containerParallelism(node), childCount: container.children.length, boundaryLinks: loopBoundaryLinks(container, edges, manifests, width) },
+      data: { editorKind: 'loop-container' as const, loopId: node.id, label: manifest ? localizedNodeLabel(manifest, node.data.label, language) : node.data.label, parallelism: containerParallelism(node), childCount: container.children.length, boundaryLinks: loopBoundaryLinks(container, edges, manifests, width) },
     }
   }
   const base = withInitialNodeMetrics(node, manifest)

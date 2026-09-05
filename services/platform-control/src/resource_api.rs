@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 
 use agentx_api_types::PageResponse;
 use axum::{
@@ -486,12 +486,63 @@ async fn resource_options(
             "requirements":requirement_values
         }));
     }
+    attach_model_metadata(&state, actor.tenant_id, &query.resource_type, &mut items).await?;
     Ok(Json(PageResponse {
         items,
         page,
         page_size,
         total,
     }))
+}
+
+// Studio budget defaults follow the selected model, so model options carry the
+// deployment token limits and the latest price currency alongside the label.
+async fn attach_model_metadata(
+    state: &ControlApiState,
+    tenant_id: Uuid,
+    resource_type: &str,
+    items: &mut [Value],
+) -> ApiResult<()> {
+    if resource_type != "model" || items.is_empty() {
+        return Ok(());
+    }
+    // model_aliases.id is BINARY(16); binding the hyphenated string would
+    // never match, so parse each option id back to a Uuid before binding.
+    let ids: Vec<Uuid> = items
+        .iter()
+        .filter_map(|item| item["id"].as_str().and_then(|id| Uuid::parse_str(id).ok()))
+        .collect();
+    let placeholders = vec!["?"; ids.len()].join(",");
+    let metadata_sql = format!(
+        "SELECT a.id,d.max_input_tokens,d.max_output_tokens,pv.currency FROM model_aliases a JOIN model_deployments d ON d.tenant_id=a.tenant_id AND d.id=a.deployment_id LEFT JOIN model_price_versions pv ON pv.tenant_id=d.tenant_id AND pv.deployment_id=d.id AND pv.id=(SELECT latest.id FROM model_price_versions latest WHERE latest.tenant_id=d.tenant_id AND latest.deployment_id=d.id ORDER BY latest.version_number DESC LIMIT 1) WHERE a.tenant_id=? AND a.id IN ({placeholders})"
+    );
+    let mut query = sqlx::query(&metadata_sql).bind(tenant_id);
+    for id in &ids {
+        query = query.bind(id);
+    }
+    let metadata: HashMap<String, Value> = query
+        .fetch_all(&state.pool)
+        .await?
+        .into_iter()
+        .map(|row| {
+            let id: Uuid = row.try_get("id")?;
+            Ok((
+                id.to_string(),
+                json!({
+                    "maxInputTokens":row.try_get::<u64,_>("max_input_tokens")?,
+                    "maxOutputTokens":row.try_get::<u64,_>("max_output_tokens")?,
+                    "currency":row.try_get::<Option<String>,_>("currency")?,
+                }),
+            ))
+        })
+        .collect::<Result<HashMap<_, _>, sqlx::Error>>()
+        .map_err(ApiError::from)?;
+    for item in items.iter_mut() {
+        if let Some(metadata) = item["id"].as_str().and_then(|id| metadata.get(id)) {
+            item["metadata"] = metadata.clone();
+        }
+    }
+    Ok(())
 }
 
 async fn department_resource_options(

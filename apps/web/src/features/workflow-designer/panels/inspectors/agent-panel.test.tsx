@@ -1,16 +1,29 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { useState } from 'react'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { i18n } from '../../../../app/i18n'
 import { localizeManifest } from '../../model/manifest-localization'
-import type { ActionNodeData } from '../../model/types'
+import type { ActionNodeData, ResourceOption } from '../../model/types'
 import { studioManifest } from '../../testing/studio-catalog'
 import { AgentPanel } from './agent-panel'
 
 const manifest = studioManifest('agent')
 
-function AgentHarness() {
+const modelOptions: ResourceOption[] = [
+  {
+    value: 'model-1',
+    label: 'GLM-4.7',
+    resourceType: 'model',
+    operation: 'use',
+    accessState: 'authorized',
+    metadata: { maxInputTokens: 200000, maxOutputTokens: 32000, currency: 'CNY' },
+  },
+]
+
+type PanelResources = Parameters<typeof AgentPanel>[0]['resources'];
+
+function AgentHarness({ resources = {} }: { resources?: PanelResources }) {
   const [current, setCurrent] = useState<ActionNodeData>({
     editorKind: 'action', nodeType: 'agent', typeVersion: 2, label: '智能体', key: 'agent',
     parameters: { systemPrompt: { kind: 'template', segments: [{ kind: 'text', text: '你是工单处理助手。' }] }, userQuestion: { kind: 'template', segments: [] }, sessionPolicy: { mode: 'application_session' } },
@@ -24,7 +37,7 @@ function AgentHarness() {
       manifest={manifest}
       onChange={(patch) => setCurrent((value) => ({ ...value, ...patch }))}
       providerOptions={{}}
-      resources={{}}
+      resources={resources}
     />
     <output data-testid="panel-state">{JSON.stringify(current.parameters)}</output>
   </>
@@ -55,6 +68,53 @@ describe('Agent panel', () => {
     expect(screen.getByTestId('parameter-maxIterations')).toBeInTheDocument()
     expect(screen.getByTestId('parameter-maxToolCalls')).toBeInTheDocument()
     expect(screen.getByTestId('parameter-limitAction')).toBeInTheDocument()
+  })
+
+  it('localizes budget unit badges', async () => {
+    await i18n.changeLanguage('zh-CN')
+    render(<AgentHarness />)
+
+    fireEvent.click(screen.getByRole('button', { name: /toggle advanced|展开或收起高级配置/i }))
+    expect(screen.getByTestId('parameter-maxIterations')).toHaveTextContent('次数')
+    expect(screen.getByTestId('parameter-maxModelCalls')).toHaveTextContent('次数')
+    expect(screen.getByTestId('parameter-maxToolCalls')).toHaveTextContent('次数')
+    expect(screen.getByTestId('parameter-maxDurationSeconds')).toHaveTextContent('秒')
+    expect(screen.getByTestId('parameter-maxCost')).toHaveTextContent('货币单位')
+  })
+
+  it('seeds token budgets from the selected model and follows its currency', async () => {
+    await i18n.changeLanguage('zh-CN')
+    render(<AgentHarness resources={{ model: modelOptions }} />)
+
+    fireEvent.click(screen.getByTestId('agent-inspector-model').querySelector('[role="combobox"]')!)
+    fireEvent.click(screen.getByRole('option', { name: /GLM-4\.7/ }))
+
+    await waitFor(() => {
+      const state = JSON.parse(screen.getByTestId('panel-state').textContent ?? '{}')
+      expect(state.maxTotalTokens).toBe(200000)
+      expect(state.maxOutputTokens).toBe(32000)
+    })
+    fireEvent.click(screen.getByRole('button', { name: /toggle advanced|展开或收起高级配置/i }))
+    expect(screen.getByTestId('parameter-maxCost')).toHaveTextContent('CNY')
+  })
+
+  it('keeps manually edited budgets until the model is selected again', async () => {
+    await i18n.changeLanguage('zh-CN')
+    render(<AgentHarness resources={{ model: modelOptions }} />)
+
+    fireEvent.click(screen.getByTestId('agent-inspector-model').querySelector('[role="combobox"]')!)
+    fireEvent.click(screen.getByRole('option', { name: /GLM-4\.7/ }))
+    await waitFor(() => {
+      expect(JSON.parse(screen.getByTestId('panel-state').textContent ?? '{}').maxTotalTokens).toBe(200000)
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: /toggle advanced|展开或收起高级配置/i }))
+    const tokenInput = screen.getByTestId('parameter-maxTotalTokens').querySelector('input')!
+    fireEvent.change(tokenInput, { target: { value: '1000' } })
+    expect(JSON.parse(screen.getByTestId('panel-state').textContent ?? '{}').maxTotalTokens).toBe(1000)
+
+    fireEvent.change(screen.getByTestId('parameter-maxCost').querySelector('input')!, { target: { value: '2.5' } })
+    expect(JSON.parse(screen.getByTestId('panel-state').textContent ?? '{}').maxCost).toBe(2.5)
   })
 
   it('switches the session policy through the core configuration', () => {

@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import type { Checkpoint, ForkExecutionRequest, NodeExecution } from '../../shared/api/types'
+import { useNodeNames } from '../workflow-designer/api/node-display'
 import { cn } from '../../shared/lib/cn'
 import { Button } from '../../shared/ui/button'
 import { Dialog, DialogContent } from '../../shared/ui/dialog'
@@ -26,6 +27,7 @@ const modes: ForkMode[] = ['whole', 'node', 'to_node', 'from_node']
 
 export function ExecutionForkDialog({ open, nodes, checkpoints, initialNodeId, pending, onClose, onSubmit }: ForkDialogProps) {
   const { t } = useTranslation()
+  const { resolveNodeName } = useNodeNames()
   const uniqueNodes = useMemo(() => Array.from(new Map(nodes.map((node) => [node.nodeId, node])).values()), [nodes])
   const [mode, setMode] = useState<ForkMode>('whole')
   const [checkpointId, setCheckpointId] = useState('')
@@ -73,7 +75,7 @@ export function ExecutionForkDialog({ open, nodes, checkpoints, initialNodeId, p
         <div className="space-y-4 border-r border-border p-5 max-md:border-b max-md:border-r-0">
           <Field label={t('executions.forkDialog.checkpoint')}><Select aria-label={t('executions.forkDialog.checkpoint')} className="w-full" onValueChange={setCheckpointId} options={checkpoints.map((checkpoint) => ({ value: checkpoint.id, label: `#${checkpoint.sequenceNumber} · ${checkpoint.checkpointType}` }))} value={checkpointId} /></Field>
           <Field label={t('executions.forkDialog.scope')}><div className="grid grid-cols-2 gap-1 rounded-md bg-muted p-1">{modes.map((item) => <button className={cn('h-8 rounded text-[11px] font-medium text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-primary/30', mode === item && 'bg-surface text-foreground shadow-sm')} key={item} onClick={() => setMode(item)} type="button">{t(`executions.forkDialog.modes.${item}`)}</button>)}</div></Field>
-          {mode !== 'whole' && <Field label={t('executions.forkDialog.targetNode')}><Select aria-label={t('executions.forkDialog.targetNode')} className="w-full" onValueChange={setNodeId} options={uniqueNodes.map((node) => ({ value: node.nodeId, label: `${node.nodeName} · ${t('executions.forkDialog.run')} ${node.runIndex}` }))} value={nodeId} /></Field>}
+          {mode !== 'whole' && <Field label={t('executions.forkDialog.targetNode')}><Select aria-label={t('executions.forkDialog.targetNode')} className="w-full" onValueChange={setNodeId} options={uniqueNodes.map((node) => ({ value: node.nodeId, label: `${resolveNodeName(node.nodeName, node.nodeType)} · ${t('executions.forkDialog.run')} ${node.runIndex}` }))} value={nodeId} /></Field>}
           <Field label={t('executions.forkDialog.inputOverrides')}><Textarea aria-label={t('executions.forkDialog.inputOverrides')} className="min-h-32 font-mono text-[11px]" onChange={(event) => setOverrides(event.target.value)} spellCheck={false} value={overrides} /></Field>
           {error && <p className="flex gap-2 text-[11px] text-danger"><AlertTriangle className="mt-0.5 size-3.5 shrink-0" />{error}</p>}
         </div>
@@ -85,8 +87,8 @@ export function ExecutionForkDialog({ open, nodes, checkpoints, initialNodeId, p
               const irreversible = willRerun && node.sideEffectLevel === 'irreversible'
               return <div className="grid grid-cols-[28px_minmax(0,1fr)_150px] items-center gap-3 border-b border-border px-2 py-3 last:border-b-0 max-sm:grid-cols-[28px_minmax(0,1fr)]" key={node.nodeId}>
                 <span className={cn('grid size-7 place-items-center rounded-md', willRerun ? 'bg-primary/10 text-primary' : 'bg-success/10 text-success')}>{willRerun ? <Play className="size-3.5" /> : <Recycle className="size-3.5" />}</span>
-                <div className="min-w-0"><strong className="block truncate text-[11px]">{node.nodeName}</strong><span className="text-[9px] text-muted-foreground">{willRerun ? t('executions.forkDialog.rerun') : t('executions.forkDialog.reuseOutput')} · {t(`executions.sideEffects.${node.sideEffectLevel}`)}</span></div>
-                {irreversible ? <Select aria-label={t('executions.forkDialog.decision', { name: node.nodeName })} className="h-8 min-w-0 text-[11px] max-sm:col-start-2" onValueChange={(value) => setDecisions((current) => ({ ...current, [node.nodeId]: value as Decision }))} options={[{ value: 'dry_run', label: t('executions.forkDialog.dryRun') }, { value: 'reuse_output', label: t('executions.forkDialog.reusePreviousOutput'), disabled: node.output == null }, { value: 'execute', label: t('executions.forkDialog.confirmExecute') }]} value={decisions[node.nodeId] ?? 'dry_run'} /> : <span className="text-right text-[10px] text-muted-foreground max-sm:hidden">{willRerun ? t('executions.forkDialog.willExecute') : t('executions.forkDialog.noSideEffect')}</span>}
+                <div className="min-w-0"><strong className="block truncate text-[11px]">{resolveNodeName(node.nodeName, node.nodeType)}</strong><span className="text-[9px] text-muted-foreground">{willRerun ? t('executions.forkDialog.rerun') : t('executions.forkDialog.reuseOutput')} · {t(`executions.sideEffects.${node.sideEffectLevel}`)}</span></div>
+                {irreversible ? <Select aria-label={t('executions.forkDialog.decision', { name: resolveNodeName(node.nodeName, node.nodeType) })} className="h-8 min-w-0 text-[11px] max-sm:col-start-2" onValueChange={(value) => setDecisions((current) => ({ ...current, [node.nodeId]: value as Decision }))} options={[{ value: 'dry_run', label: t('executions.forkDialog.dryRun') }, { value: 'reuse_output', label: t('executions.forkDialog.reusePreviousOutput'), disabled: node.output == null }, { value: 'execute', label: t('executions.forkDialog.confirmExecute') }]} value={decisions[node.nodeId] ?? 'dry_run'} /> : <span className="text-right text-[10px] text-muted-foreground max-sm:hidden">{willRerun ? t('executions.forkDialog.willExecute') : t('executions.forkDialog.noSideEffect')}</span>}
               </div>
             })}
           </div>

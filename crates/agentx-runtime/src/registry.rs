@@ -526,8 +526,8 @@ fn m5_manifest(
             "sessionPolicy":{"control":"json"},
             "maxIterations":{"control":"number","unit":"calls"},"maxModelCalls":{"control":"number","unit":"calls"},
             "maxToolCalls":{"control":"number","unit":"calls"},"maxTotalTokens":{"control":"number","unit":"tokens"},
-            "maxOutputTokens":{"control":"number","unit":"tokens"},"maxCostMicros":{"control":"number","unit":"micros"},
-            "maxDurationMs":{"control":"number","unit":"milliseconds"},"limitAction":{"control":"select"}
+            "maxOutputTokens":{"control":"number","unit":"tokens"},"maxCost":{"control":"number","unit":"currency"},
+            "maxDurationSeconds":{"control":"number","unit":"seconds"},"limitAction":{"control":"select"}
         }),
         "code" => json!({
             "runner":{"control":"select"},"source":{"control":"code","languageField":"runner"},
@@ -863,10 +863,10 @@ fn default_manifests() -> Vec<NodeManifestVersion> {
                         "maxIterations":{"type":"integer","minimum":1,"maximum":12,"default":12},
                         "maxModelCalls":{"type":"integer","minimum":1,"maximum":12,"default":12},
                         "maxToolCalls":{"type":"integer","minimum":0,"maximum":32,"default":32},
-                        "maxTotalTokens":{"type":"integer","minimum":1,"maximum":64000,"default":64000},
-                        "maxOutputTokens":{"type":"integer","minimum":1,"maximum":64000,"default":4096},
-                        "maxCostMicros":{"type":"integer","minimum":0,"maximum":1000000,"default":1000000},
-                        "maxDurationMs":{"type":"integer","minimum":1000,"maximum":300000,"default":300000},
+                        "maxTotalTokens":{"type":"integer","minimum":1,"maximum":2000000,"default":64000},
+                        "maxOutputTokens":{"type":"integer","minimum":1,"maximum":2000000,"default":4096},
+                        "maxCost":{"type":"number","minimum":0,"maximum":1000,"default":1},
+                        "maxDurationSeconds":{"type":"integer","minimum":1,"maximum":3600,"default":300},
                         "limitAction":{"enum":["fail","error_output","partial"],"default":"error_output"}
                     },
                     "additionalProperties":false
@@ -1162,8 +1162,8 @@ fn chinese_parameter_name(value: &str) -> String {
         "maxToolCalls" => "最大工具调用数".into(),
         "maxTotalTokens" => "最大 Token 数".into(),
         "maxOutputTokens" => "最大输出 Token".into(),
-        "maxCostMicros" => "最大成本".into(),
-        "maxDurationMs" => "最大时长".into(),
+        "maxCost" => "最大成本".into(),
+        "maxDurationSeconds" => "最大时长（秒）".into(),
         "workflowVersionId" => "工作流版本".into(),
         "authenticationMode" => "认证方式".into(),
         "statusCode" => "状态码".into(),

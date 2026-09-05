@@ -580,6 +580,11 @@ async fn api_first_control_closure_uses_empty_schema_and_public_routes() {
     .await;
     assert_eq!(status, 200, "model options response: {model_options}");
     assert_eq!(
+        model_options["items"][0]["metadata"],
+        json!({"maxInputTokens":4096,"maxOutputTokens":1024,"currency":"USD"}),
+        "model options must carry budget metadata for studio defaults"
+    );
+    assert_eq!(
         model_options["items"][0]["requirements"]
             .as_array()
             .unwrap()

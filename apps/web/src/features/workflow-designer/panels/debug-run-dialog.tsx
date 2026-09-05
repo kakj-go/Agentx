@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 
 import { apiRequest } from '../../../shared/api/client'
 import type { NodeExecution, RuntimeDetails } from '../../../shared/api/types'
+import { useNodeNames } from '../api/node-display'
 import { Button } from '../../../shared/ui/button'
 import { Dialog, DialogContent } from '../../../shared/ui/dialog'
 import { Select } from '../../../shared/ui/select'
@@ -16,6 +17,7 @@ export type DebugInputSource =
 
 export function DebugRunDialog({ open, mode, targetName, executionId, running, onClose, onRun }: { open: boolean; mode: 'single_node' | 'from_node'; targetName: string; executionId?: string; running: boolean; onClose: () => void; onRun: (source: DebugInputSource, input: unknown) => void }) {
   const { t } = useTranslation()
+  const { resolveNodeName } = useNodeNames()
   const [kind, setKind] = useState<DebugInputSource['kind']>('manual')
   const [manual, setManual] = useState('{}')
   const [historyNode, setHistoryNode] = useState('')
@@ -23,7 +25,7 @@ export function DebugRunDialog({ open, mode, targetName, executionId, running, o
   const [error, setError] = useState('')
   const nodes = useQuery({ queryKey: ['debug-input-nodes', executionId], queryFn: () => apiRequest<{ items: NodeExecution[] }>(`/executions/${executionId}/nodes`), enabled: open && Boolean(executionId), retry: false })
   const details = useQuery({ queryKey: ['debug-input-artifacts', executionId], queryFn: () => apiRequest<RuntimeDetails>(`/executions/${executionId}/runtime-details`), enabled: open && Boolean(executionId), retry: false })
-  const historyOptions = (nodes.data?.items ?? []).filter((node) => node.status === 'succeeded' && node.output !== null && node.output !== undefined).map((node) => ({ value: node.id, label: `${node.nodeName} · run ${node.runIndex}` }))
+  const historyOptions = (nodes.data?.items ?? []).filter((node) => node.status === 'succeeded' && node.output !== null && node.output !== undefined).map((node) => ({ value: node.id, label: `${resolveNodeName(node.nodeName, node.nodeType)} · ${t('executions.nodePanel.run')} ${node.runIndex}` }))
   const artifactOptions = useMemo(() => runtimeArtifacts(details.data).map((item, index) => ({ value: item, label: t('studio.debug.artifactLabel', { index: index + 1, id: item.slice(0, 8) }) })), [details.data, t])
   useEffect(() => { if (open) setError('') }, [open])
 

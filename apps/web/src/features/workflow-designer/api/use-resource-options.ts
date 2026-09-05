@@ -6,7 +6,7 @@ import type { ResourceOption, ResourceType } from '../model/types'
 export type ResourceOptionOperation = NonNullable<ResourceOption['operation']>
 export type ResourceOptionRequest = { resourceType: ResourceType; operation: ResourceOptionOperation }
 
-type ResourceOptionPage = { items: Array<{ id: string; name: string; detail: string; status: string; resourceVersionId?: string | null; accessState: ResourceOption['accessState']; pendingRequestId?: string | null; requirements?: ResourceOption['requirements'] }>; page: number; pageSize: number; total: number }
+type ResourceOptionPage = { items: Array<{ id: string; name: string; detail: string; status: string; resourceVersionId?: string | null; accessState: ResourceOption['accessState']; pendingRequestId?: string | null; requirements?: ResourceOption['requirements']; metadata?: ResourceOption['metadata'] }>; page: number; pageSize: number; total: number }
 
 export function useResourceOptions(workflowId: string, requests: ResourceOptionRequest[]) {
   const normalized = deduplicateRequests(requests)
@@ -32,7 +32,7 @@ export async function loadResourceOptions(workflowId: string, { resourceType, op
   let hasMore = true
   while (hasMore) {
     const response = await apiRequest<ResourceOptionPage>(`/workflows/${workflowId}/resource-options?resourceType=${resourceType}&operation=${operation}&page=${page}&pageSize=100`)
-    items.push(...response.items.map((item) => ({ resourceType, operation, value: item.id, label: item.name, detail: item.detail, status: item.status, versionId: item.resourceVersionId, accessState: item.accessState, pendingRequestId: item.pendingRequestId, requirements: item.requirements })))
+    items.push(...response.items.map((item) => ({ resourceType, operation, value: item.id, label: item.name, detail: item.detail, status: item.status, versionId: item.resourceVersionId, accessState: item.accessState, pendingRequestId: item.pendingRequestId, requirements: item.requirements, metadata: item.metadata })))
     hasMore = items.length < response.total && response.items.length > 0
     if (hasMore) page += 1
   }

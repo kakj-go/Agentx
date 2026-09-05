@@ -236,7 +236,7 @@ async fn agent_attachment_revocation_is_tool_scoped(fixture: &Fixture) {
         iteration_index: 0,
         timeout_ms: 30_000,
         node_parameters: json!({
-            "budget":{"maxIterations":3,"maxModelCalls":3,"maxTokens":100,"maxCostMicros":100},
+            "budget":{"maxIterations":3,"maxModelCalls":3,"maxTokens":100,"maxCost":0.0001},
             "_agent":{
                 "contractVersion":"1.1","bundleHash":"attachment-bundle","definitionHash":"attachment-definition",
                 "stableAgentNodeKey":"attachment-agent","sessionPolicy":"invocation",

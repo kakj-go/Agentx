@@ -242,36 +242,35 @@ pub(super) fn apply_model_price(
 
 #[cfg(test)]
 pub(super) fn effective_agent_budget(parameters: &Value) -> Value {
-    let nested = parameters.get("budget");
-    let maximum_iterations = nested
-        .and_then(|budget| budget.get("maxIterations"))
-        .or_else(|| parameters.get("maxIterations"))
+    let budget = parameters.get("budget").unwrap_or(parameters);
+    let maximum_iterations = budget
+        .get("maxIterations")
         .and_then(Value::as_u64)
         .unwrap_or(12)
         .clamp(1, 12);
-    let maximum_model_calls = parameters
+    let maximum_model_calls = budget
         .get("maxModelCalls")
         .and_then(Value::as_u64)
         .unwrap_or(12)
         .clamp(1, 12);
-    let maximum_tool_calls = parameters
+    let maximum_tool_calls = budget
         .get("maxToolCalls")
         .and_then(Value::as_u64)
         .unwrap_or(32)
         .clamp(0, 32);
-    let maximum_tokens = nested
-        .and_then(|budget| budget.get("maxTokens"))
-        .or_else(|| parameters.get("maxTotalTokens"))
+    let maximum_tokens = budget
+        .get("maxTokens")
+        .or_else(|| budget.get("maxTotalTokens"))
         .and_then(Value::as_u64)
         .unwrap_or(64_000);
-    let maximum_output_tokens = parameters
+    let maximum_output_tokens = budget
         .get("maxOutputTokens")
         .and_then(Value::as_u64)
         .unwrap_or(4_096);
-    let maximum_cost = nested
-        .and_then(|budget| budget.get("maxCostMicros"))
-        .or_else(|| parameters.get("maxCostMicros"))
-        .and_then(Value::as_u64)
+    let maximum_cost = budget
+        .get("maxCost")
+        .and_then(Value::as_f64)
+        .map(|cost| (cost * 1_000_000.0) as u64)
         .unwrap_or(1_000_000);
     json!({
         "maxIterations": maximum_iterations,
@@ -280,8 +279,8 @@ pub(super) fn effective_agent_budget(parameters: &Value) -> Value {
         "maxTokens": maximum_tokens,
         "maxOutputTokens": maximum_output_tokens,
         "maxCostMicros": maximum_cost,
-        "maxDurationMs":parameters.get("maxDurationMs").and_then(Value::as_u64).unwrap_or(300_000),
-        "limitAction":parameters.get("limitAction").and_then(Value::as_str).unwrap_or("error_output"),
+        "maxDurationMs":budget.get("maxDurationSeconds").and_then(Value::as_u64).map(|seconds|seconds.saturating_mul(1_000)).unwrap_or(300_000),
+        "limitAction":budget.get("limitAction").and_then(Value::as_str).unwrap_or("error_output"),
     })
 }
 

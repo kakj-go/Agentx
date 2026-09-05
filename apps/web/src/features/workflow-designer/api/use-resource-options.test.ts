@@ -30,4 +30,27 @@ describe('loadResourceOptions', () => {
     expect(options).toHaveLength(101)
     expect(options.at(-1)).toMatchObject({ value: 'rag-100', resourceType: 'rag', operation: 'read' })
   })
+
+  it('keeps model metadata so budget defaults can follow the selected model', async () => {
+    vi.mocked(apiRequest).mockResolvedValueOnce({
+      items: [{
+        id: 'model-1',
+        name: 'GLM-4.7',
+        detail: 'conn / glm-4.7',
+        status: 'active',
+        accessState: 'authorized',
+        metadata: { maxInputTokens: 200000, maxOutputTokens: 32000, currency: 'CNY' },
+      }],
+      page: 1,
+      pageSize: 100,
+      total: 1,
+    })
+
+    const options = await loadResourceOptions('workflow-1', { resourceType: 'model', operation: 'use' })
+
+    expect(options[0]).toMatchObject({
+      value: 'model-1',
+      metadata: { maxInputTokens: 200000, maxOutputTokens: 32000, currency: 'CNY' },
+    })
+  })
 })

@@ -618,8 +618,8 @@ fn full_definition() -> Result<WorkflowDefinition> {
     let parameters = json!({
         "systemPrompt":{"kind":"template","segments":[{"kind":"text","text":system_prompt}]},"userQuestion":user_question,
         "sessionPolicy":{"mode":session_policy},"maxIterations":4,"maxModelCalls":4,
-        "maxToolCalls":4,"maxTotalTokens":max_total_tokens,"maxOutputTokens":512,"maxCostMicros":10000,
-        "maxDurationMs":60000,"limitAction":"fail"
+        "maxToolCalls":4,"maxTotalTokens":max_total_tokens,"maxOutputTokens":512,"maxCost":0.01,
+        "maxDurationSeconds":60,"limitAction":"fail"
     });
     let nodes = vec![json!({
         "id":"agent","key":"agent","type":"agent","typeVersion":2,"name":"Agent",

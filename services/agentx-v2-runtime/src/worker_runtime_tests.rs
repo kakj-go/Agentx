@@ -199,9 +199,9 @@ fn http_responses_redact_raw_and_structured_credential_values() {
 fn current_agent_manifest_budget_fields_override_defaults() {
     assert_eq!(
         effective_agent_budget(
-            &json!({"maxIterations":3,"maxTotalTokens":1000,"maxCostMicros":1000})
+            &json!({"maxIterations":3,"maxTotalTokens":1000,"maxCost":0.001,"maxDurationSeconds":120})
         ),
-        json!({"maxIterations":3,"maxModelCalls":12,"maxToolCalls":32,"maxTokens":1000,"maxOutputTokens":4096,"maxCostMicros":1000,"maxDurationMs":300000,"limitAction":"error_output"})
+        json!({"maxIterations":3,"maxModelCalls":12,"maxToolCalls":32,"maxTokens":1000,"maxOutputTokens":4096,"maxCostMicros":1000,"maxDurationMs":120000,"limitAction":"error_output"})
     );
 }
 
@@ -220,7 +220,7 @@ fn set_builtin_uses_resolved_values_and_keep_only_set() {
 fn explicit_nested_agent_budget_takes_precedence() {
     assert_eq!(
         effective_agent_budget(
-            &json!({"budget":{"maxIterations":4,"maxTokens":2000,"maxCostMicros":3000},"maxIterations":2,"maxTotalTokens":500,"maxCostMicros":700})
+            &json!({"budget":{"maxIterations":4,"maxTokens":2000,"maxCost":0.003},"maxIterations":2,"maxTotalTokens":500,"maxCost":0.0007})
         ),
         json!({"maxIterations":4,"maxModelCalls":12,"maxToolCalls":32,"maxTokens":2000,"maxOutputTokens":4096,"maxCostMicros":3000,"maxDurationMs":300000,"limitAction":"error_output"})
     );
@@ -493,8 +493,8 @@ fn every_studio_manifest_parameter_has_an_explicit_runtime_consumer() {
                 "maxToolCalls",
                 "maxTotalTokens",
                 "maxOutputTokens",
-                "maxCostMicros",
-                "maxDurationMs",
+                "maxCost",
+                "maxDurationSeconds",
                 "limitAction",
             ],
         ),

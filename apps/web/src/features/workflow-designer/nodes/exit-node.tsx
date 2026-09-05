@@ -3,6 +3,7 @@ import { Flag, Lock } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { cn } from '../../../shared/lib/cn'
+import { localizedExitLabel } from '../model/node-display'
 import type { CanvasNode, ExitNodeData } from '../model/types'
 import { STUDIO_CARD_WIDTH } from './node-appearance'
 
@@ -16,7 +17,7 @@ export function ExitNode({ data, selected }: NodeProps<CanvasNode>) {
       <div className="flex h-11 shrink-0 items-center gap-2 px-3">
         <span className="grid size-6 shrink-0 place-items-center rounded-md bg-[#F59E0B] text-white"><Flag className="size-3.5" /></span>
         <strong className="flex min-w-0 flex-1 items-center gap-1 text-[13px] font-semibold leading-none">
-          <span className="min-w-0 truncate">{exit.label}</span>
+          <span className="min-w-0 truncate">{localizedExitLabel(exit.label, t('studio.exit.defaultName'))}</span>
           {exit.protected ? <Lock aria-label={t('studio.exit.protected')} className="size-3 shrink-0 text-muted-foreground" data-testid="exit-protected" /> : null}
         </strong>
       </div>

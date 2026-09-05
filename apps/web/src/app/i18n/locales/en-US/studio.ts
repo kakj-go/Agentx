@@ -494,6 +494,7 @@ const translations = {
   "exit": {
     "title": "End node",
     "description": "The output contract is shared; each end node maps its own values",
+    "defaultName": "End",
     "summary": "Output variables",
     "protected": "The initial end node cannot be deleted",
     "sharedBanner": "Shared across all end nodes: edits made on any end node apply everywhere",
@@ -737,7 +738,10 @@ const translations = {
     "minutes": "Minutes",
     "hours": "Hours",
     "days": "Days",
-    "tokens": "tokens"
+    "tokens": "tokens",
+    "calls": "calls",
+    "items": "items",
+    "currency": "currency"
   },
   "mergePolicies": {
     "replace": "Replace",

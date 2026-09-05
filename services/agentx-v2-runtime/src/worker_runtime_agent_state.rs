@@ -658,8 +658,8 @@ pub(super) fn effective_agent_budget(parameters: &Value) -> Value {
         "maxModelCalls":budget.get("maxModelCalls").and_then(Value::as_u64).unwrap_or(12).clamp(1, 12),
         "maxTokens":budget.get("maxTotalTokens").or_else(|| budget.get("maxTokens")).and_then(Value::as_u64).unwrap_or(64_000),
         "maxOutputTokens":budget.get("maxOutputTokens").and_then(Value::as_u64).unwrap_or(4_096),
-        "maxCostMicros":budget.get("maxCostMicros").and_then(Value::as_u64).unwrap_or(1_000_000),
-        "maxDurationMs":budget.get("maxDurationMs").and_then(Value::as_u64).unwrap_or(300_000),
+        "maxCostMicros":budget.get("maxCost").and_then(Value::as_f64).map(|cost|(cost*1_000_000.0) as u64).unwrap_or(1_000_000),
+        "maxDurationMs":budget.get("maxDurationSeconds").and_then(Value::as_u64).map(|seconds|seconds.saturating_mul(1_000)).unwrap_or(300_000),
         "maxTraceEvents":budget.get("maxTraceEvents").and_then(Value::as_u64).unwrap_or(1_024).clamp(1, 10_000)
     })
 }

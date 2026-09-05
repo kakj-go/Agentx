@@ -146,7 +146,15 @@ function schemaTypeLabel(type: unknown): string {
   return type ? String(type) : "unknown";
 }
 
-export function ParameterControl({ panel, name }: { panel: ActionPanelProps; name: string }) {
+export function ParameterControl({
+  panel,
+  name,
+  unitOverride,
+}: {
+  panel: ActionPanelProps;
+  name: string;
+  unitOverride?: string;
+}) {
   const schema = panel.manifest.parameterSchema.properties?.[name];
   if (!schema) return null;
   const ui: UiField | undefined = panel.manifest.uiSchema.fields?.[name];
@@ -169,6 +177,7 @@ export function ParameterControl({ panel, name }: { panel: ActionPanelProps; nam
         workflowId={panel.workflowId}
         labelOverride={panel.localized?.parameterLabel(name)}
         descriptionOverride={panel.localized?.parameterDescription(name)}
+        unitOverride={unitOverride}
         nestedLocalization={
           panel.localized
             ? {

@@ -574,7 +574,7 @@ async fn agent_worker_runs_a_bounded_tool_loop_and_persists_usage(fixture: &Fixt
         iteration_index: 0,
         timeout_ms: 30_000,
         node_parameters: json!({
-            "budget":{"maxIterations":3,"maxModelCalls":3,"maxTokens":100,"maxCostMicros":100},
+            "budget":{"maxIterations":3,"maxModelCalls":3,"maxTokens":100,"maxCost":0.0001},
             "_agent":{
                 "contractVersion":"1.1",
                 "bundleHash":"bundle-fixture",
@@ -766,7 +766,7 @@ async fn application_session_agent_restores_context_across_executions(fixture: &
             iteration_index: 0,
             timeout_ms: 30_000,
             node_parameters: json!({
-                "budget":{"maxIterations":2,"maxModelCalls":2,"maxTokens":100,"maxCostMicros":100},
+                "budget":{"maxIterations":2,"maxModelCalls":2,"maxTokens":100,"maxCost":0.0001},
                 "_agent":{
                     "contractVersion":"1.1","bundleHash":"session-bundle","definitionHash":"session-definition",
                     "stableAgentNodeKey":"session-agent","sessionPolicy":"application_session",

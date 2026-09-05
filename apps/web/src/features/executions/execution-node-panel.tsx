@@ -2,6 +2,7 @@ import { AlertTriangle, Clock3, GitBranch } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import type { NodeExecution } from '../../shared/api/types'
+import { useNodeNames } from '../workflow-designer/api/node-display'
 import { StatusBadge } from '../../shared/components/status-badge'
 import { useLocaleFormat } from '../../shared/lib/locale-format'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../shared/ui/tabs'
@@ -15,11 +16,12 @@ type NodePanelProps = {
 
 export function ExecutionNodePanel({ node, onDownloadArtifact }: NodePanelProps) {
   const { t } = useTranslation()
+  const { resolveNodeName } = useNodeNames()
   const { formatDateTime } = useLocaleFormat()
   if (!node) return <div className="grid min-h-[520px] place-items-center px-6 text-center text-sm text-muted-foreground">{t('executions.nodePanel.selectNode')}</div>
   return <section aria-label={t('executions.nodePanel.ariaLabel')} className="min-w-0 bg-surface">
     <header className="flex min-h-16 flex-wrap items-center gap-3 border-b border-border px-4 py-3">
-      <div className="min-w-0 flex-1"><h2 className="truncate text-sm font-semibold">{node.nodeName}</h2><p className="mt-1 truncate text-[10px] text-muted-foreground">{node.nodeType}@{node.nodeVersion} · {t('executions.nodePanel.run')} {node.runIndex} · {node.capability}</p></div>
+      <div className="min-w-0 flex-1"><h2 className="truncate text-sm font-semibold">{resolveNodeName(node.nodeName, node.nodeType)}</h2><p className="mt-1 truncate text-[10px] text-muted-foreground">{node.nodeType}@{node.nodeVersion} · {t('executions.nodePanel.run')} {node.runIndex} · {node.capability}</p></div>
       <StatusBadge status={executionStatus(node.status)} />
     </header>
     {node.errorMessage && <div className="flex gap-2 border-b border-danger/25 bg-danger/10 px-4 py-3 text-xs text-danger"><AlertTriangle className="mt-0.5 size-4 shrink-0" /><span><strong>{node.errorCode}</strong><br />{node.errorMessage}</span></div>}

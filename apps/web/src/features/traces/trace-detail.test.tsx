@@ -50,6 +50,6 @@ describe('Trace Span detail', () => {
     expect(screen.getAllByRole('tab')).toHaveLength(2)
     expect(screen.getByText('这是生命周期 Span，没有业务内容。')).toBeInTheDocument()
     expect(screen.queryByRole('tab', { name: '工作流输入' })).not.toBeInTheDocument()
-    expect(vi.mocked(fetch)).not.toHaveBeenCalled()
+    expect(vi.mocked(fetch)).not.toHaveBeenCalledWith(expect.stringContaining('/trace/spans/'), expect.anything())
   })
 })

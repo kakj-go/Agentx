@@ -9,6 +9,7 @@ import { Input } from "../../../../shared/ui/input";
 import { Select } from "../../../../shared/ui/select";
 import { Textarea } from "../../../../shared/ui/textarea";
 import { asInputBinding, SmartInput } from "../../forms/binding-inputs";
+import { localizedExitLabel } from "../../model/node-display";
 import { RequiredLabel } from "../../forms/required-label";
 import { groupColor } from "../../nodes/node-appearance";
 import type {
@@ -89,7 +90,7 @@ export function ExitPanel({
     <InspectorShell testId="exit-panel">
       <header className="flex h-16 items-center gap-3 border-b border-border px-4">
         <span className="grid size-9 place-items-center rounded-md" style={{ color: groupColor('output'), backgroundColor: `color-mix(in srgb, ${groupColor('output')} 12%, transparent)` }}><LogOut className="size-5" /></span>
-        <div className="min-w-0 flex-1"><strong className="block text-sm">{current?.data.label ?? t("studio.exit.title")}</strong><span className="text-[10px] text-muted-foreground">{t("studio.exit.description")}</span></div>
+        <div className="min-w-0 flex-1"><strong className="block text-sm">{current ? localizedExitLabel(current.data.label, t("studio.exit.defaultName")) : t("studio.exit.title")}</strong><span className="text-[10px] text-muted-foreground">{t("studio.exit.description")}</span></div>
         <Button aria-label={t("common.close")} onClick={onClose} size="icon" variant="ghost"><X className="size-4" /></Button>
       </header>
       <div className="min-h-0 flex-1 space-y-6 overflow-y-auto p-4">

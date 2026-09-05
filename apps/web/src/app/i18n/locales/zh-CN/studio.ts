@@ -494,6 +494,7 @@ const translations = {
   "exit": {
     "title": "结束节点",
     "description": "输出契约全局共享，本节点配置各自的取值映射",
+    "defaultName": "结束",
     "summary": "输出变量",
     "protected": "初始结束节点不可删除",
     "sharedBanner": "输出表全局共享：在任一结束节点修改后对所有结束节点生效",
@@ -737,7 +738,10 @@ const translations = {
     "minutes": "分钟",
     "hours": "小时",
     "days": "天",
-    "tokens": "Token"
+    "tokens": "Token",
+    "calls": "次数",
+    "items": "项",
+    "currency": "货币单位"
   },
   "mergePolicies": {
     "replace": "覆盖",

@@ -17,6 +17,39 @@ import {
 
 const CORE_PARAMETERS = ["systemPrompt", "userQuestion", "sessionPolicy"];
 
+function selectedModelOption(panel: ActionPanelProps) {
+  const reference = panel.data.resourceReferences.find(
+    (candidate) => candidate.bindingRole === "model",
+  );
+  if (!reference) return undefined;
+  return resourceOptionsFor(panel.resources, "model", "use").find(
+    (candidate) => candidate.value === reference.resourceId,
+  );
+}
+
+function modelCurrencyFor(panel: ActionPanelProps) {
+  return selectedModelOption(panel)?.metadata?.currency ?? undefined;
+}
+
+// Re-selecting a model seeds the token budgets from its deployment limits;
+// manual edits afterwards are preserved until the next model selection.
+function modelBudgetDefaults(panel: ActionPanelProps, resourceId: string) {
+  const metadata = resourceOptionsFor(panel.resources, "model", "use").find(
+    (candidate) => candidate.value === resourceId,
+  )?.metadata;
+  if (!metadata?.maxInputTokens && !metadata?.maxOutputTokens) return undefined;
+  const properties = panel.manifest.parameterSchema.properties ?? {};
+  const parameters = { ...panel.data.parameters };
+  const apply = (name: string, value: number | undefined) => {
+    if (!value || value <= 0) return;
+    const maximum = properties[name]?.maximum;
+    parameters[name] = maximum ? Math.min(value, maximum) : value;
+  };
+  apply("maxTotalTokens", metadata?.maxInputTokens);
+  apply("maxOutputTokens", metadata?.maxOutputTokens);
+  return parameters;
+}
+
 export function AgentPanel(panel: ActionPanelProps) {
   const { t } = useTranslation();
   const [advancedOpen, setAdvancedOpen] = useState(false);
@@ -25,8 +58,9 @@ export function AgentPanel(panel: ActionPanelProps) {
   const summary = [
     panel.data.parameters.maxIterations ? t("studio.panels.agent.iterationSummary", { count: panel.data.parameters.maxIterations }) : undefined,
     panel.data.parameters.maxToolCalls !== undefined ? t("studio.panels.agent.toolSummary", { count: panel.data.parameters.maxToolCalls }) : undefined,
-    panel.data.parameters.maxDurationMs ? t("studio.panels.agent.durationSummary", { count: Math.round(Number(panel.data.parameters.maxDurationMs) / 1000) }) : undefined,
+    panel.data.parameters.maxDurationSeconds ? t("studio.panels.agent.durationSummary", { count: panel.data.parameters.maxDurationSeconds }) : undefined,
   ].filter(Boolean).join(" · ");
+  const costUnit = modelCurrencyFor(panel);
   return (
     <div className="space-y-5" data-testid="agent-panel">
       <AgentCoreConfiguration panel={panel} />
@@ -64,7 +98,12 @@ export function AgentPanel(panel: ActionPanelProps) {
           {advancedOpen && advancedFields.length > 0 && (
             <div className="grid grid-cols-2 gap-3 border-t border-border p-3">
               {advancedFields.map((name) => (
-                <ParameterControl key={name} name={name} panel={panel} />
+                <ParameterControl
+                  key={name}
+                  name={name}
+                  panel={panel}
+                  unitOverride={name === "maxCost" ? costUnit : undefined}
+                />
               ))}
             </div>
           )}
@@ -122,7 +161,9 @@ function AgentCoreConfiguration({ panel }: { panel: ActionPanelProps }) {
               onChange={(resourceId, versionId) => {
                 const kept = panel.data.resourceReferences.filter((candidate) => slot.multiple || candidate.bindingRole !== slot.name)
                 if (slot.multiple && references.some((candidate) => candidate.resourceId === resourceId)) return
-                panel.onChange({ resourceReferences: [...kept, { bindingRole: slot.name, resourceType: slot.resourceType, resourceId, resourceVersionId: versionId, operation }] })
+                const resourceReferences = [...kept, { bindingRole: slot.name, resourceType: slot.resourceType, resourceId, resourceVersionId: versionId, operation }]
+                const parameters = slot.name === "model" ? modelBudgetDefaults(panel, resourceId) : undefined
+                panel.onChange(parameters ? { resourceReferences, parameters } : { resourceReferences })
               }}
               onClear={
                 slot.required

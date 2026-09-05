@@ -9,6 +9,7 @@ const translations = {
   itemCount: '{{count}} 个 Item', itemIndex: 'Item {{index}}', rawItem: '原始 Item / 来源 / Binary', emptyObject: '空对象', downloadArtifact: '查看 / 下载 Artifact', usageValue: '{{input}} input · {{output}} output · {{total}} total', runLabel: 'run {{run}} · iteration {{iteration}}',
   views: { label: 'Trace 视图', nodes: '节点视图', waterfall: '高级瀑布', nodesHint: '默认展示业务节点和语义输入输出', waterfallHint: '展示底层 Span 时间线和完整诊断信息' },
   boundaries: { start: '开始', startDescription: 'Start Boundary · 工作流输入', end: '结束', endDescription: 'End Boundary · 工作流输出' },
+  waitApproval: '审批 · {{title}}', waitGeneric: '等待 · {{title}}',
   kinds: { execution: '执行', boundary: '边界', node: '节点', attempt: '尝试', agent_run: '智能体运行', agent_iteration: '智能体迭代', runtime_call: 'Runtime 调用', sandbox: '沙箱', wait: '等待 / 审批' },
   contentKinds: { workflow_input: '工作流输入', workflow_output: '工作流输出', node_input: '节点输入', node_output: '节点输出', attempt_input: '尝试输入', attempt_output: '尝试输出', resolved_parameters: '解析参数', runtime_request: 'Provider / Runtime 请求', runtime_response: 'Provider / Runtime 响应', agent_input: '智能体输入', agent_output: '智能体输出', iteration_input: '迭代输入', iteration_output: '迭代输出', sandbox_request: '沙箱请求', sandbox_response: '沙箱响应', wait_request: '等待请求', wait_response: '等待响应', conversion_record: '字符串转换记录' },
 } as const

@@ -33,8 +33,6 @@
         },
         "parameterLabels": {
           "limitAction": "Limit Action",
-          "maxCostMicros": "Max Cost Micros",
-          "maxDurationMs": "Max Duration Ms",
           "maxIterations": "Max Iterations",
           "maxModelCalls": "Max Model Calls",
           "maxOutputTokens": "Max Output Tokens",
@@ -44,7 +42,9 @@
           "sessionPolicy.mode": "Mode",
           "sessionPolicy.retentionPolicyId": "Retention Policy Id",
           "systemPrompt": "System Prompt",
-          "userQuestion": "User Question"
+          "userQuestion": "User Question",
+          "maxCost": "Max Cost",
+          "maxDurationSeconds": "Max Duration Seconds"
         },
         "parameterEnumOptions": {
           "limitAction": {
@@ -81,8 +81,6 @@
         },
         "parameterLabels": {
           "limitAction": "超限动作",
-          "maxCostMicros": "最大成本",
-          "maxDurationMs": "最大时长",
           "maxIterations": "最大迭代次数",
           "maxModelCalls": "最大模型调用数",
           "maxOutputTokens": "最大输出 Token",
@@ -92,7 +90,9 @@
           "sessionPolicy.mode": "模式",
           "sessionPolicy.retentionPolicyId": "保留策略",
           "systemPrompt": "系统提示词",
-          "userQuestion": "用户问题"
+          "userQuestion": "用户问题",
+          "maxCost": "最大成本",
+          "maxDurationSeconds": "最大时长（秒）"
         },
         "parameterEnumOptions": {
           "limitAction": {
@@ -188,18 +188,6 @@
             "partial"
           ]
         },
-        "maxCostMicros": {
-          "default": 1000000,
-          "maximum": 1000000,
-          "minimum": 0,
-          "type": "integer"
-        },
-        "maxDurationMs": {
-          "default": 300000,
-          "maximum": 300000,
-          "minimum": 1000,
-          "type": "integer"
-        },
         "maxIterations": {
           "default": 12,
           "maximum": 12,
@@ -214,7 +202,7 @@
         },
         "maxOutputTokens": {
           "default": 4096,
-          "maximum": 64000,
+          "maximum": 2000000,
           "minimum": 1,
           "type": "integer"
         },
@@ -226,7 +214,7 @@
         },
         "maxTotalTokens": {
           "default": 64000,
-          "maximum": 64000,
+          "maximum": 2000000,
           "minimum": 1,
           "type": "integer"
         },
@@ -302,6 +290,18 @@
             ],
             "recursive": false
           }
+        },
+        "maxCost": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1000,
+          "default": 1
+        },
+        "maxDurationSeconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3600,
+          "default": 300
         }
       },
       "required": [
@@ -513,14 +513,6 @@
         "limitAction": {
           "control": "select"
         },
-        "maxCostMicros": {
-          "control": "number",
-          "unit": "micros"
-        },
-        "maxDurationMs": {
-          "control": "number",
-          "unit": "milliseconds"
-        },
         "maxIterations": {
           "control": "number",
           "unit": "calls"
@@ -549,6 +541,14 @@
         },
         "userQuestion": {
           "control": "template"
+        },
+        "maxCost": {
+          "control": "number",
+          "unit": "currency"
+        },
+        "maxDurationSeconds": {
+          "control": "number",
+          "unit": "seconds"
         }
       },
       "resourceSelectors": [

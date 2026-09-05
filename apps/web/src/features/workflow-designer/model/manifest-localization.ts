@@ -37,7 +37,8 @@ export function localizeManifest(manifest: NodeManifest, language?: string): Loc
   }
 }
 
-export function localizedNodeLabel(manifest: NodeManifest, savedLabel: string, language?: string) {
+export function localizedNodeLabel(manifest: NodeManifest | undefined, savedLabel: string, language?: string) {
+  if (!manifest) return savedLabel
   const localized = localizeManifest(manifest, language)
   const defaultNames = new Set([manifest.displayName, ...Object.values(manifest.localizations ?? {}).map((value) => value.displayName).filter(Boolean)])
   return !savedLabel || defaultNames.has(savedLabel) ? localized.displayName : savedLabel

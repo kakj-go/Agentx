@@ -428,6 +428,11 @@ export type ResourceOption = {
   accessState?: "authorized" | "grantable" | "requestable" | "pending" | "rejected" | "unavailable";
   pendingRequestId?: string | null;
   manifest?: NodeManifest;
+  metadata?: {
+    maxInputTokens?: number;
+    maxOutputTokens?: number;
+    currency?: string | null;
+  };
   requirements?: Array<{
     resourceType: string;
     resourceId: string;

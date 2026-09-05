@@ -14,6 +14,7 @@ import type {
   WorkflowVersion,
 } from "../../shared/api/types";
 import { localizedValue } from "../../shared/lib/localized-value";
+import { localizedNodeLabel } from "./model/manifest-localization";
 import { Button } from "../../shared/ui/button";
 import { Dialog, DialogContent } from "../../shared/ui/dialog";
 import { Select } from "../../shared/ui/select";
@@ -77,7 +78,7 @@ type StudioValidationIssue = {
 
 export function WorkflowCanvas() {
   const { workflowId = "" } = useParams();
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const queryClient = useQueryClient();
   const { showToast } = useToast();
   const hydrated = useRef(false);
@@ -1094,7 +1095,13 @@ export function WorkflowCanvas() {
             onRun={(source, input) => void executeRun(source, input)}
             open={debugDialogOpen}
             running={runtime.running}
-            targetName={selected.data.label}
+            targetName={localizedNodeLabel(
+              manifestMap.get(
+                `${selected.data.nodeType}@${selected.data.typeVersion}`,
+              ),
+              selected.data.label,
+              i18n.language,
+            )}
           />
         )}
       <PublishDialog

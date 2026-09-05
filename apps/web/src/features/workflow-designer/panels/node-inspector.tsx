@@ -299,6 +299,7 @@ export function NodeInspector({
             parameterCatalogs={parameterCatalogs}
             currentNodeCatalog={currentNodeCatalog}
             resources={resources}
+            title={title}
             onResourceAuthorize={onResourceAuthorize}
             onResourceRequest={onResourceRequest}
             sourceNodeId={nodeId}
@@ -374,6 +375,7 @@ function Parameters({
   fieldErrors,
   onChange,
   t,
+  title,
   onResourceAuthorize,
   onResourceRequest,
   sourceNodeId,
@@ -390,6 +392,7 @@ function Parameters({
   fieldErrors: Record<string, string>;
   onChange: (data: Partial<ActionNodeData>) => void;
   t: (key: string, fallback?: string) => string;
+  title: string;
   onResourceAuthorize?: (option: ResourceOption) => Promise<void>;
   onResourceRequest?: (option: ResourceOption, context?: ResourceRequestContext) => Promise<void>;
   sourceNodeId?: string;
@@ -423,13 +426,13 @@ function Parameters({
       <details className="rounded-md border border-border/60" data-testid="node-basics">
         <summary className="flex cursor-pointer items-center justify-between gap-2 px-2.5 py-2 text-[11px] text-muted-foreground">
           <span>{t("studio.inspector.basics")}</span>
-          <span className="min-w-0 truncate font-medium text-foreground/70">{data.label}</span>
+          <span className="min-w-0 truncate font-medium text-foreground/70">{title}</span>
         </summary>
         <div className="space-y-3 border-t border-border/60 p-2.5">
           <PanelField error={fieldErrors.name ?? nameError} fieldPath="name" label={t("studio.inspector.name")} required>
             <Input
               onChange={(event) => onChange({ label: event.target.value })}
-              value={data.label}
+              value={data.label.trim() ? title : ""}
             />
           </PanelField>
           <PanelField error={fieldErrors.key ?? keyError} fieldPath="key" label={t("studio.inspector.key")} required>

@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import type { TraceSpan } from '../../shared/api/types'
+import { useNodeNames } from '../workflow-designer/api/node-display'
 import { Badge } from '../../shared/ui/badge'
 import { Button } from '../../shared/ui/button'
 import { Input } from '../../shared/ui/input'
@@ -22,6 +23,7 @@ type Props = {
 
 export function TraceWaterfall({ executionId, className, active = true, onNodeSelect, onDownloadArtifact }: Props) {
   const { t } = useTranslation()
+  const { resolveSpanName } = useNodeNames()
   const kindLabels = t('trace.kinds', { returnObjects: true }) as Record<string, string>
   const trace = useExecutionTrace(executionId, active)
   const [selectedId, setSelectedId] = useState<string>()
@@ -37,7 +39,7 @@ export function TraceWaterfall({ executionId, className, active = true, onNodeSe
     const preferred = trace.spans.find((span) => isError(span.status)) ?? trace.spans.find((span) => span.status === 'running') ?? trace.spans.find((span) => span.spanKind === 'execution') ?? trace.spans[0]
     setSelectedId(preferred?.spanId)
   }, [selectedId, trace.spans])
-  const rows = useMemo(() => buildTraceRows(trace.spans, collapsed, search, kind, errorsOnly), [collapsed, errorsOnly, kind, search, trace.spans])
+  const rows = useMemo(() => buildTraceRows(trace.spans, collapsed, search, kind, errorsOnly, (span) => resolveSpanName(span.spanName)), [collapsed, errorsOnly, kind, resolveSpanName, search, trace.spans])
   const selected = trace.spans.find((span) => span.spanId === selectedId)
   const bounds = useMemo(() => traceBounds(trace.spans, now), [now, trace.spans])
   const select = (span: TraceSpan) => { setSelectedId(span.spanId); if (span.nodeExecutionId) onNodeSelect?.(span.nodeExecutionId) }
@@ -57,8 +59,7 @@ export function TraceWaterfall({ executionId, className, active = true, onNodeSe
       <div className="min-w-0 overflow-auto" role="treegrid" aria-label={t('trace.tree')}>
         <div className="min-w-[820px]">
           <div className="sticky top-0 z-10 grid h-9 grid-cols-[300px_88px_74px_minmax(350px,1fr)] items-center border-b border-border bg-muted/80 px-2 text-[9px] font-semibold uppercase tracking-wider text-muted-foreground backdrop-blur" role="row"><span role="columnheader">{t('trace.hierarchy')}</span><span role="columnheader">{t('trace.status')}</span><span role="columnheader">{t('trace.duration')}</span><span role="columnheader">{t('trace.timeline')}</span></div>
-          {rows.map(({ span, depth }) => <TraceWaterfallRow bounds={bounds} collapsed={collapsed.has(span.spanId)} depth={depth} hasChildren={trace.spans.some((item) => item.parentSpanId === span.spanId)} key={span.spanId} now={now} onSelect={() => select(span)} onToggle={() => setCollapsed((current) => toggleSet(current, span.spanId))} selected={selectedId === span.spanId} span={span} zoom={zoom} />)}
-          {!rows.length && <p className="p-8 text-center text-xs text-muted-foreground">{t('trace.noMatches')}</p>}
+          {rows.map(({ span, depth }) => <TraceWaterfallRow bounds={bounds} collapsed={collapsed.has(span.spanId)} depth={depth} hasChildren={trace.spans.some((item) => item.parentSpanId === span.spanId)} key={span.spanId} now={now} onSelect={() => select(span)} onToggle={() => setCollapsed((current) => toggleSet(current, span.spanId))} selected={selectedId === span.spanId} span={span} zoom={zoom} />)}          {!rows.length && <p className="p-8 text-center text-xs text-muted-foreground">{t('trace.noMatches')}</p>}
           {trace.hasNextPage && <div className="flex justify-center border-t border-border p-3"><Button disabled={trace.isFetchingNextPage} onClick={() => void trace.fetchNextPage()} size="sm" variant="secondary">{trace.isFetchingNextPage && <LoaderCircle className="size-3.5 animate-spin" />}{t('trace.loadMore')}</Button></div>}
         </div>
       </div>
@@ -69,12 +70,13 @@ export function TraceWaterfall({ executionId, className, active = true, onNodeSe
 
 function TraceWaterfallRow({ span, depth, selected, collapsed, hasChildren, bounds, now, zoom, onSelect, onToggle }: { span: TraceSpan; depth: number; selected: boolean; collapsed: boolean; hasChildren: boolean; bounds: { start: number; duration: number }; now: number; zoom: number; onSelect: () => void; onToggle: () => void }) {
   const { t } = useTranslation()
+  const { resolveSpanName } = useNodeNames()
   const start = new Date(span.startedAt).getTime()
   const spanDuration = span.durationMs ?? Math.max(0, (span.endedAt ? new Date(span.endedAt).getTime() : now) - start)
   const left = ((start - bounds.start) / bounds.duration) * 100
   const width = Math.max(.35, (spanDuration / bounds.duration) * 100)
   return <div aria-expanded={hasChildren ? !collapsed : undefined} aria-level={depth + 1} aria-selected={selected} className={cn('grid h-10 grid-cols-[300px_88px_74px_minmax(350px,1fr)] items-center border-b border-border px-2 text-[10px] outline-none hover:bg-muted/45 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/30', selected && 'bg-primary/5 ring-inset ring-primary/20')} onClick={onSelect} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onSelect() } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); moveRowFocus(event.currentTarget, event.key === 'ArrowDown' ? 1 : -1) } else if (event.key === 'ArrowRight' && hasChildren && collapsed) { event.preventDefault(); onToggle() } else if (event.key === 'ArrowLeft' && hasChildren && !collapsed) { event.preventDefault(); onToggle() } }} role="row" tabIndex={selected ? 0 : -1}>
-    <div className="flex min-w-0 items-center" role="gridcell"><span style={{ width: depth * 16 }} /><button aria-label={collapsed ? t('trace.expand') : t('trace.collapse')} className="mr-1 grid size-5 shrink-0 place-items-center rounded hover:bg-muted" disabled={!hasChildren} onClick={(event) => { event.stopPropagation(); onToggle() }} type="button">{hasChildren ? collapsed ? <ChevronRight className="size-3" /> : <ChevronDown className="size-3" /> : null}</button><span className={cn('mr-2 size-2 shrink-0 rounded-sm', kindColor[span.spanKind] ?? 'bg-muted-foreground')} /><span className="min-w-0"><strong className="block truncate font-medium">{span.spanName}</strong><small className="block truncate text-[9px] text-muted-foreground">{t(`trace.kinds.${span.spanKind}`)}</small></span></div>
+    <div className="flex min-w-0 items-center" role="gridcell"><span style={{ width: depth * 16 }} /><button aria-label={collapsed ? t('trace.expand') : t('trace.collapse')} className="mr-1 grid size-5 shrink-0 place-items-center rounded hover:bg-muted" disabled={!hasChildren} onClick={(event) => { event.stopPropagation(); onToggle() }} type="button">{hasChildren ? collapsed ? <ChevronRight className="size-3" /> : <ChevronDown className="size-3" /> : null}</button><span className={cn('mr-2 size-2 shrink-0 rounded-sm', kindColor[span.spanKind] ?? 'bg-muted-foreground')} /><span className="min-w-0"><strong className="block truncate font-medium">{resolveSpanName(span.spanName)}</strong><small className="block truncate text-[9px] text-muted-foreground">{t(`trace.kinds.${span.spanKind}`)}</small></span></div>
     <div role="gridcell"><Badge className="px-1.5 py-0.5 text-[9px]" tone={statusTone(span.status)}>{t(`common.${span.status}`, { defaultValue: span.status })}</Badge></div>
     <span className="tabular-nums text-muted-foreground" role="gridcell">{duration(spanDuration)}</span>
     <div className="relative h-full overflow-hidden border-l border-border" role="gridcell"><div className="absolute inset-0 origin-left" style={{ width: `${zoom}%`, backgroundImage: 'linear-gradient(to right, transparent calc(25% - 1px), var(--color-border) 25%, transparent calc(25% + 1px), transparent calc(50% - 1px), var(--color-border) 50%, transparent calc(50% + 1px), transparent calc(75% - 1px), var(--color-border) 75%, transparent calc(75% + 1px))' }}><span className={cn('absolute top-3 h-3.5 min-w-[3px] rounded-sm opacity-85', isError(span.status) ? 'bg-danger' : kindColor[span.spanKind] ?? 'bg-primary', !span.endedAt && 'animate-pulse')} style={{ left: `${left}%`, width: `${width}%` }} title={duration(spanDuration)} /></div></div>

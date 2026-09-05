@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
 
 import type { Approval, Checkpoint, ExecutionEvent, NodeExecution } from '../../shared/api/types'
+import { useNodeNames } from '../workflow-designer/api/node-display'
 import { useLocaleFormat } from '../../shared/lib/locale-format'
 import { localizedValue } from '../../shared/lib/localized-value'
 import { Button } from '../../shared/ui/button'
@@ -19,6 +20,7 @@ type RecoveryRailProps = {
 
 export function ExecutionRecoveryRail({ checkpoints, approvals, nodes, events, canConfirm, onConfirm }: RecoveryRailProps) {
   const { t } = useTranslation()
+  const { resolveNodeName } = useNodeNames()
   const { formatDateTime } = useLocaleFormat()
   const confirmations = nodes.filter((node) => node.sideEffectLevel === 'irreversible' && node.status === 'waiting')
   return <aside aria-label={t('executions.recovery.ariaLabel')} className="min-w-0 bg-surface">
@@ -28,7 +30,7 @@ export function ExecutionRecoveryRail({ checkpoints, approvals, nodes, events, c
         {approvals.map((approval) => <div className="py-2.5" key={approval.id}><div className="flex items-start justify-between gap-2"><div className="min-w-0"><strong className="block truncate text-[11px]">{approval.title}</strong><p className="mt-1 text-[10px] text-muted-foreground">{localizedValue(t, 'approvals.statuses', approval.status)} · {localizedValue(t, 'approvals.resumeStatuses', approval.resumeStatus)}</p></div><Button asChild aria-label={t('executions.recovery.openApproval')} size="icon" variant="ghost"><Link to={`/approvals/${approval.id}`}><ExternalLink className="size-3.5" /></Link></Button></div></div>)}
       </RailSection>}
       {confirmations.length > 0 && <RailSection icon={ShieldAlert} title={t('executions.recovery.sideEffectConfirmation')}>
-        {confirmations.map((node) => <div className="py-2.5" key={node.id}><strong className="block truncate text-[11px]">{node.nodeName}</strong><p className="my-2 text-[10px] leading-4 text-muted-foreground">{t('executions.recovery.irreversibleWaiting')}</p><Button disabled={!canConfirm} onClick={() => onConfirm(node)} size="sm" variant="secondary">{t('executions.recovery.handle')}</Button></div>)}
+        {confirmations.map((node) => <div className="py-2.5" key={node.id}><strong className="block truncate text-[11px]">{resolveNodeName(node.nodeName, node.nodeType)}</strong><p className="my-2 text-[10px] leading-4 text-muted-foreground">{t('executions.recovery.irreversibleWaiting')}</p><Button disabled={!canConfirm} onClick={() => onConfirm(node)} size="sm" variant="secondary">{t('executions.recovery.handle')}</Button></div>)}
       </RailSection>}
       <RailSection icon={GitFork} title={t('executions.recovery.checkpoints', { count: checkpoints.length })}>
         {checkpoints.slice().reverse().slice(0, 8).map((checkpoint) => <div className="border-b border-border/70 py-2.5 last:border-0" key={checkpoint.id}><div className="flex items-center justify-between gap-2"><strong className="text-[11px]">#{checkpoint.sequenceNumber} {checkpoint.checkpointType}</strong><span className="text-[9px] text-muted-foreground">{formatDateTime(checkpoint.createdAt)}</span></div><p className="mt-1 truncate font-mono text-[9px] text-muted-foreground" title={checkpoint.stateHash}>{checkpoint.stateHash}</p><p className="mt-1 text-[9px] text-muted-foreground">{t('executions.recovery.activationsAndDeliveries', { activations: checkpoint.activationCount, deliveries: checkpoint.deliveryCount })}</p></div>)}

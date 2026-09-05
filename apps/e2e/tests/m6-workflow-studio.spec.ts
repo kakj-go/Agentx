@@ -741,7 +741,7 @@ test('M6 Studio creates, debugs, versions and publishes a manifest-driven Workfl
   await expect(agentConfigDetails.getByText('高级配置', { exact: true })).toBeVisible()
   await expect(agentConfigDetails.getByText('不支持的 UI 控件')).toHaveCount(0)
   await agentConfigDetails.getByTestId('agent-budget-section').getByRole('button', { name: /展开或收起高级配置|Expand or collapse advanced settings/ }).click()
-  await expect(agentConfigDetails.getByTestId('parameter-maxDurationMs')).toContainText('毫秒')
+  await expect(agentConfigDetails.getByTestId('parameter-maxDurationSeconds')).toContainText('秒')
   await expect(agentConfigDetails.getByTestId('parameter-maxTotalTokens')).toContainText('Token')
 
   const configuredCodeDetails = await openNodeDetails(page, code)
