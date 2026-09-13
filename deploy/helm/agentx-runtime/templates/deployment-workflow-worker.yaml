@@ -19,13 +19,13 @@ spec:
           image: {{ include "agentx.image" (list . "workflow-worker") }}
           imagePullPolicy: {{ .Values.global.images.pullPolicy }}
           env:
+            - { name: AGENTX_PLUGIN_WORK_DIR, value: /var/run/agentx/plugin-work }
             - name: AGENTX_INSTANCE_ID
               valueFrom: { fieldRef: { fieldPath: metadata.uid } }
             - name: AGENTX_WORKER_ID
               valueFrom: { fieldRef: { fieldPath: metadata.uid } }
             - { name: AGENTX_WORKER_CAPABILITIES, value: {{ .Values.runtime.services.workflowWorker.capability | quote }} }
             - { name: AGENTX_PLUGIN_MAX_PROCESSES, value: {{ .Values.runtime.services.workflowWorker.pluginMaxProcesses | quote }} }
-            - { name: AGENTX_PLUGIN_IDLE_SECONDS, value: {{ .Values.runtime.services.workflowWorker.pluginIdleSeconds | quote }} }
             - { name: AGENTX_PLUGIN_MEMORY_MB, value: {{ .Values.runtime.services.workflowWorker.pluginMemoryMb | quote }} }
             - { name: AGENTX_PLUGIN_CACHE_DIR, value: /var/run/agentx/plugin-cache }
             - { name: AGENTX_RUNTIME_MYSQL_HOST, value: {{ .Values.global.components.runtimeMysql.host | quote }} }
@@ -63,18 +63,21 @@ spec:
             - { name: http, containerPort: 8080 }
             - { name: admin, containerPort: 9091 }
             - { name: metrics, containerPort: 9092 }
-          resources: { requests: { cpu: 100m, memory: 128Mi, ephemeral-storage: 64Mi }, limits: { cpu: 2, memory: 1Gi, ephemeral-storage: 512Mi } }
+          resources: { requests: { cpu: 100m, memory: 128Mi, ephemeral-storage: 64Mi }, limits: { cpu: 2, memory: 1Gi, ephemeral-storage: 1Gi } }
           securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, runAsNonRoot: true, capabilities: { drop: [ALL] } }
           startupProbe: { httpGet: { path: /health/live, port: http }, periodSeconds: 2, failureThreshold: 30 }
           readinessProbe: { httpGet: { path: /health/ready, port: http }, periodSeconds: 5, failureThreshold: 2 }
           livenessProbe: { httpGet: { path: /health/live, port: http }, periodSeconds: 10, failureThreshold: 3 }
           lifecycle: { preStop: { httpGet: { path: /health/drain, port: admin, scheme: HTTP } } }
           volumeMounts:
+            - { name: plugin-work, mountPath: /var/run/agentx/plugin-work }
             - { name: plugin-cache, mountPath: /var/run/agentx/plugin-cache }
 {{- if eq .Values.global.environment "production" }}
 {{ include "agentx.runtime.caMount" . | nindent 12 }}
 {{- end }}
       volumes:
+        - name: plugin-work
+          emptyDir: { sizeLimit: 512Mi }
         - name: plugin-cache
           emptyDir: { sizeLimit: 256Mi }
 {{- if eq .Values.global.environment "production" }}

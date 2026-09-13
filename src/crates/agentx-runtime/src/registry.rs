@@ -322,7 +322,7 @@ fn load_builtin_package(
     let package: BuiltinPackageManifest =
         serde_json::from_str(package_source).expect("built-in package Manifest is valid");
     assert_eq!(package.protocol_version, 1, "built-in package protocol");
-    assert_eq!(package.sdk_api_version, 1, "built-in package SDK API");
+    assert_eq!(package.sdk_api_version, 2, "built-in package SDK API");
     assert!(!package.display_name.trim().is_empty());
     assert!(!package.description.trim().is_empty());
     assert_eq!(

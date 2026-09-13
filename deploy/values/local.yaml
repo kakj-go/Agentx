@@ -161,7 +161,6 @@ runtime:
       maxReplicas: 4
       capability: all
       pluginMaxProcesses: 8
-      pluginIdleSeconds: 60
       pluginMemoryMb: 96
       mysqlPool: 6
     sandboxManager:

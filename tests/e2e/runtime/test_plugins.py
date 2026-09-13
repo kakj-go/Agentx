@@ -213,7 +213,7 @@ def test_plugin_runner_image_and_handshake(installed_agentx: dict[str, str]) -> 
             "jsonrpc": "2.0",
             "id": "e2e-initialize",
             "method": "runner.initialize",
-            "params": {"protocolVersion": 1, "sdkApiVersion": 1},
+            "params": {"protocolVersion": 2, "sdkApiVersion": 2},
         },
         separators=(",", ":"),
     )
@@ -230,7 +230,7 @@ def test_plugin_runner_image_and_handshake(installed_agentx: dict[str, str]) -> 
             'test "$(node --version)" = "v24.20.0"; '
             "test -r /opt/agentx/plugin-runner/runner.mjs; "
             'test "$AGENTX_PLUGIN_MAX_PROCESSES" = "8"; '
-            'test "$AGENTX_PLUGIN_IDLE_SECONDS" = "60"; '
+            'test -w "$AGENTX_PLUGIN_WORK_DIR"; '
             'test "$AGENTX_PLUGIN_MEMORY_MB" = "96"; '
             'test "$(cat /proc/1/comm)" = "tini"; '
             "! env | grep '^AGENTX_CONTROL_'; "
@@ -245,8 +245,8 @@ def test_plugin_runner_image_and_handshake(installed_agentx: dict[str, str]) -> 
         "jsonrpc": "2.0",
         "id": "e2e-initialize",
         "result": {
-            "protocolVersion": 1,
-            "sdkApiVersion": 1,
+            "protocolVersion": 2,
+            "sdkApiVersion": 2,
             "nodeVersion": "24.20.0",
         },
     }
@@ -387,7 +387,7 @@ def test_plugin_runner_clears_background_tasks_and_contains_process_crashes(
             "jsonrpc": "2.0",
             "id": "init",
             "method": "runner.initialize",
-            "params": {"protocolVersion": 1, "sdkApiVersion": 1},
+            "params": {"protocolVersion": 2, "sdkApiVersion": 2},
         },
         separators=(",", ":"),
     )

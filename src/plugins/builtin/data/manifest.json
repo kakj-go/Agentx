@@ -1,6 +1,6 @@
 {
   "protocolVersion": 1,
-  "sdkApiVersion": 1,
+  "sdkApiVersion": 2,
   "packageId": "agentx/data",
   "packageVersion": "1.0.0",
   "displayName": "Agentx Data",

@@ -1,5 +1,5 @@
 export declare const PLUGIN_PROTOCOL_VERSION: 1;
-export declare const PLUGIN_SDK_API_VERSION: 1;
+export declare const PLUGIN_SDK_API_VERSION: 2;
 export type Json = null | boolean | number | string | Json[] | {
     [key: string]: Json;
 };
@@ -58,9 +58,16 @@ export type CredentialDescriptor = {
     allowedOperations: string[];
 };
 export type ArtifactInput = {
-    bytesBase64: string;
+    path: string;
     fileName: string;
     contentType: string;
+};
+export type ArtifactFile = {
+    path: string;
+    fileName: string;
+    contentType: string;
+    sizeBytes: number;
+    sha256: string;
 };
 export type TraceContent = {
     type: string;
@@ -106,6 +113,7 @@ export type ExecuteContext<P extends Json = Json> = {
         list(): Promise<CredentialDescriptor[]>;
     };
     artifacts: {
+        read(reference: ArtifactRef): Promise<ArtifactFile>;
         put(input: ArtifactInput): Promise<ArtifactRef>;
     };
 };
@@ -167,6 +175,7 @@ export type ProviderContext = {
         list(): Promise<CredentialDescriptor[]>;
     };
     artifacts: {
+        read(reference: ArtifactRef): Promise<ArtifactFile>;
         put(input: ArtifactInput): Promise<ArtifactRef>;
     };
 };

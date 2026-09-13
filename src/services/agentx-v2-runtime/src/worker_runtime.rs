@@ -205,13 +205,15 @@ impl WorkerExecution {
     }
 }
 
+#[derive(Clone)]
 pub struct RuntimeWorker {
     pub(crate) pool: MySqlPool,
     pub(crate) provider: Arc<dyn WorkerProvider>,
     pub(crate) vault: Option<RuntimeVault>,
     pub(crate) objects: Arc<dyn ObjectStore>,
     pub(crate) plugin_slots: Arc<tokio::sync::Semaphore>,
-    pub(crate) plugin_processes: Arc<plugin::PluginProcessPool>,
+    plugin_parallelism: usize,
+    pub(crate) plugin_trace: plugin::PluginTraceSink,
     pub(crate) plugin_artifacts: Arc<plugin::PluginArtifactCache>,
 }
 
@@ -222,10 +224,10 @@ impl RuntimeWorker {
             .and_then(|value| value.parse().ok())
             .unwrap_or(8_usize)
             .clamp(1, 64);
-        let plugin_processes = Arc::new(plugin::PluginProcessPool::new(plugin_concurrency));
-        plugin_processes.start_reaper();
         let plugin_artifacts = Arc::new(plugin::PluginArtifactCache::from_env());
+        let plugin_trace = plugin::PluginTraceSink::new(pool.clone(), objects.clone());
         Ok(Self {
+            plugin_trace,
             pool,
             provider: Arc::new(ProviderHttpClient::from_env(
                 agentx_runtime_contracts::EgressRole::WorkflowWorker,
@@ -233,7 +235,7 @@ impl RuntimeWorker {
             vault: RuntimeVault::from_env().ok(),
             objects,
             plugin_slots: Arc::new(tokio::sync::Semaphore::new(plugin_concurrency)),
-            plugin_processes,
+            plugin_parallelism: plugin_concurrency,
             plugin_artifacts,
         })
     }
@@ -245,18 +247,22 @@ impl RuntimeWorker {
         objects: Arc<dyn ObjectStore>,
         provider: Arc<dyn WorkerProvider>,
     ) -> Self {
-        let plugin_processes = Arc::new(plugin::PluginProcessPool::new(8));
-        plugin_processes.start_reaper();
         let plugin_artifacts = Arc::new(plugin::PluginArtifactCache::for_tests());
+        let plugin_trace = plugin::PluginTraceSink::new(pool.clone(), objects.clone());
         Self {
+            plugin_trace,
             pool,
             provider,
             vault: RuntimeVault::from_env().ok(),
             objects,
             plugin_slots: Arc::new(tokio::sync::Semaphore::new(8)),
-            plugin_processes,
+            plugin_parallelism: 8,
             plugin_artifacts,
         }
+    }
+
+    pub fn plugin_parallelism(&self) -> usize {
+        self.plugin_parallelism
     }
 
     pub async fn execute(&self, claim: &ClaimedWorkerAttempt) -> WorkerExecution {

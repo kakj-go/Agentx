@@ -7,7 +7,7 @@
 | Package field | Required value |
 |---|---|
 | `protocolVersion` | `1` |
-| `sdkApiVersion` | `1` |
+| `sdkApiVersion` | `2` |
 | `packageId` | lowercase `publisher/name`; `agentx/*` is reserved |
 | `packageVersion` | semantic version such as `1.2.0` |
 | `nodes` | unique paths to Node Manifest JSON files |

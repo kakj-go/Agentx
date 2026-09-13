@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises'
 
 const root = new URL('../', import.meta.url)
 const manifest = JSON.parse(await readFile(new URL('manifest.json', root)))
-if (manifest.protocolVersion !== 1 || manifest.sdkApiVersion !== 1) throw new Error('Plugin protocolVersion and sdkApiVersion must be 1')
+if (manifest.protocolVersion !== 1 || manifest.sdkApiVersion !== 2) throw new Error('Plugin package protocolVersion must be 1 and sdkApiVersion must be 2')
 if (!/^[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*$/.test(manifest.packageId) || manifest.packageId.startsWith('agentx/')) throw new Error('packageId must be a non-reserved lowercase publisher/name')
 if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(manifest.packageVersion)) throw new Error('packageVersion must be semantic version')
 if (!Array.isArray(manifest.nodes) || !manifest.nodes.length || new Set(manifest.nodes).size !== manifest.nodes.length) throw new Error('nodes must contain unique manifest paths')

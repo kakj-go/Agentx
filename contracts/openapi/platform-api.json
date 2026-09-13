@@ -14698,6 +14698,132 @@
           "executions"
         ]
       }
+    },
+    "/api/v1/workflows/{id}/draft/resolve-plugins": {
+      "post": {
+        "operationId": "resolveWorkflowPluginDefinitions",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "definition": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "definition"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "nodes": {
+                      "additionalProperties": {
+                        "properties": {
+                          "inputPorts": {
+                            "items": {
+                              "type": "object"
+                            },
+                            "type": "array"
+                          },
+                          "issues": {
+                            "items": {
+                              "properties": {
+                                "code": {
+                                  "type": "string"
+                                },
+                                "message": {
+                                  "type": "string"
+                                },
+                                "path": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "path",
+                                "code",
+                                "message"
+                              ],
+                              "type": "object"
+                            },
+                            "type": "array"
+                          },
+                          "outputPortSchemas": {
+                            "additionalProperties": true,
+                            "type": "object"
+                          },
+                          "outputPorts": {
+                            "items": {
+                              "type": "object"
+                            },
+                            "type": "array"
+                          },
+                          "outputSchema": {},
+                          "status": {
+                            "enum": [
+                              "complete",
+                              "incomplete",
+                              "invalid"
+                            ],
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "status"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "nodes"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Effective contracts keyed by node id"
+          },
+          "403": {
+            "description": "Workflow access denied"
+          },
+          "422": {
+            "description": "Invalid plugin definition"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Resolve plugin contracts for an unsaved Workflow using the save-time dependency order",
+        "tags": [
+          "Workflows"
+        ]
+      }
     }
   },
   "tags": [

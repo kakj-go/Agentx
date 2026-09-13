@@ -11,7 +11,7 @@ import {
 describe("plugin SDK contract", () => {
   it("pins the public protocol and SDK API to version 1", () => {
     expect(PLUGIN_PROTOCOL_VERSION).toBe(1);
-    expect(PLUGIN_SDK_API_VERSION).toBe(1);
+    expect(PLUGIN_SDK_API_VERSION).toBe(2);
   });
 
   it("constructs stable completed and failed results", () => {

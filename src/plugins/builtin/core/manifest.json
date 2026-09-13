@@ -1,6 +1,6 @@
 {
   "protocolVersion": 1,
-  "sdkApiVersion": 1,
+  "sdkApiVersion": 2,
   "packageId": "agentx/core",
   "packageVersion": "1.0.0",
   "displayName": "Agentx Core",

@@ -10,7 +10,6 @@ use agentx_runtime_contracts::{
     TraceContentKindV1, TraceEventKindV1, TraceSpanKindV1, WorkerResultStatusV1,
     deterministic_uuid,
 };
-use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -18,10 +17,13 @@ use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines},
     process::{Child, ChildStdin, ChildStdout, Command},
     sync::{Mutex, OwnedSemaphorePermit, Semaphore},
-    time::{Duration, Instant, timeout},
+    time::{Duration, timeout},
 };
 
 use super::{ClaimedWorkerAttempt, RuntimeWorker, WorkerExecution};
+
+#[path = "worker_runtime_plugin_files.rs"]
+mod files;
 
 static DESIGN_SLOTS: LazyLock<std::sync::Arc<Semaphore>> = LazyLock::new(|| {
     let maximum = std::env::var("AGENTX_PLUGIN_DESIGN_MAX_PROCESSES")
@@ -53,8 +55,8 @@ struct RpcError {
 enum PluginResult {
     Completed {
         outputs: std::collections::BTreeMap<String, Vec<Item>>,
-        #[serde(default)]
-        trace: Vec<PluginTrace>,
+        #[serde(default, rename = "traceDiagnostics")]
+        diagnostics: Value,
     },
     Failed {
         code: String,
@@ -63,8 +65,8 @@ enum PluginResult {
         retryable: bool,
         #[serde(default)]
         details: Value,
-        #[serde(default)]
-        trace: Vec<PluginTrace>,
+        #[serde(default, rename = "traceDiagnostics")]
+        diagnostics: Value,
     },
 }
 
@@ -74,11 +76,7 @@ struct PluginTrace {
     name: String,
     status: String,
     #[serde(default)]
-    parent_index: Option<usize>,
-    #[serde(default)]
     attributes: Value,
-    #[serde(default)]
-    contents: Vec<PluginContent>,
 }
 
 #[derive(Deserialize)]
@@ -106,20 +104,60 @@ struct LiveTraceEvent {
     event: Option<Value>,
 }
 
-pub(crate) struct PluginProcessPool {
-    idle: Mutex<Vec<PluginProcess>>,
-    maximum_idle: usize,
-    idle_timeout: Duration,
+#[derive(Clone)]
+pub(crate) struct PluginTraceSink {
+    events: tokio::sync::mpsc::Sender<(std::sync::Arc<ClaimedWorkerAttempt>, LiveTraceEvent)>,
+    diagnostics: tokio::sync::mpsc::Sender<(std::sync::Arc<ClaimedWorkerAttempt>, u64)>,
+}
+
+impl PluginTraceSink {
+    pub(crate) fn new(
+        pool: sqlx::MySqlPool,
+        objects: std::sync::Arc<dyn object_store::ObjectStore>,
+    ) -> Self {
+        let (events, mut event_rx) = tokio::sync::mpsc::channel::<(
+            std::sync::Arc<ClaimedWorkerAttempt>,
+            LiveTraceEvent,
+        )>(128);
+        let (diagnostics, mut diagnostic_rx) =
+            tokio::sync::mpsc::channel::<(std::sync::Arc<ClaimedWorkerAttempt>, u64)>(16);
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    biased;
+                    Some((claim, dropped)) = diagnostic_rx.recv() => emit_trace_diagnostics(&pool, &claim, dropped).await,
+                    Some((claim, event)) = event_rx.recv() => {
+                        if !emit_live_trace_event(&pool, &objects, &claim, &event).await {
+                            tracing::warn!(attempt_id=%claim.task.attempt_id, "Plugin Trace delivery failed");
+                        }
+                    }
+                    else => break,
+                }
+            }
+        });
+        Self {
+            events,
+            diagnostics,
+        }
+    }
+
+    fn event(&self, claim: std::sync::Arc<ClaimedWorkerAttempt>, event: LiveTraceEvent) -> bool {
+        self.events.try_send((claim, event)).is_ok()
+    }
+
+    fn diagnostics(&self, claim: std::sync::Arc<ClaimedWorkerAttempt>, dropped: u64) {
+        if dropped > 0 && self.diagnostics.try_send((claim.clone(), dropped)).is_err() {
+            tracing::warn!(attempt_id=%claim.task.attempt_id, dropped, "Plugin Trace diagnostics queue is full");
+        }
+    }
 }
 
 struct PluginProcess {
-    bundle_digest: String,
     child: Child,
     stdin: ChildStdin,
     lines: Lines<BufReader<ChildStdout>>,
     process_tree: ProcessTreeGuard,
     _capacity: OwnedSemaphorePermit,
-    idle_since: Instant,
 }
 
 pub(crate) struct PluginArtifactCache {
@@ -272,109 +310,10 @@ fn artifact_bytes_match(bytes: &[u8], expected_size: u64, expected_hash: &str) -
         && format!("sha256:{:x}", Sha256::digest(bytes)) == expected_hash
 }
 
-impl PluginProcessPool {
-    pub(crate) fn new(maximum_idle: usize) -> Self {
-        let idle_seconds = std::env::var("AGENTX_PLUGIN_IDLE_SECONDS")
-            .ok()
-            .and_then(|value| value.parse::<u64>().ok())
-            .unwrap_or(60)
-            .clamp(5, 3_600);
-        Self {
-            idle: Mutex::new(Vec::new()),
-            maximum_idle,
-            idle_timeout: Duration::from_secs(idle_seconds),
-        }
-    }
-
-    pub(crate) fn start_reaper(self: &std::sync::Arc<Self>) {
-        let pool = std::sync::Arc::downgrade(self);
-        tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(5));
-            loop {
-                interval.tick().await;
-                let Some(pool) = pool.upgrade() else { break };
-                pool.reap().await;
-            }
-        });
-    }
-
-    async fn reap(&self) {
-        let mut idle = self.idle.lock().await;
-        let timeout = self.idle_timeout;
-        idle.retain_mut(|process| {
-            process.idle_since.elapsed() < timeout
-                && process
-                    .child
-                    .try_wait()
-                    .is_ok_and(|status| status.is_none())
-        });
-    }
-
-    async fn checkout(
-        &self,
-        slots: std::sync::Arc<Semaphore>,
-        bundle_digest: &str,
-        node: &str,
-        runner: &str,
-        wait: Duration,
-    ) -> Result<PluginProcess, WorkerExecution> {
-        {
-            let mut idle = self.idle.lock().await;
-            let timeout = self.idle_timeout;
-            idle.retain_mut(|process| {
-                process.idle_since.elapsed() < timeout
-                    && process
-                        .child
-                        .try_wait()
-                        .is_ok_and(|status| status.is_none())
-            });
-            if let Some(index) = idle
-                .iter()
-                .position(|process| process.bundle_digest == bundle_digest)
-            {
-                return Ok(idle.swap_remove(index));
-            }
-            if slots.available_permits() == 0 && !idle.is_empty() {
-                idle.swap_remove(0);
-            }
-        }
-        let capacity = match timeout(wait, slots.acquire_owned()).await {
-            Ok(Ok(capacity)) => capacity,
-            _ => {
-                return Err(WorkerExecution::failed(
-                    "PLUGIN_TIMED_OUT",
-                    "Plugin execution expired while waiting for process capacity",
-                    false,
-                ));
-            }
-        };
-        spawn_plugin_process(node, runner, bundle_digest, capacity)
-            .await
-            .map_err(|error| {
-                WorkerExecution::failed("PLUGIN_PROCESS_START_FAILED", error.to_string(), false)
-            })
-    }
-
-    async fn checkin(&self, mut process: PluginProcess) {
-        if !process
-            .child
-            .try_wait()
-            .is_ok_and(|status| status.is_none())
-        {
-            return;
-        }
-        process.idle_since = Instant::now();
-        let mut idle = self.idle.lock().await;
-        if idle.len() < self.maximum_idle {
-            idle.push(process);
-        }
-    }
-}
-
 async fn spawn_plugin_process(
     node: &str,
     runner: &str,
-    bundle_digest: &str,
+    directory: &Path,
     capacity: OwnedSemaphorePermit,
 ) -> std::io::Result<PluginProcess> {
     let mut command = Command::new(node);
@@ -385,7 +324,8 @@ async fn spawn_plugin_process(
         .clamp(32, 1_024);
     command
         .arg(format!("--max-old-space-size={memory_mb}"))
-        .arg(runner)
+        .arg(std::path::absolute(runner)?)
+        .current_dir(directory)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -413,7 +353,7 @@ async fn spawn_plugin_process(
     }
     let mut lines = BufReader::new(stdout).lines();
     let initialize_id = uuid::Uuid::now_v7().to_string();
-    let initialize = json!({"jsonrpc":"2.0","id":initialize_id,"method":"runner.initialize","params":{"protocolVersion":1,"sdkApiVersion":1}});
+    let initialize = json!({"jsonrpc":"2.0","id":initialize_id,"method":"runner.initialize","params":{"protocolVersion":2,"sdkApiVersion":2}});
     stdin
         .write_all(format!("{initialize}\n").as_bytes())
         .await?;
@@ -435,7 +375,7 @@ async fn spawn_plugin_process(
             .get("result")
             .and_then(|value| value.get("protocolVersion"))
             .and_then(Value::as_u64)
-            != Some(1)
+            != Some(2)
     {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
@@ -443,13 +383,11 @@ async fn spawn_plugin_process(
         ));
     }
     Ok(PluginProcess {
-        bundle_digest: bundle_digest.into(),
         child,
         stdin,
         lines,
         process_tree,
         _capacity: capacity,
-        idle_since: Instant::now(),
     })
 }
 
@@ -482,7 +420,8 @@ pub(crate) async fn invoke_design_operation(
         .await
         .map_err(|_| "Plugin design operation expired while waiting for capacity".to_owned())?
         .map_err(|error| error.to_string())?;
-    let mut process = spawn_plugin_process(&node, &runner, &binding.bundle_digest, capacity)
+    let mut files = files::InvocationFiles::new().map_err(|error| error.to_string())?;
+    let mut process = spawn_plugin_process(&node, &runner, files.path(), capacity)
         .await
         .map_err(|error| error.to_string())?;
     parameters["runtimeSource"] = Value::String(binding.runtime_source.clone());
@@ -519,10 +458,14 @@ pub(crate) async fn invoke_design_operation(
                     host_method,
                     message.get("params").cloned().unwrap_or(Value::Null),
                     call_index,
+                    &mut files,
                 )
                 .await
                 {
-                    Ok(result) => json!({"jsonrpc":"2.0","id":id,"result":result}),
+                    Ok(result) => {
+                        files.observe(&result);
+                        json!({"jsonrpc":"2.0","id":id,"result":result})
+                    }
                     Err((code, message)) => {
                         json!({"jsonrpc":"2.0","id":id,"error":{"code":code,"message":message}})
                     }
@@ -567,6 +510,7 @@ pub(crate) async fn invoke_design_operation(
     Ok(response.get("result").cloned().unwrap_or(Value::Null))
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn handle_design_host_call(
     worker: &RuntimeWorker,
     tenant_id: uuid::Uuid,
@@ -575,6 +519,7 @@ async fn handle_design_host_call(
     method: &str,
     params: Value,
     call_index: u32,
+    files: &mut files::InvocationFiles,
 ) -> Result<Value, (i64, String)> {
     let input = params.get("input").cloned().unwrap_or(Value::Null);
     match method {
@@ -694,36 +639,18 @@ async fn handle_design_host_call(
                 .map_err(design_provider_error)?;
             Ok(design_http_response(response)["body"].clone())
         }
-        "host.artifacts.put" => {
-            let encoded = input
-                .get("bytesBase64")
-                .and_then(Value::as_str)
-                .ok_or_else(|| (-32602, "Artifact bytesBase64 is required".into()))?;
-            let bytes = BASE64_STANDARD
-                .decode(encoded)
-                .map_err(|error| (-32602, error.to_string()))?;
-            if bytes.len() > 8 * 1024 * 1024 {
-                return Err((-32602, "Plugin Artifact exceeds 8 MiB".into()));
-            }
-            let object_id = deterministic_uuid(
-                operation_id,
-                format!("design-plugin-artifact:{call_index}").as_bytes(),
-            );
-            let content_hash = ContentHash::parse(format!("sha256:{:x}", Sha256::digest(&bytes)))
-                .map_err(|error| (-32020, error.to_string()))?;
-            let key = RuntimeObjectReferenceV1::canonical_key(tenant_id, object_id, &content_hash);
-            worker
-                .objects
-                .put(&object_store::path::Path::from(key), bytes.clone().into())
+        "host.artifacts.read" | "host.artifacts.put" => {
+            files
+                .handle(
+                    worker,
+                    tenant_id,
+                    operation_id,
+                    None,
+                    method,
+                    input,
+                    call_index,
+                )
                 .await
-                .map_err(|error| (-32020, error.to_string()))?;
-            Ok(json!({
-                "artifactId":object_id,
-                "fileName":input.get("fileName").and_then(Value::as_str).unwrap_or("provider-artifact.bin"),
-                "contentType":input.get("contentType").and_then(Value::as_str).unwrap_or("application/octet-stream"),
-                "sizeBytes":bytes.len(),
-                "sha256":content_hash.as_str().trim_start_matches("sha256:"),
-            }))
         }
         _ => Err((-32601, format!("Host method '{method}' is not supported"))),
     }
@@ -872,20 +799,41 @@ pub(super) async fn execute(
             "/opt/agentx/plugin-runner/runner.mjs".into()
         }
     });
-    let mut process = match worker
-        .plugin_processes
-        .checkout(
-            worker.plugin_slots.clone(),
-            &plugin.bundle_digest,
-            &node,
-            &runner,
-            Duration::from_millis(wait_ms),
-        )
-        .await
+    let capacity = match timeout(
+        Duration::from_millis(wait_ms),
+        worker.plugin_slots.clone().acquire_owned(),
+    )
+    .await
     {
-        Ok(process) => process,
-        Err(execution) => return execution,
+        Ok(Ok(capacity)) => capacity,
+        _ => {
+            return WorkerExecution::failed(
+                "PLUGIN_TIMED_OUT",
+                "Plugin expired while waiting for process capacity",
+                false,
+            );
+        }
     };
+    let mut files = match files::InvocationFiles::new() {
+        Ok(files) => files,
+        Err(error) => {
+            return WorkerExecution::failed("PLUGIN_WORKSPACE_FAILED", error.to_string(), false);
+        }
+    };
+    let mut process = match spawn_plugin_process(&node, &runner, files.path(), capacity).await {
+        Ok(process) => process,
+        Err(error) => {
+            return WorkerExecution::failed(
+                "PLUGIN_PROCESS_START_FAILED",
+                error.to_string(),
+                false,
+            );
+        }
+    };
+    files.observe(
+        &json!({"inputs":claim.inputs,"parameters":claim.node_parameters,
+        "perItemParameters":claim.per_item_parameters,"context":claim.context}),
+    );
     let execution = json!({
         "nodeType":claim.node_type,
         "nodeVersion":claim.node_version,
@@ -919,9 +867,10 @@ pub(super) async fn execute(
         terminate_process_tree(&process.process_tree, &mut process.child).await;
         return WorkerExecution::failed("PLUGIN_PROTOCOL_ERROR", error.to_string(), false);
     }
+    let trace_claim = std::sync::Arc::new(claim.clone());
     let wait = async {
         let mut host_call_index = 0_u32;
-        let mut streamed_trace = false;
+        let mut dropped_trace = 0_u64;
         loop {
             let line = process.lines.next_line().await?.ok_or_else(|| {
                 std::io::Error::new(
@@ -941,13 +890,23 @@ pub(super) async fn execute(
                 if let Some(params) = message.get("params")
                     && let Ok(event) = serde_json::from_value::<LiveTraceEvent>(params.clone())
                     && event.invocation_id == claim.task.attempt_id.to_string()
+                    && !worker.plugin_trace.event(trace_claim.clone(), event)
                 {
-                    streamed_trace |= emit_live_trace_event(worker, claim, &event).await;
+                    dropped_trace += 1;
                 }
                 continue;
             }
             if let Some(method) = message.get("method").and_then(Value::as_str) {
                 let id = message.get("id").cloned().unwrap_or(Value::Null);
+                if !id
+                    .as_str()
+                    .is_some_and(|id| id.starts_with(&format!("host:{}:", claim.task.attempt_id)))
+                {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "Host request belongs to another invocation",
+                    ));
+                }
                 host_call_index = host_call_index.saturating_add(1);
                 let response = match handle_host_call(
                     worker,
@@ -955,10 +914,14 @@ pub(super) async fn execute(
                     method,
                     message.get("params").cloned().unwrap_or(Value::Null),
                     host_call_index,
+                    &mut files,
                 )
                 .await
                 {
-                    Ok(result) => json!({"jsonrpc":"2.0","id":id,"result":result}),
+                    Ok(result) => {
+                        files.observe(&result);
+                        json!({"jsonrpc":"2.0","id":id,"result":result})
+                    }
                     Err((code, message)) => {
                         json!({"jsonrpc":"2.0","id":id,"error":{"code":code,"message":message}})
                     }
@@ -971,7 +934,7 @@ pub(super) async fn execute(
             }
             let response = serde_json::from_value::<RpcResponse>(message)
                 .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
-            return Ok::<_, std::io::Error>((response, streamed_trace));
+            return Ok::<_, std::io::Error>((response, dropped_trace));
         }
     };
     let response = match timeout(Duration::from_millis(claim.timeout_ms.max(1)), wait).await {
@@ -994,7 +957,7 @@ pub(super) async fn execute(
         }
         Ok(Ok(response)) => response,
     };
-    let (response, streamed_trace) = response;
+    let (response, dropped_trace) = response;
     if response.id != Value::String(claim.task.attempt_id.to_string()) {
         terminate_process_tree(&process.process_tree, &mut process.child).await;
         return WorkerExecution::failed(
@@ -1003,7 +966,13 @@ pub(super) async fn execute(
             false,
         );
     }
-    worker.plugin_processes.checkin(process).await;
+    terminate_process_tree(&process.process_tree, &mut process.child).await;
+    drop(process);
+    if dropped_trace > 0 {
+        worker
+            .plugin_trace
+            .diagnostics(trace_claim.clone(), dropped_trace);
+    }
     if let Some(error) = response.error {
         return WorkerExecution::failed(
             if error.code == -32021 {
@@ -1016,10 +985,17 @@ pub(super) async fn execute(
         );
     }
     match response.result {
-        Some(PluginResult::Completed { outputs, trace }) => {
-            if !streamed_trace {
-                emit_trace(worker, claim, &trace).await;
-            }
+        Some(PluginResult::Completed {
+            outputs,
+            diagnostics,
+        }) => {
+            worker.plugin_trace.diagnostics(
+                trace_claim.clone(),
+                diagnostics
+                    .get("dropped")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0),
+            );
             WorkerExecution {
                 status: WorkerResultStatusV1::Succeeded,
                 outputs,
@@ -1033,11 +1009,15 @@ pub(super) async fn execute(
             message,
             retryable,
             details,
-            trace,
+            diagnostics,
         }) => {
-            if !streamed_trace {
-                emit_trace(worker, claim, &trace).await;
-            }
+            worker.plugin_trace.diagnostics(
+                trace_claim.clone(),
+                diagnostics
+                    .get("dropped")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0),
+            );
             let message = if details.is_null() {
                 message
             } else {
@@ -1055,12 +1035,37 @@ pub(super) async fn execute(
     }
 }
 
+async fn emit_trace_diagnostics(
+    pool: &sqlx::MySqlPool,
+    claim: &ClaimedWorkerAttempt,
+    dropped: u64,
+) {
+    if dropped == 0 {
+        return;
+    }
+    let _ = timeout(Duration::from_millis(500), async {
+        let Ok(mut tx) = pool.begin().await else { return; };
+        let mut draft = crate::trace_delivery::TraceDraft::span(
+            claim.task.tenant_id, claim.task.execution_id, claim.task.attempt_id,
+            Some((claim.task.node_execution_id, TraceSpanKindV1::Node)), TraceSpanKindV1::Attempt,
+            "Plugin diagnostics", TraceEventKindV1::Updated, "plugin.trace.incomplete", "running",
+        );
+        draft.node_execution_id = Some(claim.task.node_execution_id);
+        draft.attempt_id = Some(claim.task.attempt_id);
+        draft.attributes = json!({"diagnosticWarning":"Plugin diagnostics were dropped", "traceIncomplete":true,"droppedDiagnostics":dropped});
+        crate::trace_delivery::enqueue_best_effort(&mut tx, draft).await;
+        let _ = tx.commit().await;
+    }).await;
+}
+
+#[allow(clippy::too_many_arguments)]
 async fn handle_host_call(
     worker: &RuntimeWorker,
     claim: &ClaimedWorkerAttempt,
     method: &str,
     params: Value,
     call_index: u32,
+    files: &mut files::InvocationFiles,
 ) -> Result<Value, (i64, String)> {
     let input = params.get("input").cloned().unwrap_or(Value::Null);
     let mut nested = claim.clone();
@@ -1185,52 +1190,18 @@ async fn handle_host_call(
                 })
                 .collect(),
         )),
-        "host.artifacts.put" => {
-            let encoded = input
-                .get("bytesBase64")
-                .and_then(Value::as_str)
-                .ok_or_else(|| (-32602, "Artifact bytesBase64 is required".into()))?;
-            let bytes = BASE64_STANDARD
-                .decode(encoded)
-                .map_err(|error| (-32602, format!("Artifact base64 is invalid: {error}")))?;
-            if bytes.len() > 8 * 1024 * 1024 {
-                return Err((-32602, "Plugin Artifact exceeds 8 MiB".into()));
-            }
-            let content_type = input
-                .get("contentType")
-                .and_then(Value::as_str)
-                .unwrap_or("application/octet-stream");
-            let file_name = input
-                .get("fileName")
-                .and_then(Value::as_str)
-                .unwrap_or("plugin-artifact.bin");
-            let artifact = crate::trace_artifact::persist_content(
-                &worker.pool,
-                &worker.objects,
-                claim.task.tenant_id,
-                claim.task.attempt_id,
-                &format!("plugin-artifact-{call_index}"),
-                bytes,
-                content_type,
-            )
-            .await
-            .map_err(|error| (-32020, error.to_string()))?;
-            crate::trace_artifact::register_artifact(
-                &worker.pool,
-                &artifact,
-                claim.task.execution_id,
-                claim.task.node_execution_id,
-                TraceContentKindV1::RuntimeResponse,
-            )
-            .await
-            .map_err(|error| (-32020, error.to_string()))?;
-            Ok(json!({
-                "artifactId":artifact.object_id,
-                "fileName":file_name,
-                "contentType":artifact.media_type,
-                "sizeBytes":artifact.size_bytes,
-                "sha256":artifact.content_hash.as_str().trim_start_matches("sha256:"),
-            }))
+        "host.artifacts.read" | "host.artifacts.put" => {
+            files
+                .handle(
+                    worker,
+                    claim.task.tenant_id,
+                    claim.task.attempt_id,
+                    Some(claim),
+                    method,
+                    input,
+                    call_index,
+                )
+                .await
         }
         _ => Err((-32601, format!("Host method '{method}' is not supported"))),
     }
@@ -1386,7 +1357,8 @@ fn valid_plugin_content(binding: &PluginNodeBinding, content: &PluginContent) ->
 }
 
 async fn emit_live_trace_event(
-    worker: &RuntimeWorker,
+    pool: &sqlx::MySqlPool,
+    objects: &std::sync::Arc<dyn object_store::ObjectStore>,
     claim: &ClaimedWorkerAttempt,
     event: &LiveTraceEvent,
 ) -> bool {
@@ -1416,11 +1388,7 @@ async fn emit_live_trace_event(
         timeout(
             Duration::from_secs(2),
             crate::trace_artifact::externalize_plugin_content(
-                &worker.pool,
-                &worker.objects,
-                claim,
-                entity_id,
-                value,
+                pool, objects, claim, entity_id, value,
             ),
         )
         .await
@@ -1429,7 +1397,7 @@ async fn emit_live_trace_event(
     } else {
         None
     };
-    let Ok(Ok(mut tx)) = timeout(Duration::from_millis(250), worker.pool.begin()).await else {
+    let Ok(Ok(mut tx)) = timeout(Duration::from_millis(250), pool.begin()).await else {
         return false;
     };
     let (event_kind, event_type, status) = match event.phase.as_str() {
@@ -1492,143 +1460,6 @@ async fn emit_live_trace_event(
         return false;
     }
     true
-}
-
-async fn emit_trace(worker: &RuntimeWorker, claim: &ClaimedWorkerAttempt, spans: &[PluginTrace]) {
-    let Some(binding) = &claim.plugin else { return };
-    let mut content_refs = std::collections::BTreeMap::new();
-    for (span_index, span) in spans.iter().take(64).enumerate() {
-        for (content_index, content) in span
-            .contents
-            .iter()
-            .take(32)
-            .filter(|content| valid_plugin_content(binding, content))
-            .enumerate()
-        {
-            let envelope = plugin_content_envelope(binding, claim, content);
-            if let Some(reference) = timeout(
-                Duration::from_secs(2),
-                crate::trace_artifact::externalize_plugin_content(
-                    &worker.pool,
-                    &worker.objects,
-                    claim,
-                    trace_entity(claim.task.attempt_id, span_index),
-                    &envelope,
-                ),
-            )
-            .await
-            .ok()
-            .flatten()
-            {
-                content_refs.insert((span_index, content_index), reference);
-            }
-        }
-    }
-    let Ok(Ok(mut tx)) = timeout(Duration::from_millis(250), worker.pool.begin()).await else {
-        return;
-    };
-    for (index, span) in spans.iter().take(64).enumerate() {
-        let entity_id = trace_entity(claim.task.attempt_id, index);
-        let base_attributes = json!({
-            "packageId":binding.package_id,
-            "packageVersion":binding.package_version,
-            "bundleDigest":binding.bundle_digest,
-            "nodeType":claim.node_type,
-            "meteringSource":"plugin_diagnostic",
-            "pluginAttributes":span.attributes,
-        });
-        let mut started = crate::trace_delivery::TraceDraft::span(
-            claim.task.tenant_id,
-            claim.task.execution_id,
-            entity_id,
-            Some(trace_parent(claim, span.parent_index)),
-            TraceSpanKindV1::PluginOperation,
-            span.name.clone(),
-            TraceEventKindV1::Started,
-            "plugin.operation.started",
-            "running",
-        );
-        started.node_execution_id = Some(claim.task.node_execution_id);
-        started.attempt_id = Some(claim.task.attempt_id);
-        started.attributes = base_attributes.clone();
-        crate::trace_delivery::enqueue_best_effort(&mut tx, started).await;
-        for (content_index, content) in span
-            .contents
-            .iter()
-            .take(32)
-            .filter(|content| valid_plugin_content(binding, content))
-            .enumerate()
-        {
-            let mut update = crate::trace_delivery::TraceDraft::span(
-                claim.task.tenant_id,
-                claim.task.execution_id,
-                entity_id,
-                Some(trace_parent(claim, span.parent_index)),
-                TraceSpanKindV1::PluginOperation,
-                span.name.clone(),
-                TraceEventKindV1::Updated,
-                "plugin.content",
-                "running",
-            );
-            update.node_execution_id = Some(claim.task.node_execution_id);
-            update.attempt_id = Some(claim.task.attempt_id);
-            update.attributes = json!({
-                "packageId":binding.package_id,
-                "packageVersion":binding.package_version,
-                "bundleDigest":binding.bundle_digest,
-                "nodeType":claim.node_type,
-                "contentType":content.content_type,
-                "contentVersion":content.version,
-                "label":content.label,
-            });
-            update.content_kind = Some(TraceContentKindV1::PluginContent);
-            let envelope = plugin_content_envelope(binding, claim, content);
-            update.content_preview = crate::trace_delivery::bounded_preview(&envelope);
-            update.content_ref = content_refs.get(&(index, content_index)).copied();
-            crate::trace_delivery::enqueue_best_effort(&mut tx, update).await;
-        }
-        let status = if span.status == "failed" {
-            "failed"
-        } else {
-            "succeeded"
-        };
-        let mut finished = crate::trace_delivery::TraceDraft::span(
-            claim.task.tenant_id,
-            claim.task.execution_id,
-            entity_id,
-            Some(trace_parent(claim, span.parent_index)),
-            TraceSpanKindV1::PluginOperation,
-            span.name.clone(),
-            TraceEventKindV1::Finished,
-            "plugin.operation.finished",
-            status,
-        );
-        finished.node_execution_id = Some(claim.task.node_execution_id);
-        finished.attempt_id = Some(claim.task.attempt_id);
-        finished.attributes = base_attributes;
-        crate::trace_delivery::enqueue_best_effort(&mut tx, finished).await;
-    }
-    if let Err(error) = tx.commit().await {
-        tracing::warn!(%error, "Plugin Trace commit failed");
-    }
-}
-
-fn plugin_content_envelope(
-    binding: &PluginNodeBinding,
-    claim: &ClaimedWorkerAttempt,
-    content: &PluginContent,
-) -> Value {
-    json!({
-        "packageId":binding.package_id,
-        "packageVersion":binding.package_version,
-        "bundleDigest":binding.bundle_digest,
-        "nodeType":claim.node_type,
-        "typeVersion":claim.node_version,
-        "contentType":content.content_type,
-        "contentVersion":content.version,
-        "label":content.label,
-        "data":content.data,
-    })
 }
 
 #[cfg(test)]

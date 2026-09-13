@@ -52,7 +52,7 @@ async fn install_runtime_artifact(
         .unwrap();
 }
 
-struct NoProvider;
+pub(super) struct NoProvider;
 #[async_trait::async_trait]
 impl super::super::WorkerProvider for NoProvider {
     async fn post_json(
@@ -98,7 +98,7 @@ async fn rust_worker_executes_a_node_module() {
             task: WorkerTaskV1 { protocol_version: 1, task_id: Uuid::now_v7(), tenant_id: Uuid::now_v7(), execution_id: Uuid::now_v7(), node_execution_id: Uuid::now_v7(), attempt_id, capability: NodeCapability::PluginNodejs, bundle_id: Uuid::now_v7(), work_package_id: None, state_version: 1, compatibility_hash: ContentHash::parse(format!("sha256:{}", "a".repeat(64))).unwrap(), deadline_at: OffsetDateTime::now_utc() + time::Duration::seconds(10) },
             node_type: "acme.test".into(), node_version: 1, run_index: 0, iteration_index: 0, timeout_ms: 5_000,
             node_parameters: json!({"answer":42}), per_item_parameters: vec![], string_conversions: json!([]), inputs: BTreeMap::new(), resources: vec![], context: json!({}),
-            plugin: Some(plugin_binding("acme/test", format!("sha256:{}", "b".repeat(64)), "export async function execute(ctx){return {status:'completed',outputs:{main:[{json:{answer:ctx.parameters.answer}}]}}}".into())),
+            plugin: Some(plugin_binding("acme/test", format!("sha256:{}", "b".repeat(64)), "export async function execute(ctx){return {status:'completed',outputs:{main:[{json:{answer:ctx.parameters.answer,pid:process.pid}}]}}}".into())),
             trace_parent_span_entity_id: None,
         };
     install_runtime_artifact(
@@ -115,11 +115,9 @@ async fn rust_worker_executes_a_node_module() {
         result.error_code,
         result.error_message
     );
-    assert_eq!(result.outputs["main"][0].json, json!({"answer":42}));
-    let first_pid = worker.plugin_processes.idle.lock().await[0]
-        .child
-        .id()
-        .expect("pooled Runner PID");
+    assert_eq!(result.outputs["main"][0].json["answer"], json!(42));
+    let first_pid = result.outputs["main"][0].json["pid"].clone();
+    assert_eq!(worker.plugin_slots.available_permits(), 8);
     let artifact = claim
         .plugin
         .as_ref()
@@ -143,11 +141,11 @@ async fn rust_worker_executes_a_node_module() {
         claim.plugin.as_ref().unwrap().runtime_source,
         "a corrupt local cache entry must be replaced from immutable Runtime storage"
     );
-    assert_eq!(
-        worker.plugin_processes.idle.lock().await[0].child.id(),
-        Some(first_pid),
-        "the same digest should reuse an initialized idle Runner"
+    assert_ne!(
+        second.outputs["main"][0].json["pid"], first_pid,
+        "each invocation owns a fresh process"
     );
+    assert_eq!(worker.plugin_slots.available_permits(), 8);
 }
 
 #[tokio::test]
@@ -365,7 +363,7 @@ async fn runner_crash_is_contained_and_the_pool_recovers() {
     .await;
     let crashed = execute(&worker, &claim).await;
     assert_eq!(crashed.error_code.as_deref(), Some("PLUGIN_PROTOCOL_ERROR"));
-    assert!(worker.plugin_processes.idle.lock().await.is_empty());
+    assert_eq!(worker.plugin_slots.available_permits(), 8);
     claim.plugin = Some(plugin_binding(
         "acme/crash",
         format!("sha256:{}", "f".repeat(64)),
@@ -406,6 +404,81 @@ async fn plugin_failure_preserves_its_retry_decision() {
     let result = execute(&worker, &claim).await;
     assert_eq!(result.retryable, Some(true));
     assert!(result.error_message.as_deref().unwrap().contains("phase"));
+}
+
+#[tokio::test]
+async fn bounded_invocations_wake_waiters_and_keep_fast_work_independent() {
+    let pool = MySqlPoolOptions::new()
+        .connect_lazy("mysql://user:password@127.0.0.1/unused")
+        .unwrap();
+    let mut worker =
+        RuntimeWorker::new_with_provider(pool, Arc::new(InMemory::new()), Arc::new(NoProvider));
+    worker.plugin_slots = Arc::new(Semaphore::new(2));
+    let tenant = Uuid::now_v7();
+    let binding = plugin_binding("acme/concurrent", format!("sha256:{}", "9".repeat(64)),
+        "export async function execute(ctx){const started=Date.now();await new Promise(resolve=>setTimeout(resolve,ctx.parameters.delay));return {status:'completed',outputs:{main:[{json:{started,finished:Date.now()}}]}}}".into());
+    install_runtime_artifact(&worker, tenant, &binding).await;
+    let claims = [800, 50, 50].map(|delay| {
+        let attempt = Uuid::now_v7();
+        ClaimedWorkerAttempt {
+            lease: WorkerAttemptLeaseV1 {
+                protocol_version: 1,
+                attempt_id: attempt,
+                worker_id: Uuid::now_v7(),
+                fencing_token: 1,
+                locked_until: OffsetDateTime::now_utc() + time::Duration::seconds(20),
+            },
+            task: WorkerTaskV1 {
+                protocol_version: 1,
+                task_id: Uuid::now_v7(),
+                tenant_id: tenant,
+                execution_id: Uuid::now_v7(),
+                node_execution_id: Uuid::now_v7(),
+                attempt_id: attempt,
+                capability: NodeCapability::PluginNodejs,
+                bundle_id: Uuid::now_v7(),
+                work_package_id: None,
+                state_version: 1,
+                compatibility_hash: ContentHash::parse(format!("sha256:{}", "a".repeat(64)))
+                    .unwrap(),
+                deadline_at: OffsetDateTime::now_utc() + time::Duration::seconds(10),
+            },
+            node_type: "acme.concurrent".into(),
+            node_version: 1,
+            run_index: 0,
+            iteration_index: 0,
+            timeout_ms: 5000,
+            node_parameters: json!({"delay":delay}),
+            per_item_parameters: vec![],
+            string_conversions: json!([]),
+            inputs: BTreeMap::new(),
+            resources: vec![],
+            context: json!({}),
+            plugin: Some(binding.clone()),
+            trace_parent_span_entity_id: None,
+        }
+    });
+    let results =
+        futures::future::join_all(claims.iter().map(|claim| execute(&worker, claim))).await;
+    for result in &results {
+        assert_eq!(
+            result.status,
+            WorkerResultStatusV1::Succeeded,
+            "{:?}",
+            result.error_message
+        );
+    }
+    let outputs = results
+        .iter()
+        .map(|result| &result.outputs["main"][0].json)
+        .collect::<Vec<_>>();
+    let slow_end = outputs[0]["finished"].as_i64().unwrap();
+    assert!(outputs[1]["finished"].as_i64().unwrap() < slow_end);
+    assert!(
+        outputs[2]["finished"].as_i64().unwrap() < slow_end,
+        "queued invocation must wake as soon as one process exits"
+    );
+    assert_eq!(worker.plugin_slots.available_permits(), 2);
 }
 
 #[cfg(unix)]

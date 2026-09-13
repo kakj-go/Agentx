@@ -14,6 +14,7 @@ const spanContext = new AsyncLocalStorage()
 let initialized = false
 let inputClosed = false
 let hostRequestSequence = 0
+let invocationUsed = false
 const protocolWrite = process.stdout.write.bind(process.stdout)
 
 for (const level of ['log', 'info', 'debug', 'warn', 'error']) {
@@ -45,11 +46,11 @@ async function handleLine(line) {
   if (!message.method) return reply(message?.id ?? null, undefined, rpcError(-32600, 'Invalid Request'))
   try {
     if (message.method === 'runner.initialize') {
-      if (message.params?.protocolVersion !== 1 || message.params?.sdkApiVersion !== 1) {
+      if (message.params?.protocolVersion !== 2 || message.params?.sdkApiVersion !== 2) {
         return reply(message.id, undefined, rpcError(-32010, 'Unsupported plugin protocol or SDK API version'))
       }
       initialized = true
-      return reply(message.id, { protocolVersion: 1, sdkApiVersion: 1, nodeVersion: process.versions.node })
+      return reply(message.id, { protocolVersion: 2, sdkApiVersion: 2, nodeVersion: process.versions.node })
     }
     if (message.method === 'runner.shutdown') {
       reply(message.id, { stopped: true })
@@ -61,8 +62,10 @@ async function handleLine(line) {
       return reply(message.id, { cancelled: true })
     }
     if (!initialized) return reply(message.id, undefined, rpcError(-32011, 'Runner is not initialized'))
-    if (message.method === 'node.resolveDefinition' || message.method === 'node.invokeProvider') return handleDesignOperation(message)
-    if (message.method !== 'node.execute') return reply(message.id, undefined, rpcError(-32601, 'Method not found'))
+    if (!['node.execute', 'node.resolveDefinition', 'node.invokeProvider'].includes(message.method)) return reply(message.id, undefined, rpcError(-32601, 'Method not found'))
+    if (invocationUsed) return reply(message.id, undefined, rpcError(-32013, 'Runner accepts exactly one invocation'))
+    invocationUsed = true
+    if (message.method !== 'node.execute') return handleDesignOperation(message)
     return handleExecution(message)
   } catch (error) {
     reply(message.id, undefined, rpcError(-32001, error instanceof Error ? error.message : String(error)))
@@ -92,7 +95,10 @@ async function handleDesignOperation(request) {
       http: (input) => hostCall(invocationId, 'host.http', { input }, controller.signal),
       model: (input) => hostCall(invocationId, 'host.model', { input }, controller.signal),
       credentials: { list: () => hostCall(invocationId, 'host.credentials.list', {}, controller.signal) },
-      artifacts: { put: (input) => hostCall(invocationId, 'host.artifacts.put', { input }, controller.signal) },
+      artifacts: {
+        read: (input) => hostCall(invocationId, 'host.artifacts.read', { input }, controller.signal),
+        put: (input) => hostCall(invocationId, 'host.artifacts.put', { input }, controller.signal),
+      },
     }
     return reply(request.id, await provider(params.input ?? {}, context))
   } catch (error) {
@@ -123,6 +129,7 @@ async function handleExecution(request) {
     const module = await loadModule(params.runtimeSource, params.runtimeEntry, invocationId)
     if (typeof module.execute !== 'function') throw new Error('Plugin runtime must export execute')
     const trace = []
+    const diagnostics = { dropped: 0, bytes: 0, emittedBytes: 0 }
     const context = {
       inputs: params.inputs ?? {}, parameters: params.parameters ?? {}, perItemParameters: params.perItemParameters ?? [],
       stringConversions: params.stringConversions ?? [], context: params.context ?? {}, execution: params.execution,
@@ -131,11 +138,19 @@ async function handleExecution(request) {
       http: (input) => hostCall(invocationId, 'host.http', { input, parentIndex: spanContext.getStore() }, controller.signal),
       model: (input) => hostCall(invocationId, 'host.model', { input, parentIndex: spanContext.getStore() }, controller.signal),
       credentials: { list: () => hostCall(invocationId, 'host.credentials.list', { parentIndex: spanContext.getStore() }, controller.signal) },
-      artifacts: { put: (input) => hostCall(invocationId, 'host.artifacts.put', { input, parentIndex: spanContext.getStore() }, controller.signal) },
-      trace: { span: (name, body) => runSpan(invocationId, trace, name, body) },
+      artifacts: {
+        read: (input) => hostCall(invocationId, 'host.artifacts.read', { input, parentIndex: spanContext.getStore() }, controller.signal),
+        put: (input) => hostCall(invocationId, 'host.artifacts.put', { input, parentIndex: spanContext.getStore() }, controller.signal),
+      },
+      trace: { span: (name, body) => runSpan(invocationId, trace, diagnostics, name, body) },
     }
     const result = await module.execute(context)
-    reply(request.id, { ...result, trace })
+    const response = { ...result, trace, traceDiagnostics: { dropped: diagnostics.dropped } }
+    if (Buffer.byteLength(JSON.stringify(response)) > MAX_MESSAGE_BYTES - 1024) {
+      response.trace = []
+      response.traceDiagnostics.dropped += trace.length
+    }
+    reply(request.id, response)
   } catch (error) {
     const message = controller.signal.aborted
       ? `Invocation aborted: ${controller.signal.reason}`
@@ -150,29 +165,63 @@ async function handleExecution(request) {
   }
 }
 
-async function runSpan(invocationId, trace, name, body) {
-  if (trace.length >= MAX_SPANS) throw new Error('PLUGIN_TRACE_BUDGET_EXCEEDED: span limit')
+const emptySpan = { setAttribute() {}, content() {}, event() {} }
+const MAX_TRACE_BYTES = 1024 * 1024
+function retainDiagnostic(diagnostics, value) {
+  try {
+    const encoded = JSON.stringify(value)
+    const bytes = Buffer.byteLength(encoded)
+    if (diagnostics.bytes + bytes <= MAX_TRACE_BYTES) {
+      diagnostics.bytes += bytes
+      return JSON.parse(encoded)
+    }
+  } catch { /* Invalid diagnostics do not change the plugin result. */ }
+  diagnostics.dropped += 1
+  return undefined
+}
+function traceNotification(diagnostics, params) {
+  try {
+    const encoded = JSON.stringify({ jsonrpc: '2.0', method: 'trace.event', params })
+    const bytes = Buffer.byteLength(encoded)
+    if (diagnostics.emittedBytes + bytes > 4 * MAX_TRACE_BYTES || process.stdout.writableLength > 128 * 1024) {
+      diagnostics.dropped += 1
+      return
+    }
+    diagnostics.emittedBytes += bytes
+    protocolWrite(`${encoded}\n`)
+  } catch { diagnostics.dropped += 1 }
+}
+async function runSpan(invocationId, trace, diagnostics, name, body) {
   const index = trace.length
   const parentIndex = spanContext.getStore()
-  if (spanDepth(trace, parentIndex) >= MAX_SPAN_DEPTH) throw new Error('PLUGIN_TRACE_BUDGET_EXCEEDED: depth limit')
-  const value = { name, status: 'running', attributes: {}, contents: [], events: [], startedAt: new Date().toISOString(), parentIndex }
+  if (trace.length >= MAX_SPANS || spanDepth(trace, parentIndex) >= MAX_SPAN_DEPTH || diagnostics.bytes >= MAX_TRACE_BYTES) {
+    diagnostics.dropped += 1
+    return body(emptySpan)
+  }
+  const value = { name: String(name).slice(0, 256), status: 'running', attributes: {}, contents: [], events: [], startedAt: new Date().toISOString(), parentIndex }
   trace.push(value)
-  notify('trace.event', { invocationId, index, parentIndex, phase: 'started', span: value })
+  // Do not resend the accumulated content and events with every notification.
+  const notifySpan = (phase, extra = {}) => traceNotification(diagnostics, { invocationId, index, parentIndex, phase, span: { name: value.name, status: value.status, attributes: value.attributes }, ...extra })
+  notifySpan('started')
   const span = {
     setAttribute: (key, item) => {
-      if (!(key in value.attributes) && Object.keys(value.attributes).length >= MAX_ATTRIBUTES_PER_SPAN) throw new Error('PLUGIN_TRACE_BUDGET_EXCEEDED: attribute limit')
-      value.attributes[key] = item
+      if (!(key in value.attributes) && Object.keys(value.attributes).length >= MAX_ATTRIBUTES_PER_SPAN) { diagnostics.dropped += 1; return }
+      const retained = retainDiagnostic(diagnostics, { key, item })
+      if (retained) value.attributes[retained.key] = retained.item
     },
     content: (item) => {
-      if (value.contents.length >= MAX_CONTENTS_PER_SPAN) throw new Error('PLUGIN_TRACE_BUDGET_EXCEEDED: content limit')
-      value.contents.push(item)
-      notify('trace.event', { invocationId, index, parentIndex, phase: 'content', span: value, content: item })
+      if (value.contents.length >= MAX_CONTENTS_PER_SPAN) { diagnostics.dropped += 1; return }
+      const retained = retainDiagnostic(diagnostics, item)
+      if (retained === undefined) return
+      value.contents.push(retained)
+      notifySpan('content', { content: retained })
     },
     event: (event, attributes = {}) => {
-      if (value.events.length >= MAX_EVENTS_PER_SPAN) throw new Error('PLUGIN_TRACE_BUDGET_EXCEEDED: event limit')
-      const item = { event, attributes, occurredAt: new Date().toISOString() }
+      if (value.events.length >= MAX_EVENTS_PER_SPAN) { diagnostics.dropped += 1; return }
+      const item = retainDiagnostic(diagnostics, { event, attributes, occurredAt: new Date().toISOString() })
+      if (item === undefined) return
       value.events.push(item)
-      notify('trace.event', { invocationId, index, parentIndex, phase: 'event', span: value, event: item })
+      notifySpan('event', { event: item })
     },
   }
   try {
@@ -181,11 +230,11 @@ async function runSpan(invocationId, trace, name, body) {
     return result
   } catch (error) {
     value.status = 'failed'
-    value.error = String(error)
+    value.error = String(error).slice(0, 2048)
     throw error
   } finally {
     value.endedAt = new Date().toISOString()
-    notify('trace.event', { invocationId, index, parentIndex, phase: 'finished', span: value })
+    notifySpan('finished')
   }
 }
 
@@ -206,11 +255,10 @@ function hostCall(invocationId, method, params, signal) {
   })
 }
 
-async function loadModule(source, entry, cacheKey = Date.now().toString()) {
-  if (source) return import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}#${encodeURIComponent(cacheKey)}`)
+async function loadModule(source, entry) {
+  if (source) return import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`)
   if (entry) {
     const url = pathToFileURL(entry)
-    url.searchParams.set('agentxInvocation', cacheKey)
     return import(url.href)
   }
   throw new Error('Plugin runtime source is missing')

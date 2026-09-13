@@ -12,7 +12,7 @@ spec:
       serviceAccountName: runtime-gateway
       automountServiceAccountToken: false
       terminationGracePeriodSeconds: 60
-      securityContext: { runAsNonRoot: true, seccompProfile: { type: RuntimeDefault } }
+      securityContext: { runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532, fsGroup: 65532, seccompProfile: { type: RuntimeDefault } }
       initContainers:
 {{ include "agentx.runtime.schemaGate" (list . "runtimeGateway") | nindent 8 }}
       containers:
@@ -20,6 +20,7 @@ spec:
           image: {{ include "agentx.image" (list . "runtime-gateway") }}
           imagePullPolicy: {{ .Values.global.images.pullPolicy }}
           env:
+            - { name: AGENTX_PLUGIN_WORK_DIR, value: /var/run/agentx/plugin-work }
             - name: AGENTX_INSTANCE_ID
               valueFrom: { fieldRef: { fieldPath: metadata.uid } }
             - { name: AGENTX_RUNTIME_MYSQL_HOST, value: {{ .Values.global.components.runtimeMysql.host | quote }} }
@@ -70,13 +71,20 @@ spec:
             - { name: http, containerPort: 8080 }
             - { name: admin, containerPort: 9091 }
             - { name: metrics, containerPort: 9092 }
-          resources: { requests: { cpu: 100m, memory: 128Mi, ephemeral-storage: 64Mi }, limits: { cpu: 1, memory: 512Mi, ephemeral-storage: 256Mi } }
+          resources: { requests: { cpu: 100m, memory: 128Mi, ephemeral-storage: 64Mi }, limits: { cpu: 1, memory: 512Mi, ephemeral-storage: 1Gi } }
           securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, runAsNonRoot: true, capabilities: { drop: [ALL] } }
           startupProbe: { httpGet: { path: /health/live, port: http }, periodSeconds: 2, failureThreshold: 30 }
           readinessProbe: { httpGet: { path: /health/ready, port: http }, periodSeconds: 5, failureThreshold: 2 }
           livenessProbe: { httpGet: { path: /health/live, port: http }, periodSeconds: 10, failureThreshold: 3 }
           lifecycle: { preStop: { httpGet: { path: /health/drain, port: admin, scheme: HTTP } } }
           volumeMounts:
+            - { name: plugin-work, mountPath: /var/run/agentx/plugin-work }
+{{- if eq .Values.global.environment "production" }}
 {{ include "agentx.runtime.caMount" . | nindent 12 }}
+{{- end }}
       volumes:
+        - name: plugin-work
+          emptyDir: { sizeLimit: 512Mi }
+{{- if eq .Values.global.environment "production" }}
 {{ include "agentx.runtime.caVolume" . | nindent 8 }}
+{{- end }}

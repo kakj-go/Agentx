@@ -52,4 +52,17 @@ describe('Trace Span detail', () => {
     expect(screen.queryByRole('tab', { name: '工作流输入' })).not.toBeInTheDocument()
     expect(vi.mocked(fetch)).not.toHaveBeenCalledWith(expect.stringContaining('/trace/spans/'), expect.anything())
   })
+
+  it('refreshes late content when the ingested watermark advances without changing the selected tab', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const view = render(<QueryClientProvider client={client}><TraceDetail executionId="execution-1" span={span} watermark={1} /></QueryClientProvider>)
+    fireEvent.click(await screen.findByRole('tab', { name: 'Provider / Runtime 响应' }))
+    expect(await screen.findByText(/world/)).toBeInTheDocument()
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify({ executionId: 'execution-1', traceId: 'trace-1', span,
+      contents: [{ eventId: 'late', kind: 'runtime_response', preview: { answer: 'late content' }, contentRef: null, occurredAt: '2026-08-19T00:00:02Z' }], events: [],
+    }), { headers: { 'Content-Type': 'application/json' } }))
+    view.rerender(<QueryClientProvider client={client}><TraceDetail executionId="execution-1" span={span} watermark={2} /></QueryClientProvider>)
+    expect(await screen.findByText(/late content/)).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'Provider / Runtime 响应' })).toHaveAttribute('data-state', 'active')
+  })
 })

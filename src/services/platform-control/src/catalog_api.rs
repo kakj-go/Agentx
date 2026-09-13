@@ -126,9 +126,9 @@ async fn resolve_node_definition(
     let value = if manifest.capability == agentx_node_protocol::NodeCapability::PluginNodejs
         && let Some(binding) = manifest.plugin.as_ref()
     {
-        crate::canvas_plugin_api::invoke_plugin_method(&state,actor.tenant_id,binding,"node.resolveDefinition",serde_json::json!({"nodeType":node_type,"configuration":input.configuration,"upstreamContracts":input.upstream_contracts,"inputPorts":manifest.input_ports,"outputPorts":manifest.output_ports,"outputSchema":manifest.output_schema})).await?
+        crate::canvas_plugin_api::invoke_plugin_method(&state,actor.tenant_id,binding,"node.resolveDefinition",serde_json::json!({"nodeType":node_type,"configuration":input.configuration,"upstreamContracts":input.upstream_contracts,"inputPorts":manifest.input_ports,"outputPorts":manifest.output_ports,"outputSchema":manifest.output_schema,"outputPortSchemas":manifest.output_port_schemas})).await?
     } else {
-        serde_json::json!({"status":"complete","inputPorts":manifest.input_ports,"outputPorts":manifest.output_ports,"outputSchema":manifest.output_schema})
+        serde_json::json!({"status":"complete","inputPorts":manifest.input_ports,"outputPorts":manifest.output_ports,"outputSchema":manifest.output_schema,"outputPortSchemas":manifest.output_port_schemas})
     };
     Ok(Json(value))
 }

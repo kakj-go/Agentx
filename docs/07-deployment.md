@@ -100,7 +100,7 @@ Readiness表示必需依赖与 Schema可用，Liveness只表示进程存活：
 - Runtime Gateway通过 Runtime MySQL持久化游标，Redis仅唤醒。
 - Workflow Runtime多副本使用 MySQL状态条件、Claim/Lease/Fencing和 Outbox。
 - Worker按 Capability扩展，并依赖 Runtime MySQL、Redis、S3和 Runtime API。
-- `plugin_nodejs` Worker镜像固定Node.js 24.20.0和Runner摘要；启动时校验Node主版本与Runner文件。`pluginMaxProcesses`限制Node总进程数，`pluginIdleSeconds`控制按包摘要复用后的空闲回收。Linux使用进程组，Windows本地使用Job Object回收整棵进程树。
+- `plugin_nodejs` Worker镜像固定Node.js 24.20.0和Runner摘要；启动时校验Node主版本与Runner文件。`pluginMaxProcesses`限制插件消费循环和Node并发数；每次调用独立进程，完成后立即回收。`plugin-work` emptyDir承载调用级文件，源码缓存单独按摘要保留。Linux使用进程组，Windows本地使用Job Object回收整棵进程树。
 - Sandbox Manager多副本共享 MySQL Lease并接入独立 OpenSandbox。
 - Observability消费受限 Redis Trace Stream写入 ClickHouse；ClickHouse故障不阻断 Execution提交。
 

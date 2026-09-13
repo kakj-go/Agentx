@@ -61,4 +61,4 @@ def test_template_agents_document_links_and_versions_are_current() -> None:
         assert (template / relative).is_file(), relative
     manifest = (template / "manifest.json").read_text(encoding="utf-8")
     assert '"protocolVersion": 1' in manifest
-    assert '"sdkApiVersion": 1' in manifest
+    assert '"sdkApiVersion": 2' in manifest

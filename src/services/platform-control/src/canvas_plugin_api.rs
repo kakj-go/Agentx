@@ -469,7 +469,7 @@ async fn create_import(
                 .await
                 .map_err(ApiError::internal)?;
             let message = format!("{error:?}");
-            let failed = json!({"package":{"protocolVersion":1,"sdkApiVersion":1,"packageId":"invalid/package","packageVersion":"0.0.0","displayName":"Invalid plugin","description":"","nodes":[],"runtimeEntry":"","uiEntry":null,"uiStylesEntry":null,"uiAssets":{},"traceRenderers":[]},"nodes":[]});
+            let failed = json!({"package":{"protocolVersion":1,"sdkApiVersion":2,"packageId":"invalid/package","packageVersion":"0.0.0","displayName":"Invalid plugin","description":"","nodes":[],"runtimeEntry":"","uiEntry":null,"uiStylesEntry":null,"uiAssets":{},"traceRenderers":[]},"nodes":[]});
             sqlx::query("INSERT INTO canvas_plugin_imports(id,tenant_id,bundle_digest,artifact_key,status,manifest_json,issues_json,created_by,expires_at) VALUES(?,?,?,?,'failed',?,?,?,?)")
                 .bind(id).bind(actor.tenant_id).bind(&digest).bind(&artifact_key).bind(failed)
                 .bind(json!([{"path":"","code":"PLUGIN_PACKAGE_INVALID","message":message}]))
@@ -689,10 +689,10 @@ fn validate_bundle(bytes: &[u8], digest: &str) -> ApiResult<ValidatedPackage> {
             ApiError::bad_request("PLUGIN_PACKAGE_INVALID", "manifest.json is required")
         })?)
         .map_err(|error| ApiError::bad_request("PLUGIN_PACKAGE_INVALID", error.to_string()))?;
-    if package.protocol_version != 1 || package.sdk_api_version != 1 {
+    if package.protocol_version != 1 || package.sdk_api_version != 2 {
         return Err(ApiError::unprocessable(
             "PLUGIN_SDK_UNSUPPORTED",
-            "Only plugin protocol and SDK API version 1 are supported",
+            "Only plugin package protocol 1 and SDK API 2 are supported",
         ));
     }
     if !PACKAGE_ID.is_match(&package.package_id)
@@ -1526,6 +1526,10 @@ fn template_zip() -> ApiResult<Vec<u8>> {
             "src/examples/http-trace.ts",
             include_str!("../../../plugins/templates/canvas-plugin/src/examples/http-trace.ts"),
         ),
+        (
+            "src/examples/files.ts",
+            include_str!("../../../plugins/templates/canvas-plugin/src/examples/files.ts"),
+        ),
     ] {
         archive
             .start_file(name, options)
@@ -1808,7 +1812,7 @@ mod tests {
         let mut archive = zip::ZipWriter::new(cursor);
         let options = zip::write::SimpleFileOptions::default();
         let package = json!({
-            "protocolVersion":1,"sdkApiVersion":1,"packageId":"acme/test","packageVersion":"1.0.0",
+            "protocolVersion":1,"sdkApiVersion":2,"packageId":"acme/test","packageVersion":"1.0.0",
             "displayName":"Test","description":"Test plugin","nodes":["nodes/test.json"],
             "runtimeEntry":"runtime/entry.js","uiEntry":"ui/entry.js","uiStylesEntry":null,
             "traceRenderers":[]
@@ -1910,7 +1914,7 @@ mod tests {
     #[test]
     fn rejects_wrong_sdk_invalid_manifest_and_missing_entry() {
         let wrong_sdk = rewrite_package(
-            |manifest| manifest["sdkApiVersion"] = Value::from(2),
+            |manifest| manifest["sdkApiVersion"] = Value::from(1),
             |_| {},
         );
         let digest = format!("sha256:{:x}", Sha256::digest(&wrong_sdk));

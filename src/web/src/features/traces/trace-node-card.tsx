@@ -3,7 +3,6 @@ import { AlertTriangle, Bot, Box, ChevronDown, LoaderCircle } from 'lucide-react
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { apiRequest } from '../../shared/api/client'
 import type { NodeExecution, TraceSpan, TraceSpanDetail } from '../../shared/api/types'
 import { useNodeNames } from '../workflow-designer/api/node-display'
 import { Badge } from '../../shared/ui/badge'
@@ -12,7 +11,7 @@ import { formatCost } from '../../shared/lib/cost-format'
 import { TraceContents, contentPreview } from './trace-content-detail'
 import { TraceSemanticValue } from './trace-semantic-value'
 import { duration, statusTone } from './trace-model'
-import { useExecutionTrace } from './use-trace'
+import { traceSpanDetailQuery, useExecutionTrace } from './use-trace'
 
 export function TraceNodeCard({ executionId, node, defaultExpanded = false, onNodeSelect, onDownloadArtifact }: { executionId: string; node: NodeExecution; defaultExpanded?: boolean; onNodeSelect?: (node: NodeExecution) => void; onDownloadArtifact?: (artifactId: string) => void }) {
   const { t } = useTranslation()
@@ -35,9 +34,7 @@ export function TraceNodeDetails({ executionId, node, active = true, onDownloadA
   const { t } = useTranslation()
   const trace = useExecutionTrace(executionId, active, node.id)
   const detailQueries = useQueries({ queries: trace.spans.filter((span) => span.hasDetails).map((span) => ({
-    queryKey: ['trace-span-detail', executionId, span.spanId],
-    queryFn: () => apiRequest<TraceSpanDetail>(`/executions/${executionId}/trace/spans/${span.spanId}`),
-    retry: false,
+    ...traceSpanDetailQuery(executionId, span, trace.trace?.ingestedWatermark),
     enabled: active,
   })) })
   const details = useMemo(() => new Map(detailQueries.flatMap((query) => query.data ? [[query.data.span.spanId, query.data] as const] : [])), [detailQueries])

@@ -43,6 +43,7 @@ pub(crate) async fn resolve_for_publisher(
 
 #[derive(Debug, Default)]
 pub(crate) struct ResolvedWorkflowPlugins {
+    pub definitions: BTreeMap<String, Value>,
     pub manifests: BTreeMap<String, NodeManifestVersion>,
     pub dependency_manifests: agentx_bundle_builder::ResolvedPluginManifestDependencies,
     pub incomplete: Vec<CompileIssue>,
@@ -164,6 +165,7 @@ pub(crate) async fn resolve_workflow_plugins(
             }),
         )
         .await?;
+        result.definitions.insert(node.id.clone(), raw.clone());
         let resolved: ResolvedDefinitionValue = serde_json::from_value(raw).map_err(|error| {
             ApiError::unprocessable("PLUGIN_RESOLVED_DEFINITION_INVALID", error.to_string())
         })?;
@@ -182,6 +184,9 @@ pub(crate) async fn resolve_workflow_plugins(
         }
         let mut verifier = NodeRegistry::default();
         if let Err(error) = verifier.register(candidate.clone()) {
+            result.definitions.insert(node.id.clone(), json!({"status":"invalid","issues":[{
+                "path":"", "code":"PLUGIN_RESOLVED_DEFINITION_INVALID", "message":error.to_string()
+            }]}));
             result.invalid.push(CompileIssue {
                 code: "PLUGIN_RESOLVED_DEFINITION_INVALID".into(),
                 path: format!("nodes[{index}].typeVersion"),
@@ -235,6 +240,35 @@ pub(crate) async fn resolve_workflow_plugins(
         result.manifests.insert(node.id.clone(), candidate);
     }
     Ok(result)
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ResolveDraftPluginsRequest {
+    definition: WorkflowDefinition,
+}
+
+pub(crate) async fn resolve_draft_plugins(
+    axum::extract::State(state): axum::extract::State<ControlApiState>,
+    actor: crate::control_api::Actor,
+    axum::extract::Path(id): axum::extract::Path<Uuid>,
+    axum::Json(input): axum::Json<ResolveDraftPluginsRequest>,
+) -> ApiResult<axum::Json<Value>> {
+    actor.require("workflow:view")?;
+    crate::workflow_api::require_workflow_access(&state, &actor, id, false).await?;
+    let dependencies = crate::workflow_api::load_composite_definitions(
+        &state,
+        actor.tenant_id,
+        id,
+        &input.definition,
+    )
+    .await?;
+    let registry =
+        crate::canvas_plugin_api::registry_for_tenant(&state, actor.tenant_id, &dependencies, true)
+            .await?;
+    let resolved =
+        resolve_workflow_plugins(&state, actor.tenant_id, &input.definition, &registry).await?;
+    Ok(axum::Json(json!({"nodes":resolved.definitions})))
 }
 
 fn workflow_resolution_order(definition: &WorkflowDefinition) -> Vec<usize> {

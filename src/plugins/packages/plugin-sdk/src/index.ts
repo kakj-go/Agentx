@@ -1,5 +1,5 @@
 export const PLUGIN_PROTOCOL_VERSION = 1 as const
-export const PLUGIN_SDK_API_VERSION = 1 as const
+export const PLUGIN_SDK_API_VERSION = 2 as const
 
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json }
 export type ItemSource = { nodeExecutionId: string; nodeId: string; runIndex: number; outputIndex: number; itemIndex: number }
@@ -10,7 +10,8 @@ export type HttpRequest = { method?: string; url: string; query?: Array<{ name: 
 export type HostHttpResponse = { status: number; headers?: Record<string, string>; body?: Json; files?: ArtifactRef[]; runtimeCallId?: string }
 export type ModelRequest = { prompt?: string; userQuestion?: string; responseMode?: 'text' | 'structured'; structuredSchema?: Json; resourceIndex?: number }
 export type CredentialDescriptor = { index: number; resourceId: string; resourceVersion: string; credentialType: string; allowedOperations: string[] }
-export type ArtifactInput = { bytesBase64: string; fileName: string; contentType: string }
+export type ArtifactInput = { path: string; fileName: string; contentType: string }
+export type ArtifactFile = { path: string; fileName: string; contentType: string; sizeBytes: number; sha256: string }
 
 export type TraceContent = { type: string; version: number; data: Json; label?: string }
 export type TraceSpan = {
@@ -32,7 +33,7 @@ export type ExecuteContext<P extends Json = Json> = {
   http(request: HttpRequest): Promise<HostHttpResponse>
   model(request: ModelRequest): Promise<Json>
   credentials: { list(): Promise<CredentialDescriptor[]> }
-  artifacts: { put(input: ArtifactInput): Promise<ArtifactRef> }
+  artifacts: { read(reference: ArtifactRef): Promise<ArtifactFile>; put(input: ArtifactInput): Promise<ArtifactRef> }
 }
 
 export type Completed = { status: 'completed'; outputs: NodeOutputs }
@@ -52,6 +53,6 @@ export type ProviderContext = {
   http(request: HttpRequest): Promise<HostHttpResponse>
   model(request: ModelRequest): Promise<Json>
   credentials: { list(): Promise<CredentialDescriptor[]> }
-  artifacts: { put(input: ArtifactInput): Promise<ArtifactRef> }
+  artifacts: { read(reference: ArtifactRef): Promise<ArtifactFile>; put(input: ArtifactInput): Promise<ArtifactRef> }
 }
 export type Provider = (input: { search?: string; limit?: number; cursor?: string; parameters?: Json }, context: ProviderContext) => Promise<ProviderOption[] | ProviderPage> | ProviderOption[] | ProviderPage

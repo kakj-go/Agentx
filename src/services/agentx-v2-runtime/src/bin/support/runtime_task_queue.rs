@@ -73,7 +73,7 @@ pub async fn read(
             consumer,
             30_000,
             "0-0",
-            StreamAutoClaimOptions::default().count(25),
+            StreamAutoClaimOptions::default().count(1),
         )
         .await
     {
@@ -89,7 +89,7 @@ pub async fn read(
     }
     let options = StreamReadOptions::default()
         .group(TASK_GROUP, consumer)
-        .count(25)
+        .count(1)
         .block(block_ms);
     let reply: StreamReadReply = match redis
         .xread_options(&[stream.as_str()], &[">"], &options)

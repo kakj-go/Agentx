@@ -2,7 +2,7 @@ import { useInfiniteQuery } from '@tanstack/react-query'
 import { useMemo } from 'react'
 
 import { apiRequest } from '../../shared/api/client'
-import type { Trace, TraceSpan } from '../../shared/api/types'
+import type { Trace, TraceSpan, TraceSpanDetail } from '../../shared/api/types'
 
 export function useExecutionTrace(executionId: string | undefined, enabled = true, nodeExecutionId?: string) {
   const query = useInfiniteQuery({
@@ -31,6 +31,18 @@ export function mergeTracePages(pages: Trace[]) {
   const unique = new Map<string, TraceSpan>()
   for (const page of pages) for (const span of page.spans ?? []) unique.set(span.spanId, span)
   return [...unique.values()].sort((left, right) => new Date(left.startedAt).getTime() - new Date(right.startedAt).getTime() || left.spanId.localeCompare(right.spanId))
+}
+
+export function traceSpanDetailQuery(executionId: string, span?: TraceSpan, watermark = 0) {
+  return {
+    queryKey: ['trace-span-detail', executionId, span?.spanId, watermark, span?.status, span?.endedAt],
+    queryFn: ({ signal }: { signal: AbortSignal }) => apiRequest<TraceSpanDetail>(`/executions/${executionId}/trace/spans/${span?.spanId}`, { signal }),
+    enabled: Boolean(span?.hasDetails),
+    gcTime: 0,
+    retry: false,
+    placeholderData: (previous: TraceSpanDetail | undefined) => previous?.executionId === executionId && previous.span.spanId === span?.spanId ? previous : undefined,
+    refetchInterval: (query: { state: { status: string } }) => query.state.status === 'error' || (span && !terminal.has(span.status)) ? 3_000 : false as const,
+  }
 }
 
 const terminal = new Set(['succeeded', 'completed', 'failed', 'cancelled', 'timed_out', 'outcome_unknown', 'skipped'])

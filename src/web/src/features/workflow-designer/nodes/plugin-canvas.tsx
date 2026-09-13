@@ -23,6 +23,6 @@ export function PluginCanvas({ manifest, parameters }: { manifest: NodeManifest;
       if (active) setCanvas(() => ui.Canvas)
     }).catch(() => undefined)
     return () => { active = false; removeStyles() }
-  }, [i18n.language, manifest, resolvedTheme])
+  }, [i18n.language, manifest.nodeType, manifest.version, manifest.plugin?.bundleDigest, manifest.plugin?.uiSource, manifest.plugin?.uiStyles, manifest.plugin?.uiAssets, resolvedTheme])
   return Canvas ? <PluginUiBoundary fallback={null}><div className="min-h-0 px-3 pb-2 text-[10px]"><Canvas parameters={parameters} /></div></PluginUiBoundary> : null
 }

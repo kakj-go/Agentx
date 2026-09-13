@@ -63,7 +63,7 @@ export function TraceWaterfall({ executionId, className, active = true, onNodeSe
           {trace.hasNextPage && <div className="flex justify-center border-t border-border p-3"><Button disabled={trace.isFetchingNextPage} onClick={() => void trace.fetchNextPage()} size="sm" variant="secondary">{trace.isFetchingNextPage && <LoaderCircle className="size-3.5 animate-spin" />}{t('trace.loadMore')}</Button></div>}
         </div>
       </div>
-      <TraceDetail executionId={executionId} onDownloadArtifact={onDownloadArtifact} span={selected} />
+      <TraceDetail executionId={executionId} onDownloadArtifact={onDownloadArtifact} span={selected} watermark={trace.trace?.ingestedWatermark} />
     </div>
   </section>
 }

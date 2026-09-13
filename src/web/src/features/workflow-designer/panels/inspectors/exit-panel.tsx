@@ -176,7 +176,7 @@ function ContractSection({ title, description, outputs, mappings, catalog, onSav
     <SectionTitle action={<Button onClick={add} size="sm" variant="secondary"><Plus className="size-3.5" />{t("studio.addField")}</Button>} description={description} title={title} />
     {Object.keys(outputs).length === 0 && <p className="rounded-md border border-dashed border-border px-3 py-4 text-center text-[10px] text-muted-foreground">{t("studio.exit.emptyContract")}</p>}
     <div className="space-y-2">{Object.entries(outputs).map(([name, output]) => <ContractSummary catalog={catalog} key={name} mapping={mappings[name]} name={name} output={output} onDelete={() => remove(name)} onEdit={() => edit(name, output)} onMappingChange={(value) => onMappingChange(name, value)} />)}</div>
-    {editing && <ContractFieldDialog editing={{ name: editing.name, originalName: editing.originalName, output: editing.original, isNew: editing.isNew }} existing={outputs} onOpenChange={(open) => { if (!open) { setEditing(null); setDialogOpen(false); } }} onSave={save} open={dialogOpen} />}
+    {editing && <ContractFieldDialog editing={editing} existing={outputs} onOpenChange={(open) => { if (!open) { setEditing(null); setDialogOpen(false); } }} onSave={save} open={dialogOpen} />}
   </section>;
 }
 
@@ -188,12 +188,12 @@ function ContractSummary({ name, output, mapping, catalog, onMappingChange, onEd
   return <div className="rounded-md border border-border px-3 py-2.5" data-testid={`exit-mapping-${name}`}><div className="mb-2 flex items-center gap-3"><div className="min-w-0 flex-1"><div className="flex items-center gap-2"><span className="truncate text-xs font-medium">{String(schema.title ?? name)}</span><span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">{t(`studio.schemaTypes.${outputSchemaKind(output.schema)}`, outputSchemaKind(output.schema))}</span>{output.required && <span className="text-[10px] text-danger">{t("studio.interface.required")}</span>}{output.sensitive && <span className="text-[10px] text-warning">{t("studio.interface.sensitive")}</span>}</div><div className="truncate font-mono text-[10px] text-muted-foreground">{name}</div></div><Button aria-label={t("studio.editField")} onClick={onEdit} size="icon" variant="ghost"><Pencil className="size-3.5" /></Button><Button aria-label={t("studio.removeField")} onClick={onDelete} size="icon" variant="ghost"><Trash2 className="size-3.5" /></Button></div><SmartInput allowedNamespaces={allowed} catalog={catalog} expectedSchema={output.schema as JsonSchemaProperty} onChange={onMappingChange} value={asInputBinding(mapping ?? "")} /></div>;
 }
 
-function ContractFieldDialog({ open, onOpenChange, editing, existing, onSave }: { open: boolean; onOpenChange: (open: boolean) => void; editing: { name: string; originalName: string; output: WorkflowOutput; isNew: boolean }; existing: Record<string, WorkflowOutput>; onSave: (name: string, output: WorkflowOutput) => void }) {
+function ContractFieldDialog({ open, onOpenChange, editing, existing, onSave }: { open: boolean; onOpenChange: (open: boolean) => void; editing: { name: string; originalName: string; original: WorkflowOutput; isNew: boolean }; existing: Record<string, WorkflowOutput>; onSave: (name: string, output: WorkflowOutput) => void }) {
   const { t } = useTranslation();
   const [name, setName] = useState("");
   const [output, setOutput] = useState<WorkflowOutput>({ schema: { type: "string" }, required: false, sensitive: false });
   useEffect(() => {
-    if (open) { setName(editing.name); setOutput(editing.output); }
+    if (open) { setName(editing.name); setOutput(editing.original); }
   }, [open, editing]);
   const update = (patch: Partial<WorkflowOutput>) => setOutput((current) => ({ ...current, ...patch }));
   const updateType = (type: string) => update({ schema: schemaForInputKind(type, asObject(output.schema) as never) });

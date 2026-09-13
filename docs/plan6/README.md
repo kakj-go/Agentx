@@ -1,6 +1,6 @@
 # plan6：Workflow 画布插件与统一节点扩展
 
-状态：已完成。2026-09-06 的 P6-10 严格复核已补齐子工作流动态契约、Runtime 制品缓存、设计时 Provider 宿主资源、内置包来源和缺失 E2E；最终证据见 `evidence/p6-10-final-remediation.md`。`evidence/p6-09-final.md` 保留为上一轮历史记录。
+状态：功能已实现。2026-09-13 的执行边界修复与当前验收结果见 `evidence/p6-11-runtime-boundaries.md`：SDK/RPC 2、调用级进程隔离、真实并发、权威动态契约、流式文件和 Trace 降级。P6-10 与 P6-09 保留为历史证据。
 
 ## 1. 目标
 
@@ -8,7 +8,7 @@
 
 内置节点与用户插件共用节点定义、Catalog、UI 注册、版本解析和诊断扩展入口。调度、Lease/Fencing、Checkpoint、恢复、审批等待和 Agent 内核保持 Rust 权威。
 
-P6-10 已完成严格复核、聚焦修复、完整 Kubernetes 回归和正式新安装验收；79/79 项任务与 40/40 项场景均有直接实现或自动化证据。
+P6-10 记录了 79 项任务与 40 项场景的历史基线；本次复核发现的缺口、修复和明确测试范围以 P6-11 为准，不能将历史通过记录扩大为当前所有边界均已验证。
 
 ## 2. 阅读顺序
 
@@ -28,7 +28,7 @@ P6-10 已完成严格复核、聚焦修复、完整 Kubernetes 回归和正式�
 1. 插件代码按经过审批且可信处理；使用同页面 React 组件和真正的 Node.js 运行环境，不在本期增加市场审核系统、签名信任平台或强沙箱建设。
 2. 首期用户插件仅支持 TypeScript/Node.js；TS 在构建时检查并编译，运行时加载 JS 制品。浏览器产物与服务端产物分别构建。
 3. 一个包可包含多个节点。节点定义、UI、执行入口和 Trace 扩展一起形成不可变版本；Workflow 精确锁定包版本及制品摘要。
-4. Rust Worker 通过 Tokio 管理 Node Runner 进程。Runner 属于 Worker 部署单元，不新增 Plugin Daemon 服务，也不要求每个插件维护 HTTP 服务或 Kubernetes Deployment。
+4. Rust Worker 通过 Tokio 为每次业务调用管理独立 Node Runner 进程；设计时调用由 Runtime Gateway 使用独立容量执行。调用终止时回收进程树与目录，源码缓存按摘要复用。不新增 Plugin Daemon，也不要求每个插件维护 HTTP 服务或 Kubernetes Deployment。
 5. Catalog 对内置和安装包使用同一套解析规则；节点业务 Manifest 以构建产物为权威。Rust 原生执行器表只绑定核心实现，不重复维护 UI/参数定义。
 6. Set、List、HTTP 作为本期完整 TypeScript 内置插件；其余内置节点先统一包定义与 UI，核心执行能力按明确矩阵保留 Rust。必须删除已完成切换的旧执行和 UI 分支。
 7. 参数、InputBinding、端口、输出 Schema、Item/Lineage、Artifact、资源引用和有效输出契约继续由平台统一理解；自定义 UI 不削弱后端保存与编译校验。

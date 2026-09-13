@@ -3,7 +3,6 @@ import { AlertTriangle, LoaderCircle } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { apiRequest } from '../../shared/api/client'
 import type { TraceSpan, TraceSpanDetail as TraceSpanDetailValue } from '../../shared/api/types'
 import { useNodeNames } from '../workflow-designer/api/node-display'
 import { useLocaleFormat } from '../../shared/lib/locale-format'
@@ -12,23 +11,20 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../shared/ui/tabs'
 import { TraceContents, groupContents } from './trace-content-detail'
 import { JsonBlock } from './trace-semantic-value'
 import { duration, statusTone } from './trace-model'
+import { traceSpanDetailQuery } from './use-trace'
 
 type Props = {
   executionId: string
   span?: TraceSpan
+  watermark?: number
   onDownloadArtifact?: (artifactId: string) => void
 }
 
-export function TraceDetail({ executionId, span, onDownloadArtifact }: Props) {
+export function TraceDetail({ executionId, span, watermark = 0, onDownloadArtifact }: Props) {
   const { t } = useTranslation()
   const { resolveSpanName } = useNodeNames()
   const [tab, setTab] = useState('overview')
-  const detail = useQuery({
-    queryKey: ['trace-span-detail', executionId, span?.spanId],
-    queryFn: () => apiRequest<TraceSpanDetailValue>(`/executions/${executionId}/trace/spans/${span?.spanId}`),
-    enabled: Boolean(span?.hasDetails),
-    retry: false,
-  })
+  const detail = useQuery(traceSpanDetailQuery(executionId, span, watermark))
   const groups = useMemo(() => groupContents(detail.data?.contents ?? []), [detail.data?.contents])
   const tabs = useMemo(() => ['overview', ...groups.map(([kind]) => `content:${kind}`), ...(detail.data?.events.length ? ['events'] : []), 'raw'], [detail.data?.events.length, groups])
   useEffect(() => { if (!tabs.includes(tab)) setTab('overview') }, [tab, tabs])

@@ -8,14 +8,64 @@ importers:
 
   .: {}
 
-  tests/browser:
+  src/plugins/builtin/data:
+    dependencies:
+      '@agentx/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
     devDependencies:
-      '@playwright/test':
-        specifier: ^1.54.2
-        version: 1.62.1
+      typescript:
+        specifier: ~6.0.2
+        version: 6.0.3
+
+  src/plugins/builtin/http:
+    dependencies:
+      '@agentx/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
+    devDependencies:
+      typescript:
+        specifier: ~6.0.2
+        version: 6.0.3
+
+  src/plugins/packages/plugin-runner: {}
+
+  src/plugins/packages/plugin-sdk:
+    devDependencies:
+      typescript:
+        specifier: ~6.0.2
+        version: 6.0.3
+      vitest:
+        specifier: ^4.1.1
+        version: 4.1.10(@types/node@24.13.3)(jsdom@28.1.0)(vite@8.2.0(@types/node@24.13.3)(jiti@2.7.0))
+
+  src/plugins/packages/plugin-ui:
+    devDependencies:
+      '@types/react':
+        specifier: ^18.3.28
+        version: 18.3.28
+      react:
+        specifier: ^18.3.1
+        version: 18.3.1
+      typescript:
+        specifier: ~6.0.2
+        version: 6.0.3
+
+  src/plugins/templates/canvas-plugin:
+    dependencies:
+      '@agentx/plugin-sdk':
+        specifier: file:vendor/plugin-sdk
+        version: file:src/plugins/templates/canvas-plugin/vendor/plugin-sdk
+      '@agentx/plugin-ui':
+        specifier: file:vendor/plugin-ui
+        version: file:src/plugins/templates/canvas-plugin/vendor/plugin-ui
+    devDependencies:
       '@types/node':
-        specifier: ^24.13.3
+        specifier: 24.13.3
         version: 24.13.3
+      '@types/react':
+        specifier: ^18.3.28
+        version: 18.3.28
       typescript:
         specifier: ~6.0.2
         version: 6.0.3
@@ -148,7 +198,7 @@ importers:
         version: 6.0.5(vite@8.2.0(@types/node@24.13.3)(jiti@2.7.0))
       jsdom:
         specifier: ^28.1.0
-        version: 28.1.0(supports-color@10.2.2)
+        version: 28.1.0
       openapi-typescript:
         specifier: ^7.13.0
         version: 7.13.0(typescript@6.0.3)
@@ -168,61 +218,14 @@ importers:
         specifier: ^4.1.1
         version: 4.1.10(@types/node@24.13.3)(jsdom@28.1.0)(vite@8.2.0(@types/node@24.13.3)(jiti@2.7.0))
 
-  src/plugins/packages/plugin-runner: {}
-
-  src/plugins/packages/plugin-sdk:
+  tests/browser:
     devDependencies:
-      typescript:
-        specifier: ~6.0.2
-        version: 6.0.3
-      vitest:
-        specifier: ^4.1.1
-        version: 4.1.10(@types/node@24.13.3)(jsdom@28.1.0)(vite@8.2.0(@types/node@24.13.3)(jiti@2.7.0))
-
-  src/plugins/packages/plugin-ui:
-    devDependencies:
-      '@types/react':
-        specifier: ^18.3.28
-        version: 18.3.28
-      react:
-        specifier: ^18.3.1
-        version: 18.3.1
-      typescript:
-        specifier: ~6.0.2
-        version: 6.0.3
-
-  src/plugins/builtin/data:
-    dependencies:
-      '@agentx/plugin-sdk':
-        specifier: workspace:*
-        version: link:../../packages/plugin-sdk
-    devDependencies:
-      typescript:
-        specifier: ~6.0.2
-        version: 6.0.3
-
-  src/plugins/builtin/http:
-    dependencies:
-      '@agentx/plugin-sdk':
-        specifier: workspace:*
-        version: link:../../packages/plugin-sdk
-    devDependencies:
-      typescript:
-        specifier: ~6.0.2
-        version: 6.0.3
-
-  src/plugins/templates/canvas-plugin:
-    dependencies:
-      '@agentx/plugin-sdk':
-        specifier: file:vendor/plugin-sdk
-        version: file:src/plugins/templates/canvas-plugin/vendor/plugin-sdk
-      '@agentx/plugin-ui':
-        specifier: file:vendor/plugin-ui
-        version: file:src/plugins/templates/canvas-plugin/vendor/plugin-ui
-    devDependencies:
-      '@types/react':
-        specifier: ^18.3.28
-        version: 18.3.28
+      '@playwright/test':
+        specifier: ^1.54.2
+        version: 1.62.1
+      '@types/node':
+        specifier: ^24.13.3
+        version: 24.13.3
       typescript:
         specifier: ~6.0.2
         version: 6.0.3
@@ -1895,8 +1898,8 @@ packages:
   balanced-match@1.0.0:
     resolution: {integrity: sha512-9Y0g0Q8rmSt+H33DfKv7FOc3v+iRI+o1lbzt8jGcIosYW37IIW/2XVYq5NPdmaD5NQ59Nk26Kl/vZbwW9Fr8vg==}
 
-  bidi-js@1.0.3:
-    resolution: {integrity: sha512-RKshQI1R3YQ+n9YJz2QQ147P66ELpa1FQEg20Dk8oW9t2KgLbpDLLp9aGZ7y8WHSshDknG0bknqGw5/tyCs5tw==}
+  bidi-js@1.1.0:
+    resolution: {integrity: sha512-fX1Onk0tdVPC7obPWB5EbJ1z7NVhLq4m2xZLq2YXBkxzMXIGRpNMU88n0EPgWseKl12J7zXs7qrDxPK4sRs2fg==}
 
   brace-expansion@2.1.4:
     resolution: {integrity: sha512-hGfVzPxthbf3+2yjg/RBs60cB0FhqBS/zvdV/4wn4/BmN0bNMMHPc4V/BbFieqf1TKAGGAHnY4eSjajCl0f2Xg==}
@@ -3148,7 +3151,7 @@ snapshots:
   '@asamuzakjp/dom-selector@6.8.1':
     dependencies:
       '@asamuzakjp/nwsapi': 2.3.9
-      bidi-js: 1.0.3
+      bidi-js: 1.1.0
       css-tree: 3.2.1
       is-potential-custom-element-name: 1.0.1
       lru-cache: 11.5.2
@@ -4931,7 +4934,7 @@ snapshots:
 
   acorn@8.18.0: {}
 
-  agent-base@7.1.0(supports-color@10.2.2):
+  agent-base@7.1.0:
     dependencies:
       debug: 4.4.3(supports-color@10.2.2)
     transitivePeerDependencies:
@@ -4969,7 +4972,7 @@ snapshots:
 
   balanced-match@1.0.0: {}
 
-  bidi-js@1.0.3:
+  bidi-js@1.1.0:
     dependencies:
       require-from-string: 2.0.2
 
@@ -5199,9 +5202,9 @@ snapshots:
 
   html-parse-stringify@4.0.1: {}
 
-  http-proxy-agent@7.0.2(supports-color@10.2.2):
+  http-proxy-agent@7.0.2:
     dependencies:
-      agent-base: 7.1.0(supports-color@10.2.2)
+      agent-base: 7.1.0
       debug: 4.4.3(supports-color@10.2.2)
     transitivePeerDependencies:
       - supports-color
@@ -5248,7 +5251,7 @@ snapshots:
     dependencies:
       argparse: 2.0.1
 
-  jsdom@28.1.0(supports-color@10.2.2):
+  jsdom@28.1.0:
     dependencies:
       '@acemir/cssom': 0.9.31
       '@asamuzakjp/dom-selector': 6.8.1
@@ -5258,7 +5261,7 @@ snapshots:
       data-urls: 7.0.0
       decimal.js: 10.6.0
       html-encoding-sniffer: 6.0.0
-      http-proxy-agent: 7.0.2(supports-color@10.2.2)
+      http-proxy-agent: 7.0.2
       https-proxy-agent: 7.0.6(supports-color@10.2.2)
       is-potential-custom-element-name: 1.0.1
       parse5: 8.0.1
@@ -6219,7 +6222,7 @@ snapshots:
       why-is-node-running: 2.3.0
     optionalDependencies:
       '@types/node': 24.13.3
-      jsdom: 28.1.0(supports-color@10.2.2)
+      jsdom: 28.1.0
     transitivePeerDependencies:
       - msw
 

@@ -29,9 +29,9 @@ function start() {
 }
 
 async function initialize(rpc) {
-  rpc.send({ id: 'init', method: 'runner.initialize', params: { protocolVersion: 1, sdkApiVersion: 1 } })
+  rpc.send({ id: 'init', method: 'runner.initialize', params: { protocolVersion: 2, sdkApiVersion: 2 } })
   const initialized = await rpc.waitFor((message) => message.id === 'init')
-  assert.equal(initialized.result.protocolVersion, 1)
+  assert.equal(initialized.result.protocolVersion, 2)
 }
 
 test('executes an immutable module and streams trace events', async () => {
@@ -86,7 +86,7 @@ test('rejects calls before handshake and unsupported APIs', async () => {
   const rpc = start()
   rpc.send({ id: 'early', method: 'node.resolveDefinition', params: {} })
   assert.equal((await rpc.waitFor((message) => message.id === 'early')).error.code, -32011)
-  rpc.send({ id: 'bad-init', method: 'runner.initialize', params: { protocolVersion: 2, sdkApiVersion: 1 } })
+  rpc.send({ id: 'bad-init', method: 'runner.initialize', params: { protocolVersion: 1, sdkApiVersion: 1 } })
   assert.equal((await rpc.waitFor((message) => message.id === 'bad-init')).error.code, -32010)
   rpc.child.stdin.end()
   await once(rpc.child, 'close')
@@ -105,16 +105,16 @@ test('cancels an asynchronous invocation', async (t) => {
 })
 
 test('isolates module state and clears plugin background timers between invocations', async () => {
-  const rpc = start()
-  await initialize(rpc)
   const source = 'let calls=0;export async function execute(){calls+=1;setInterval(()=>{},10000);return {status:"completed",outputs:{main:[{json:{calls}}]}}}'
   for (const id of ['isolated-1', 'isolated-2']) {
+    const rpc = start()
+    await initialize(rpc)
     rpc.send({ id, method: 'node.execute', params: { invocationId: id, runtimeSource: source, execution: { deadline: new Date(Date.now() + 5_000).toISOString() } } })
     const response = await rpc.waitFor((message) => message.id === id)
     assert.equal(response.result.outputs.main[0].json.calls, 1)
+    rpc.child.stdin.end()
+    await once(rpc.child, 'close')
   }
-  rpc.child.stdin.end()
-  await Promise.race([once(rpc.child, 'close'), new Promise((_, reject) => setTimeout(() => reject(new Error('Runner leaked a plugin timer')), 2_000))])
 })
 
 test('keeps nested and concurrent Promise spans under their parent', async () => {
@@ -133,7 +133,7 @@ test('keeps nested and concurrent Promise spans under their parent', async () =>
   await once(rpc.child, 'close')
 })
 
-test('rejects trace content beyond the declared budget', async () => {
+test('drops excess trace content while preserving the business result', async () => {
   const rpc = start()
   await initialize(rpc)
   rpc.send({
@@ -144,32 +144,75 @@ test('rejects trace content beyond the declared budget', async () => {
     },
   })
   const response = await rpc.waitFor((message) => message.id === 'budget')
-  assert.match(response.error.message, /PLUGIN_TRACE_BUDGET_EXCEEDED/)
+  assert.equal(response.result.status, "completed")
+  assert.equal(response.result.traceDiagnostics.dropped, 1)
   rpc.child.stdin.end()
   await once(rpc.child, 'close')
 })
 
-test('keeps warm JSON-RPC throughput bounded without spawning another runner', async () => {
+test('repeated module allocations stay within the invocation memory budget', async () => {
+  const started = performance.now()
+  for (let index = 0; index < 120; index += 1) {
+    const rpc = start()
+    await initialize(rpc)
+    const id = `memory-${index}`
+    rpc.send({ id, method: 'node.execute', params: { invocationId: id, runtimeSource: 'const lookup=new Array(131072).fill("value"); export async function execute(){return {status:"completed",outputs:{main:[{json:{size:lookup.length,heap:process.memoryUsage().heapUsed}}]}}}', execution: { deadline: new Date(Date.now() + 5_000).toISOString() } } })
+    const response = await rpc.waitFor(message => message.id === id)
+    assert.equal(response.result.outputs.main[0].json.size, 131072)
+    assert.ok(response.result.outputs.main[0].json.heap < 32 * 1024 * 1024)
+    rpc.child.stdin.end()
+    await once(rpc.child, 'close')
+  }
+  assert.ok(performance.now() - started < 30_000)
+})
+
+test('refuses a second invocation in the same module environment', async () => {
   const rpc = start()
   await initialize(rpc)
-  const started = performance.now()
-  for (let index = 0; index < 50; index += 1) {
-    const id = `throughput-${index}`
-    rpc.send({ id, method: 'node.execute', params: { invocationId: id, runtimeSource: 'export async function execute(){return {status:"completed",outputs:{main:[]}}}', execution: { deadline: new Date(Date.now() + 5_000).toISOString() } } })
-    assert.ok((await rpc.waitFor((message) => message.id === id)).result)
-  }
-  assert.ok(performance.now() - started < 5_000)
+  const params = { invocationId: 'first', runtimeSource: 'export async function execute(){return {status:"completed",outputs:{main:[]}}}', execution: {deadline:new Date(Date.now()+5000).toISOString()} }
+  rpc.send({id:'first',method:'node.execute',params})
+  await rpc.waitFor(message=>message.id==='first')
+  rpc.send({id:'second',method:'node.execute',params:{...params,invocationId:'second'}})
+  assert.equal((await rpc.waitFor(message=>message.id==='second')).error.code,-32013)
   rpc.child.stdin.end()
   await once(rpc.child, 'close')
+})
+
+test('all diagnostic budgets and invalid content preserve business execution', async () => {
+  const rpc = start()
+  await initialize(rpc)
+  const source = `export async function execute(ctx) {
+    let effects = 0;
+    const nested = depth => ctx.trace.span('nested', () => depth ? nested(depth - 1) : effects++);
+    await nested(20);
+    await ctx.trace.span('budgets', span => {
+      for (let i=0;i<70;i++) span.setAttribute('key'+i,i);
+      for (let i=0;i<140;i++) span.event('event',{i});
+      for (let i=0;i<35;i++) span.content({type:'acme/test',version:1,data:{i}});
+      const cyclic={};cyclic.self=cyclic;
+      span.content(cyclic);
+      span.content({type:'acme/test',version:1,data:{value:BigInt(1)}});
+      span.content({type:'acme/test',version:1,data:{value:'x'.repeat(2*1024*1024)}});
+    });
+    for(let i=0;i<100;i++) await ctx.trace.span('item',()=>effects++);
+    return {status:'completed',outputs:{main:[{json:{effects}}]}};
+  }`
+  rpc.send({id:'budgets',method:'node.execute',params:{invocationId:'budgets',runtimeSource:source,execution:{deadline:new Date(Date.now()+5000).toISOString()}}})
+  const response=await rpc.waitFor(message=>message.id==='budgets')
+  assert.equal(response.result.outputs.main[0].json.effects,101)
+  assert.ok(response.result.traceDiagnostics.dropped > 50)
+  assert.ok(response.result.trace.length <= 64)
+  rpc.child.stdin.end()
+  await once(rpc.child,'close')
 })
 
 test('accepts fragmented transport writes and contains plugin stdout pollution', async () => {
   const rpc = start()
-  const initialize = `${JSON.stringify({ jsonrpc: '2.0', id: 'fragmented-init', method: 'runner.initialize', params: { protocolVersion: 1, sdkApiVersion: 1 } })}\n`
+  const initialize = `${JSON.stringify({ jsonrpc: '2.0', id: 'fragmented-init', method: 'runner.initialize', params: { protocolVersion: 2, sdkApiVersion: 2 } })}\n`
   rpc.writeRaw(initialize.slice(0, 17))
   await new Promise((resolve) => setTimeout(resolve, 5))
   rpc.writeRaw(initialize.slice(17))
-  assert.equal((await rpc.waitFor((message) => message.id === 'fragmented-init')).result.protocolVersion, 1)
+  assert.equal((await rpc.waitFor((message) => message.id === 'fragmented-init')).result.protocolVersion, 2)
   rpc.send({
     id: 'pollution', method: 'node.execute', params: {
       invocationId: 'pollution',

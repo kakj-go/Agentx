@@ -72,6 +72,18 @@ def test_all_charts_lint_and_render(values_name: str) -> None:
     assert "wait-for-runtime-schema" in rendered
     assert "wait-for-observability-schema" in rendered
     assert "database=$AGENTX_CLICKHOUSE_DATABASE" in rendered
+    for service in ("workflow-worker", "runtime-gateway"):
+        deployment = next(
+            item for item in documents if item.get("kind") == "Deployment" and item["metadata"]["name"] == service
+        )
+        pod = deployment["spec"]["template"]["spec"]
+        container = pod["containers"][0]
+        directory = next(item["value"] for item in container["env"] if item["name"] == "AGENTX_PLUGIN_WORK_DIR")
+        mount = next(item for item in container["volumeMounts"] if item["mountPath"] == directory)
+        volume = next(item for item in pod["volumes"] if item["name"] == mount["name"])
+        assert "emptyDir" in volume
+        assert pod["securityContext"]["fsGroup"] == 65532
+        assert container["securityContext"]["readOnlyRootFilesystem"] is True
     sandbox_manager = next(
         document
         for document in documents

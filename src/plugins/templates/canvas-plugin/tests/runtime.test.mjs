@@ -14,7 +14,7 @@ test('executes the built plugin with the production Agentx Runner protocol', asy
   const messages = []
   createInterface({ input: child.stdout, crlfDelay: Infinity }).on('line', (line) => messages.push(JSON.parse(line)))
   const send = (message) => child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', ...message })}\n`)
-  send({ id: 'init', method: 'runner.initialize', params: { protocolVersion: 1, sdkApiVersion: 1 } })
+  send({ id: 'init', method: 'runner.initialize', params: { protocolVersion: 2, sdkApiVersion: 2 } })
   send({ id: 'execute', method: 'node.execute', params: {
     invocationId: 'template-test', runtimeSource: await readFile(new URL('../dist/runtime/entry.js', import.meta.url), 'utf8'),
     inputs: { main: [{ json: { id: 1 } }] }, parameters: { label: 'customer' }, perItemParameters: [],
@@ -24,7 +24,7 @@ test('executes the built plugin with the production Agentx Runner protocol', asy
   await once(child, 'close')
   const initialized = messages.find((message) => message.id === 'init')
   const executed = messages.find((message) => message.id === 'execute')
-  assert.equal(initialized.result.protocolVersion, 1)
+  assert.equal(initialized.result.protocolVersion, 2)
   assert.deepEqual(executed.result.outputs.main[0].json, { id: 1, label: 'customer' })
   assert.equal(executed.result.trace[0].contents[0].type, 'acme.json-mapper/summary')
 })

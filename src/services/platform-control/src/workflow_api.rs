@@ -49,6 +49,10 @@ pub fn routes() -> Router<ControlApiState> {
             post(validate_draft),
         )
         .route(
+            "/api/v1/workflows/{id}/draft/resolve-plugins",
+            post(crate::canvas_plugin_resolution::resolve_draft_plugins),
+        )
+        .route(
             "/api/v1/workflows/{id}/debug-overlays/{node_id}",
             get(get_debug_overlay)
                 .put(save_debug_overlay)
@@ -1238,7 +1242,7 @@ async fn delete_debug_overlay(
     Ok(StatusCode::NO_CONTENT)
 }
 
-async fn require_workflow_access(
+pub(crate) async fn require_workflow_access(
     state: &ControlApiState,
     actor: &Actor,
     id: Uuid,
@@ -1531,7 +1535,7 @@ fn validation_issue(code: &str, path: &str, message: String) -> ValidationIssue 
     }
 }
 
-async fn load_composite_definitions(
+pub(crate) async fn load_composite_definitions(
     state: &ControlApiState,
     tenant_id: Uuid,
     root_workflow_id: Uuid,

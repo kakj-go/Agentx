@@ -1,6 +1,6 @@
 # 画布节点与插件接入
 
-本文描述 plan6 完成后的唯一节点接入模型。Workflow Definition 8.0、Node Manifest 3.0、Canvas Plugin Package Protocol 1、Plugin SDK API 1 和 Runner RPC 1 均按精确版本拒绝未知输入，不保留旧 Remote Action 或旧 Manifest 入口。
+本文描述 plan6 完成后的唯一节点接入模型。Workflow Definition 8.0、Node Manifest 3.0、Canvas Plugin Package Protocol 1、Plugin SDK API 2 和 Runner RPC 2 均按精确版本拒绝未知输入，不保留旧 Remote Action 或旧 Manifest 入口。
 
 ## 1. 节点分类
 
@@ -22,7 +22,7 @@ MCP、Skill、Knowledge、Memory、Credential 和 Sandbox Profile 是绑定到�
 
 更新默认版本只影响之后添加的节点。停用版本后 Catalog 不再允许新使用，Draft 可以保留并修复已有节点，Debug、发布、Rollback/重新激活会拒绝停用版本。已激活 Deployment 和已经创建的 Attempt 继续使用冻结 Bundle。Draft、Workflow Version、Deployment 和执行制品引用保护删除；未引用版本删除时同步清理对象。
 
-`agentx/*` 包 ID 保留给内置包。内置 Set/List/HTTP 与导入插件共用 `plugin_nodejs` 执行协议、Worker 进程池和结果校验，但在管理页只读展示并随 Agentx 发布。
+`agentx/*` 包 ID 保留给内置包。内置 Set/List/HTTP 与导入插件共用 `plugin_nodejs` 执行协议、Worker 有界调用进程和结果校验，但在管理页只读展示并随 Agentx 发布。
 
 ## 3. UI SDK
 
@@ -43,22 +43,22 @@ Web 以 bundle digest 缓存并动态导入编译后的 `data:` ESM。插件只�
 
 `POST /internal/runtime/v1/plugin-design-operations:execute`
 
-Runtime 使用独立有界容量启动 Runner，执行 `node.resolveDefinition` 或 `node.invokeProvider`。Control 不启动 Node。输入和输出是纯 JSON；未知方法、协议/API不匹配、超时和非法结果明确失败。Provider 的第二个参数是带 AbortSignal 的设计时宿主 Context，可访问节点已选择资源的冻结快照，并通过 Runtime 的只读 HTTP、Model、Credential descriptor 和临时 Artifact 桥接完成字段发现。静态插件没有导出解析函数时返回 Manifest 的固定端口和输出 Schema。
+Runtime Gateway 使用独立有界容量启动 Runner，执行 `node.resolveDefinition` 或 `node.invokeProvider`。Control 不启动 Node。输入和输出是纯 JSON；未知方法、协议/API不匹配、超时和非法结果明确失败。Provider 的第二个参数是带 AbortSignal 的设计时宿主 Context，可访问节点已选择资源的冻结快照，并通过 Runtime 的只读 HTTP、Model、Credential descriptor 和临时 Artifact 桥接完成字段发现。静态插件没有导出解析函数时返回 Manifest 的固定端口和输出 Schema。
 
 设计时调用固定为十秒内的同步交互，使用独立两槽并发预算；deadline 或显式取消会终止所属进程树。它不创建 Workflow Execution 或 Attempt，也不进入业务 Redis Queue。纯契约解析和只读 Provider 没有需要恢复的业务终态；正式 `node.execute` 仍通过 Worker Claim、Lease、Fencing 和恢复运行。
 
 ## 5. Runner 与宿主能力
 
-Worker 镜像固定 Node.js 24.20.0 和仓库 Runner。Tokio 管理按包摘要复用的有界进程池：一个进程同一时刻只承载一次调用，空闲超时回收，池满按 Attempt deadline 等待。Linux 创建独立进程组，Windows 使用 `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` Job Object；超时、取消、Lease丢失、Worker drain和 Future drop都会终止整个进程树。
+Worker 镜像固定 Node.js 24.20.0 和仓库 Runner。Tokio 为每次调用创建独立 Node 进程，调用终止后回收整个进程树和临时目录；按摘要保留源码缓存，不复用 ESM 模块环境。`pluginMaxProcesses` 同时控制插件消费循环和进程并发，满载按 Attempt deadline 等待。Linux 创建独立进程组，Windows 使用 `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` Job Object；超时、取消、Lease丢失、Worker drain和 Future drop都会终止整个进程树。
 
-stdin/stdout 使用换行分帧的 JSON-RPC 2.0。启动必须完成 `runner.initialize`，协议与 SDK API 均为 1。业务方法是 `node.execute`；Runner 反向调用：
+stdin/stdout 使用换行分帧的 JSON-RPC 2.0。启动必须完成 `runner.initialize`，Runner 协议与 SDK API 均为 2。业务方法是 `node.execute`；Runner 反向调用：
 
 | 方法 | Rust 宿主责任 |
 |---|---|
 | `host.http` | Egress、Credential注入、Runtime Call账本、幂等、结果未知、二进制 Artifact |
 | `host.model` | 冻结 Model资源、Provider格式、计量与输出规范化 |
 | `host.credentials.list` | 只返回非敏感描述，不返回 Secret |
-| `host.artifacts.put` | Runtime域对象、Hash、Execution/Node引用 |
+| `host.artifacts.read/put` | 调用目录中的授权文件流、相对路径/大小/Hash校验、Runtime对象和Execution/Node引用 |
 
 参数在进入 Runner 前已生成公共值和逐 Item值；插件不执行另一套表达式。结果只能是 `completed` 或 `failed`，输出端口、Item、Cardinality、Schema和 Artifact引用仍由 Runtime按冻结 IR校验。外部写调用需要逻辑幂等键；Provider结果未知通过专用 RPC错误传播为 `OutcomeUnknown`，不会盲目重试。
 
@@ -91,3 +91,5 @@ cargo run -p agentx-runtime-contracts --bin generate-contracts -- contracts/sche
 cargo run -p agentx-runtime --bin generate-studio-catalog -- src/web/src/features/workflow-designer/testing/studio-catalog.fixture.json
 cargo xtask check
 ```
+
+画布的整图动态契约使用 `/api/v1/workflows/{id}/draft/resolve-plugins`，复用保存时依赖解析顺序；单节点 resolve 继续作为 SDK 设计时工具。SDK 2 文件协议与 Trace 预算降级见 `plan6/contracts.md`。

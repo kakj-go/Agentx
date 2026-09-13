@@ -138,4 +138,18 @@ describe('Exit panel', () => {
     expect(required.compareDocumentPosition(description) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(sensitive.compareDocumentPosition(description) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
+
+  it('preserves an in-progress field name when upstream contracts refresh', () => {
+    const view = render(<ExitHarness />)
+    fireEvent.click(screen.getAllByRole('button', { name: /Add field|添加字段/ })[0])
+    fireEvent.change(screen.getByLabelText(/Output name|输出名称/), { target: { value: 'mapped' } })
+    view.rerender(<ExitHarness />)
+    expect(screen.getByLabelText(/Output name|输出名称/)).toHaveValue('mapped')
+    fireEvent.click(screen.getByRole('combobox', { name: /Type|类型/ }))
+    fireEvent.click(screen.getByRole('option', { name: /Number|数字/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Save|保存/ }))
+    const state = JSON.parse(screen.getByTestId('definition-state').textContent ?? '{}')
+    expect(state.end.outputs.mapped.schema.type).toBe('number')
+    expect(state.end.outputs.output_1).toBeUndefined()
+  })
 })

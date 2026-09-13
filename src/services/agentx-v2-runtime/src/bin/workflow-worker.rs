@@ -69,42 +69,51 @@ async fn main() -> Result<()> {
         runtime_object_store(&RuntimeObjectStorageSettings::from_env()?)?,
     )?);
     for capability in capabilities {
-        let pool = pool.clone();
-        // XREAD BLOCK must not share a multiplexed Redis connection with the
-        // other capability loops. A cloned ConnectionManager shares the same
-        // physical connection and serializes blocking reads, which can starve
-        // an otherwise ready capability for longer than an Invocation timeout.
-        let capability_redis_settings = redis_settings.clone();
-        let redis = WorkerRedis {
-            connection: connect_worker_redis(
-                &capability_redis_settings,
-                &format!("capability:{capability}"),
-            )
-            .await?,
-            settings: capability_redis_settings,
+        let parallelism = if capability == "plugin_nodejs" {
+            worker.plugin_parallelism()
+        } else {
+            1
         };
-        let worker = worker.clone();
-        let worker_lifecycle = lifecycle.clone();
-        let progress = agentx_service_kit::RoleProgressWatchdog::start(
-            format!("worker:{capability}"),
-            Duration::from_secs(agentx_service_kit::ROLE_WATCHDOG_TIMEOUT_SECONDS),
-            health.clone(),
-            lifecycle.clone(),
-            metrics.clone(),
-        )
-        .await;
-        tasks.spawn(async move {
-            worker_loop(
-                pool,
-                redis,
-                worker,
-                owner,
-                capability,
-                worker_lifecycle,
-                progress,
+        for lane in 0..parallelism {
+            let capability = capability.clone();
+            let pool = pool.clone();
+            // XREAD BLOCK must not share a multiplexed Redis connection with the
+            // other capability loops. A cloned ConnectionManager shares the same
+            // physical connection and serializes blocking reads, which can starve
+            // an otherwise ready capability for longer than an Invocation timeout.
+            let capability_redis_settings = redis_settings.clone();
+            let redis = WorkerRedis {
+                connection: connect_worker_redis(
+                    &capability_redis_settings,
+                    &format!("capability:{capability}:{lane}"),
+                )
+                .await?,
+                settings: capability_redis_settings,
+            };
+            let worker = worker.clone();
+            let worker_lifecycle = lifecycle.clone();
+            let progress = agentx_service_kit::RoleProgressWatchdog::start(
+                format!("worker:{capability}:{lane}"),
+                Duration::from_secs(agentx_service_kit::ROLE_WATCHDOG_TIMEOUT_SECONDS),
+                health.clone(),
+                lifecycle.clone(),
+                metrics.clone(),
             )
-            .await
-        });
+            .await;
+            tasks.spawn(async move {
+                worker_loop(
+                    pool,
+                    redis,
+                    worker,
+                    owner,
+                    capability,
+                    lane,
+                    worker_lifecycle,
+                    progress,
+                )
+                .await
+            });
+        }
     }
     let service_lifecycle = lifecycle.clone();
     let service_metrics = metrics.clone();
@@ -221,16 +230,18 @@ fn worker_capabilities() -> Result<Vec<String>> {
     Ok(capabilities)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn worker_loop(
     pool: sqlx::MySqlPool,
     mut redis: WorkerRedis,
     worker: Arc<agentx_v2_runtime::worker_runtime::RuntimeWorker>,
     owner: Uuid,
     capability: String,
+    lane: usize,
     lifecycle: agentx_service_kit::ServiceLifecycle,
     progress: agentx_service_kit::RoleProgressWatchdog,
 ) -> Result<()> {
-    let consumer = format!("{owner}:{capability}");
+    let consumer = format!("{owner}:{capability}:{lane}");
     loop {
         if lifecycle.is_draining() {
             return Ok(());

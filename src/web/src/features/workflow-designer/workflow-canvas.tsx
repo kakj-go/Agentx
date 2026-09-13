@@ -216,10 +216,14 @@ export function WorkflowCanvas() {
     },
     [documentManifests, manifests, subworkflowOptions.workflowVersionId],
   );
-  const resolvingDocument = useEditorStore(useShallow((state) => ({ nodes: state.nodes, edges: state.edges })));
+  const resolvingDocument = useEditorStore(useShallow((state) => ({
+    start: state.start, nodes: state.nodes, edges: state.edges, end: state.end,
+    settings: state.settings, viewport: state.viewport, boundaryLayouts: state.boundaryLayouts,
+    annotations: state.annotations, groups: state.groups,
+  })));
   const pluginDefinitions = useResolvedPluginManifests(
-    resolvingDocument.nodes,
-    resolvingDocument.edges,
+    workflowId,
+    resolvingDocument,
     baseManifestMap,
   );
   const manifestMap = useMemo(() => {
