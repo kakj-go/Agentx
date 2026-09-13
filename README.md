@@ -76,6 +76,8 @@ Agentx 采用三平面分离架构，每个逻辑域独立部署，通过 Helm �
 - 集群可以拉取 Docker Hub、ingress-nginx 和基础依赖镜像
 - OpenSandbox 已独立安装，并可从 Agentx Runtime Namespace 访问
 
+默认 OpenSandbox 地址为 `http://opensandbox.agentx-deps.svc:8080`。如果使用其他地址或主机上的 OpenSandbox，请先按 [OpenSandbox 接入说明](deploy/opensandbox/README.md) 准备自定义 Values，并在安装时传入 `--values`。
+
 ### 安装步骤
 
 当前发布：[agentxctl-v0.0.4-beta](https://github.com/kakj-go/Agentx/releases/tag/agentxctl-v0.0.4-beta)。下载的 `agentxctl` 已包含本版本安装所需的 Chart、Schema 和镜像配置，无需克隆仓库或另行下载安装脚本。
@@ -88,6 +90,7 @@ Agentx 采用三平面分离架构，每个逻辑域独立部署，通过 Helm �
 
 ```powershell
 $ErrorActionPreference = 'Stop'
+New-Item -ItemType Directory -Force "$HOME\Downloads" | Out-Null
 Set-Location $HOME\Downloads
 $release = 'https://github.com/kakj-go/Agentx/releases/download/agentxctl-v0.0.4-beta'
 $asset = 'agentxctl-windows-x86_64.exe'
@@ -105,6 +108,9 @@ if ((Get-FileHash $asset -Algorithm SHA256).Hash -ne $expected) { throw 'SHA-256
 在终端中下载、校验并安装（需要 `curl` 和 `sha256sum`）：
 
 ```bash
+(
+set -eu
+mkdir -p ~/Downloads
 cd ~/Downloads
 release='https://github.com/kakj-go/Agentx/releases/download/agentxctl-v0.0.4-beta'
 curl -fL --retry 3 "$release/agentxctl-linux-x86_64" -o agentxctl-linux-x86_64 &&
@@ -112,6 +118,7 @@ curl -fL --retry 3 "$release/agentxctl-linux-x86_64.sha256" -o agentxctl-linux-x
 sha256sum --check agentxctl-linux-x86_64.sha256 &&
 chmod +x agentxctl-linux-x86_64 &&
 ./agentxctl-linux-x86_64 install
+)
 ```
 
 ### 安装说明
@@ -172,10 +179,10 @@ kubectl -n agentx-control port-forward service/web-console 18080:8080
 
 ### 自定义部署
 
-自定义或 production 部署必须显式提供 `--values <文件>`：
+自定义或 production 部署必须显式提供 `--values <文件>`。从 Release 下载并解压完整归档包，在解压目录中按实际环境修改 `values/dockerhub-beta.yaml` 或 `values/production.example.yaml`，再执行：
 
 ```bash
-./agentxctl-linux-x86_64 install --values deploy/values/production.example.yaml
+./agentxctl install --values values/production.example.yaml
 ```
 
 ## 已发布镜像
