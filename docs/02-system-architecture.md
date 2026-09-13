@@ -137,7 +137,7 @@ Agentx 继续维护 Readiness/Liveness、Drain、PDB、Claim/Lease/Fencing 和�
 ## 3. 模块依赖规则
 
 - Studio 只能通过 Platform Control BFF 和 Runtime Gateway 调用后端。
-- Model、MCP、Memory、RAG、HTTP Request、Remote Action、Poll 和 Lifecycle 的公网 HTTPS 必须使用 `ProviderHttpClient -> agentx-egress-gateway`；基础设施 Client 继续只访问固定内部依赖。
+- Model、MCP、Memory、RAG、HTTP Request 和插件 `ctx.http/model` 的公网 HTTPS 必须使用 `ProviderHttpClient -> agentx-egress-gateway`；基础设施 Client 继续只访问固定内部依赖。
 - Platform Control 不直接执行节点，也不直连 Runtime MySQL/Redis/OSS 或 ClickHouse。
 - Worker 不修改 Workflow Draft。
 - Execution 只能运行不可变 Snapshot：生产入口使用 Version Source，Studio 调试使用精确 Draft Revision Source；任何入口都不能运行实时变化的 Draft Head。
@@ -177,7 +177,7 @@ Draft Debug 和 Version Execution 只在来源解析阶段不同，后续共享�
 - 沙箱：OpenSandbox；本地 Docker Runtime + runc，Kubernetes Runtime；gVisor/Kata 或等价强隔离列为后续生产强化
 - 部署：Kubernetes、Kustomize；固定 Helm 只用于脚本管理的专用 ingress-nginx
 
-首期不发布 Rust、Python 或 JavaScript Node SDK，也不开放外部可执行节点扩展面。内置执行节点由Rust Registry及版本化Node Manifest唯一声明；常规REST集成使用`declarative_http`，MCP/Skill/Knowledge/Memory作为Agent资源能力，Python/JavaScript/Shell自定义逻辑通过Code节点进入OpenSandbox。Rust侧基于固定版本的OpenSandbox API维护内部DTO、Endpoint、安全校验和错误映射，不把供应商SDK或Sidecar嵌入运行链路。
+plan6 发布 TypeScript/Node.js 画布插件 SDK。管理员导入审核后的不可变 ZIP；Web 动态装载包内 React ESM/CSS，Runtime Worker 通过固定 Node.js 24.20.0 Runner执行冻结源码。Control只管理包、版本、引用和发布，设计时调用也转发给Runtime，不能启动Node；Worker只读Execution Snapshot中的精确包摘要，不回查Control。Set、List和HTTP已使用同一TypeScript执行协议，Loop、Approval、Sub-workflow、Model、Agent、Code与边界继续由Rust原生语义实现。Python/JavaScript/Shell的非可信通用代码仍通过Code节点进入OpenSandbox。
 
 ## 6. 一致性边界
 

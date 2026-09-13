@@ -1,0 +1,237 @@
+{
+  "protocolVersion": "3.0",
+  "nodeType": "mcp_tool",
+  "version": 1,
+  "displayName": "MCP Tool",
+  "description": "Execute a frozen MCP tool.",
+  "category": "internal",
+  "keywords": [
+    "model"
+  ],
+  "localizations": {
+    "en-US": {
+      "displayName": "MCP Tool",
+      "description": "Execute a frozen MCP tool.",
+      "keywords": [
+        "mcp tool"
+      ],
+      "inputPortLabels": {
+        "main": "Main"
+      },
+      "outputPortLabels": {
+        "main": "Main",
+        "error": "Error"
+      },
+      "parameterLabels": {
+        "arguments": "Arguments"
+      },
+      "bindingSlotLabels": {
+        "resource": "MCP Tool"
+      }
+    },
+    "zh-CN": {
+      "displayName": "MCP Tool",
+      "description": "Execute a frozen MCP tool.",
+      "keywords": [
+        "mcp tool"
+      ],
+      "inputPortLabels": {
+        "main": "Main"
+      },
+      "outputPortLabels": {
+        "main": "Main",
+        "error": "Error"
+      },
+      "parameterLabels": {
+        "arguments": "Arguments"
+      },
+      "bindingSlotLabels": {
+        "resource": "MCP Tool"
+      }
+    }
+  },
+  "iconKey": "brain-circuit",
+  "executionStyle": "action",
+  "capability": "mcp_tool",
+  "readiness": "any",
+  "inputPorts": [
+    {
+      "name": "main",
+      "kind": "main",
+      "required": true,
+      "variadic": false
+    }
+  ],
+  "outputPorts": [
+    {
+      "name": "main",
+      "kind": "main",
+      "required": false,
+      "variadic": false
+    },
+    {
+      "name": "error",
+      "kind": "error",
+      "required": false,
+      "variadic": false
+    }
+  ],
+  "bindingSlots": [
+    {
+      "name": "resource",
+      "resourceType": "mcp_tool",
+      "placement": "inspector",
+      "required": true,
+      "multiple": false
+    }
+  ],
+  "parameterSchema": {
+    "type": "object",
+    "properties": {
+      "arguments": {}
+    },
+    "additionalProperties": false
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "text": {
+        "type": "string"
+      },
+      "structuredOutput": {
+        "type": [
+          "object",
+          "null"
+        ]
+      },
+      "files": {
+        "type": "array",
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "artifactId": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "contentType": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "fileName": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "sha256": {
+              "pattern": "^[0-9a-fA-F]{64}$",
+              "type": "string"
+            },
+            "sizeBytes": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "artifactId",
+            "fileName",
+            "contentType",
+            "sizeBytes",
+            "sha256"
+          ],
+          "type": "object"
+        }
+      }
+    },
+    "required": [
+      "text",
+      "structuredOutput",
+      "files"
+    ],
+    "additionalProperties": false
+  },
+  "outputPortSchemas": {
+    "error": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "details": {
+          "type": "object"
+        },
+        "message": {
+          "type": "string"
+        },
+        "nodeExecutionId": {
+          "type": "string"
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "sourceNodeId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "retryable",
+        "details",
+        "sourceNodeId",
+        "nodeExecutionId"
+      ],
+      "type": "object"
+    }
+  },
+  "outputCardinality": {
+    "error": "many",
+    "main": "exactly_one"
+  },
+  "selectorCapabilities": {
+    "namespaces": [
+      "inputs",
+      "outputs",
+      "contexts"
+    ],
+    "supportsCurrent": true,
+    "supportsFirstLast": true,
+    "supportsAll": true,
+    "supportsRunSelection": true
+  },
+  "contextReadCapability": true,
+  "contextWriteCapability": true,
+  "artifactOutputSchema": {
+    "items": {
+      "type": "object"
+    },
+    "type": "array"
+  },
+  "uiSchema": {
+    "fields": {
+      "arguments": {
+        "control": "json"
+      }
+    },
+    "resourceSelectors": [
+      {
+        "resourceType": "mcp_tool",
+        "operation": "use",
+        "required": true
+      }
+    ],
+    "canvas": {
+      "role": "default"
+    }
+  },
+  "providers": [],
+  "credentials": [],
+  "defaultTimeoutMs": 300000,
+  "retryPolicy": {
+    "retryable": false,
+    "maxAttempts": 0,
+    "initialBackoffMs": 0,
+    "maxBackoffMs": 0
+  },
+  "sandboxRequired": false,
+  "supportsMock": false,
+  "sideEffectLevel": "irreversible"
+}

@@ -1,0 +1,489 @@
+{
+  "protocolVersion": "3.0",
+  "nodeType": "list",
+  "version": 1,
+  "displayName": "List Operator",
+  "description": "Filter, sort and truncate the item stream in one node.",
+  "category": "transform",
+  "keywords": [
+    "list"
+  ],
+  "localizations": {
+    "en-US": {
+      "displayName": "List Operator",
+      "description": "Filter, sort and truncate the item stream in one node.",
+      "keywords": [
+        "list"
+      ],
+      "inputPortLabels": {
+        "main": "Input"
+      },
+      "outputPortLabels": {
+        "error": "Error",
+        "main": "Output"
+      },
+      "parameterLabels": {
+        "filter": "Filter",
+        "filter.conditions": "Conditions",
+        "filter.conditions[]": "Conditions",
+        "filter.conditions[].condition": "Condition",
+        "filter.conditions[].condition.left": "Left",
+        "filter.conditions[].condition.operator": "Operator",
+        "filter.conditions[].condition.right": "Right",
+        "filter.conditions[].label": "Label",
+        "filter.logicalOp": "Logical Op",
+        "input": "Input",
+        "input[]": "Input",
+        "sort": "Sort",
+        "sort[]": "Sort",
+        "sort[].direction": "Direction",
+        "sort[].nulls": "Nulls",
+        "sort[].selector": "Selector",
+        "takeN": "Take N"
+      },
+      "parameterEnumOptions": {
+        "filter.conditions[].condition.operator": {
+          "contains": "Contains",
+          "ends_with": "Ends with",
+          "eq": "Eq",
+          "gt": "Gt",
+          "gte": "Gte",
+          "in": "In",
+          "is_empty": "Is empty",
+          "is_not_empty": "Is not empty",
+          "lt": "Lt",
+          "lte": "Lte",
+          "matches": "Matches",
+          "ne": "Ne",
+          "not_contains": "Not contains",
+          "starts_with": "Starts with"
+        },
+        "filter.logicalOp": {
+          "and": "And",
+          "or": "Or"
+        },
+        "sort[].direction": {
+          "asc": "Asc",
+          "desc": "Desc"
+        },
+        "sort[].nulls": {
+          "first": "First",
+          "last": "Last"
+        }
+      }
+    },
+    "zh-CN": {
+      "displayName": "列表操作",
+      "description": "在单个节点内完成过滤、排序与截断。",
+      "keywords": [
+        "列表操作"
+      ],
+      "inputPortLabels": {
+        "main": "输入"
+      },
+      "outputPortLabels": {
+        "error": "错误",
+        "main": "输出"
+      },
+      "parameterLabels": {
+        "filter": "过滤条件",
+        "filter.conditions": "条件组",
+        "filter.conditions[]": "条件组",
+        "filter.conditions[].condition": "条件",
+        "filter.conditions[].condition.left": "Left",
+        "filter.conditions[].condition.operator": "Operator",
+        "filter.conditions[].condition.right": "Right",
+        "filter.conditions[].label": "显示名称",
+        "filter.logicalOp": "条件关系",
+        "input": "输入数据",
+        "input[]": "输入数据",
+        "sort": "排序规则",
+        "sort[]": "排序规则",
+        "sort[].direction": "排序方向",
+        "sort[].nulls": "空值位置",
+        "sort[].selector": "字段选择",
+        "takeN": "取前 N 项"
+      },
+      "parameterEnumOptions": {
+        "filter.conditions[].condition.operator": {
+          "contains": "Contains",
+          "ends_with": "Ends with",
+          "eq": "Eq",
+          "gt": "Gt",
+          "gte": "Gte",
+          "in": "In",
+          "is_empty": "Is empty",
+          "is_not_empty": "Is not empty",
+          "lt": "Lt",
+          "lte": "Lte",
+          "matches": "Matches",
+          "ne": "Ne",
+          "not_contains": "Not contains",
+          "starts_with": "Starts with"
+        },
+        "filter.logicalOp": {
+          "and": "且",
+          "or": "或"
+        },
+        "sort[].direction": {
+          "asc": "升序",
+          "desc": "降序"
+        },
+        "sort[].nulls": {
+          "first": "第一个",
+          "last": "最后一个"
+        }
+      }
+    }
+  },
+  "iconKey": "filter",
+  "executionStyle": "action",
+  "capability": "plugin_nodejs",
+  "readiness": "any",
+  "inputPorts": [
+    {
+      "name": "main",
+      "kind": "main",
+      "required": true,
+      "variadic": false
+    }
+  ],
+  "outputPorts": [
+    {
+      "name": "main",
+      "kind": "main",
+      "required": false,
+      "variadic": false
+    },
+    {
+      "name": "error",
+      "kind": "error",
+      "required": false,
+      "variadic": false
+    }
+  ],
+  "bindingSlots": [],
+  "parameterSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "filter": {
+        "additionalProperties": false,
+        "default": {
+          "conditions": [],
+          "logicalOp": "and"
+        },
+        "properties": {
+          "conditions": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "condition": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "left": {
+                      "x-agentx-binding": {
+                        "acceptedCardinality": [
+                          "single"
+                        ],
+                        "acceptedKinds": [
+                          "literal",
+                          "reference",
+                          "template",
+                          "array",
+                          "object"
+                        ],
+                        "allowedNamespaces": [
+                          "inputs",
+                          "outputs",
+                          "contexts",
+                          "execution",
+                          "item",
+                          "loop"
+                        ],
+                        "missingPolicies": [
+                          "error",
+                          "null",
+                          "omit"
+                        ],
+                        "recursive": false
+                      }
+                    },
+                    "operator": {
+                      "enum": [
+                        "eq",
+                        "ne",
+                        "gt",
+                        "gte",
+                        "lt",
+                        "lte",
+                        "in",
+                        "contains",
+                        "not_contains",
+                        "ends_with",
+                        "starts_with",
+                        "matches",
+                        "is_empty",
+                        "is_not_empty"
+                      ],
+                      "type": "string"
+                    },
+                    "right": {
+                      "x-agentx-binding": {
+                        "acceptedCardinality": [
+                          "single"
+                        ],
+                        "acceptedKinds": [
+                          "literal",
+                          "reference",
+                          "template",
+                          "array",
+                          "object"
+                        ],
+                        "allowedNamespaces": [
+                          "inputs",
+                          "outputs",
+                          "contexts",
+                          "execution",
+                          "item",
+                          "loop"
+                        ],
+                        "missingPolicies": [
+                          "error",
+                          "null",
+                          "omit"
+                        ],
+                        "recursive": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "left",
+                    "operator"
+                  ],
+                  "type": "object"
+                },
+                "label": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "condition"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "logicalOp": {
+            "default": "and",
+            "enum": [
+              "and",
+              "or"
+            ],
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "input": {
+        "items": {},
+        "type": "array",
+        "x-agentx-binding": {
+          "acceptedCardinality": [
+            "single"
+          ],
+          "acceptedKinds": [
+            "literal",
+            "reference",
+            "template",
+            "array",
+            "object"
+          ],
+          "allowedNamespaces": [
+            "inputs",
+            "outputs",
+            "contexts",
+            "execution",
+            "item",
+            "loop"
+          ],
+          "missingPolicies": [
+            "error",
+            "null",
+            "omit"
+          ],
+          "recursive": false
+        }
+      },
+      "sort": {
+        "default": [],
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "direction": {
+              "default": "asc",
+              "enum": [
+                "asc",
+                "desc"
+              ],
+              "type": "string"
+            },
+            "nulls": {
+              "default": "last",
+              "enum": [
+                "first",
+                "last"
+              ],
+              "type": "string"
+            },
+            "selector": {
+              "x-agentx-binding": {
+                "acceptedCardinality": [
+                  "single"
+                ],
+                "acceptedKinds": [
+                  "reference"
+                ],
+                "allowedNamespaces": [
+                  "inputs",
+                  "outputs",
+                  "contexts",
+                  "execution",
+                  "item",
+                  "loop"
+                ],
+                "missingPolicies": [
+                  "error",
+                  "null",
+                  "omit"
+                ],
+                "recursive": false
+              }
+            }
+          },
+          "required": [
+            "selector",
+            "direction",
+            "nulls"
+          ],
+          "type": "object"
+        },
+        "type": "array"
+      },
+      "takeN": {
+        "minimum": 0,
+        "type": "integer"
+      }
+    },
+    "required": [
+      "input"
+    ],
+    "type": "object"
+  },
+  "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "items": {
+        "items": {},
+        "type": "array"
+      }
+    },
+    "required": [
+      "items"
+    ],
+    "type": "object"
+  },
+  "outputPortSchemas": {
+    "error": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "details": {
+          "type": "object"
+        },
+        "message": {
+          "type": "string"
+        },
+        "nodeExecutionId": {
+          "type": "string"
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "sourceNodeId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "retryable",
+        "details",
+        "sourceNodeId",
+        "nodeExecutionId"
+      ],
+      "type": "object"
+    }
+  },
+  "outputCardinality": {
+    "error": "zero_or_one",
+    "main": "exactly_one"
+  },
+  "selectorCapabilities": {
+    "namespaces": [
+      "inputs",
+      "outputs",
+      "contexts"
+    ],
+    "supportsCurrent": true,
+    "supportsFirstLast": true,
+    "supportsAll": true,
+    "supportsRunSelection": true
+  },
+  "contextReadCapability": true,
+  "contextWriteCapability": true,
+  "artifactOutputSchema": {
+    "items": {
+      "type": "object"
+    },
+    "type": "array"
+  },
+  "uiSchema": {
+    "order": [
+      "input",
+      "filter",
+      "sort",
+      "takeN"
+    ],
+    "fields": {
+      "filter": {
+        "control": "condition_builder"
+      },
+      "input": {
+        "control": "value"
+      },
+      "sort": {
+        "control": "sort_builder"
+      },
+      "takeN": {
+        "control": "number"
+      }
+    },
+    "canvas": {
+      "role": "default"
+    }
+  },
+  "providers": [],
+  "credentials": [],
+  "defaultTimeoutMs": 30000,
+  "retryPolicy": {
+    "retryable": false,
+    "maxAttempts": 0,
+    "initialBackoffMs": 0,
+    "maxBackoffMs": 0
+  },
+  "sandboxRequired": false,
+  "supportsMock": true,
+  "sideEffectLevel": "none"
+}

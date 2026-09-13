@@ -167,9 +167,7 @@ def test_loop_checkpoint_recovers_after_workflow_runtime_restart(
                         "method": "GET",
                         "url": {
                             "kind": "template",
-                            "segments": [
-                                {"kind": "text", "text": f"{e2e_providers['echo_mcp']}/v1/plan5/delay"}
-                            ],
+                            "segments": [{"kind": "text", "text": f"{e2e_providers['echo_mcp']}/v1/plan5/delay"}],
                         },
                         "query": [],
                         "headers": [],

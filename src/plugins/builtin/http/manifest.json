@@ -1,0 +1,13 @@
+{
+  "protocolVersion": 1,
+  "sdkApiVersion": 1,
+  "packageId": "agentx/http",
+  "packageVersion": "1.0.0",
+  "displayName": "Agentx HTTP",
+  "description": "Built-in Agentx HTTP node package.",
+  "runtimeEntry": "dist/runtime.js",
+  "nodes": [
+    "nodes/declarative_http.json"
+  ],
+  "traceRenderers": []
+}

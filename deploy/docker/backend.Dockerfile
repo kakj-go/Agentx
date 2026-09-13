@@ -7,16 +7,17 @@ WORKDIR /workspace
 # The base image already pins the compiler. Omitting rust-toolchain.toml avoids
 # rustup downloading development-only components for every service image.
 COPY Cargo.toml Cargo.lock ./
-COPY crates ./crates
-COPY services ./services
+COPY src/crates ./src/crates
+COPY src/services ./src/services
+COPY src/plugins ./src/plugins
 COPY tests/fixtures ./tests/fixtures
-COPY xtask ./xtask
-COPY migrations ./migrations
-COPY openapi ./openapi
+COPY tools ./tools
+COPY deploy ./deploy
+COPY contracts ./contracts
 
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/workspace/target \
-    find crates services -type f -name '*.rs' -exec touch {} + \
+    find src/crates src/services tools tests/fixtures -type f -name '*.rs' -exec touch {} + \
     && if [ -n "$CARGO_PACKAGE" ]; then \
         CARGO_TARGET_DIR="/workspace/target/$CARGO_PACKAGE" \
             cargo build --release --locked --package "$CARGO_PACKAGE" --bin "$APP" \
@@ -32,17 +33,19 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
         cp /bin/false /tmp/agentx-p3-fixture; \
     fi
 
-FROM debian:bookworm-slim AS runtime
+FROM node:24.20.0-bookworm-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e AS runtime
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates \
+    && apt-get install -y --no-install-recommends ca-certificates tini \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /tmp/agentx-service /usr/local/bin/agentx-service
 COPY --from=builder /tmp/agentx-p3-fixture /usr/local/bin/agentx-p3-fixture
+COPY --from=builder /workspace/src/plugins/packages/plugin-runner/runner.mjs /opt/agentx/plugin-runner/runner.mjs
 
 ENV AGENTX_BIND_ADDR=0.0.0.0:8080
+ENV AGENTX_PLUGIN_RUNNER_PATH=/opt/agentx/plugin-runner/runner.mjs
 EXPOSE 8080 3128 3129 9091 9092
 
 USER 65532:65532
-ENTRYPOINT ["/usr/local/bin/agentx-service"]
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/agentx-service"]

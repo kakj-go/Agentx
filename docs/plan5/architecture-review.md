@@ -36,7 +36,7 @@
 
 ### A1 节点目录与资源执行能力分开，元数据来源唯一
 
-原问题（已收口）：[catalog_api.rs](../../services/platform-control/src/catalog_api.rs) 的 `manifests_for_tenant` 先收集数据库Manifest，再补 `NodeRegistry::m5_defaults`；相同类型/版本会受来源优先级影响。运行Registry仍包含资源节点，直接对外暴露会把不应独立创建的技能/工具等带入Studio。
+原问题（已收口）：[catalog_api.rs](../../src/services/platform-control/src/catalog_api.rs) 的 `manifests_for_tenant` 先收集数据库Manifest，再补 `NodeRegistry::m5_defaults`；相同类型/版本会受来源优先级影响。运行Registry仍包含资源节点，直接对外暴露会把不应独立创建的技能/工具等带入Studio。
 
 目标：
 
@@ -50,7 +50,7 @@
 
 ### A2 有效节点契约只由同一套Rust逻辑生成
 
-原问题（已收口）：[compiler.rs](../../crates/agentx-runtime/src/compiler.rs) 的输出Schema推导、[bundle-builder](../../crates/agentx-bundle-builder/src/lib.rs) 的子流程Schema生成、[reference-path.ts](../../apps/web/src/features/workflow-designer/forms/reference-picker/reference-path.ts) 的目录构建分处多处，已经出现all_complete标量/数组及动态端口不一致。
+原问题（已收口）：[compiler.rs](../../src/crates/agentx-runtime/src/compiler.rs) 的输出Schema推导、[bundle-builder](../../src/crates/agentx-bundle-builder/src/lib.rs) 的子流程Schema生成、[reference-path.ts](../../src/web/src/features/workflow-designer/forms/reference-picker/reference-path.ts) 的目录构建分处多处，已经出现all_complete标量/数组及动态端口不一致。
 
 目标：在现有编译模块内提取可复用的纯函数/小模块，以Manifest、节点参数、固定依赖版本和图关系为输入，统一计算有效输入/输出Schema、动态端口、基数、敏感性与引用能力。不是新建Schema服务。IR显式保存Exit定义顺序；`all_complete`按实际到达Exit对齐字段数组，可选缺失写null并同步元素Schema，不能依赖BTreeMap顺序或生成不同长度的相关字段数组。
 
@@ -75,7 +75,7 @@ Runtime只消费冻结IR中的契约，不能为了“统一解析”在运行�
 
 ### A3 运行图为权威，画布只是可逆的视图投影
 
-原问题（已收口）：[connections.ts](../../apps/web/src/features/workflow-designer/utils/connections.ts) 的chip控制边归一、[workflow-flow.tsx](../../apps/web/src/features/workflow-designer/canvas/workflow-flow.tsx) 的容器投影与尺寸处理、[serializer.ts](../../apps/web/src/features/workflow-designer/model/serializer.ts) 共同影响图语义，容易让纯UI辅助节点介入执行定义。
+原问题（已收口）：[connections.ts](../../src/web/src/features/workflow-designer/utils/connections.ts) 的chip控制边归一、[workflow-flow.tsx](../../src/web/src/features/workflow-designer/canvas/workflow-flow.tsx) 的容器投影与尺寸处理、[serializer.ts](../../src/web/src/features/workflow-designer/model/serializer.ts) 共同影响图语义，容易让纯UI辅助节点介入执行定义。
 
 目标：
 
@@ -90,7 +90,7 @@ React Flow已有父子关系、父相对坐标和边界约束能力，适合继�
 
 ### A4 审批生命周期与业务决策分开，Runtime拥有最终裁决
 
-原问题（已收口）：[publish.rs](../../services/agentx-v2-runtime/src/publish.rs) 将自定义decision直接作为task.status，恢复与审计分支又只处理固定approved/rejected；这属于状态模型耦合，不能仅补一个按钮回调。
+原问题（已收口）：[publish.rs](../../src/services/agentx-v2-runtime/src/publish.rs) 将自定义decision直接作为task.status，恢复与审计分支又只处理固定approved/rejected；这属于状态模型耦合，不能仅补一个按钮回调。
 
 目标：固定任务生命周期，独立保存decision ID与buttons快照；显示名不参与路由。所有业务决策统一走Decide，删除旧双接口与兼容映射。
 
@@ -100,7 +100,7 @@ Control负责用户权限入口与治理展示，投影可以用于界面和前�
 
 ### A5 所有执行终态共用收尾规则
 
-原问题（已收口）：[engine_persistence.rs](../../services/agentx-v2-runtime/src/engine_persistence.rs) 的 `finish_execution` 与 [execution.rs](../../services/agentx-v2-runtime/src/execution.rs) 的 `process_cancel_command` 分别收尾；挂起审批清理只在显式取消路径看到，首次返回路径容易遗漏。
+原问题（已收口）：[engine_persistence.rs](../../src/services/agentx-v2-runtime/src/engine_persistence.rs) 的 `finish_execution` 与 [execution.rs](../../src/services/agentx-v2-runtime/src/execution.rs) 的 `process_cancel_command` 分别收尾；挂起审批清理只在显式取消路径看到，首次返回路径容易遗漏。
 
 目标：在现有Runtime应用层集中终态收尾职责，让成功、失败、首次返回、取消、超时共享“哪些激活/审批/子执行/资源必须失效或释放”的规则。状态机仍负责决定终态，存储层负责原子落地，不把SQL或Provider I/O放进纯状态机。
 
@@ -112,7 +112,7 @@ Control负责用户权限入口与治理展示，投影可以用于界面和前�
 
 ### A6 子流程只有一套配置与输入准备路径，Loop不升级成子Execution集群
 
-原问题（已收口）：[bundle-builder](../../crates/agentx-bundle-builder/src/lib.rs) 能生成Composite inputs Schema，但 [composite_execution.rs](../../services/agentx-v2-runtime/src/composite_execution.rs) 的 `create_child` 仍直接从activation.inputs取值，公开配置与实际输入消费没有统一。
+原问题（已收口）：[bundle-builder](../../src/crates/agentx-bundle-builder/src/lib.rs) 能生成Composite inputs Schema，但 [composite_execution.rs](../../src/services/agentx-v2-runtime/src/composite_execution.rs) 的 `create_child` 仍直接从activation.inputs取值，公开配置与实际输入消费没有统一。
 
 目标：设计器只有一个sub_workflow入口，选择固定版本后使用其契约；显式映射在父上下文求值并校验，再传给子执行。内部派生Manifest可以继续作为编译产物，但不能成为另一套公开节点/输入协议。
 

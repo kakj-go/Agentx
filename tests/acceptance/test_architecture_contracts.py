@@ -58,8 +58,8 @@ def test_claim_lease_catalog_and_source_invariants() -> None:
     roles = [entry["role"] for entry in audit["entries"]]
     assert len(roles) == len(set(roles))
     assert set(roles) == expected
-    control_migration = (ROOT / "migrations/control/0006_horizontal_scalability.sql").read_text(encoding="utf-8")
-    runtime_migration = (ROOT / "migrations/runtime/0006_horizontal_scalability.sql").read_text(encoding="utf-8")
+    control_migration = (ROOT / "deploy/migrations/control/0006_horizontal_scalability.sql").read_text(encoding="utf-8")
+    runtime_migration = (ROOT / "deploy/migrations/runtime/0006_horizontal_scalability.sql").read_text(encoding="utf-8")
     for entry in audit["entries"]:
         assert 1 <= int(entry["batchSize"]) <= 100
         assert entry["externalIoAfterCommit"] is True
@@ -69,10 +69,10 @@ def test_claim_lease_catalog_and_source_invariants() -> None:
             migration = control_migration if entry["authority"].startswith("control_mysql.") else runtime_migration
             assert index in migration
     production_roots = (
-        ROOT / "services/platform-control",
-        ROOT / "services/agentx-v2-runtime",
-        ROOT / "services/observability",
-        ROOT / "crates/agentx-mysql-lease",
+        ROOT / "src/services/platform-control",
+        ROOT / "src/services/agentx-v2-runtime",
+        ROOT / "src/services/observability",
+        ROOT / "src/crates/agentx-mysql-lease",
     )
     for source_path in (path for base in production_roots for path in base.rglob("*.rs")):
         if "tests" in source_path.parts or re.search(r"_tests?\.rs$", source_path.name):
@@ -102,9 +102,9 @@ def test_backend_deployments_use_pod_uid_as_instance_id() -> None:
 
 
 def test_openapi_routes_have_platform_control_handlers() -> None:
-    openapi = json.loads((ROOT / "openapi/platform-api.json").read_text(encoding="utf-8"))
+    openapi = json.loads((ROOT / "contracts/openapi/platform-api.json").read_text(encoding="utf-8"))
     source = "\n".join(
-        path.read_text(encoding="utf-8") for path in sorted((ROOT / "services/platform-control/src").rglob("*.rs"))
+        path.read_text(encoding="utf-8") for path in sorted((ROOT / "src/services/platform-control/src").rglob("*.rs"))
     )
     route_matches = list(re.finditer(r'\.route\(\s*"(?P<path>/api/v1/[^"\s]+)"', source, re.DOTALL))
     implemented: set[str] = set()

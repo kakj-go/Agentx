@@ -794,6 +794,9 @@
         "replicas",
         "maxReplicas",
         "capability",
+        "pluginMaxProcesses",
+        "pluginIdleSeconds",
+        "pluginMemoryMb",
         "mysqlPool"
       ],
       "properties": {
@@ -813,7 +816,7 @@
           "enum": [
             "all",
             "builtin",
-            "declarative_http",
+            "plugin_nodejs",
             "agent",
             "model",
             "mcp_tool",
@@ -822,6 +825,21 @@
             "skill",
             "sandbox"
           ]
+        },
+        "pluginMaxProcesses": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 64
+        },
+        "pluginIdleSeconds": {
+          "type": "integer",
+          "minimum": 5,
+          "maximum": 3600
+        },
+        "pluginMemoryMb": {
+          "type": "integer",
+          "minimum": 32,
+          "maximum": 1024
         }
       }
     },

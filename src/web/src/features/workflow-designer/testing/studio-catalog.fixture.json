@@ -1,0 +1,4241 @@
+[
+  {
+    "protocolVersion": "3.0",
+    "nodeType": "agent",
+    "version": 2,
+    "displayName": "Agent",
+    "description": "Reason with models, tools, memory, knowledge, and skills.",
+    "category": "ai",
+    "keywords": [
+      "agent"
+    ],
+    "localizations": {
+      "en-US": {
+        "displayName": "Agent",
+        "description": "Reason with models, tools, memory, knowledge, and skills.",
+        "keywords": [
+          "agent"
+        ],
+        "inputPortLabels": {
+          "main": "Input"
+        },
+        "outputPortLabels": {
+          "error": "Error",
+          "main": "Output"
+        },
+        "bindingSlotLabels": {
+          "knowledge": "Knowledge",
+          "long_term_memory": "Long-term Memory",
+          "mcp_tools": "MCP Tools",
+          "model": "Model",
+          "skills": "Skills",
+          "workspace_sandbox": "Workspace Sandbox"
+        },
+        "parameterLabels": {
+          "limitAction": "Limit Action",
+          "maxCost": "Max Cost",
+          "maxDurationSeconds": "Max Duration Seconds",
+          "maxIterations": "Max Iterations",
+          "maxModelCalls": "Max Model Calls",
+          "maxOutputTokens": "Max Output Tokens",
+          "maxToolCalls": "Max Tool Calls",
+          "maxTotalTokens": "Max Total Tokens",
+          "sessionPolicy": "Session Policy",
+          "sessionPolicy.mode": "Mode",
+          "sessionPolicy.retentionPolicyId": "Retention Policy Id",
+          "systemPrompt": "System Prompt",
+          "userQuestion": "User Question"
+        },
+        "parameterEnumOptions": {
+          "limitAction": {
+            "error_output": "Error output",
+            "fail": "Fail",
+            "partial": "Partial"
+          },
+          "sessionPolicy.mode": {
+            "application_session": "Application session",
+            "invocation": "Invocation"
+          }
+        }
+      },
+      "zh-CN": {
+        "displayName": "智能体",
+        "description": "使用模型、工具、记忆、知识和技能完成推理。",
+        "keywords": [
+          "智能体"
+        ],
+        "inputPortLabels": {
+          "main": "输入"
+        },
+        "outputPortLabels": {
+          "error": "错误",
+          "main": "输出"
+        },
+        "bindingSlotLabels": {
+          "knowledge": "知识库",
+          "long_term_memory": "长期记忆",
+          "mcp_tools": "MCP 工具",
+          "model": "模型",
+          "skills": "技能",
+          "workspace_sandbox": "工作区沙箱"
+        },
+        "parameterLabels": {
+          "limitAction": "超限动作",
+          "maxCost": "最大成本",
+          "maxDurationSeconds": "最大时长（秒）",
+          "maxIterations": "最大迭代次数",
+          "maxModelCalls": "最大模型调用数",
+          "maxOutputTokens": "最大输出 Token",
+          "maxToolCalls": "最大工具调用数",
+          "maxTotalTokens": "最大 Token 数",
+          "sessionPolicy": "会话策略",
+          "sessionPolicy.mode": "模式",
+          "sessionPolicy.retentionPolicyId": "保留策略",
+          "systemPrompt": "系统提示词",
+          "userQuestion": "用户问题"
+        },
+        "parameterEnumOptions": {
+          "limitAction": {
+            "error_output": "输出错误",
+            "fail": "失败并停止",
+            "partial": "部分结果"
+          },
+          "sessionPolicy.mode": {
+            "application_session": "应用会话",
+            "invocation": "本次调用"
+          }
+        }
+      }
+    },
+    "iconKey": "bot",
+    "executionStyle": "action",
+    "capability": "agent",
+    "readiness": "any",
+    "inputPorts": [
+      {
+        "name": "main",
+        "kind": "main",
+        "required": true,
+        "variadic": false
+      }
+    ],
+    "outputPorts": [
+      {
+        "name": "main",
+        "kind": "main",
+        "required": false,
+        "variadic": false
+      },
+      {
+        "name": "error",
+        "kind": "error",
+        "required": false,
+        "variadic": false
+      }
+    ],
+    "bindingSlots": [
+      {
+        "name": "model",
+        "resourceType": "model",
+        "placement": "inspector",
+        "required": true,
+        "multiple": false
+      },
+      {
+        "name": "workspace_sandbox",
+        "resourceType": "sandbox_profile",
+        "placement": "inspector",
+        "required": false,
+        "multiple": false
+      },
+      {
+        "name": "mcp_tools",
+        "resourceType": "mcp_tool",
+        "placement": "inspector",
+        "required": false,
+        "multiple": true
+      },
+      {
+        "name": "skills",
+        "resourceType": "skill",
+        "placement": "inspector",
+        "required": false,
+        "multiple": true
+      },
+      {
+        "name": "knowledge",
+        "resourceType": "rag",
+        "placement": "inspector",
+        "required": false,
+        "multiple": true
+      },
+      {
+        "name": "long_term_memory",
+        "resourceType": "memory",
+        "placement": "inspector",
+        "required": false,
+        "multiple": false
+      }
+    ],
+    "parameterSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "limitAction": {
+          "default": "error_output",
+          "enum": [
+            "fail",
+            "error_output",
+            "partial"
+          ]
+        },
+        "maxCost": {
+          "default": 1,
+          "maximum": 1000,
+          "minimum": 0,
+          "type": "number"
+        },
+        "maxDurationSeconds": {
+          "default": 300,
+          "maximum": 3600,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "maxIterations": {
+          "default": 12,
+          "maximum": 12,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "maxModelCalls": {
+          "default": 12,
+          "maximum": 12,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "maxOutputTokens": {
+          "default": 4096,
+          "maximum": 2000000,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "maxToolCalls": {
+          "default": 32,
+          "maximum": 32,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maxTotalTokens": {
+          "default": 64000,
+          "maximum": 2000000,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "sessionPolicy": {
+          "additionalProperties": false,
+          "properties": {
+            "mode": {
+              "enum": [
+                "application_session",
+                "invocation"
+              ]
+            },
+            "retentionPolicyId": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "mode"
+          ],
+          "type": "object"
+        },
+        "systemPrompt": {
+          "type": "string",
+          "x-agentx-binding": {
+            "acceptedCardinality": [
+              "single"
+            ],
+            "acceptedKinds": [
+              "literal",
+              "reference",
+              "template"
+            ],
+            "allowedNamespaces": [
+              "inputs",
+              "outputs",
+              "contexts",
+              "execution",
+              "item",
+              "loop"
+            ],
+            "missingPolicies": [
+              "error",
+              "null",
+              "omit"
+            ],
+            "recursive": false
+          }
+        },
+        "userQuestion": {
+          "type": "string",
+          "x-agentx-binding": {
+            "acceptedCardinality": [
+              "single"
+            ],
+            "acceptedKinds": [
+              "literal",
+              "reference",
+              "template"
+            ],
+            "allowedNamespaces": [
+              "inputs",
+              "outputs",
+              "contexts",
+              "execution",
+              "item",
+              "loop"
+            ],
+            "missingPolicies": [
+              "error",
+              "null",
+              "omit"
+            ],
+            "recursive": false
+          }
+        }
+      },
+      "required": [
+        "sessionPolicy"
+      ],
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "citations": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "metadata": {
+                "type": "object"
+              },
+              "recordId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "sourceId": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              },
+              "title": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "uri": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "sourceId",
+              "text",
+              "metadata"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "files": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "artifactId": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "contentType": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "fileName": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "sha256": {
+                "pattern": "^[0-9a-fA-F]{64}$",
+                "type": "string"
+              },
+              "sizeBytes": {
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "artifactId",
+              "fileName",
+              "contentType",
+              "sizeBytes",
+              "sha256"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "finishReason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "partial": {
+          "type": "boolean"
+        },
+        "reasoningContent": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "structuredOutput": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "text": {
+          "type": "string"
+        },
+        "usage": {
+          "additionalProperties": false,
+          "properties": {
+            "costMicros": {
+              "type": "integer"
+            },
+            "inputTokens": {
+              "type": "integer"
+            },
+            "outputTokens": {
+              "type": "integer"
+            },
+            "totalTokens": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "inputTokens",
+            "outputTokens",
+            "totalTokens",
+            "costMicros"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "text",
+        "reasoningContent",
+        "structuredOutput",
+        "files",
+        "citations",
+        "usage",
+        "finishReason",
+        "partial"
+      ],
+      "type": "object"
+    },
+    "outputPortSchemas": {
+      "error": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "details": {
+            "type": "object"
+          },
+          "message": {
+            "type": "string"
+          },
+          "nodeExecutionId": {
+            "type": "string"
+          },
+          "retryable": {
+            "type": "boolean"
+          },
+          "sourceNodeId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "retryable",
+          "details",
+          "sourceNodeId",
+          "nodeExecutionId"
+        ],
+        "type": "object"
+      }
+    },
+    "outputCardinality": {
+      "error": "many",
+      "main": "exactly_one"
+    },
+    "selectorCapabilities": {
+      "namespaces": [
+        "inputs",
+        "outputs",
+        "contexts"
+      ],
+      "supportsCurrent": true,
+      "supportsFirstLast": true,
+      "supportsAll": true,
+      "supportsRunSelection": true
+    },
+    "contextReadCapability": true,
+    "contextWriteCapability": true,
+    "artifactOutputSchema": {
+      "items": {
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "uiSchema": {
+      "fields": {
+        "limitAction": {
+          "control": "select"
+        },
+        "maxCost": {
+          "control": "number",
+          "unit": "currency"
+        },
+        "maxDurationSeconds": {
+          "control": "number",
+          "unit": "seconds"
+        },
+        "maxIterations": {
+          "control": "number",
+          "unit": "calls"
+        },
+        "maxModelCalls": {
+          "control": "number",
+          "unit": "calls"
+        },
+        "maxOutputTokens": {
+          "control": "number",
+          "unit": "tokens"
+        },
+        "maxToolCalls": {
+          "control": "number",
+          "unit": "calls"
+        },
+        "maxTotalTokens": {
+          "control": "number",
+          "unit": "tokens"
+        },
+        "sessionPolicy": {
+          "control": "json"
+        },
+        "systemPrompt": {
+          "control": "prompt"
+        },
+        "userQuestion": {
+          "control": "template"
+        }
+      },
+      "resourceSelectors": [
+        {
+          "bindingRole": "model",
+          "label": "Model",
+          "operation": "use",
+          "required": true,
+          "resourceType": "model"
+        },
+        {
+          "bindingRole": "workspace_sandbox",
+          "label": "Workspace Sandbox",
+          "operation": "use",
+          "required": false,
+          "resourceType": "sandbox_profile"
+        },
+        {
+          "bindingRole": "mcp_tools",
+          "label": "MCP Tools",
+          "multiple": true,
+          "operation": "use",
+          "required": false,
+          "resourceType": "mcp_tool"
+        },
+        {
+          "bindingRole": "skills",
+          "label": "Skills",
+          "multiple": true,
+          "operation": "use",
+          "required": false,
+          "resourceType": "skill"
+        },
+        {
+          "bindingRole": "knowledge",
+          "label": "Knowledge",
+          "multiple": true,
+          "operation": "read",
+          "required": false,
+          "resourceType": "rag"
+        },
+        {
+          "bindingRole": "long_term_memory",
+          "label": "Long-term Memory",
+          "multiple": false,
+          "operation": "read",
+          "required": false,
+          "resourceType": "memory"
+        }
+      ],
+      "canvas": {
+        "role": "agent"
+      }
+    },
+    "plugin": {
+      "packageId": "agentx/core",
+      "packageVersion": "1.0.0",
+      "bundleDigest": "sha256:10e69d4c3fbd9312c770a79711e20c02f032c0d9d6a3939fe8631edf85e20e16",
+      "runtimeEntry": "native",
+      "runtimeSource": ""
+    },
+    "providers": [],
+    "credentials": [],
+    "defaultTimeoutMs": 300000,
+    "retryPolicy": {
+      "retryable": false,
+      "maxAttempts": 0,
+      "initialBackoffMs": 0,
+      "maxBackoffMs": 0
+    },
+    "sandboxRequired": false,
+    "supportsMock": false,
+    "sideEffectLevel": "irreversible"
+  },
+  {
+    "protocolVersion": "3.0",
+    "nodeType": "approval",
+    "version": 1,
+    "displayName": "Approval",
+    "description": "Suspend execution for a human decision.",
+    "category": "logic",
+    "keywords": [
+      "approval"
+    ],
+    "localizations": {
+      "en-US": {
+        "displayName": "Approval",
+        "description": "Suspend execution for a human decision.",
+        "keywords": [
+          "approval"
+        ],
+        "inputPortLabels": {
+          "main": "Input"
+        },
+        "outputPortLabels": {
+          "decision": "Decision",
+          "error": "Error",
+          "timed_out": "Timed out"
+        },
+        "parameterLabels": {
+          "buttons": "Buttons",
+          "buttons[]": "Buttons",
+          "buttons[].id": "Id",
+          "buttons[].label": "Label",
+          "candidateUserId": "Candidate User Id",
+          "description": "Description",
+          "timeoutMs": "Timeout Ms",
+          "title": "Title"
+        }
+      },
+      "zh-CN": {
+        "displayName": "审批",
+        "description": "暂停执行并等待人工审批。",
+        "keywords": [
+          "审批"
+        ],
+        "inputPortLabels": {
+          "main": "输入"
+        },
+        "outputPortLabels": {
+          "decision": "审批决策",
+          "error": "错误",
+          "timed_out": "已超时"
+        },
+        "parameterLabels": {
+          "buttons": "决策按钮",
+          "buttons[]": "决策按钮",
+          "buttons[].id": "稳定标识",
+          "buttons[].label": "显示名称",
+          "candidateUserId": "候选用户",
+          "description": "描述",
+          "timeoutMs": "超时时间",
+          "title": "标题"
+        }
+      }
+    },
+    "iconKey": "badge-check",
+    "executionStyle": "suspend",
+    "capability": "builtin",
+    "readiness": "any",
+    "inputPorts": [
+      {
+        "name": "main",
+        "kind": "main",
+        "required": true,
+        "variadic": false
+      }
+    ],
+    "outputPorts": [
+      {
+        "name": "decision",
+        "kind": "main",
+        "required": false,
+        "variadic": true
+      },
+      {
+        "name": "timed_out",
+        "kind": "main",
+        "required": false,
+        "variadic": false
+      },
+      {
+        "name": "error",
+        "kind": "error",
+        "required": false,
+        "variadic": false
+      }
+    ],
+    "bindingSlots": [],
+    "parameterSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "buttons": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "label"
+            ],
+            "type": "object"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "candidateUserId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "description": {
+          "type": "string",
+          "x-agentx-binding": {
+            "acceptedCardinality": [
+              "single"
+            ],
+            "acceptedKinds": [
+              "literal",
+              "reference",
+              "template"
+            ],
+            "allowedNamespaces": [
+              "inputs",
+              "outputs",
+              "contexts",
+              "execution",
+              "item",
+              "loop"
+            ],
+            "missingPolicies": [
+              "error",
+              "null",
+              "omit"
+            ],
+            "recursive": false
+          }
+        },
+        "timeoutMs": {
+          "maximum": 31536000000,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "title": {
+          "type": "string",
+          "x-agentx-binding": {
+            "acceptedCardinality": [
+              "single"
+            ],
+            "acceptedKinds": [
+              "literal",
+              "reference",
+              "template"
+            ],
+            "allowedNamespaces": [
+              "inputs",
+              "outputs",
+              "contexts",
+              "execution",
+              "item",
+              "loop"
+            ],
+            "missingPolicies": [
+              "error",
+              "null",
+              "omit"
+            ],
+            "recursive": false
+          }
+        }
+      },
+      "required": [
+        "candidateUserId"
+      ],
+      "type": "object"
+    },
+    "outputSchema": {
+      "type": "object"
+    },
+    "outputPortSchemas": {
+      "decision": {
+        "additionalProperties": false,
+        "properties": {
+          "decidedBy": {
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "decision": {
+            "type": "string"
+          },
+          "input": {},
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "taskId": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "taskId",
+          "decision",
+          "decidedBy",
+          "reason",
+          "input"
+        ],
+        "type": "object"
+      },
+      "error": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "details": {
+            "type": "object"
+          },
+          "message": {
+            "type": "string"
+          },
+          "nodeExecutionId": {
+            "type": "string"
+          },
+          "retryable": {
+            "type": "boolean"
+          },
+          "sourceNodeId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "retryable",
+          "details",
+          "sourceNodeId",
+          "nodeExecutionId"
+        ],
+        "type": "object"
+      },
+      "timed_out": {
+        "additionalProperties": false,
+        "properties": {
+          "decidedBy": {
+            "type": "null"
+          },
+          "decision": {
+            "enum": [
+              "timed_out"
+            ],
+            "type": "string"
+          },
+          "input": {},
+          "reason": {
+            "type": "null"
+          },
+          "taskId": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "taskId",
+          "decision",
+          "decidedBy",
+          "reason",
+          "input"
+        ],
+        "type": "object"
+      }
+    },
+    "outputCardinality": {
+      "decision": "zero_or_one",
+      "error": "zero_or_one",
+      "timed_out": "zero_or_one"
+    },
+    "selectorCapabilities": {
+      "namespaces": [
+        "inputs",
+        "outputs",
+        "contexts"
+      ],
+      "supportsCurrent": true,
+      "supportsFirstLast": true,
+      "supportsAll": true,
+      "supportsRunSelection": true
+    },
+    "contextReadCapability": true,
+    "contextWriteCapability": false,
+    "artifactOutputSchema": {
+      "items": {
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "uiSchema": {
+      "order": [
+        "title",
+        "description",
+        "candidateUserId",
+        "buttons",
+        "timeoutMs"
+      ],
+      "fields": {
+        "buttons": {
+          "control": "buttons_editor"
+        },
+        "candidateUserId": {
+          "control": "provider_options",
+          "provider": "users"
+        },
+        "description": {
+          "control": "template"
+        },
+        "timeoutMs": {
+          "control": "number"
+        },
+        "title": {
+          "control": "template"
+        }
+      },
+      "canvas": {
+        "role": "suspend"
+      }
+    },
+    "plugin": {
+      "packageId": "agentx/core",
+      "packageVersion": "1.0.0",
+      "bundleDigest": "sha256:10e69d4c3fbd9312c770a79711e20c02f032c0d9d6a3939fe8631edf85e20e16",
+      "runtimeEntry": "native",
+      "runtimeSource": ""
+    },
+    "providers": [
+      "users"
+    ],
+    "credentials": [],
+    "defaultTimeoutMs": null,
+    "retryPolicy": {
+      "retryable": false,
+      "maxAttempts": 0,
+      "initialBackoffMs": 0,
+      "maxBackoffMs": 0
+    },
+    "sandboxRequired": false,
+    "supportsMock": true,
+    "sideEffectLevel": "none"
+  },
+  {
+    "protocolVersion": "3.0",
+    "nodeType": "code",
+    "version": 1,
+    "displayName": "Code",
+    "description": "Run code in an isolated sandbox.",
+    "category": "transform",
+    "keywords": [
+      "code"
+    ],
+    "localizations": {
+      "en-US": {
+        "displayName": "Code",
+        "description": "Run code in an isolated sandbox.",
+        "keywords": [
+          "code"
+        ],
+        "inputPortLabels": {
+          "main": "Input"
+        },
+        "outputPortLabels": {
+          "error": "Error",
+          "main": "Output"
+        },
+        "parameterLabels": {
+          "inputs": "Inputs",
+          "networkPolicy": "Network Policy",
+          "networkPolicy.destinations": "Destinations",
+          "networkPolicy.destinations[]": "Destinations",
+          "networkPolicy.destinations[].ports": "Ports",
+          "networkPolicy.destinations[].ports[]": "Ports",
+          "networkPolicy.destinations[].ports[].from": "From",
+          "networkPolicy.destinations[].ports[].to": "To",
+          "networkPolicy.destinations[].target": "Target",
+          "networkPolicy.mode": "Mode",
+          "outputExample": "Output Example",
+          "runner": "Runner",
+          "source": "Source"
+        },
+        "parameterEnumOptions": {
+          "networkPolicy.mode": {
+            "allowlist": "Allowlist",
+            "deny": "Deny"
+          },
+          "runner": {
+            "javascript": "Javascript",
+            "python": "Python",
+            "shell": "Shell"
+          }
+        }
+      },
+      "zh-CN": {
+        "displayName": "代码",
+        "description": "在隔离沙箱中运行代码。",
+        "keywords": [
+          "代码"
+        ],
+        "inputPortLabels": {
+          "main": "输入"
+        },
+        "outputPortLabels": {
+          "error": "错误",
+          "main": "输出"
+        },
+        "parameterLabels": {
+          "inputs": "命名输入",
+          "networkPolicy": "网络策略",
+          "networkPolicy.destinations": "Destinations",
+          "networkPolicy.destinations[]": "Destinations",
+          "networkPolicy.destinations[].ports": "Ports",
+          "networkPolicy.destinations[].ports[]": "Ports",
+          "networkPolicy.destinations[].ports[].from": "来源字段",
+          "networkPolicy.destinations[].ports[].to": "目标字段",
+          "networkPolicy.destinations[].target": "Target",
+          "networkPolicy.mode": "模式",
+          "outputExample": "返回 JSON 示例",
+          "runner": "运行器",
+          "source": "源代码"
+        },
+        "parameterEnumOptions": {
+          "networkPolicy.mode": {
+            "allowlist": "Allowlist",
+            "deny": "Deny"
+          },
+          "runner": {
+            "javascript": "JavaScript",
+            "python": "Python",
+            "shell": "Shell"
+          }
+        }
+      }
+    },
+    "iconKey": "code-2",
+    "executionStyle": "action",
+    "capability": "sandbox",
+    "readiness": "any",
+    "inputPorts": [
+      {
+        "name": "main",
+        "kind": "main",
+        "required": true,
+        "variadic": false
+      }
+    ],
+    "outputPorts": [
+      {
+        "name": "main",
+        "kind": "main",
+        "required": false,
+        "variadic": false
+      },
+      {
+        "name": "error",
+        "kind": "error",
+        "required": false,
+        "variadic": false
+      }
+    ],
+    "bindingSlots": [],
+    "parameterSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "inputs": {
+          "additionalProperties": {},
+          "default": {
+            "fields": {},
+            "kind": "object"
+          },
+          "type": "object",
+          "x-agentx-binding": {
+            "acceptedCardinality": [
+              "single"
+            ],
+            "acceptedKinds": [
+              "literal",
+              "reference",
+              "template",
+              "array",
+              "object"
+            ],
+            "allowedNamespaces": [
+              "inputs",
+              "outputs",
+              "contexts",
+              "execution",
+              "item",
+              "loop"
+            ],
+            "missingPolicies": [
+              "error",
+              "null",
+              "omit"
+            ],
+            "recursive": true
+          }
+        },
+        "networkPolicy": {
+          "additionalProperties": false,
+          "default": {
+            "destinations": [],
+            "mode": "deny"
+          },
+          "properties": {
+            "destinations": {
+              "default": [],
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "ports": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "from": {
+                          "maximum": 65535,
+                          "minimum": 1,
+                          "type": "integer"
+                        },
+                        "to": {
+                          "maximum": 65535,
+                          "minimum": 1,
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "from",
+                        "to"
+                      ],
+                      "type": "object"
+                    },
+                    "maxItems": 8,
+                    "minItems": 1,
+                    "type": "array"
+                  },
+                  "target": {
+                    "maxLength": 253,
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "target",
+                  "ports"
+                ],
+                "type": "object"
+              },
+              "maxItems": 32,
+              "type": "array"
+            },
+            "mode": {
+              "default": "deny",
+              "enum": [
+                "deny",
+                "allowlist"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "mode",
+            "destinations"
+          ],
+          "type": "object"
+        },
+        "outputExample": {
+          "additionalProperties": true,
+          "default": {},
+          "type": "object"
+        },
+        "runner": {
+          "default": "python",
+          "enum": [
+            "python",
+            "javascript",
+            "shell"
+          ],
+          "type": "string"
+        },
+        "source": {
+          "default": "def main(**inputs):\n    return {}",
+          "type": "string"
+        }
+      },
+      "required": [
+        "runner",
+        "inputs",
+        "source",
+        "outputExample",
+        "networkPolicy"
+      ],
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "exitCode": {
+          "type": "integer"
+        },
+        "files": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "artifactId": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "contentType": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "fileName": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "sha256": {
+                "pattern": "^[0-9a-fA-F]{64}$",
+                "type": "string"
+              },
+              "sizeBytes": {
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "artifactId",
+              "fileName",
+              "contentType",
+              "sizeBytes",
+              "sha256"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "partial": {
+          "type": "boolean"
+        },
+        "stderr": {
+          "type": "string"
+        },
+        "stdout": {
+          "type": "string"
+        },
+        "structuredOutput": {
+          "type": [
+            "object",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "stdout",
+        "stderr",
+        "exitCode",
+        "structuredOutput",
+        "files",
+        "partial"
+      ],
+      "type": "object"
+    },
+    "outputPortSchemas": {
+      "error": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "details": {
+            "type": "object"
+          },
+          "message": {
+            "type": "string"
+          },
+          "nodeExecutionId": {
+            "type": "string"
+          },
+          "retryable": {
+            "type": "boolean"
+          },
+          "sourceNodeId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "retryable",
+          "details",
+          "sourceNodeId",
+          "nodeExecutionId"
+        ],
+        "type": "object"
+      }
+    },
+    "outputCardinality": {
+      "error": "many",
+      "main": "exactly_one"
+    },
+    "selectorCapabilities": {
+      "namespaces": [
+        "inputs",
+        "outputs",
+        "contexts"
+      ],
+      "supportsCurrent": true,
+      "supportsFirstLast": true,
+      "supportsAll": true,
+      "supportsRunSelection": true
+    },
+    "contextReadCapability": true,
+    "contextWriteCapability": true,
+    "artifactOutputSchema": {
+      "items": {
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "uiSchema": {
+      "fields": {
+        "inputs": {
+          "control": "mapper"
+        },
+        "networkPolicy": {
+          "control": "network_policy"
+        },
+        "outputExample": {
+          "control": "json5_example"
+        },
+        "runner": {
+          "control": "select"
+        },
+        "source": {
+          "control": "code",
+          "languageField": "runner"
+        }
+      },
+      "resourceSelectors": [
+        {
+          "operation": "use",
+          "required": true,
+          "resourceType": "sandbox_profile"
+        }
+      ],
+      "canvas": {
+        "role": "code"
+      }
+    },
+    "plugin": {
+      "packageId": "agentx/core",
+      "packageVersion": "1.0.0",
+      "bundleDigest": "sha256:10e69d4c3fbd9312c770a79711e20c02f032c0d9d6a3939fe8631edf85e20e16",
+      "runtimeEntry": "native",
+      "runtimeSource": ""
+    },
+    "providers": [],
+    "credentials": [],
+    "defaultTimeoutMs": 300000,
+    "retryPolicy": {
+      "retryable": false,
+      "maxAttempts": 0,
+      "initialBackoffMs": 0,
+      "maxBackoffMs": 0
+    },
+    "sandboxRequired": true,
+    "supportsMock": false,
+    "sideEffectLevel": "irreversible"
+  },
+  {
+    "protocolVersion": "3.0",
+    "nodeType": "declarative_http",
+    "version": 1,
+    "displayName": "HTTP Request",
+    "description": "Call an HTTP endpoint.",
+    "category": "integration",
+    "keywords": [
+      "declarative",
+      "http"
+    ],
+    "localizations": {
+      "en-US": {
+        "displayName": "HTTP Request",
+        "description": "Call an HTTP endpoint.",
+        "keywords": [
+          "declarative",
+          "http"
+        ],
+        "inputPortLabels": {
+          "main": "Input"
+        },
+        "outputPortLabels": {
+          "error": "Error",
+          "main": "Output"
+        },
+        "parameterLabels": {
+          "apiKeyPlacement": "Api Key Placement",
+          "apiKeyPlacement.in": "In",
+          "apiKeyPlacement.name": "Name",
+          "body": "Body",
+          "headers": "Headers",
+          "headers[]": "Headers",
+          "headers[].name": "Name",
+          "headers[].value": "Value",
+          "method": "Method",
+          "query": "Query",
+          "query[]": "Query",
+          "query[].name": "Name",
+          "query[].value": "Value",
+          "url": "Url"
+        },
+        "parameterEnumOptions": {
+          "apiKeyPlacement.in": {
+            "header": "Header",
+            "query": "Query"
+          },
+          "method": {
+            "DELETE": "D E L E T E",
+            "GET": "G E T",
+            "PATCH": "P A T C H",
+            "POST": "P O S T",
+            "PUT": "P U T"
+          }
+        }
+      },
+      "zh-CN": {
+        "displayName": "HTTP 请求",
+        "description": "调用 HTTP 接口。",
+        "keywords": [
+          "HTTP 请求"
+        ],
+        "inputPortLabels": {
+          "main": "输入"
+        },
+        "outputPortLabels": {
+          "error": "错误",
+          "main": "输出"
+        },
+        "parameterLabels": {
+          "apiKeyPlacement": "API Key 位置",
+          "apiKeyPlacement.in": "注入位置",
+          "apiKeyPlacement.name": "名称",
+          "body": "请求体",
+          "headers": "请求头",
+          "headers[]": "请求头",
+          "headers[].name": "名称",
+          "headers[].value": "值",
+          "method": "请求方法",
+          "query": "查询参数",
+          "query[]": "查询参数",
+          "query[].name": "名称",
+          "query[].value": "值",
+          "url": "地址"
+        },
+        "parameterEnumOptions": {
+          "apiKeyPlacement.in": {
+            "header": "请求头",
+            "query": "查询"
+          },
+          "method": {
+            "DELETE": "DELETE",
+            "GET": "GET",
+            "PATCH": "PATCH",
+            "POST": "POST",
+            "PUT": "PUT"
+          }
+        }
+      }
+    },
+    "iconKey": "box",
+    "executionStyle": "action",
+    "capability": "plugin_nodejs",
+    "readiness": "any",
+    "inputPorts": [
+      {
+        "name": "main",
+        "kind": "main",
+        "required": true,
+        "variadic": false
+      }
+    ],
+    "outputPorts": [
+      {
+        "name": "main",
+        "kind": "main",
+        "required": false,
+        "variadic": false
+      },
+      {
+        "name": "error",
+        "kind": "error",
+        "required": false,
+        "variadic": false
+      }
+    ],
+    "bindingSlots": [
+      {
+        "name": "credential",
+        "resourceType": "credential",
+        "placement": "inspector",
+        "required": false,
+        "multiple": false
+      }
+    ],
+    "parameterSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "apiKeyPlacement": {
+          "additionalProperties": false,
+          "properties": {
+            "in": {
+              "enum": [
+                "header",
+                "query"
+              ],
+              "type": "string"
+            },
+            "name": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "in",
+            "name"
+          ],
+          "type": "object"
+        },
+        "body": {
+          "x-agentx-binding": {
+            "acceptedCardinality": [
+              "single"
+            ],
+            "acceptedKinds": [
+              "literal",
+              "reference",
+              "template",
+              "array",
+              "object"
+            ],
+            "allowedNamespaces": [
+              "inputs",
+              "outputs",
+              "contexts",
+              "execution",
+              "item",
+              "loop"
+            ],
+            "missingPolicies": [
+              "error",
+              "null",
+              "omit"
+            ],
+            "recursive": true
+          }
+        },
+        "headers": {
+          "default": [],
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "value": {
+                "x-agentx-binding": {
+                  "acceptedCardinality": [
+                    "single"
+                  ],
+                  "acceptedKinds": [
+                    "literal",
+                    "reference",
+                    "template"
+                  ],
+                  "allowedNamespaces": [
+                    "inputs",
+                    "outputs",
+                    "contexts",
+                    "execution",
+                    "item",
+                    "loop"
+                  ],
+                  "missingPolicies": [
+                    "error",
+                    "null",
+                    "omit"
+                  ],
+                  "recursive": false
+                }
+              }
+            },
+            "required": [
+              "name",
+              "value"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "method": {
+          "default": "GET",
+          "enum": [
+            "GET",
+            "POST",
+            "PUT",
+            "PATCH",
+            "DELETE"
+          ],
+          "type": "string"
+        },
+        "query": {
+          "default": [],
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "value": {
+                "x-agentx-binding": {
+                  "acceptedCardinality": [
+                    "single"
+                  ],
+                  "acceptedKinds": [
+                    "literal",
+                    "reference",
+                    "template"
+                  ],
+                  "allowedNamespaces": [
+                    "inputs",
+                    "outputs",
+                    "contexts",
+                    "execution",
+                    "item",
+                    "loop"
+                  ],
+                  "missingPolicies": [
+                    "error",
+                    "null",
+                    "omit"
+                  ],
+                  "recursive": false
+                }
+              }
+            },
+            "required": [
+              "name",
+              "value"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "url": {
+          "x-agentx-binding": {
+            "acceptedCardinality": [
+              "single"
+            ],
+            "acceptedKinds": [
+              "literal",
+              "reference",
+              "template"
+            ],
+            "allowedNamespaces": [
+              "inputs",
+              "outputs",
+              "contexts",
+              "execution",
+              "item",
+              "loop"
+            ],
+            "missingPolicies": [
+              "error",
+              "null",
+              "omit"
+            ],
+            "recursive": false
+          }
+        }
+      },
+      "required": [
+        "url"
+      ],
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "body": {
+          "type": "string"
+        },
+        "files": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "artifactId": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "contentType": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "fileName": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "sha256": {
+                "pattern": "^[0-9a-fA-F]{64}$",
+                "type": "string"
+              },
+              "sizeBytes": {
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "artifactId",
+              "fileName",
+              "contentType",
+              "sizeBytes",
+              "sha256"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "headers": {
+          "type": "object"
+        },
+        "statusCode": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "statusCode",
+        "headers",
+        "body",
+        "files"
+      ],
+      "type": "object"
+    },
+    "outputPortSchemas": {
+      "error": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "details": {
+            "type": "object"
+          },
+          "message": {
+            "type": "string"
+          },
+          "nodeExecutionId": {
+            "type": "string"
+          },
+          "retryable": {
+            "type": "boolean"
+          },
+          "sourceNodeId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "retryable",
+          "details",
+          "sourceNodeId",
+          "nodeExecutionId"
+        ],
+        "type": "object"
+      }
+    },
+    "outputCardinality": {
+      "error": "many",
+      "main": "exactly_one"
+    },
+    "selectorCapabilities": {
+      "namespaces": [
+        "inputs",
+        "outputs",
+        "contexts"
+      ],
+      "supportsCurrent": true,
+      "supportsFirstLast": true,
+      "supportsAll": true,
+      "supportsRunSelection": true
+    },
+    "contextReadCapability": true,
+    "contextWriteCapability": true,
+    "artifactOutputSchema": {
+      "items": {
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "uiSchema": {
+      "order": [
+        "method",
+        "url",
+        "query",
+        "headers",
+        "body",
+        "apiKeyPlacement"
+      ],
+      "fields": {
+        "apiKeyPlacement": {
+          "control": "api_key_placement"
+        },
+        "body": {
+          "control": "structured"
+        },
+        "headers": {
+          "control": "kv_builder"
+        },
+        "method": {
+          "control": "select"
+        },
+        "query": {
+          "control": "kv_builder"
+        },
+        "url": {
+          "control": "template"
+        }
+      },
+      "resourceSelectors": [
+        {
+          "bindingRole": "credential",
+          "label": "Credential",
+          "operation": "use",
+          "required": false,
+          "resourceType": "credential"
+        }
+      ],
+      "canvas": {
+        "role": "default"
+      }
+    },
+    "plugin": {
+      "packageId": "agentx/http",
+      "packageVersion": "1.0.0",
+      "bundleDigest": "sha256:532160789d7bb0f30242c5cc335db2cfcd1677449492e9b0140736790829dbff",
+      "runtimeEntry": "dist/runtime.js",
+      "runtimeSource": "export const execute = async (context) => {\n    const request = { ...context.parameters, body: context.parameters.body ?? context.inputs.main?.[0]?.json ?? null, idempotencyKey: context.execution.idempotencyKey };\n    const response = await context.http(request);\n    return { status: 'completed', outputs: { main: [{ json: response }] } };\n};\n",
+      "runtimeArtifact": {
+        "objectId": "b8340029-8a6b-57b5-915f-f5ef1b843370",
+        "contentHash": "sha256:9c32ff07fa58b8b96c481e9943aa2041bd12504eb253e0da38d5c90d5b243c7f",
+        "sizeBytes": 344,
+        "mediaType": "text/javascript"
+      }
+    },
+    "providers": [],
+    "credentials": [],
+    "defaultTimeoutMs": 30000,
+    "retryPolicy": {
+      "retryable": false,
+      "maxAttempts": 0,
+      "initialBackoffMs": 0,
+      "maxBackoffMs": 0
+    },
+    "sandboxRequired": false,
+    "supportsMock": true,
+    "sideEffectLevel": "idempotent"
+  },
+  {
+    "protocolVersion": "3.0",
+    "nodeType": "if",
+    "version": 1,
+    "displayName": "Condition",
+    "description": "Route items to the first matching IF/ELIF branch, else to ELSE.",
+    "category": "logic",
+    "keywords": [
+      "if"
+    ],
+    "localizations": {
+      "en-US": {
+        "displayName": "Condition",
+        "description": "Route items to the first matching IF/ELIF branch, else to ELSE.",
+        "keywords": [
+          "if"
+        ],
+        "inputPortLabels": {
+          "main": "Input"
+        },
+        "outputPortLabels": {
+          "case": "Case",
+          "else": "Else",
+          "error": "Error"
+        },
+        "parameterLabels": {
+          "cases": "Cases",
+          "cases[]": "Cases",
+          "cases[].conditions": "Conditions",
+          "cases[].conditions[]": "Conditions",
+          "cases[].conditions[].condition": "Condition",
+          "cases[].conditions[].condition.left": "Left",
+          "cases[].conditions[].condition.operator": "Operator",
+          "cases[].conditions[].condition.right": "Right",
+          "cases[].conditions[].label": "Label",
+          "cases[].id": "Id",
+          "cases[].logicalOp": "Logical Op",
+          "cases[].name": "Name"
+        },
+        "parameterEnumOptions": {
+          "cases[].conditions[].condition.operator": {
+            "contains": "Contains",
+            "ends_with": "Ends with",
+            "eq": "Eq",
+            "gt": "Gt",
+            "gte": "Gte",
+            "in": "In",
+            "is_empty": "Is empty",
+            "is_not_empty": "Is not empty",
+            "lt": "Lt",
+            "lte": "Lte",
+            "matches": "Matches",
+            "ne": "Ne",
+            "not_contains": "Not contains",
+            "starts_with": "Starts with"
+          },
+          "cases[].logicalOp": {
+            "and": "And",
+            "or": "Or"
+          }
+        }
+      },
+      "zh-CN": {
+        "displayName": "条件分支",
+        "description": "按序命中 IF/ELIF 分支，未命中走 ELSE 分支。",
+        "keywords": [
+          "条件分支"
+        ],
+        "inputPortLabels": {
+          "main": "输入"
+        },
+        "outputPortLabels": {
+          "case": "条件分支",
+          "else": "否则分支",
+          "error": "错误"
+        },
+        "parameterLabels": {
+          "cases": "分支",
+          "cases[]": "分支",
+          "cases[].conditions": "条件组",
+          "cases[].conditions[]": "条件组",
+          "cases[].conditions[].condition": "条件",
+          "cases[].conditions[].condition.left": "Left",
+          "cases[].conditions[].condition.operator": "Operator",
+          "cases[].conditions[].condition.right": "Right",
+          "cases[].conditions[].label": "显示名称",
+          "cases[].id": "稳定标识",
+          "cases[].logicalOp": "条件关系",
+          "cases[].name": "名称"
+        },
+        "parameterEnumOptions": {
+          "cases[].conditions[].condition.operator": {
+            "contains": "Contains",
+            "ends_with": "Ends with",
+            "eq": "Eq",
+            "gt": "Gt",
+            "gte": "Gte",
+            "in": "In",
+            "is_empty": "Is empty",
+            "is_not_empty": "Is not empty",
+            "lt": "Lt",
+            "lte": "Lte",
+            "matches": "Matches",
+            "ne": "Ne",
+            "not_contains": "Not contains",
+            "starts_with": "Starts with"
+          },
+          "cases[].logicalOp": {
+            "and": "且",
+            "or": "或"
+          }
+        }
+      }
+    },
+    "iconKey": "split",
+    "executionStyle": "action",
+    "capability": "builtin",
+    "readiness": "any",
+    "inputPorts": [
+      {
+        "name": "main",
+        "kind": "main",
+        "required": true,
+        "variadic": false
+      }
+    ],
+    "outputPorts": [
+      {
+        "name": "case",
+        "kind": "main",
+        "required": false,
+        "variadic": true
+      },
+      {
+        "name": "else",
+        "kind": "main",
+        "required": false,
+        "variadic": false
+      },
+      {
+        "name": "error",
+        "kind": "error",
+        "required": false,
+        "variadic": false
+      }
+    ],
+    "bindingSlots": [],
+    "parameterSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "cases": {
+          "default": [
+            {
+              "conditions": [
+                {
+                  "condition": {
+                    "left": {
+                      "kind": "literal",
+                      "value": ""
+                    },
+                    "operator": "eq",
+                    "right": {
+                      "kind": "literal",
+                      "value": ""
+                    }
+                  }
+                }
+              ],
+              "id": "case_1",
+              "logicalOp": "and",
+              "name": ""
+            }
+          ],
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "conditions": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "condition": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "left": {
+                          "x-agentx-binding": {
+                            "acceptedCardinality": [
+                              "single"
+                            ],
+                            "acceptedKinds": [
+                              "literal",
+                              "reference",
+                              "template",
+                              "array",
+                              "object"
+                            ],
+                            "allowedNamespaces": [
+                              "inputs",
+                              "outputs",
+                              "contexts",
+                              "execution",
+                              "item",
+                              "loop"
+                            ],
+                            "missingPolicies": [
+                              "error",
+                              "null",
+                              "omit"
+                            ],
+                            "recursive": false
+                          }
+                        },
+                        "operator": {
+                          "enum": [
+                            "eq",
+                            "ne",
+                            "gt",
+                            "gte",
+                            "lt",
+                            "lte",
+                            "in",
+                            "contains",
+                            "not_contains",
+                            "ends_with",
+                            "starts_with",
+                            "matches",
+                            "is_empty",
+                            "is_not_empty"
+                          ],
+                          "type": "string"
+                        },
+                        "right": {
+                          "x-agentx-binding": {
+                            "acceptedCardinality": [
+                              "single"
+                            ],
+                            "acceptedKinds": [
+                              "literal",
+                              "reference",
+                              "template",
+                              "array",
+                              "object"
+                            ],
+                            "allowedNamespaces": [
+                              "inputs",
+                              "outputs",
+                              "contexts",
+                              "execution",
+                              "item",
+                              "loop"
+                            ],
+                            "missingPolicies": [
+                              "error",
+                              "null",
+                              "omit"
+                            ],
+                            "recursive": false
+                          }
+                        }
+                      },
+                      "required": [
+                        "left",
+                        "operator"
+                      ],
+                      "type": "object"
+                    },
+                    "label": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "condition"
+                  ],
+                  "type": "object"
+                },
+                "minItems": 1,
+                "type": "array"
+              },
+              "id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "logicalOp": {
+                "default": "and",
+                "enum": [
+                  "and",
+                  "or"
+                ],
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "conditions"
+            ],
+            "type": "object"
+          },
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "cases"
+      ],
+      "type": "object"
+    },
+    "outputSchema": {
+      "type": "object"
+    },
+    "outputPortSchemas": {
+      "error": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "details": {
+            "type": "object"
+          },
+          "message": {
+            "type": "string"
+          },
+          "nodeExecutionId": {
+            "type": "string"
+          },
+          "retryable": {
+            "type": "boolean"
+          },
+          "sourceNodeId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "retryable",
+          "details",
+          "sourceNodeId",
+          "nodeExecutionId"
+        ],
+        "type": "object"
+      }
+    },
+    "outputCardinality": {
+      "case": "zero_or_many",
+      "else": "zero_or_many",
+      "error": "zero_or_many"
+    },
+    "selectorCapabilities": {
+      "namespaces": [
+        "inputs",
+        "outputs",
+        "contexts"
+      ],
+      "supportsCurrent": true,
+      "supportsFirstLast": true,
+      "supportsAll": true,
+      "supportsRunSelection": true
+    },
+    "contextReadCapability": true,
+    "contextWriteCapability": false,
+    "artifactOutputSchema": {
+      "items": {
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "uiSchema": {
+      "fields": {
+        "cases": {
+          "control": "condition_builder"
+        }
+      },
+      "canvas": {
+        "role": "branch"
+      }
+    },
+    "plugin": {
+      "packageId": "agentx/core",
+      "packageVersion": "1.0.0",
+      "bundleDigest": "sha256:10e69d4c3fbd9312c770a79711e20c02f032c0d9d6a3939fe8631edf85e20e16",
+      "runtimeEntry": "native",
+      "runtimeSource": ""
+    },
+    "providers": [],
+    "credentials": [],
+    "defaultTimeoutMs": 30000,
+    "retryPolicy": {
+      "retryable": false,
+      "maxAttempts": 0,
+      "initialBackoffMs": 0,
+      "maxBackoffMs": 0
+    },
+    "sandboxRequired": false,
+    "supportsMock": true,
+    "sideEffectLevel": "none"
+  },
+  {
+    "protocolVersion": "3.0",
+    "nodeType": "list",
+    "version": 1,
+    "displayName": "List Operator",
+    "description": "Filter, sort and truncate the item stream in one node.",
+    "category": "transform",
+    "keywords": [
+      "list"
+    ],
+    "localizations": {
+      "en-US": {
+        "displayName": "List Operator",
+        "description": "Filter, sort and truncate the item stream in one node.",
+        "keywords": [
+          "list"
+        ],
+        "inputPortLabels": {
+          "main": "Input"
+        },
+        "outputPortLabels": {
+          "error": "Error",
+          "main": "Output"
+        },
+        "parameterLabels": {
+          "filter": "Filter",
+          "filter.conditions": "Conditions",
+          "filter.conditions[]": "Conditions",
+          "filter.conditions[].condition": "Condition",
+          "filter.conditions[].condition.left": "Left",
+          "filter.conditions[].condition.operator": "Operator",
+          "filter.conditions[].condition.right": "Right",
+          "filter.conditions[].label": "Label",
+          "filter.logicalOp": "Logical Op",
+          "input": "Input",
+          "input[]": "Input",
+          "sort": "Sort",
+          "sort[]": "Sort",
+          "sort[].direction": "Direction",
+          "sort[].nulls": "Nulls",
+          "sort[].selector": "Selector",
+          "takeN": "Take N"
+        },
+        "parameterEnumOptions": {
+          "filter.conditions[].condition.operator": {
+            "contains": "Contains",
+            "ends_with": "Ends with",
+            "eq": "Eq",
+            "gt": "Gt",
+            "gte": "Gte",
+            "in": "In",
+            "is_empty": "Is empty",
+            "is_not_empty": "Is not empty",
+            "lt": "Lt",
+            "lte": "Lte",
+            "matches": "Matches",
+            "ne": "Ne",
+            "not_contains": "Not contains",
+            "starts_with": "Starts with"
+          },
+          "filter.logicalOp": {
+            "and": "And",
+            "or": "Or"
+          },
+          "sort[].direction": {
+            "asc": "Asc",
+            "desc": "Desc"
+          },
+          "sort[].nulls": {
+            "first": "First",
+            "last": "Last"
+          }
+        }
+      },
+      "zh-CN": {
+        "displayName": "列表操作",
+        "description": "在单个节点内完成过滤、排序与截断。",
+        "keywords": [
+          "列表操作"
+        ],
+        "inputPortLabels": {
+          "main": "输入"
+        },
+        "outputPortLabels": {
+          "error": "错误",
+          "main": "输出"
+        },
+        "parameterLabels": {
+          "filter": "过滤条件",
+          "filter.conditions": "条件组",
+          "filter.conditions[]": "条件组",
+          "filter.conditions[].condition": "条件",
+          "filter.conditions[].condition.left": "Left",
+          "filter.conditions[].condition.operator": "Operator",
+          "filter.conditions[].condition.right": "Right",
+          "filter.conditions[].label": "显示名称",
+          "filter.logicalOp": "条件关系",
+          "input": "输入数据",
+          "input[]": "输入数据",
+          "sort": "排序规则",
+          "sort[]": "排序规则",
+          "sort[].direction": "排序方向",
+          "sort[].nulls": "空值位置",
+          "sort[].selector": "字段选择",
+          "takeN": "取前 N 项"
+        },
+        "parameterEnumOptions": {
+          "filter.conditions[].condition.operator": {
+            "contains": "Contains",
+            "ends_with": "Ends with",
+            "eq": "Eq",
+            "gt": "Gt",
+            "gte": "Gte",
+            "in": "In",
+            "is_empty": "Is empty",
+            "is_not_empty": "Is not empty",
+            "lt": "Lt",
+            "lte": "Lte",
+            "matches": "Matches",
+            "ne": "Ne",
+            "not_contains": "Not contains",
+            "starts_with": "Starts with"
+          },
+          "filter.logicalOp": {
+            "and": "且",
+            "or": "或"
+          },
+          "sort[].direction": {
+            "asc": "升序",
+            "desc": "降序"
+          },
+          "sort[].nulls": {
+            "first": "第一个",
+            "last": "最后一个"
+          }
+        }
+      }
+    },
+    "iconKey": "filter",
+    "executionStyle": "action",
+    "capability": "plugin_nodejs",
+    "readiness": "any",
+    "inputPorts": [
+      {
+        "name": "main",
+        "kind": "main",
+        "required": true,
+        "variadic": false
+      }
+    ],
+    "outputPorts": [
+      {
+        "name": "main",
+        "kind": "main",
+        "required": false,
+        "variadic": false
+      },
+      {
+        "name": "error",
+        "kind": "error",
+        "required": false,
+        "variadic": false
+      }
+    ],
+    "bindingSlots": [],
+    "parameterSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "filter": {
+          "additionalProperties": false,
+          "default": {
+            "conditions": [],
+            "logicalOp": "and"
+          },
+          "properties": {
+            "conditions": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "condition": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "left": {
+                        "x-agentx-binding": {
+                          "acceptedCardinality": [
+                            "single"
+                          ],
+                          "acceptedKinds": [
+                            "literal",
+                            "reference",
+                            "template",
+                            "array",
+                            "object"
+                          ],
+                          "allowedNamespaces": [
+                            "inputs",
+                            "outputs",
+                            "contexts",
+                            "execution",
+                            "item",
+                            "loop"
+                          ],
+                          "missingPolicies": [
+                            "error",
+                            "null",
+                            "omit"
+                          ],
+                          "recursive": false
+                        }
+                      },
+                      "operator": {
+                        "enum": [
+                          "eq",
+                          "ne",
+                          "gt",
+                          "gte",
+                          "lt",
+                          "lte",
+                          "in",
+                          "contains",
+                          "not_contains",
+                          "ends_with",
+                          "starts_with",
+                          "matches",
+                          "is_empty",
+                          "is_not_empty"
+                        ],
+                        "type": "string"
+                      },
+                      "right": {
+                        "x-agentx-binding": {
+                          "acceptedCardinality": [
+                            "single"
+                          ],
+                          "acceptedKinds": [
+                            "literal",
+                            "reference",
+                            "template",
+                            "array",
+                            "object"
+                          ],
+                          "allowedNamespaces": [
+                            "inputs",
+                            "outputs",
+                            "contexts",
+                            "execution",
+                            "item",
+                            "loop"
+                          ],
+                          "missingPolicies": [
+                            "error",
+                            "null",
+                            "omit"
+                          ],
+                          "recursive": false
+                        }
+                      }
+                    },
+                    "required": [
+                      "left",
+                      "operator"
+                    ],
+                    "type": "object"
+                  },
+                  "label": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "condition"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "logicalOp": {
+              "default": "and",
+              "enum": [
+                "and",
+                "or"
+              ],
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "input": {
+          "items": {},
+          "type": "array",
+          "x-agentx-binding": {
+            "acceptedCardinality": [
+              "single"
+            ],
+            "acceptedKinds": [
+              "literal",
+              "reference",
+              "template",
+              "array",
+              "object"
+            ],
+            "allowedNamespaces": [
+              "inputs",
+              "outputs",
+              "contexts",
+              "execution",
+              "item",
+              "loop"
+            ],
+            "missingPolicies": [
+              "error",
+              "null",
+              "omit"
+            ],
+            "recursive": false
+          }
+        },
+        "sort": {
+          "default": [],
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "direction": {
+                "default": "asc",
+                "enum": [
+                  "asc",
+                  "desc"
+                ],
+                "type": "string"
+              },
+              "nulls": {
+                "default": "last",
+                "enum": [
+                  "first",
+                  "last"
+                ],
+                "type": "string"
+              },
+              "selector": {
+                "x-agentx-binding": {
+                  "acceptedCardinality": [
+                    "single"
+                  ],
+                  "acceptedKinds": [
+                    "reference"
+                  ],
+                  "allowedNamespaces": [
+                    "inputs",
+                    "outputs",
+                    "contexts",
+                    "execution",
+                    "item",
+                    "loop"
+                  ],
+                  "missingPolicies": [
+                    "error",
+                    "null",
+                    "omit"
+                  ],
+                  "recursive": false
+                }
+              }
+            },
+            "required": [
+              "selector",
+              "direction",
+              "nulls"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "takeN": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "input"
+      ],
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "items": {
+          "items": {},
+          "type": "array"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "type": "object"
+    },
+    "outputPortSchemas": {
+      "error": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "details": {
+            "type": "object"
+          },
+          "message": {
+            "type": "string"
+          },
+          "nodeExecutionId": {
+            "type": "string"
+          },
+          "retryable": {
+            "type": "boolean"
+          },
+          "sourceNodeId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "retryable",
+          "details",
+          "sourceNodeId",
+          "nodeExecutionId"
+        ],
+        "type": "object"
+      }
+    },
+    "outputCardinality": {
+      "error": "zero_or_one",
+      "main": "exactly_one"
+    },
+    "selectorCapabilities": {
+      "namespaces": [
+        "inputs",
+        "outputs",
+        "contexts"
+      ],
+      "supportsCurrent": true,
+      "supportsFirstLast": true,
+      "supportsAll": true,
+      "supportsRunSelection": true
+    },
+    "contextReadCapability": true,
+    "contextWriteCapability": true,
+    "artifactOutputSchema": {
+      "items": {
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "uiSchema": {
+      "order": [
+        "input",
+        "filter",
+        "sort",
+        "takeN"
+      ],
+      "fields": {
+        "filter": {
+          "control": "condition_builder"
+        },
+        "input": {
+          "control": "value"
+        },
+        "sort": {
+          "control": "sort_builder"
+        },
+        "takeN": {
+          "control": "number"
+        }
+      },
+      "canvas": {
+        "role": "default"
+      }
+    },
+    "plugin": {
+      "packageId": "agentx/data",
+      "packageVersion": "1.0.0",
+      "bundleDigest": "sha256:3b480001bddb6a00f44860dc175e1b471a0e9ebca9e501c8dcf8611dd58f62b6",
+      "runtimeEntry": "dist/runtime.js",
+      "runtimeSource": "export const resolveDefinition = (configuration, upstreamContracts, context) => {\n    if (context.nodeType === 'set') {\n        const incoming = schemaObject(upstreamContracts.main)?.schema ?? {};\n        const contracts = { ...upstreamContracts, $currentItem: incoming };\n        const schema = configuration.keepOnlySet === true\n            ? { type: 'object', properties: {}, required: [], additionalProperties: false }\n            : cloneSchema(incoming);\n        const properties = schemaObject(schema.properties) ?? {};\n        const required = new Set(Array.isArray(schema.required) ? schema.required.filter((value) => typeof value === 'string') : []);\n        const values = bindingFields(configuration.values);\n        for (const [name, binding] of Object.entries(values)) {\n            properties[name] = bindingSchema(binding, contracts);\n            required.add(name);\n        }\n        schema.type = 'object';\n        schema.properties = properties;\n        schema.required = [...required];\n        return { status: 'complete', outputSchema: schema, outputPortSchemas: { main: schema } };\n    }\n    if (context.nodeType === 'list') {\n        const input = bindingSchema(configuration.input, upstreamContracts);\n        const item = schemaObject(input)?.items ?? {};\n        const issues = listConditionIssues(configuration, { ...upstreamContracts, $currentItem: item });\n        const schema = { type: 'object', properties: { items: { type: 'array', items: item } }, required: ['items'], additionalProperties: false };\n        return { status: issues.length ? 'invalid' : 'complete', outputSchema: schema, outputPortSchemas: { main: schema }, issues };\n    }\n    return { status: 'invalid', issues: [{ path: '', code: 'BUILTIN_NODE_UNSUPPORTED', message: `Unsupported data node ${context.nodeType}` }] };\n};\nexport const execute = (context) => {\n    if (context.execution.nodeType === 'set')\n        return executeSet(context.inputs, context.parameters, context.perItemParameters);\n    if (context.execution.nodeType === 'list')\n        return executeList(context.parameters, context.perItemParameters);\n    return { status: 'failed', code: 'BUILTIN_NODE_UNSUPPORTED', message: `Unsupported data node ${context.execution.nodeType}` };\n};\nfunction executeSet(inputs, common, perItem) {\n    const main = inputs.main ?? [];\n    const offset = Object.entries(inputs).filter(([name]) => name < 'main').reduce((total, [, items]) => total + items.length, 0);\n    const output = main.map((item, index) => {\n        const parameters = perItem[offset + index] ?? common;\n        const values = object(parameters.values);\n        const base = parameters.keepOnlySet === true ? {} : object(item.json);\n        return { ...item, json: { ...base, ...values } };\n    });\n    return { status: 'completed', outputs: { main: output } };\n}\nfunction executeList(common, perItem) {\n    if (!Array.isArray(common.input))\n        return { status: 'failed', code: 'LIST_INPUT_NOT_ARRAY', message: 'List input must resolve to an array' };\n    const kept = common.input.map((json, index) => ({ index, item: { json } })).filter(({ index }) => passes(perItem[index] ?? common));\n    const fields = Array.isArray(common.sort) ? common.sort : [];\n    if (fields.length)\n        kept.sort((left, right) => compareFields(perItem[left.index] ?? common, perItem[right.index] ?? common, fields));\n    const take = typeof common.takeN === 'number' && common.takeN >= 0 ? common.takeN : kept.length;\n    return { status: 'completed', outputs: { main: [{ json: { items: kept.slice(0, take).map(({ item }) => item.json) } }] } };\n}\nfunction passes(parameters) {\n    const filter = object(parameters.filter);\n    const conditions = Array.isArray(filter.conditions) ? filter.conditions.map((entry) => object(entry).condition === true) : [];\n    return filter.logicalOp === 'or' ? conditions.some(Boolean) : conditions.every(Boolean);\n}\nfunction compareFields(left, right, fields) {\n    const leftFields = Array.isArray(left.sort) ? left.sort : [];\n    const rightFields = Array.isArray(right.sort) ? right.sort : [];\n    for (let index = 0; index < fields.length; index += 1) {\n        const specification = object(fields[index]);\n        const ordering = compareJson(object(leftFields[index]).selector, object(rightFields[index]).selector, specification.nulls === 'first');\n        if (ordering !== 0)\n            return specification.direction === 'desc' ? -ordering : ordering;\n    }\n    return 0;\n}\nfunction compareJson(left, right, nullsFirst) {\n    const leftMissing = left === null || left === undefined;\n    const rightMissing = right === null || right === undefined;\n    if (leftMissing && rightMissing)\n        return 0;\n    if (leftMissing)\n        return nullsFirst ? -1 : 1;\n    if (rightMissing)\n        return nullsFirst ? 1 : -1;\n    if (typeof left === 'number' && typeof right === 'number')\n        return left === right ? 0 : left < right ? -1 : 1;\n    return canonical(left).localeCompare(canonical(right));\n}\nfunction canonical(value) {\n    if (Array.isArray(value))\n        return `[${value.map(canonical).join(',')}]`;\n    if (value && typeof value === 'object')\n        return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`).join(',')}}`;\n    return JSON.stringify(value);\n}\nfunction object(value) {\n    return value && typeof value === 'object' && !Array.isArray(value) ? value : {};\n}\nfunction schemaObject(value) {\n    return value && typeof value === 'object' && !Array.isArray(value) ? value : undefined;\n}\nfunction cloneSchema(value) {\n    const cloned = JSON.parse(JSON.stringify(value));\n    return schemaObject(cloned) ?? { type: 'object' };\n}\nfunction bindingFields(value) {\n    const binding = object(value);\n    return binding.kind === 'object' ? object(binding.fields) : {};\n}\nfunction bindingSchema(value, upstream) {\n    const binding = object(value);\n    switch (binding.kind) {\n        case 'literal': return literalSchema(binding.value);\n        case 'template': return { type: 'string' };\n        case 'array': {\n            const items = Array.isArray(binding.items) ? binding.items.map((item) => bindingSchema(item, upstream)) : [];\n            const first = items[0];\n            return { type: 'array', items: first && items.every((item) => JSON.stringify(item) === JSON.stringify(first)) ? first : {} };\n        }\n        case 'object': {\n            const fields = object(binding.fields);\n            return { type: 'object', properties: Object.fromEntries(Object.entries(fields).map(([name, child]) => [name, bindingSchema(child, upstream)])), required: Object.keys(fields) };\n        }\n        case 'reference': {\n            const selector = object(binding.selector);\n            const path = Array.isArray(selector.path) ? selector.path : [];\n            if (selector.namespace === 'inputs')\n                return schemaAt(upstream.$inputs, path);\n            if (selector.namespace === 'contexts' && typeof path[0] === 'string') {\n                const contexts = schemaObject(upstream.$contexts);\n                const context = schemaObject(contexts?.[path[0]]);\n                return schemaAt(context?.schema, path.slice(1));\n            }\n            if (selector.namespace === 'outputs' && typeof selector.sourceNodeId === 'string') {\n                const nodes = schemaObject(upstream.$nodes);\n                const node = schemaObject(nodes?.[selector.sourceNodeId]);\n                const ports = schemaObject(node?.ports);\n                const port = typeof selector.port === 'string' ? selector.port : 'main';\n                return schemaAt(ports?.[port], path);\n            }\n            if (selector.namespace === 'item') {\n                return schemaAt(upstream.$currentItem, path);\n            }\n            return {};\n        }\n        default: return {};\n    }\n}\nfunction listConditionIssues(configuration, upstream) {\n    const filter = object(configuration.filter);\n    const rows = Array.isArray(filter.conditions) ? filter.conditions : [];\n    return rows.flatMap((entry, index) => {\n        const condition = object(object(entry).condition);\n        const left = bindingSchema(condition.left, upstream);\n        const right = bindingSchema(condition.right, upstream);\n        const operator = typeof condition.operator === 'string' ? condition.operator : '';\n        if (schemasCompatible(left, right, operator))\n            return [];\n        return [{ path: `filter.conditions[${index}].condition.right`, code: 'CONDITION_OPERAND_TYPE_MISMATCH', message: 'Condition operands have incompatible schemas' }];\n    });\n}\nfunction schemasCompatible(left, right, operator) {\n    const leftTypes = schemaTypes(left);\n    const rightTypes = schemaTypes(right);\n    if (!leftTypes.length || !rightTypes.length)\n        return true;\n    if (['gt', 'gte', 'lt', 'lte'].includes(operator)) {\n        return (leftTypes.some((value) => value === 'number' || value === 'integer') && rightTypes.some((value) => value === 'number' || value === 'integer'))\n            || (leftTypes.includes('string') && rightTypes.includes('string'));\n    }\n    if (['contains', 'not_contains', 'starts_with', 'ends_with', 'matches'].includes(operator))\n        return leftTypes.includes('string') || leftTypes.includes('array');\n    return leftTypes.some((value) => rightTypes.includes(value) || (value === 'integer' && rightTypes.includes('number')) || (value === 'number' && rightTypes.includes('integer')));\n}\nfunction schemaTypes(value) {\n    const type = schemaObject(value)?.type;\n    return Array.isArray(type) ? type.filter((item) => typeof item === 'string') : typeof type === 'string' ? [type] : [];\n}\nfunction schemaAt(value, path) {\n    let current = value ?? {};\n    for (const segment of path) {\n        const schema = schemaObject(current);\n        if (!schema)\n            return {};\n        current = typeof segment === 'number'\n            ? schemaObject(schema.items) ?? {}\n            : schemaObject(schema.properties)?.[String(segment)] ?? {};\n    }\n    return current;\n}\nfunction literalSchema(value) {\n    if (value === null || value === undefined)\n        return { type: 'null' };\n    if (Array.isArray(value)) {\n        const items = value.map(literalSchema);\n        const first = items[0];\n        return { type: 'array', items: first && items.every((item) => JSON.stringify(item) === JSON.stringify(first)) ? first : {} };\n    }\n    if (typeof value === 'object')\n        return { type: 'object', properties: Object.fromEntries(Object.entries(value).map(([name, child]) => [name, literalSchema(child)])), required: Object.keys(value) };\n    return { type: typeof value === 'number' ? (Number.isInteger(value) ? 'integer' : 'number') : typeof value };\n}\n",
+      "runtimeArtifact": {
+        "objectId": "7e82e757-650a-5a63-aaa2-dd6b7717d87b",
+        "contentHash": "sha256:d22521a2f156d1bd48611da9aa99335666b969e55cf2e0c471c0c52b4100dbb5",
+        "sizeBytes": 10751,
+        "mediaType": "text/javascript"
+      }
+    },
+    "providers": [],
+    "credentials": [],
+    "defaultTimeoutMs": 30000,
+    "retryPolicy": {
+      "retryable": false,
+      "maxAttempts": 0,
+      "initialBackoffMs": 0,
+      "maxBackoffMs": 0
+    },
+    "sandboxRequired": false,
+    "supportsMock": true,
+    "sideEffectLevel": "none"
+  },
+  {
+    "protocolVersion": "3.0",
+    "nodeType": "loop_over_items",
+    "version": 1,
+    "displayName": "Loop Over Items",
+    "description": "Process items in controlled batches.",
+    "category": "logic",
+    "keywords": [
+      "loop",
+      "over",
+      "items"
+    ],
+    "localizations": {
+      "en-US": {
+        "displayName": "Loop Over Items",
+        "description": "Process items in controlled batches.",
+        "keywords": [
+          "loop",
+          "over",
+          "items"
+        ],
+        "inputPortLabels": {
+          "main": "Input"
+        },
+        "outputPortLabels": {
+          "error": "Error",
+          "main": "Output"
+        },
+        "parameterLabels": {
+          "errorMode": "Error Mode",
+          "input": "Input",
+          "input[]": "Input",
+          "outputSelector": "Output Selector",
+          "parallelism": "Parallelism"
+        },
+        "parameterEnumOptions": {
+          "errorMode": {
+            "continue": "Continue",
+            "remove": "Remove",
+            "terminate": "Terminate"
+          }
+        }
+      },
+      "zh-CN": {
+        "displayName": "循环处理",
+        "description": "按批次循环处理数据项。",
+        "keywords": [
+          "循环处理"
+        ],
+        "inputPortLabels": {
+          "main": "输入"
+        },
+        "outputPortLabels": {
+          "error": "错误",
+          "main": "输出"
+        },
+        "parameterLabels": {
+          "errorMode": "失败处理",
+          "input": "输入数据",
+          "input[]": "输入数据",
+          "outputSelector": "每轮输出",
+          "parallelism": "并发数"
+        },
+        "parameterEnumOptions": {
+          "errorMode": {
+            "continue": "保留失败位置",
+            "remove": "移除失败项",
+            "terminate": "终止"
+          }
+        }
+      }
+    },
+    "iconKey": "repeat-2",
+    "executionStyle": "action",
+    "capability": "builtin",
+    "readiness": "any",
+    "inputPorts": [
+      {
+        "name": "main",
+        "kind": "main",
+        "required": true,
+        "variadic": false
+      }
+    ],
+    "outputPorts": [
+      {
+        "name": "main",
+        "kind": "main",
+        "required": false,
+        "variadic": false
+      },
+      {
+        "name": "error",
+        "kind": "error",
+        "required": false,
+        "variadic": false
+      }
+    ],
+    "bindingSlots": [],
+    "parameterSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "errorMode": {
+          "default": "terminate",
+          "enum": [
+            "terminate",
+            "continue",
+            "remove"
+          ],
+          "type": "string"
+        },
+        "input": {
+          "items": {},
+          "type": "array",
+          "x-agentx-binding": {
+            "acceptedCardinality": [
+              "single"
+            ],
+            "acceptedKinds": [
+              "literal",
+              "reference",
+              "template",
+              "array",
+              "object"
+            ],
+            "allowedNamespaces": [
+              "inputs",
+              "outputs",
+              "contexts",
+              "execution",
+              "item",
+              "loop"
+            ],
+            "missingPolicies": [
+              "error",
+              "null",
+              "omit"
+            ],
+            "recursive": false
+          }
+        },
+        "outputSelector": {
+          "x-agentx-binding": {
+            "acceptedCardinality": [
+              "single"
+            ],
+            "acceptedKinds": [
+              "reference"
+            ],
+            "allowedNamespaces": [
+              "inputs",
+              "outputs",
+              "contexts",
+              "execution",
+              "item",
+              "loop"
+            ],
+            "missingPolicies": [
+              "error",
+              "null",
+              "omit"
+            ],
+            "recursive": false
+          }
+        },
+        "parallelism": {
+          "default": 1,
+          "maximum": 10,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "input",
+        "outputSelector"
+      ],
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "items": {
+          "items": {},
+          "type": "array"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "type": "object"
+    },
+    "outputPortSchemas": {
+      "error": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "details": {
+            "type": "object"
+          },
+          "message": {
+            "type": "string"
+          },
+          "nodeExecutionId": {
+            "type": "string"
+          },
+          "retryable": {
+            "type": "boolean"
+          },
+          "sourceNodeId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "retryable",
+          "details",
+          "sourceNodeId",
+          "nodeExecutionId"
+        ],
+        "type": "object"
+      }
+    },
+    "outputCardinality": {
+      "error": "zero_or_one",
+      "main": "exactly_one"
+    },
+    "selectorCapabilities": {
+      "namespaces": [
+        "inputs",
+        "outputs",
+        "contexts"
+      ],
+      "supportsCurrent": true,
+      "supportsFirstLast": true,
+      "supportsAll": true,
+      "supportsRunSelection": true
+    },
+    "contextReadCapability": true,
+    "contextWriteCapability": false,
+    "artifactOutputSchema": {
+      "items": {
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "uiSchema": {
+      "order": [
+        "input",
+        "outputSelector",
+        "errorMode",
+        "parallelism"
+      ],
+      "fields": {
+        "errorMode": {
+          "control": "select"
+        },
+        "input": {
+          "control": "value"
+        },
+        "outputSelector": {
+          "control": "reference"
+        },
+        "parallelism": {
+          "control": "number"
+        }
+      },
+      "canvas": {
+        "role": "loop"
+      }
+    },
+    "plugin": {
+      "packageId": "agentx/core",
+      "packageVersion": "1.0.0",
+      "bundleDigest": "sha256:10e69d4c3fbd9312c770a79711e20c02f032c0d9d6a3939fe8631edf85e20e16",
+      "runtimeEntry": "native",
+      "runtimeSource": ""
+    },
+    "providers": [],
+    "credentials": [],
+    "defaultTimeoutMs": 30000,
+    "retryPolicy": {
+      "retryable": false,
+      "maxAttempts": 0,
+      "initialBackoffMs": 0,
+      "maxBackoffMs": 0
+    },
+    "sandboxRequired": false,
+    "supportsMock": true,
+    "sideEffectLevel": "none"
+  },
+  {
+    "protocolVersion": "3.0",
+    "nodeType": "merge",
+    "version": 1,
+    "displayName": "Merge",
+    "description": "Combine multiple workflow branches.",
+    "category": "logic",
+    "keywords": [
+      "merge"
+    ],
+    "localizations": {
+      "en-US": {
+        "displayName": "Merge",
+        "description": "Combine multiple workflow branches.",
+        "keywords": [
+          "merge"
+        ],
+        "inputPortLabels": {
+          "left": "Port",
+          "main": "Input",
+          "right": "Port"
+        },
+        "outputPortLabels": {
+          "error": "Error",
+          "main": "Output"
+        },
+        "parameterLabels": {
+          "conflictStrategy": "Conflict Strategy",
+          "joinType": "Join Type",
+          "leftField": "Left Field",
+          "mode": "Mode",
+          "rightField": "Right Field"
+        },
+        "parameterEnumOptions": {
+          "conflictStrategy": {
+            "prefer_left": "Prefer left",
+            "prefer_right": "Prefer right",
+            "suffix": "Suffix"
+          },
+          "joinType": {
+            "full": "Full",
+            "inner": "Inner",
+            "left": "Left",
+            "right": "Right"
+          },
+          "mode": {
+            "append": "Append",
+            "combine_by_key": "Combine by key",
+            "combine_by_position": "Combine by position"
+          }
+        }
+      },
+      "zh-CN": {
+        "displayName": "合并",
+        "description": "合并多个工作流分支的数据。",
+        "keywords": [
+          "合并"
+        ],
+        "inputPortLabels": {
+          "left": "端口",
+          "main": "输入",
+          "right": "端口"
+        },
+        "outputPortLabels": {
+          "error": "错误",
+          "main": "输出"
+        },
+        "parameterLabels": {
+          "conflictStrategy": "冲突策略",
+          "joinType": "连接类型",
+          "leftField": "左侧键",
+          "mode": "模式",
+          "rightField": "右侧键"
+        },
+        "parameterEnumOptions": {
+          "conflictStrategy": {
+            "prefer_left": "优先左侧",
+            "prefer_right": "优先右侧",
+            "suffix": "添加后缀"
+          },
+          "joinType": {
+            "full": "全连接",
+            "inner": "内连接",
+            "left": "左连接",
+            "right": "右连接"
+          },
+          "mode": {
+            "append": "追加",
+            "combine_by_key": "按键合并",
+            "combine_by_position": "按位置合并"
+          }
+        }
+      }
+    },
+    "iconKey": "git-merge",
+    "executionStyle": "action",
+    "capability": "builtin",
+    "readiness": "required",
+    "inputPorts": [
+      {
+        "name": "main",
+        "kind": "main",
+        "required": false,
+        "variadic": true
+      },
+      {
+        "name": "left",
+        "kind": "main",
+        "required": false,
+        "variadic": false
+      },
+      {
+        "name": "right",
+        "kind": "main",
+        "required": false,
+        "variadic": false
+      }
+    ],
+    "outputPorts": [
+      {
+        "name": "main",
+        "kind": "main",
+        "required": false,
+        "variadic": false
+      },
+      {
+        "name": "error",
+        "kind": "error",
+        "required": false,
+        "variadic": false
+      }
+    ],
+    "bindingSlots": [],
+    "parameterSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "conflictStrategy": {
+          "default": "prefer_right",
+          "enum": [
+            "prefer_left",
+            "prefer_right",
+            "suffix"
+          ],
+          "type": "string"
+        },
+        "joinType": {
+          "default": "inner",
+          "enum": [
+            "inner",
+            "left",
+            "right",
+            "full"
+          ],
+          "type": "string"
+        },
+        "leftField": {
+          "default": "id",
+          "type": "string"
+        },
+        "mode": {
+          "default": "append",
+          "enum": [
+            "append",
+            "combine_by_position",
+            "combine_by_key"
+          ],
+          "type": "string"
+        },
+        "rightField": {
+          "default": "id",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "outputSchema": {
+      "type": "object"
+    },
+    "outputPortSchemas": {
+      "error": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "details": {
+            "type": "object"
+          },
+          "message": {
+            "type": "string"
+          },
+          "nodeExecutionId": {
+            "type": "string"
+          },
+          "retryable": {
+            "type": "boolean"
+          },
+          "sourceNodeId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "retryable",
+          "details",
+          "sourceNodeId",
+          "nodeExecutionId"
+        ],
+        "type": "object"
+      }
+    },
+    "outputCardinality": {
+      "error": "many",
+      "main": "many"
+    },
+    "selectorCapabilities": {
+      "namespaces": [
+        "inputs",
+        "outputs",
+        "contexts"
+      ],
+      "supportsCurrent": true,
+      "supportsFirstLast": true,
+      "supportsAll": true,
+      "supportsRunSelection": true
+    },
+    "contextReadCapability": true,
+    "contextWriteCapability": false,
+    "artifactOutputSchema": {
+      "items": {
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "uiSchema": {
+      "fields": {
+        "conflictStrategy": {
+          "control": "select"
+        },
+        "joinType": {
+          "control": "select"
+        },
+        "leftField": {
+          "control": "text"
+        },
+        "mode": {
+          "control": "select"
+        },
+        "rightField": {
+          "control": "text"
+        }
+      },
+      "canvas": {
+        "role": "merge"
+      }
+    },
+    "plugin": {
+      "packageId": "agentx/core",
+      "packageVersion": "1.0.0",
+      "bundleDigest": "sha256:10e69d4c3fbd9312c770a79711e20c02f032c0d9d6a3939fe8631edf85e20e16",
+      "runtimeEntry": "native",
+      "runtimeSource": ""
+    },
+    "providers": [],
+    "credentials": [],
+    "defaultTimeoutMs": 30000,
+    "retryPolicy": {
+      "retryable": false,
+      "maxAttempts": 0,
+      "initialBackoffMs": 0,
+      "maxBackoffMs": 0
+    },
+    "sandboxRequired": false,
+    "supportsMock": true,
+    "sideEffectLevel": "none"
+  },
+  {
+    "protocolVersion": "3.0",
+    "nodeType": "model",
+    "version": 1,
+    "displayName": "Model",
+    "description": "Invoke an authorized model resource.",
+    "category": "ai",
+    "keywords": [
+      "model"
+    ],
+    "localizations": {
+      "en-US": {
+        "displayName": "Model",
+        "description": "Invoke an authorized model resource.",
+        "keywords": [
+          "model"
+        ],
+        "inputPortLabels": {
+          "main": "Input"
+        },
+        "outputPortLabels": {
+          "error": "Error",
+          "main": "Output"
+        },
+        "parameterLabels": {
+          "prompt": "Prompt",
+          "responseMode": "Response Mode",
+          "structuredSchema": "Structured Schema",
+          "userQuestion": "User Question"
+        },
+        "parameterEnumOptions": {
+          "responseMode": {
+            "json_schema": "Json schema",
+            "text": "Text"
+          }
+        }
+      },
+      "zh-CN": {
+        "displayName": "模型",
+        "description": "调用已授权的模型资源。",
+        "keywords": [
+          "模型"
+        ],
+        "inputPortLabels": {
+          "main": "输入"
+        },
+        "outputPortLabels": {
+          "error": "错误",
+          "main": "输出"
+        },
+        "parameterLabels": {
+          "prompt": "提示词",
+          "responseMode": "响应模式",
+          "structuredSchema": "结构化输出结构",
+          "userQuestion": "用户问题"
+        },
+        "parameterEnumOptions": {
+          "responseMode": {
+            "json_schema": "JSON Schema",
+            "text": "文本"
+          }
+        }
+      }
+    },
+    "iconKey": "brain-circuit",
+    "executionStyle": "action",
+    "capability": "model",
+    "readiness": "any",
+    "inputPorts": [
+      {
+        "name": "main",
+        "kind": "main",
+        "required": true,
+        "variadic": false
+      }
+    ],
+    "outputPorts": [
+      {
+        "name": "main",
+        "kind": "main",
+        "required": false,
+        "variadic": false
+      },
+      {
+        "name": "error",
+        "kind": "error",
+        "required": false,
+        "variadic": false
+      }
+    ],
+    "bindingSlots": [],
+    "parameterSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "prompt": {
+          "type": "string",
+          "x-agentx-binding": {
+            "acceptedCardinality": [
+              "single"
+            ],
+            "acceptedKinds": [
+              "literal",
+              "reference",
+              "template"
+            ],
+            "allowedNamespaces": [
+              "inputs",
+              "outputs",
+              "contexts",
+              "execution",
+              "item",
+              "loop"
+            ],
+            "missingPolicies": [
+              "error",
+              "null",
+              "omit"
+            ],
+            "recursive": false
+          }
+        },
+        "responseMode": {
+          "default": "text",
+          "enum": [
+            "text",
+            "json_schema"
+          ],
+          "type": "string"
+        },
+        "structuredSchema": {
+          "type": "object"
+        },
+        "userQuestion": {
+          "type": "string",
+          "x-agentx-binding": {
+            "acceptedCardinality": [
+              "single"
+            ],
+            "acceptedKinds": [
+              "literal",
+              "reference",
+              "template"
+            ],
+            "allowedNamespaces": [
+              "inputs",
+              "outputs",
+              "contexts",
+              "execution",
+              "item",
+              "loop"
+            ],
+            "missingPolicies": [
+              "error",
+              "null",
+              "omit"
+            ],
+            "recursive": false
+          }
+        }
+      },
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "citations": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "metadata": {
+                "type": "object"
+              },
+              "recordId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "sourceId": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              },
+              "title": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "uri": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "sourceId",
+              "text",
+              "metadata"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "files": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "artifactId": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "contentType": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "fileName": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "sha256": {
+                "pattern": "^[0-9a-fA-F]{64}$",
+                "type": "string"
+              },
+              "sizeBytes": {
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "artifactId",
+              "fileName",
+              "contentType",
+              "sizeBytes",
+              "sha256"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "finishReason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "partial": {
+          "type": "boolean"
+        },
+        "reasoningContent": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "structuredOutput": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "text": {
+          "type": "string"
+        },
+        "usage": {
+          "additionalProperties": false,
+          "properties": {
+            "costMicros": {
+              "type": "integer"
+            },
+            "inputTokens": {
+              "type": "integer"
+            },
+            "outputTokens": {
+              "type": "integer"
+            },
+            "totalTokens": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "inputTokens",
+            "outputTokens",
+            "totalTokens",
+            "costMicros"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "text",
+        "reasoningContent",
+        "structuredOutput",
+        "files",
+        "citations",
+        "usage",
+        "finishReason",
+        "partial"
+      ],
+      "type": "object"
+    },
+    "outputPortSchemas": {
+      "error": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "details": {
+            "type": "object"
+          },
+          "message": {
+            "type": "string"
+          },
+          "nodeExecutionId": {
+            "type": "string"
+          },
+          "retryable": {
+            "type": "boolean"
+          },
+          "sourceNodeId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "retryable",
+          "details",
+          "sourceNodeId",
+          "nodeExecutionId"
+        ],
+        "type": "object"
+      }
+    },
+    "outputCardinality": {
+      "error": "many",
+      "main": "exactly_one"
+    },
+    "selectorCapabilities": {
+      "namespaces": [
+        "inputs",
+        "outputs",
+        "contexts"
+      ],
+      "supportsCurrent": true,
+      "supportsFirstLast": true,
+      "supportsAll": true,
+      "supportsRunSelection": true
+    },
+    "contextReadCapability": true,
+    "contextWriteCapability": true,
+    "artifactOutputSchema": {
+      "items": {
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "uiSchema": {
+      "fields": {
+        "prompt": {
+          "control": "prompt"
+        },
+        "responseMode": {
+          "control": "select"
+        },
+        "structuredSchema": {
+          "control": "schema_editor"
+        },
+        "userQuestion": {
+          "control": "template"
+        }
+      },
+      "resourceSelectors": [
+        {
+          "operation": "use",
+          "required": true,
+          "resourceType": "model"
+        }
+      ],
+      "canvas": {
+        "role": "default"
+      }
+    },
+    "plugin": {
+      "packageId": "agentx/core",
+      "packageVersion": "1.0.0",
+      "bundleDigest": "sha256:10e69d4c3fbd9312c770a79711e20c02f032c0d9d6a3939fe8631edf85e20e16",
+      "runtimeEntry": "native",
+      "runtimeSource": ""
+    },
+    "providers": [],
+    "credentials": [],
+    "defaultTimeoutMs": 300000,
+    "retryPolicy": {
+      "retryable": false,
+      "maxAttempts": 0,
+      "initialBackoffMs": 0,
+      "maxBackoffMs": 0
+    },
+    "sandboxRequired": false,
+    "supportsMock": false,
+    "sideEffectLevel": "none"
+  },
+  {
+    "protocolVersion": "3.0",
+    "nodeType": "set",
+    "version": 1,
+    "displayName": "Edit Fields",
+    "description": "Set or transform item fields.",
+    "category": "transform",
+    "keywords": [
+      "set"
+    ],
+    "localizations": {
+      "en-US": {
+        "displayName": "Edit Fields",
+        "description": "Set or transform item fields.",
+        "keywords": [
+          "set"
+        ],
+        "inputPortLabels": {
+          "main": "Input"
+        },
+        "outputPortLabels": {
+          "error": "Error",
+          "main": "Output"
+        },
+        "parameterLabels": {
+          "keepOnlySet": "Keep Only Set",
+          "values": "Values"
+        }
+      },
+      "zh-CN": {
+        "displayName": "编辑字段",
+        "description": "设置或转换数据字段。",
+        "keywords": [
+          "编辑字段"
+        ],
+        "inputPortLabels": {
+          "main": "输入"
+        },
+        "outputPortLabels": {
+          "error": "错误",
+          "main": "输出"
+        },
+        "parameterLabels": {
+          "keepOnlySet": "仅保留已设置字段",
+          "values": "字段值"
+        }
+      }
+    },
+    "iconKey": "box",
+    "executionStyle": "action",
+    "capability": "plugin_nodejs",
+    "readiness": "any",
+    "inputPorts": [
+      {
+        "name": "main",
+        "kind": "main",
+        "required": true,
+        "variadic": false
+      }
+    ],
+    "outputPorts": [
+      {
+        "name": "main",
+        "kind": "main",
+        "required": false,
+        "variadic": false
+      },
+      {
+        "name": "error",
+        "kind": "error",
+        "required": false,
+        "variadic": false
+      }
+    ],
+    "bindingSlots": [],
+    "parameterSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "keepOnlySet": {
+          "default": false,
+          "type": "boolean"
+        },
+        "values": {
+          "default": {
+            "fields": {},
+            "kind": "object"
+          },
+          "type": "object",
+          "x-agentx-binding": {
+            "acceptedCardinality": [
+              "single"
+            ],
+            "acceptedKinds": [
+              "literal",
+              "reference",
+              "template",
+              "array",
+              "object"
+            ],
+            "allowedNamespaces": [
+              "inputs",
+              "outputs",
+              "contexts",
+              "execution",
+              "item",
+              "loop"
+            ],
+            "missingPolicies": [
+              "error",
+              "null",
+              "omit"
+            ],
+            "recursive": true
+          }
+        }
+      },
+      "type": "object"
+    },
+    "outputSchema": {
+      "type": "object"
+    },
+    "outputPortSchemas": {
+      "error": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "details": {
+            "type": "object"
+          },
+          "message": {
+            "type": "string"
+          },
+          "nodeExecutionId": {
+            "type": "string"
+          },
+          "retryable": {
+            "type": "boolean"
+          },
+          "sourceNodeId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "retryable",
+          "details",
+          "sourceNodeId",
+          "nodeExecutionId"
+        ],
+        "type": "object"
+      }
+    },
+    "outputCardinality": {
+      "error": "many",
+      "main": "many"
+    },
+    "selectorCapabilities": {
+      "namespaces": [
+        "inputs",
+        "outputs",
+        "contexts"
+      ],
+      "supportsCurrent": true,
+      "supportsFirstLast": true,
+      "supportsAll": true,
+      "supportsRunSelection": true
+    },
+    "contextReadCapability": true,
+    "contextWriteCapability": true,
+    "artifactOutputSchema": {
+      "items": {
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "uiSchema": {
+      "order": [
+        "values",
+        "keepOnlySet"
+      ],
+      "fields": {
+        "keepOnlySet": {
+          "control": "boolean"
+        },
+        "values": {
+          "control": "structured"
+        }
+      },
+      "canvas": {
+        "role": "default"
+      }
+    },
+    "plugin": {
+      "packageId": "agentx/data",
+      "packageVersion": "1.0.0",
+      "bundleDigest": "sha256:3b480001bddb6a00f44860dc175e1b471a0e9ebca9e501c8dcf8611dd58f62b6",
+      "runtimeEntry": "dist/runtime.js",
+      "runtimeSource": "export const resolveDefinition = (configuration, upstreamContracts, context) => {\n    if (context.nodeType === 'set') {\n        const incoming = schemaObject(upstreamContracts.main)?.schema ?? {};\n        const contracts = { ...upstreamContracts, $currentItem: incoming };\n        const schema = configuration.keepOnlySet === true\n            ? { type: 'object', properties: {}, required: [], additionalProperties: false }\n            : cloneSchema(incoming);\n        const properties = schemaObject(schema.properties) ?? {};\n        const required = new Set(Array.isArray(schema.required) ? schema.required.filter((value) => typeof value === 'string') : []);\n        const values = bindingFields(configuration.values);\n        for (const [name, binding] of Object.entries(values)) {\n            properties[name] = bindingSchema(binding, contracts);\n            required.add(name);\n        }\n        schema.type = 'object';\n        schema.properties = properties;\n        schema.required = [...required];\n        return { status: 'complete', outputSchema: schema, outputPortSchemas: { main: schema } };\n    }\n    if (context.nodeType === 'list') {\n        const input = bindingSchema(configuration.input, upstreamContracts);\n        const item = schemaObject(input)?.items ?? {};\n        const issues = listConditionIssues(configuration, { ...upstreamContracts, $currentItem: item });\n        const schema = { type: 'object', properties: { items: { type: 'array', items: item } }, required: ['items'], additionalProperties: false };\n        return { status: issues.length ? 'invalid' : 'complete', outputSchema: schema, outputPortSchemas: { main: schema }, issues };\n    }\n    return { status: 'invalid', issues: [{ path: '', code: 'BUILTIN_NODE_UNSUPPORTED', message: `Unsupported data node ${context.nodeType}` }] };\n};\nexport const execute = (context) => {\n    if (context.execution.nodeType === 'set')\n        return executeSet(context.inputs, context.parameters, context.perItemParameters);\n    if (context.execution.nodeType === 'list')\n        return executeList(context.parameters, context.perItemParameters);\n    return { status: 'failed', code: 'BUILTIN_NODE_UNSUPPORTED', message: `Unsupported data node ${context.execution.nodeType}` };\n};\nfunction executeSet(inputs, common, perItem) {\n    const main = inputs.main ?? [];\n    const offset = Object.entries(inputs).filter(([name]) => name < 'main').reduce((total, [, items]) => total + items.length, 0);\n    const output = main.map((item, index) => {\n        const parameters = perItem[offset + index] ?? common;\n        const values = object(parameters.values);\n        const base = parameters.keepOnlySet === true ? {} : object(item.json);\n        return { ...item, json: { ...base, ...values } };\n    });\n    return { status: 'completed', outputs: { main: output } };\n}\nfunction executeList(common, perItem) {\n    if (!Array.isArray(common.input))\n        return { status: 'failed', code: 'LIST_INPUT_NOT_ARRAY', message: 'List input must resolve to an array' };\n    const kept = common.input.map((json, index) => ({ index, item: { json } })).filter(({ index }) => passes(perItem[index] ?? common));\n    const fields = Array.isArray(common.sort) ? common.sort : [];\n    if (fields.length)\n        kept.sort((left, right) => compareFields(perItem[left.index] ?? common, perItem[right.index] ?? common, fields));\n    const take = typeof common.takeN === 'number' && common.takeN >= 0 ? common.takeN : kept.length;\n    return { status: 'completed', outputs: { main: [{ json: { items: kept.slice(0, take).map(({ item }) => item.json) } }] } };\n}\nfunction passes(parameters) {\n    const filter = object(parameters.filter);\n    const conditions = Array.isArray(filter.conditions) ? filter.conditions.map((entry) => object(entry).condition === true) : [];\n    return filter.logicalOp === 'or' ? conditions.some(Boolean) : conditions.every(Boolean);\n}\nfunction compareFields(left, right, fields) {\n    const leftFields = Array.isArray(left.sort) ? left.sort : [];\n    const rightFields = Array.isArray(right.sort) ? right.sort : [];\n    for (let index = 0; index < fields.length; index += 1) {\n        const specification = object(fields[index]);\n        const ordering = compareJson(object(leftFields[index]).selector, object(rightFields[index]).selector, specification.nulls === 'first');\n        if (ordering !== 0)\n            return specification.direction === 'desc' ? -ordering : ordering;\n    }\n    return 0;\n}\nfunction compareJson(left, right, nullsFirst) {\n    const leftMissing = left === null || left === undefined;\n    const rightMissing = right === null || right === undefined;\n    if (leftMissing && rightMissing)\n        return 0;\n    if (leftMissing)\n        return nullsFirst ? -1 : 1;\n    if (rightMissing)\n        return nullsFirst ? 1 : -1;\n    if (typeof left === 'number' && typeof right === 'number')\n        return left === right ? 0 : left < right ? -1 : 1;\n    return canonical(left).localeCompare(canonical(right));\n}\nfunction canonical(value) {\n    if (Array.isArray(value))\n        return `[${value.map(canonical).join(',')}]`;\n    if (value && typeof value === 'object')\n        return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`).join(',')}}`;\n    return JSON.stringify(value);\n}\nfunction object(value) {\n    return value && typeof value === 'object' && !Array.isArray(value) ? value : {};\n}\nfunction schemaObject(value) {\n    return value && typeof value === 'object' && !Array.isArray(value) ? value : undefined;\n}\nfunction cloneSchema(value) {\n    const cloned = JSON.parse(JSON.stringify(value));\n    return schemaObject(cloned) ?? { type: 'object' };\n}\nfunction bindingFields(value) {\n    const binding = object(value);\n    return binding.kind === 'object' ? object(binding.fields) : {};\n}\nfunction bindingSchema(value, upstream) {\n    const binding = object(value);\n    switch (binding.kind) {\n        case 'literal': return literalSchema(binding.value);\n        case 'template': return { type: 'string' };\n        case 'array': {\n            const items = Array.isArray(binding.items) ? binding.items.map((item) => bindingSchema(item, upstream)) : [];\n            const first = items[0];\n            return { type: 'array', items: first && items.every((item) => JSON.stringify(item) === JSON.stringify(first)) ? first : {} };\n        }\n        case 'object': {\n            const fields = object(binding.fields);\n            return { type: 'object', properties: Object.fromEntries(Object.entries(fields).map(([name, child]) => [name, bindingSchema(child, upstream)])), required: Object.keys(fields) };\n        }\n        case 'reference': {\n            const selector = object(binding.selector);\n            const path = Array.isArray(selector.path) ? selector.path : [];\n            if (selector.namespace === 'inputs')\n                return schemaAt(upstream.$inputs, path);\n            if (selector.namespace === 'contexts' && typeof path[0] === 'string') {\n                const contexts = schemaObject(upstream.$contexts);\n                const context = schemaObject(contexts?.[path[0]]);\n                return schemaAt(context?.schema, path.slice(1));\n            }\n            if (selector.namespace === 'outputs' && typeof selector.sourceNodeId === 'string') {\n                const nodes = schemaObject(upstream.$nodes);\n                const node = schemaObject(nodes?.[selector.sourceNodeId]);\n                const ports = schemaObject(node?.ports);\n                const port = typeof selector.port === 'string' ? selector.port : 'main';\n                return schemaAt(ports?.[port], path);\n            }\n            if (selector.namespace === 'item') {\n                return schemaAt(upstream.$currentItem, path);\n            }\n            return {};\n        }\n        default: return {};\n    }\n}\nfunction listConditionIssues(configuration, upstream) {\n    const filter = object(configuration.filter);\n    const rows = Array.isArray(filter.conditions) ? filter.conditions : [];\n    return rows.flatMap((entry, index) => {\n        const condition = object(object(entry).condition);\n        const left = bindingSchema(condition.left, upstream);\n        const right = bindingSchema(condition.right, upstream);\n        const operator = typeof condition.operator === 'string' ? condition.operator : '';\n        if (schemasCompatible(left, right, operator))\n            return [];\n        return [{ path: `filter.conditions[${index}].condition.right`, code: 'CONDITION_OPERAND_TYPE_MISMATCH', message: 'Condition operands have incompatible schemas' }];\n    });\n}\nfunction schemasCompatible(left, right, operator) {\n    const leftTypes = schemaTypes(left);\n    const rightTypes = schemaTypes(right);\n    if (!leftTypes.length || !rightTypes.length)\n        return true;\n    if (['gt', 'gte', 'lt', 'lte'].includes(operator)) {\n        return (leftTypes.some((value) => value === 'number' || value === 'integer') && rightTypes.some((value) => value === 'number' || value === 'integer'))\n            || (leftTypes.includes('string') && rightTypes.includes('string'));\n    }\n    if (['contains', 'not_contains', 'starts_with', 'ends_with', 'matches'].includes(operator))\n        return leftTypes.includes('string') || leftTypes.includes('array');\n    return leftTypes.some((value) => rightTypes.includes(value) || (value === 'integer' && rightTypes.includes('number')) || (value === 'number' && rightTypes.includes('integer')));\n}\nfunction schemaTypes(value) {\n    const type = schemaObject(value)?.type;\n    return Array.isArray(type) ? type.filter((item) => typeof item === 'string') : typeof type === 'string' ? [type] : [];\n}\nfunction schemaAt(value, path) {\n    let current = value ?? {};\n    for (const segment of path) {\n        const schema = schemaObject(current);\n        if (!schema)\n            return {};\n        current = typeof segment === 'number'\n            ? schemaObject(schema.items) ?? {}\n            : schemaObject(schema.properties)?.[String(segment)] ?? {};\n    }\n    return current;\n}\nfunction literalSchema(value) {\n    if (value === null || value === undefined)\n        return { type: 'null' };\n    if (Array.isArray(value)) {\n        const items = value.map(literalSchema);\n        const first = items[0];\n        return { type: 'array', items: first && items.every((item) => JSON.stringify(item) === JSON.stringify(first)) ? first : {} };\n    }\n    if (typeof value === 'object')\n        return { type: 'object', properties: Object.fromEntries(Object.entries(value).map(([name, child]) => [name, literalSchema(child)])), required: Object.keys(value) };\n    return { type: typeof value === 'number' ? (Number.isInteger(value) ? 'integer' : 'number') : typeof value };\n}\n",
+      "runtimeArtifact": {
+        "objectId": "7e82e757-650a-5a63-aaa2-dd6b7717d87b",
+        "contentHash": "sha256:d22521a2f156d1bd48611da9aa99335666b969e55cf2e0c471c0c52b4100dbb5",
+        "sizeBytes": 10751,
+        "mediaType": "text/javascript"
+      }
+    },
+    "providers": [],
+    "credentials": [],
+    "defaultTimeoutMs": 30000,
+    "retryPolicy": {
+      "retryable": false,
+      "maxAttempts": 0,
+      "initialBackoffMs": 0,
+      "maxBackoffMs": 0
+    },
+    "sandboxRequired": false,
+    "supportsMock": true,
+    "sideEffectLevel": "none"
+  },
+  {
+    "protocolVersion": "3.0",
+    "nodeType": "sub_workflow",
+    "version": 1,
+    "displayName": "Sub-workflow",
+    "description": "Run an immutable workflow version.",
+    "category": "integration",
+    "keywords": [
+      "sub",
+      "workflow"
+    ],
+    "localizations": {
+      "en-US": {
+        "displayName": "Sub-workflow",
+        "description": "Run an immutable workflow version.",
+        "keywords": [
+          "sub",
+          "workflow"
+        ],
+        "inputPortLabels": {
+          "main": "Input"
+        },
+        "outputPortLabels": {
+          "error": "Error",
+          "main": "Output"
+        },
+        "parameterLabels": {
+          "inputs": "Inputs",
+          "workflowVersionId": "Workflow Version Id"
+        }
+      },
+      "zh-CN": {
+        "displayName": "子流程",
+        "description": "执行一个不可变的工作流版本。",
+        "keywords": [
+          "子流程"
+        ],
+        "inputPortLabels": {
+          "main": "输入"
+        },
+        "outputPortLabels": {
+          "error": "错误",
+          "main": "输出"
+        },
+        "parameterLabels": {
+          "inputs": "命名输入",
+          "workflowVersionId": "工作流版本"
+        }
+      }
+    },
+    "iconKey": "box",
+    "executionStyle": "sub_workflow",
+    "capability": "builtin",
+    "readiness": "any",
+    "inputPorts": [
+      {
+        "name": "main",
+        "kind": "main",
+        "required": true,
+        "variadic": false
+      }
+    ],
+    "outputPorts": [
+      {
+        "name": "main",
+        "kind": "main",
+        "required": false,
+        "variadic": false
+      },
+      {
+        "name": "error",
+        "kind": "error",
+        "required": false,
+        "variadic": false
+      }
+    ],
+    "bindingSlots": [],
+    "parameterSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "inputs": {
+          "additionalProperties": {},
+          "default": {
+            "fields": {},
+            "kind": "object"
+          },
+          "type": "object",
+          "x-agentx-binding": {
+            "acceptedCardinality": [
+              "single"
+            ],
+            "acceptedKinds": [
+              "literal",
+              "reference",
+              "template",
+              "array",
+              "object"
+            ],
+            "allowedNamespaces": [
+              "inputs",
+              "outputs",
+              "contexts",
+              "execution",
+              "item",
+              "loop"
+            ],
+            "missingPolicies": [
+              "error",
+              "null",
+              "omit"
+            ],
+            "recursive": true
+          }
+        },
+        "workflowVersionId": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "workflowVersionId",
+        "inputs"
+      ],
+      "type": "object"
+    },
+    "outputSchema": {
+      "type": "object"
+    },
+    "outputPortSchemas": {
+      "error": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "details": {
+            "type": "object"
+          },
+          "message": {
+            "type": "string"
+          },
+          "nodeExecutionId": {
+            "type": "string"
+          },
+          "retryable": {
+            "type": "boolean"
+          },
+          "sourceNodeId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "retryable",
+          "details",
+          "sourceNodeId",
+          "nodeExecutionId"
+        ],
+        "type": "object"
+      }
+    },
+    "outputCardinality": {
+      "error": "many",
+      "main": "many"
+    },
+    "selectorCapabilities": {
+      "namespaces": [
+        "inputs",
+        "outputs",
+        "contexts"
+      ],
+      "supportsCurrent": true,
+      "supportsFirstLast": true,
+      "supportsAll": true,
+      "supportsRunSelection": true
+    },
+    "contextReadCapability": true,
+    "contextWriteCapability": true,
+    "artifactOutputSchema": {
+      "items": {
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "uiSchema": {
+      "order": [
+        "workflowVersionId",
+        "inputs"
+      ],
+      "fields": {
+        "inputs": {
+          "control": "mapper"
+        },
+        "workflowVersionId": {
+          "control": "provider_options",
+          "provider": "workflow_versions"
+        }
+      },
+      "canvas": {
+        "role": "sub_workflow"
+      }
+    },
+    "plugin": {
+      "packageId": "agentx/core",
+      "packageVersion": "1.0.0",
+      "bundleDigest": "sha256:10e69d4c3fbd9312c770a79711e20c02f032c0d9d6a3939fe8631edf85e20e16",
+      "runtimeEntry": "native",
+      "runtimeSource": ""
+    },
+    "providers": [
+      "workflow_versions"
+    ],
+    "credentials": [],
+    "defaultTimeoutMs": 300000,
+    "retryPolicy": {
+      "retryable": false,
+      "maxAttempts": 0,
+      "initialBackoffMs": 0,
+      "maxBackoffMs": 0
+    },
+    "sandboxRequired": false,
+    "supportsMock": true,
+    "sideEffectLevel": "none"
+  }
+]

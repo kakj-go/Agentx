@@ -1,29 +1,29 @@
 [workspace]
 members = [
-  "crates/agentx-agent-core",
-  "crates/agentx-key-material",
-  "crates/agentxctl",
-  "crates/agentx-api-types",
-  "crates/agentx-application",
-  "crates/agentx-boundary-check",
-  "crates/agentx-bundle-builder",
-  "crates/agentx-control-infrastructure",
-  "crates/agentx-domain",
-  "crates/agentx-mysql-lease",
-  "crates/agentx-node-protocol",
-  "crates/agentx-runtime",
-  "crates/agentx-runtime-contracts",
-  "crates/agentx-runtime-infrastructure",
-  "crates/agentx-v2-ops",
-  "crates/agentx-service-kit",
-  "services/platform-control",
-  "services/agentx-v2-runtime",
-  "services/agentx-egress-gateway",
-  "services/observability",
-  "services/echo-mcp",
-  "services/echo-node",
+  "src/crates/agentx-agent-core",
+  "src/crates/agentx-key-material",
+  "tools/agentxctl",
+  "src/crates/agentx-api-types",
+  "src/crates/agentx-application",
+  "tools/agentx-boundary-check",
+  "src/crates/agentx-bundle-builder",
+  "src/crates/agentx-control-infrastructure",
+  "src/crates/agentx-domain",
+  "src/crates/agentx-mysql-lease",
+  "src/crates/agentx-node-protocol",
+  "src/crates/agentx-runtime",
+  "src/crates/agentx-runtime-contracts",
+  "src/crates/agentx-runtime-infrastructure",
+  "src/crates/agentx-v2-ops",
+  "src/crates/agentx-service-kit",
+  "src/services/platform-control",
+  "src/services/agentx-v2-runtime",
+  "src/services/agentx-egress-gateway",
+  "src/services/observability",
+  "tests/fixtures/echo-mcp",
+  "tests/fixtures/echo-node",
   "tests/fixtures/backup-adapter",
-  "xtask",
+  "tools/xtask",
 ]
 resolver = "3"
 
@@ -87,7 +87,7 @@ quick-xml = "0.37"
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "mysql", "uuid", "time", "json", "rust_decimal", "migrate", "macros"] }
 thiserror = "2.0"
 time = { version = "0.3", features = ["serde", "formatting", "parsing", "macros"] }
-tokio = { version = "1.0", features = ["macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+tokio = { version = "1.0", features = ["io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
 tokio-tungstenite = { version = "0.27", default-features = false, features = ["connect", "handshake", "rustls-tls-webpki-roots"] }
 webpki-roots = "0.26"
 futures-util = "0.3"
@@ -108,17 +108,17 @@ url = "2.5"
 zeroize = "1.8"
 zip = { version = "2.4", default-features = false, features = ["deflate"] }
 
-agentx-api-types = { path = "crates/agentx-api-types" }
-agentx-agent-core = { path = "crates/agentx-agent-core" }
-agentx-key-material = { path = "crates/agentx-key-material" }
-agentx-bundle-builder = { path = "crates/agentx-bundle-builder" }
-agentx-application = { path = "crates/agentx-application" }
-agentx-control-infrastructure = { path = "crates/agentx-control-infrastructure" }
-agentx-domain = { path = "crates/agentx-domain" }
-agentx-mysql-lease = { path = "crates/agentx-mysql-lease" }
-agentx-node-protocol = { path = "crates/agentx-node-protocol" }
-agentx-runtime = { path = "crates/agentx-runtime" }
-agentx-runtime-contracts = { path = "crates/agentx-runtime-contracts" }
-agentx-runtime-infrastructure = { path = "crates/agentx-runtime-infrastructure" }
-agentx-v2-ops = { path = "crates/agentx-v2-ops" }
-agentx-service-kit = { path = "crates/agentx-service-kit" }
+agentx-api-types = { path = "src/crates/agentx-api-types" }
+agentx-agent-core = { path = "src/crates/agentx-agent-core" }
+agentx-key-material = { path = "src/crates/agentx-key-material" }
+agentx-bundle-builder = { path = "src/crates/agentx-bundle-builder" }
+agentx-application = { path = "src/crates/agentx-application" }
+agentx-control-infrastructure = { path = "src/crates/agentx-control-infrastructure" }
+agentx-domain = { path = "src/crates/agentx-domain" }
+agentx-mysql-lease = { path = "src/crates/agentx-mysql-lease" }
+agentx-node-protocol = { path = "src/crates/agentx-node-protocol" }
+agentx-runtime = { path = "src/crates/agentx-runtime" }
+agentx-runtime-contracts = { path = "src/crates/agentx-runtime-contracts" }
+agentx-runtime-infrastructure = { path = "src/crates/agentx-runtime-infrastructure" }
+agentx-v2-ops = { path = "src/crates/agentx-v2-ops" }
+agentx-service-kit = { path = "src/crates/agentx-service-kit" }

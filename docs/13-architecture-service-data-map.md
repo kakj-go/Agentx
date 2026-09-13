@@ -41,9 +41,12 @@ platform-control publisher/api/projector
   ──短期 RS256 Service/Delegation JWT──> Runtime Internal API
 platform-control api
   ──短期 Delegation JWT──> Observability Internal API
+platform-control api
+  ──runtime.plugins.design Service JWT──> runtime-gateway ──Node Runner──> resolveDefinition/Provider
 
 runtime-gateway ──Runtime Command──> workflow-runtime
 workflow-runtime ──Capability Task──> workflow-worker / sandbox-manager
+workflow-worker ──冻结PluginNodeBinding──> Node.js 24 Runner ──host RPC──> Rust Egress/Model/Vault/Artifact
 workflow-runtime trace-relay ──Redis Stream──> observability ──> ClickHouse
 
 runtime-gateway / workflow-runtime / workflow-worker
@@ -57,9 +60,9 @@ Runtime 不主动调用 Control。Runtime 当前状态只来自 Runtime MySQL；
 
 | 数据域 | Migration 目录 | 当前 `CREATE TABLE` 数 | 权威内容 |
 |---|---|---:|---|
-| Control MySQL | `migrations/control` | 107 | IAM、Workflow 草稿/版本/Deployment、资源元数据/授权、Application 管理、治理投影和 Control Outbox |
-| Runtime MySQL | `migrations/runtime` | 99 | Route、Session/Message/Invocation、Execution/Snapshot/Attempt、Wait/Approval、Checkpoint/Fork、Runtime Call、Quota、Retention、Event/Trace Outbox |
-| ClickHouse | `migrations/observability` | 4 | Trace 明细、去重冲突和 Consumer Health；不是 Runtime 当前状态权威 |
+| Control MySQL | `deploy/migrations/control` | 112 | IAM、Workflow 草稿/版本/Deployment、画布插件包/导入/版本/对象清理队列、资源元数据/授权、Application 管理、治理投影和 Control Outbox |
+| Runtime MySQL | `deploy/migrations/runtime` | 108 | Route、Session/Message/Invocation、Execution/Snapshot/Attempt、Wait/Approval、Checkpoint/Fork、Runtime Call、Quota、Retention、Event/Trace Outbox |
+| ClickHouse | `deploy/migrations/observability` | 4 | Trace 明细、去重冲突和 Consumer Health；不是 Runtime 当前状态权威 |
 | Runtime Redis | 无业务 Migration | 不适用 | Capability/Trace Stream、Consumer Group、SSE 唤醒和快速配额；可从 MySQL 权威事实重建 |
 | 三域 OSS | 独立 Bucket/Prefix/IAM | 不适用 | Control 源对象、Runtime Bundle/Artifact/Checkpoint、Observability 内容分别隔离 |
 
@@ -67,11 +70,12 @@ Runtime 不主动调用 Control。Runtime 当前状态只来自 Runtime MySQL；
 
 ## 4. 契约与所有权
 
-- `platform-control` 唯一实现 `/api/v1` 并生成 `openapi/platform-api.json`。
-- V2 `runtime-gateway` 唯一实现 `/gateway/v1` 并生成 `openapi/trigger-gateway.json`。
-- Runtime Internal API 与 Observability Internal API 分别由 `openapi/runtime-internal-v1.json` 和 `openapi/observability-internal-v1.json` 冻结，不经公网 Ingress。
+- `platform-control` 唯一实现 `/api/v1` 并生成 `contracts/openapi/platform-api.json`。
+- V2 `runtime-gateway` 唯一实现 `/gateway/v1` 并生成 `contracts/openapi/trigger-gateway.json`。
+- Runtime Internal API 与 Observability Internal API 分别由 `contracts/openapi/runtime-internal-v1.json` 和 `contracts/openapi/observability-internal-v1.json` 冻结，不经公网 Ingress。
 - `agentx-runtime-contracts` 是跨面 Bundle、Work Package、Command/Event、Query、Worker Protocol 和 JWT DTO 的唯一共享入口。
 - Workflow Definition当前只接受8.0。Rust Registry拥有Studio内置节点Catalog；Start/Exit由设计器边界组件创建，MCP/Skill/RAG/Memory只作为Agent资源能力。数据库Manifest必须与Registry来源、版本及hash一致，子流程Manifest只从固定Workflow Version派生。
+- Node Manifest当前只接受3.0；画布插件包/SDK/Runner RPC均为1。Control拥有插件包、版本、引用、导入与审计，Runtime只接收IR中的冻结源码和摘要。Set/List/HTTP使用内置TypeScript包，其他核心控制流和Agent/Code语义继续原生执行。
 - Application渠道修改只推进Control的runtime config revision；Runtime仅在下一版Application Deployment激活其冻结trigger清单。不存在绕过Deployment的即时trigger同步入口，回滚会一并恢复该版本的渠道快照。
 - Execution 查询由 Runtime Query Authority 按完整过滤条件创建 Cursor 快照；Control BFF 只计算不扩张的授权范围、转发查询并批量补充 Control 当前名称，禁止页后本地过滤或逐行名称查询。
 - `agentx-control-infrastructure` 与 `agentx-runtime-infrastructure` 分别拥有所属存储 Adapter；服务不能共享 Repository 绕过 Internal API。

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "root": "apps/web/src",
+  "root": "src/web/src",
   "algorithm": "sha256-normalized-lf-path-content-v1",
   "fileCount": 249,
   "sha256": "566c3e4202f124fd6da563a74e445f1c3f4f23d76f465cc8821d7ed78b4c20ca"

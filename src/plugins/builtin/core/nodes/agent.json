@@ -1,0 +1,617 @@
+{
+  "protocolVersion": "3.0",
+  "nodeType": "agent",
+  "version": 2,
+  "displayName": "Agent",
+  "description": "Reason with models, tools, memory, knowledge, and skills.",
+  "category": "ai",
+  "keywords": [
+    "agent"
+  ],
+  "localizations": {
+    "en-US": {
+      "displayName": "Agent",
+      "description": "Reason with models, tools, memory, knowledge, and skills.",
+      "keywords": [
+        "agent"
+      ],
+      "inputPortLabels": {
+        "main": "Input"
+      },
+      "outputPortLabels": {
+        "error": "Error",
+        "main": "Output"
+      },
+      "bindingSlotLabels": {
+        "knowledge": "Knowledge",
+        "long_term_memory": "Long-term Memory",
+        "mcp_tools": "MCP Tools",
+        "model": "Model",
+        "skills": "Skills",
+        "workspace_sandbox": "Workspace Sandbox"
+      },
+      "parameterLabels": {
+        "limitAction": "Limit Action",
+        "maxCost": "Max Cost",
+        "maxDurationSeconds": "Max Duration Seconds",
+        "maxIterations": "Max Iterations",
+        "maxModelCalls": "Max Model Calls",
+        "maxOutputTokens": "Max Output Tokens",
+        "maxToolCalls": "Max Tool Calls",
+        "maxTotalTokens": "Max Total Tokens",
+        "sessionPolicy": "Session Policy",
+        "sessionPolicy.mode": "Mode",
+        "sessionPolicy.retentionPolicyId": "Retention Policy Id",
+        "systemPrompt": "System Prompt",
+        "userQuestion": "User Question"
+      },
+      "parameterEnumOptions": {
+        "limitAction": {
+          "error_output": "Error output",
+          "fail": "Fail",
+          "partial": "Partial"
+        },
+        "sessionPolicy.mode": {
+          "application_session": "Application session",
+          "invocation": "Invocation"
+        }
+      }
+    },
+    "zh-CN": {
+      "displayName": "智能体",
+      "description": "使用模型、工具、记忆、知识和技能完成推理。",
+      "keywords": [
+        "智能体"
+      ],
+      "inputPortLabels": {
+        "main": "输入"
+      },
+      "outputPortLabels": {
+        "error": "错误",
+        "main": "输出"
+      },
+      "bindingSlotLabels": {
+        "knowledge": "知识库",
+        "long_term_memory": "长期记忆",
+        "mcp_tools": "MCP 工具",
+        "model": "模型",
+        "skills": "技能",
+        "workspace_sandbox": "工作区沙箱"
+      },
+      "parameterLabels": {
+        "limitAction": "超限动作",
+        "maxCost": "最大成本",
+        "maxDurationSeconds": "最大时长（秒）",
+        "maxIterations": "最大迭代次数",
+        "maxModelCalls": "最大模型调用数",
+        "maxOutputTokens": "最大输出 Token",
+        "maxToolCalls": "最大工具调用数",
+        "maxTotalTokens": "最大 Token 数",
+        "sessionPolicy": "会话策略",
+        "sessionPolicy.mode": "模式",
+        "sessionPolicy.retentionPolicyId": "保留策略",
+        "systemPrompt": "系统提示词",
+        "userQuestion": "用户问题"
+      },
+      "parameterEnumOptions": {
+        "limitAction": {
+          "error_output": "输出错误",
+          "fail": "失败并停止",
+          "partial": "部分结果"
+        },
+        "sessionPolicy.mode": {
+          "application_session": "应用会话",
+          "invocation": "本次调用"
+        }
+      }
+    }
+  },
+  "iconKey": "bot",
+  "executionStyle": "action",
+  "capability": "agent",
+  "readiness": "any",
+  "inputPorts": [
+    {
+      "name": "main",
+      "kind": "main",
+      "required": true,
+      "variadic": false
+    }
+  ],
+  "outputPorts": [
+    {
+      "name": "main",
+      "kind": "main",
+      "required": false,
+      "variadic": false
+    },
+    {
+      "name": "error",
+      "kind": "error",
+      "required": false,
+      "variadic": false
+    }
+  ],
+  "bindingSlots": [
+    {
+      "name": "model",
+      "resourceType": "model",
+      "placement": "inspector",
+      "required": true,
+      "multiple": false
+    },
+    {
+      "name": "workspace_sandbox",
+      "resourceType": "sandbox_profile",
+      "placement": "inspector",
+      "required": false,
+      "multiple": false
+    },
+    {
+      "name": "mcp_tools",
+      "resourceType": "mcp_tool",
+      "placement": "inspector",
+      "required": false,
+      "multiple": true
+    },
+    {
+      "name": "skills",
+      "resourceType": "skill",
+      "placement": "inspector",
+      "required": false,
+      "multiple": true
+    },
+    {
+      "name": "knowledge",
+      "resourceType": "rag",
+      "placement": "inspector",
+      "required": false,
+      "multiple": true
+    },
+    {
+      "name": "long_term_memory",
+      "resourceType": "memory",
+      "placement": "inspector",
+      "required": false,
+      "multiple": false
+    }
+  ],
+  "parameterSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "limitAction": {
+        "default": "error_output",
+        "enum": [
+          "fail",
+          "error_output",
+          "partial"
+        ]
+      },
+      "maxCost": {
+        "default": 1,
+        "maximum": 1000,
+        "minimum": 0,
+        "type": "number"
+      },
+      "maxDurationSeconds": {
+        "default": 300,
+        "maximum": 3600,
+        "minimum": 1,
+        "type": "integer"
+      },
+      "maxIterations": {
+        "default": 12,
+        "maximum": 12,
+        "minimum": 1,
+        "type": "integer"
+      },
+      "maxModelCalls": {
+        "default": 12,
+        "maximum": 12,
+        "minimum": 1,
+        "type": "integer"
+      },
+      "maxOutputTokens": {
+        "default": 4096,
+        "maximum": 2000000,
+        "minimum": 1,
+        "type": "integer"
+      },
+      "maxToolCalls": {
+        "default": 32,
+        "maximum": 32,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "maxTotalTokens": {
+        "default": 64000,
+        "maximum": 2000000,
+        "minimum": 1,
+        "type": "integer"
+      },
+      "sessionPolicy": {
+        "additionalProperties": false,
+        "properties": {
+          "mode": {
+            "enum": [
+              "application_session",
+              "invocation"
+            ]
+          },
+          "retentionPolicyId": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "mode"
+        ],
+        "type": "object"
+      },
+      "systemPrompt": {
+        "type": "string",
+        "x-agentx-binding": {
+          "acceptedCardinality": [
+            "single"
+          ],
+          "acceptedKinds": [
+            "literal",
+            "reference",
+            "template"
+          ],
+          "allowedNamespaces": [
+            "inputs",
+            "outputs",
+            "contexts",
+            "execution",
+            "item",
+            "loop"
+          ],
+          "missingPolicies": [
+            "error",
+            "null",
+            "omit"
+          ],
+          "recursive": false
+        }
+      },
+      "userQuestion": {
+        "type": "string",
+        "x-agentx-binding": {
+          "acceptedCardinality": [
+            "single"
+          ],
+          "acceptedKinds": [
+            "literal",
+            "reference",
+            "template"
+          ],
+          "allowedNamespaces": [
+            "inputs",
+            "outputs",
+            "contexts",
+            "execution",
+            "item",
+            "loop"
+          ],
+          "missingPolicies": [
+            "error",
+            "null",
+            "omit"
+          ],
+          "recursive": false
+        }
+      }
+    },
+    "required": [
+      "sessionPolicy"
+    ],
+    "type": "object"
+  },
+  "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "citations": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "metadata": {
+              "type": "object"
+            },
+            "recordId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "sourceId": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            },
+            "title": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "uri": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "sourceId",
+            "text",
+            "metadata"
+          ],
+          "type": "object"
+        },
+        "type": "array"
+      },
+      "files": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "artifactId": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "contentType": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "fileName": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "sha256": {
+              "pattern": "^[0-9a-fA-F]{64}$",
+              "type": "string"
+            },
+            "sizeBytes": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "artifactId",
+            "fileName",
+            "contentType",
+            "sizeBytes",
+            "sha256"
+          ],
+          "type": "object"
+        },
+        "type": "array"
+      },
+      "finishReason": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "partial": {
+        "type": "boolean"
+      },
+      "reasoningContent": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "structuredOutput": {
+        "type": [
+          "object",
+          "null"
+        ]
+      },
+      "text": {
+        "type": "string"
+      },
+      "usage": {
+        "additionalProperties": false,
+        "properties": {
+          "costMicros": {
+            "type": "integer"
+          },
+          "inputTokens": {
+            "type": "integer"
+          },
+          "outputTokens": {
+            "type": "integer"
+          },
+          "totalTokens": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "inputTokens",
+          "outputTokens",
+          "totalTokens",
+          "costMicros"
+        ],
+        "type": "object"
+      }
+    },
+    "required": [
+      "text",
+      "reasoningContent",
+      "structuredOutput",
+      "files",
+      "citations",
+      "usage",
+      "finishReason",
+      "partial"
+    ],
+    "type": "object"
+  },
+  "outputPortSchemas": {
+    "error": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "details": {
+          "type": "object"
+        },
+        "message": {
+          "type": "string"
+        },
+        "nodeExecutionId": {
+          "type": "string"
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "sourceNodeId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "retryable",
+        "details",
+        "sourceNodeId",
+        "nodeExecutionId"
+      ],
+      "type": "object"
+    }
+  },
+  "outputCardinality": {
+    "error": "many",
+    "main": "exactly_one"
+  },
+  "selectorCapabilities": {
+    "namespaces": [
+      "inputs",
+      "outputs",
+      "contexts"
+    ],
+    "supportsCurrent": true,
+    "supportsFirstLast": true,
+    "supportsAll": true,
+    "supportsRunSelection": true
+  },
+  "contextReadCapability": true,
+  "contextWriteCapability": true,
+  "artifactOutputSchema": {
+    "items": {
+      "type": "object"
+    },
+    "type": "array"
+  },
+  "uiSchema": {
+    "fields": {
+      "limitAction": {
+        "control": "select"
+      },
+      "maxCost": {
+        "control": "number",
+        "unit": "currency"
+      },
+      "maxDurationSeconds": {
+        "control": "number",
+        "unit": "seconds"
+      },
+      "maxIterations": {
+        "control": "number",
+        "unit": "calls"
+      },
+      "maxModelCalls": {
+        "control": "number",
+        "unit": "calls"
+      },
+      "maxOutputTokens": {
+        "control": "number",
+        "unit": "tokens"
+      },
+      "maxToolCalls": {
+        "control": "number",
+        "unit": "calls"
+      },
+      "maxTotalTokens": {
+        "control": "number",
+        "unit": "tokens"
+      },
+      "sessionPolicy": {
+        "control": "json"
+      },
+      "systemPrompt": {
+        "control": "prompt"
+      },
+      "userQuestion": {
+        "control": "template"
+      }
+    },
+    "resourceSelectors": [
+      {
+        "bindingRole": "model",
+        "label": "Model",
+        "operation": "use",
+        "required": true,
+        "resourceType": "model"
+      },
+      {
+        "bindingRole": "workspace_sandbox",
+        "label": "Workspace Sandbox",
+        "operation": "use",
+        "required": false,
+        "resourceType": "sandbox_profile"
+      },
+      {
+        "bindingRole": "mcp_tools",
+        "label": "MCP Tools",
+        "multiple": true,
+        "operation": "use",
+        "required": false,
+        "resourceType": "mcp_tool"
+      },
+      {
+        "bindingRole": "skills",
+        "label": "Skills",
+        "multiple": true,
+        "operation": "use",
+        "required": false,
+        "resourceType": "skill"
+      },
+      {
+        "bindingRole": "knowledge",
+        "label": "Knowledge",
+        "multiple": true,
+        "operation": "read",
+        "required": false,
+        "resourceType": "rag"
+      },
+      {
+        "bindingRole": "long_term_memory",
+        "label": "Long-term Memory",
+        "multiple": false,
+        "operation": "read",
+        "required": false,
+        "resourceType": "memory"
+      }
+    ],
+    "canvas": {
+      "role": "agent"
+    }
+  },
+  "providers": [],
+  "credentials": [],
+  "defaultTimeoutMs": 300000,
+  "retryPolicy": {
+    "retryable": false,
+    "maxAttempts": 0,
+    "initialBackoffMs": 0,
+    "maxBackoffMs": 0
+  },
+  "sandboxRequired": false,
+  "supportsMock": false,
+  "sideEffectLevel": "irreversible"
+}

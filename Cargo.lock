@@ -218,6 +218,7 @@ dependencies = [
  "schemars 1.2.2",
  "serde",
  "serde_json",
+ "sha2",
  "time",
  "uuid",
 ]
@@ -368,6 +369,7 @@ dependencies = [
  "hmac",
  "http-body-util",
  "jsonschema",
+ "libc",
  "object_store",
  "prost",
  "quick-xml",
@@ -383,6 +385,7 @@ dependencies = [
  "sha1",
  "sha2",
  "sqlx",
+ "tempfile",
  "testcontainers",
  "thiserror 2.0.19",
  "time",
@@ -396,6 +399,7 @@ dependencies = [
  "url",
  "uuid",
  "webpki-roots 0.26.11",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

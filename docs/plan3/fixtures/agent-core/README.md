@@ -13,7 +13,7 @@
 
 更新流程：
 
-1. 运行 `uv run --frozen python scripts/plan3/verify_pi_reference.py --run-upstream-tests` 验证 Commit、Package、License、关键源码 Blob及跨平台上游行为；有可用 `/bin/bash` 时追加 `--run-bash-tests`。
+1. 运行 `uv run --frozen python tools/scripts/plan3/verify_pi_reference.py --run-upstream-tests` 验证 Commit、Package、License、关键源码 Blob及跨平台上游行为；有可用 `/bin/bash` 时追加 `--run-bash-tests`。
 2. 对照 `docs/plan3/p3-00/reference-audit.md` 中列出的上游测试重放脚本化 Model/Tool 输入。
 3. 只把规范化结果写入 `cases.jsonl`；每行必须通过 `fixture.schema.json`。
 4. 运行 `cargo test -p agentx-agent-core`。Commit、Package 或预期行为变化必须同时更新审计报告、Schema 版本或差异说明。

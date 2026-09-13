@@ -1,0 +1,62 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .:
+    dependencies:
+      '@agentx/plugin-sdk':
+        specifier: file:vendor/plugin-sdk
+        version: file:vendor/plugin-sdk
+      '@agentx/plugin-ui':
+        specifier: file:vendor/plugin-ui
+        version: file:vendor/plugin-ui
+    devDependencies:
+      '@types/react':
+        specifier: ^18.3.28
+        version: 18.3.31
+      typescript:
+        specifier: ~6.0.2
+        version: 6.0.3
+
+packages:
+
+  '@agentx/plugin-sdk@file:vendor/plugin-sdk':
+    resolution: {directory: vendor/plugin-sdk, type: directory}
+
+  '@agentx/plugin-ui@file:vendor/plugin-ui':
+    resolution: {directory: vendor/plugin-ui, type: directory}
+
+  '@types/prop-types@15.7.15':
+    resolution: {integrity: sha512-F6bEyamV9jKGAFBEmlQnesRPGOQqS2+Uwi0Em15xenOxHaf2hv6L8YCVn3rPdPJOiJfPiCnLIRyvwVaqMY3MIw==}
+
+  '@types/react@18.3.31':
+    resolution: {integrity: sha512-vfEqpXTvwT91yhmwdfouStN2hSKwTvyRs8qpLfADyrq/kxDw0hZM7Wk9Ug1FELj8hIby+S/+kQCSRFF32nv2Qw==}
+
+  csstype@3.2.3:
+    resolution: {integrity: sha512-z1HGKcYy2xA8AGQfwrn0PAy+PB7X/GSj3UVJW9qKyn43xWa+gl5nXmU4qqLMRzWVLFC8KusUX8T/0kCiOYpAIQ==}
+
+  typescript@6.0.3:
+    resolution: {integrity: sha512-y2TvuxSZPDyQakkFRPZHKFm+KKVqIisdg9/CZwm9ftvKXLP8NRWj38/ODjNbr43SsoXqNuAisEf1GdCxqWcdBw==}
+    engines: {node: '>=14.17'}
+    hasBin: true
+
+snapshots:
+
+  '@agentx/plugin-sdk@file:vendor/plugin-sdk': {}
+
+  '@agentx/plugin-ui@file:vendor/plugin-ui': {}
+
+  '@types/prop-types@15.7.15': {}
+
+  '@types/react@18.3.31':
+    dependencies:
+      '@types/prop-types': 15.7.15
+      csstype: 3.2.3
+
+  csstype@3.2.3: {}
+
+  typescript@6.0.3: {}

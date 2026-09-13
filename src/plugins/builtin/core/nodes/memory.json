@@ -1,0 +1,208 @@
+{
+  "protocolVersion": "3.0",
+  "nodeType": "memory",
+  "version": 1,
+  "displayName": "Memory",
+  "description": "Read or update a frozen memory resource.",
+  "category": "internal",
+  "keywords": [
+    "model"
+  ],
+  "localizations": {
+    "en-US": {
+      "displayName": "Memory",
+      "description": "Read or update a frozen memory resource.",
+      "keywords": [
+        "memory"
+      ],
+      "inputPortLabels": {
+        "main": "Main"
+      },
+      "outputPortLabels": {
+        "main": "Main",
+        "error": "Error"
+      },
+      "parameterLabels": {
+        "operation": "Operation",
+        "input": "Input"
+      },
+      "bindingSlotLabels": {
+        "resource": "Memory"
+      }
+    },
+    "zh-CN": {
+      "displayName": "Memory",
+      "description": "Read or update a frozen memory resource.",
+      "keywords": [
+        "memory"
+      ],
+      "inputPortLabels": {
+        "main": "Main"
+      },
+      "outputPortLabels": {
+        "main": "Main",
+        "error": "Error"
+      },
+      "parameterLabels": {
+        "operation": "Operation",
+        "input": "Input"
+      },
+      "bindingSlotLabels": {
+        "resource": "Memory"
+      }
+    }
+  },
+  "iconKey": "brain-circuit",
+  "executionStyle": "action",
+  "capability": "memory",
+  "readiness": "any",
+  "inputPorts": [
+    {
+      "name": "main",
+      "kind": "main",
+      "required": true,
+      "variadic": false
+    }
+  ],
+  "outputPorts": [
+    {
+      "name": "main",
+      "kind": "main",
+      "required": false,
+      "variadic": false
+    },
+    {
+      "name": "error",
+      "kind": "error",
+      "required": false,
+      "variadic": false
+    }
+  ],
+  "bindingSlots": [
+    {
+      "name": "resource",
+      "resourceType": "memory",
+      "placement": "inspector",
+      "required": true,
+      "multiple": false
+    }
+  ],
+  "parameterSchema": {
+    "type": "object",
+    "required": [
+      "operation"
+    ],
+    "properties": {
+      "operation": {
+        "enum": [
+          "search",
+          "add"
+        ]
+      },
+      "input": {}
+    },
+    "additionalProperties": false
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "items": {
+        "type": "array",
+        "items": {}
+      }
+    },
+    "required": [
+      "items"
+    ],
+    "additionalProperties": false
+  },
+  "outputPortSchemas": {
+    "error": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "details": {
+          "type": "object"
+        },
+        "message": {
+          "type": "string"
+        },
+        "nodeExecutionId": {
+          "type": "string"
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "sourceNodeId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "retryable",
+        "details",
+        "sourceNodeId",
+        "nodeExecutionId"
+      ],
+      "type": "object"
+    }
+  },
+  "outputCardinality": {
+    "error": "many",
+    "main": "exactly_one"
+  },
+  "selectorCapabilities": {
+    "namespaces": [
+      "inputs",
+      "outputs",
+      "contexts"
+    ],
+    "supportsCurrent": true,
+    "supportsFirstLast": true,
+    "supportsAll": true,
+    "supportsRunSelection": true
+  },
+  "contextReadCapability": true,
+  "contextWriteCapability": true,
+  "artifactOutputSchema": {
+    "items": {
+      "type": "object"
+    },
+    "type": "array"
+  },
+  "uiSchema": {
+    "fields": {
+      "operation": {
+        "control": "select"
+      },
+      "input": {
+        "control": "json"
+      }
+    },
+    "resourceSelectors": [
+      {
+        "resourceType": "memory",
+        "operation": "read",
+        "required": true
+      }
+    ],
+    "canvas": {
+      "role": "default"
+    }
+  },
+  "providers": [],
+  "credentials": [],
+  "defaultTimeoutMs": 300000,
+  "retryPolicy": {
+    "retryable": false,
+    "maxAttempts": 0,
+    "initialBackoffMs": 0,
+    "maxBackoffMs": 0
+  },
+  "sandboxRequired": false,
+  "supportsMock": false,
+  "sideEffectLevel": "reversible"
+}

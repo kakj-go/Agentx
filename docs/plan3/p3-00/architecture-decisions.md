@@ -51,4 +51,4 @@ P3-02 初始每 Worker硬上限：活跃 Agent Run 64、并发 Model Effect 16�
 
 - 冻结 Definition 6.0、Manifest 2.0、Bundle 2.0、Agent Core Contract 1.0、AgentRunInputV1、Session/Operation V1 和 Process Session V1。
 - P3-01 直接删除 Agent v1 Slot/DTO，不加兼容层、migration 或 fallback；开发阶段历史草稿可清理。
-- `schemas/agent-core-v1` 和 `openapi/agent-core-contracts-v1.json` 由 Rust 类型生成，`schema_drift` 测试防止漂移。
+- `contracts/schemas/agent-core-v1` 和 `contracts/openapi/agent-core-contracts-v1.json` 由 Rust 类型生成，`schema_drift` 测试防止漂移。

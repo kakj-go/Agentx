@@ -33,6 +33,7 @@ spec:
             - { name: AGENTX_RUNTIME_CORS_ALLOW_DYNAMIC_ORIGIN, value: {{ ne .Values.global.environment "production" | quote }} }
             - { name: AGENTX_RUNTIME_GATEWAY_RATE_LIMIT_RPS, value: "50" }
             - { name: AGENTX_RUNTIME_GATEWAY_RATE_LIMIT_BURST, value: "100" }
+            - { name: AGENTX_PLUGIN_DESIGN_MAX_PROCESSES, value: "2" }
             - { name: AGENTX_RUNTIME_USER_JWT_ISSUER, value: agentx-platform }
             - { name: AGENTX_RUNTIME_USER_JWT_AUDIENCE, value: agentx-runtime-gateway }
             - { name: AGENTX_RUNTIME_VAULT_ENDPOINT, value: {{ .Values.global.components.secretProvider.endpoint | quote }} }

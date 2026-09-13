@@ -27,12 +27,12 @@
 
 ## 实施范围
 
-- **Domain**（`crates/agentx-domain/src/workflow.rs`）：`ExitParameters`/`protected`、契约拆分、7.0、`empty()` 模板（初始 protected exit + `start→exit.main`）、exit 校验规则（`EXIT_PARAMETERS_INVALID`/`EXIT_MAPPING_KEY_UNKNOWN`/`EXIT_REQUIRED_MAPPING_MISSING`/`END_BOUNDARY_REMOVED`/`EXIT_NOT_TERMINAL` 语义并入 `INVALID_BOUNDARY_DIRECTION`）。
+- **Domain**（`src/crates/agentx-domain/src/workflow.rs`）：`ExitParameters`/`protected`、契约拆分、7.0、`empty()` 模板（初始 protected exit + `start→exit.main`）、exit 校验规则（`EXIT_PARAMETERS_INVALID`/`EXIT_MAPPING_KEY_UNKNOWN`/`EXIT_REQUIRED_MAPPING_MISSING`/`END_BOUNDARY_REMOVED`/`EXIT_NOT_TERMINAL` 语义并入 `INVALID_BOUNDARY_DIRECTION`）。
 - **编译器与 IR**（`compiler.rs`、`compiler_normalization.rs`、`runtime-contracts/ir.rs`）：via-exit terminal 折叠、`CompiledExitV1`、`start_to_exit`（替代 `start_to_end`）、per-exit 引用/类型/coerce 校验、`DUPLICATE_TERMINAL_FANOUT`、可达性适配。
 - **运行时**（`state.rs`、`engine_persistence.rs`、`engine_persist_machine.rs`）：`EndDelivery.targetExit`、物化按到达 exit 选映射、部分执行子图适配、`execution_end_deliveries.target_exit_id` 列。
 - **控制面**（`workflow_api.rs`）：draft 三处 `schema_version` 硬编码升 7.0。
-- **前端**（`apps/web`）：`ExitNodeData` 类型、`addExit`/删除保护（`removeSelected` + ReactFlow remove change 拦截）、serializer 7.0 双向、画布只合成 `__start__`、ExitNode 组件、连线校验（exit 双入端口 variadic）、ExitPanel（全局契约组 + 本出口映射组 + 契约改名联动）、palette 内置条目、布局尺寸、i18n（zh/en 同构）。
-- **E2E**：新增 `apps/e2e/tests/workflow-multi-exit.spec.ts`（初始 protected exit 不可删、第二个 exit 可删、共享契约 + 各自映射、保存断言、运行断言输出取自实际到达 exit 的映射）；`m6-workflow-studio`、`m2.1-control-plane`、`m6-local-builtins`、`resource-grant-requests` 的旧 `workflow-end` 交互全部迁移到 exit 节点；pytest suites 新增 `workflow-multi-exit`。
+- **前端**（`src/web`）：`ExitNodeData` 类型、`addExit`/删除保护（`removeSelected` + ReactFlow remove change 拦截）、serializer 7.0 双向、画布只合成 `__start__`、ExitNode 组件、连线校验（exit 双入端口 variadic）、ExitPanel（全局契约组 + 本出口映射组 + 契约改名联动）、palette 内置条目、布局尺寸、i18n（zh/en 同构）。
+- **E2E**：新增 `tests/browser/tests/workflow-multi-exit.spec.ts`（初始 protected exit 不可删、第二个 exit 可删、共享契约 + 各自映射、保存断言、运行断言输出取自实际到达 exit 的映射）；`m6-workflow-studio`、`m2.1-control-plane`、`m6-local-builtins`、`resource-grant-requests` 的旧 `workflow-end` 交互全部迁移到 exit 节点；pytest suites 新增 `workflow-multi-exit`。
 
 ## 验收状态
 

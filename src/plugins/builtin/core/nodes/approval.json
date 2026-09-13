@@ -1,0 +1,358 @@
+{
+  "protocolVersion": "3.0",
+  "nodeType": "approval",
+  "version": 1,
+  "displayName": "Approval",
+  "description": "Suspend execution for a human decision.",
+  "category": "logic",
+  "keywords": [
+    "approval"
+  ],
+  "localizations": {
+    "en-US": {
+      "displayName": "Approval",
+      "description": "Suspend execution for a human decision.",
+      "keywords": [
+        "approval"
+      ],
+      "inputPortLabels": {
+        "main": "Input"
+      },
+      "outputPortLabels": {
+        "decision": "Decision",
+        "error": "Error",
+        "timed_out": "Timed out"
+      },
+      "parameterLabels": {
+        "buttons": "Buttons",
+        "buttons[]": "Buttons",
+        "buttons[].id": "Id",
+        "buttons[].label": "Label",
+        "candidateUserId": "Candidate User Id",
+        "description": "Description",
+        "timeoutMs": "Timeout Ms",
+        "title": "Title"
+      }
+    },
+    "zh-CN": {
+      "displayName": "审批",
+      "description": "暂停执行并等待人工审批。",
+      "keywords": [
+        "审批"
+      ],
+      "inputPortLabels": {
+        "main": "输入"
+      },
+      "outputPortLabels": {
+        "decision": "审批决策",
+        "error": "错误",
+        "timed_out": "已超时"
+      },
+      "parameterLabels": {
+        "buttons": "决策按钮",
+        "buttons[]": "决策按钮",
+        "buttons[].id": "稳定标识",
+        "buttons[].label": "显示名称",
+        "candidateUserId": "候选用户",
+        "description": "描述",
+        "timeoutMs": "超时时间",
+        "title": "标题"
+      }
+    }
+  },
+  "iconKey": "badge-check",
+  "executionStyle": "suspend",
+  "capability": "builtin",
+  "readiness": "any",
+  "inputPorts": [
+    {
+      "name": "main",
+      "kind": "main",
+      "required": true,
+      "variadic": false
+    }
+  ],
+  "outputPorts": [
+    {
+      "name": "decision",
+      "kind": "main",
+      "required": false,
+      "variadic": true
+    },
+    {
+      "name": "timed_out",
+      "kind": "main",
+      "required": false,
+      "variadic": false
+    },
+    {
+      "name": "error",
+      "kind": "error",
+      "required": false,
+      "variadic": false
+    }
+  ],
+  "bindingSlots": [],
+  "parameterSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "buttons": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "label": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "label"
+          ],
+          "type": "object"
+        },
+        "minItems": 1,
+        "type": "array"
+      },
+      "candidateUserId": {
+        "format": "uuid",
+        "type": "string"
+      },
+      "description": {
+        "type": "string",
+        "x-agentx-binding": {
+          "acceptedCardinality": [
+            "single"
+          ],
+          "acceptedKinds": [
+            "literal",
+            "reference",
+            "template"
+          ],
+          "allowedNamespaces": [
+            "inputs",
+            "outputs",
+            "contexts",
+            "execution",
+            "item",
+            "loop"
+          ],
+          "missingPolicies": [
+            "error",
+            "null",
+            "omit"
+          ],
+          "recursive": false
+        }
+      },
+      "timeoutMs": {
+        "maximum": 31536000000,
+        "minimum": 1,
+        "type": "integer"
+      },
+      "title": {
+        "type": "string",
+        "x-agentx-binding": {
+          "acceptedCardinality": [
+            "single"
+          ],
+          "acceptedKinds": [
+            "literal",
+            "reference",
+            "template"
+          ],
+          "allowedNamespaces": [
+            "inputs",
+            "outputs",
+            "contexts",
+            "execution",
+            "item",
+            "loop"
+          ],
+          "missingPolicies": [
+            "error",
+            "null",
+            "omit"
+          ],
+          "recursive": false
+        }
+      }
+    },
+    "required": [
+      "candidateUserId"
+    ],
+    "type": "object"
+  },
+  "outputSchema": {
+    "type": "object"
+  },
+  "outputPortSchemas": {
+    "decision": {
+      "additionalProperties": false,
+      "properties": {
+        "decidedBy": {
+          "format": "uuid",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "decision": {
+          "type": "string"
+        },
+        "input": {},
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "taskId": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "taskId",
+        "decision",
+        "decidedBy",
+        "reason",
+        "input"
+      ],
+      "type": "object"
+    },
+    "error": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "details": {
+          "type": "object"
+        },
+        "message": {
+          "type": "string"
+        },
+        "nodeExecutionId": {
+          "type": "string"
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "sourceNodeId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "retryable",
+        "details",
+        "sourceNodeId",
+        "nodeExecutionId"
+      ],
+      "type": "object"
+    },
+    "timed_out": {
+      "additionalProperties": false,
+      "properties": {
+        "decidedBy": {
+          "type": "null"
+        },
+        "decision": {
+          "enum": [
+            "timed_out"
+          ],
+          "type": "string"
+        },
+        "input": {},
+        "reason": {
+          "type": "null"
+        },
+        "taskId": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "taskId",
+        "decision",
+        "decidedBy",
+        "reason",
+        "input"
+      ],
+      "type": "object"
+    }
+  },
+  "outputCardinality": {
+    "decision": "zero_or_one",
+    "error": "zero_or_one",
+    "timed_out": "zero_or_one"
+  },
+  "selectorCapabilities": {
+    "namespaces": [
+      "inputs",
+      "outputs",
+      "contexts"
+    ],
+    "supportsCurrent": true,
+    "supportsFirstLast": true,
+    "supportsAll": true,
+    "supportsRunSelection": true
+  },
+  "contextReadCapability": true,
+  "contextWriteCapability": false,
+  "artifactOutputSchema": {
+    "items": {
+      "type": "object"
+    },
+    "type": "array"
+  },
+  "uiSchema": {
+    "order": [
+      "title",
+      "description",
+      "candidateUserId",
+      "buttons",
+      "timeoutMs"
+    ],
+    "fields": {
+      "buttons": {
+        "control": "buttons_editor"
+      },
+      "candidateUserId": {
+        "control": "provider_options",
+        "provider": "users"
+      },
+      "description": {
+        "control": "template"
+      },
+      "timeoutMs": {
+        "control": "number"
+      },
+      "title": {
+        "control": "template"
+      }
+    },
+    "canvas": {
+      "role": "suspend"
+    }
+  },
+  "providers": [
+    "users"
+  ],
+  "credentials": [],
+  "defaultTimeoutMs": null,
+  "retryPolicy": {
+    "retryable": false,
+    "maxAttempts": 0,
+    "initialBackoffMs": 0,
+    "maxBackoffMs": 0
+  },
+  "sandboxRequired": false,
+  "supportsMock": true,
+  "sideEffectLevel": "none"
+}

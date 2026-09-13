@@ -1,0 +1,14 @@
+{
+  "protocolVersion": 1,
+  "sdkApiVersion": 1,
+  "packageId": "agentx/data",
+  "packageVersion": "1.0.0",
+  "displayName": "Agentx Data",
+  "description": "Built-in Agentx Data node package.",
+  "runtimeEntry": "dist/runtime.js",
+  "nodes": [
+    "nodes/list.json",
+    "nodes/set.json"
+  ],
+  "traceRenderers": []
+}

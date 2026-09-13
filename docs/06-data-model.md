@@ -11,6 +11,8 @@
 
 Redis 和 ClickHouse 都不能代替 MySQL 中的权威 Execution 状态。
 
+Canvas Plugin 管理状态只在Control域：`canvas_plugins`保存包身份与默认版本，`canvas_plugin_versions`保存不可变摘要、Manifest快照、对象Key和启停状态，`canvas_plugin_imports`保存24小时导入预览与确认状态。`node_definition_versions.plugin_version_id`关联Catalog版本。Workflow Definition通过节点`type/typeVersion`建立精确引用，编译IR再冻结完整`PluginNodeBinding`；Runtime不复制可变插件配置表。`runtime_calls.plugin_parent_span_entity_id`只保存宿主调用的Trace父实体，执行恢复仍以Execution/Attempt状态为准。
+
 ## 2. 租户与权限表
 
 - tenants

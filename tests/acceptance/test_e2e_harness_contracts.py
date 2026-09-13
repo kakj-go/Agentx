@@ -33,17 +33,18 @@ def test_scale_down_keeps_the_ingress_admission_controller_available() -> None:
 def test_playwright_harness_uses_the_windows_executable_shim_and_new_stage_name() -> None:
     source = Path("tests/e2e/product/test_playwright.py").read_text(encoding="utf-8")
 
-    assert '"pnpm.cmd" if os.name == "nt" else "pnpm"' in source
+    assert '("corepack.cmd", "pnpm") if os.name == "nt" else ("corepack", "pnpm")' in source
     assert 'environment["AGENTX_E2E_STAGE"] = "helm-agentxctl"' in source
     assert 'environment["AGENTX_V2_08_CONTEXT_OUTPUT"]' in source
     assert '"tests/v2-08-api-first.spec.ts"' in source
     assert '"tests/m2.1-control-plane.spec.ts"' in source
     assert '"tests/m6-workflow-studio.spec.ts"' in source
+    assert '[*pnpm, "--filter", "@agentx/e2e", "exec", "playwright", "test", *tests]' in source
     assert '[pnpm, "--filter", "@agentx/e2e", "test"]' not in source
 
 
 def test_control_plane_selects_its_scoped_echo_mcp_fixture() -> None:
-    source = Path("apps/e2e/tests/m2.1-control-plane.spec.ts").read_text(encoding="utf-8")
+    source = Path("tests/browser/tests/m2.1-control-plane.spec.ts").read_text(encoding="utf-8")
 
     assert "'echo', 'MCP 工具', 'workflow', '使用', 'Echo MCP / echo'" in source
     assert "name: /^echo Echo MCP \\/ echo$/" in source
@@ -89,7 +90,7 @@ def test_lightrag_tokenizer_cache_is_pinned_and_separate_from_the_runtime_pod() 
 
 
 def test_local_image_build_includes_the_runtime_node_fixture() -> None:
-    xtask = Path("xtask/src/main.rs").read_text(encoding="utf-8")
+    xtask = Path("tools/xtask/src/main.rs").read_text(encoding="utf-8")
     assert '== Some("local")' in xtask
     assert 'for fixture in ["echo-node", "echo-mcp"]' in xtask
     assert "selected.push(fixture.to_owned())" in xtask

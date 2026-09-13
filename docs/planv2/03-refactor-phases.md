@@ -32,7 +32,7 @@
 ### 代码结构建议
 
 ```text
-crates/
+src/crates/
 ├── agentx-domain                    # 保留真正存储无关、跨面的值对象
 ├── agentx-application               # 迁移期保留纯 Port/Use Case，禁止导出 SQL 类型
 ├── agentx-runtime                   # 复用现有编译器、表达式和状态机内核
@@ -57,8 +57,8 @@ crates/
 
 | ID | 状态 | 任务 | 交付物 | 验收 |
 |---|---|---|---|---|
-| V2D-001 | done | 建立 Control 初始 Migration | `migrations/control/0001_initial.sql` | 空库初始化、FK/索引/租户约束检查 |
-| V2D-002 | done | 建立 Runtime 初始 Migration | `migrations/runtime/0001_initial.sql` | 空库初始化、状态机和 Outbox 约束检查 |
+| V2D-001 | done | 建立 Control 初始 Migration | `deploy/migrations/control/0001_initial.sql` | 空库初始化、FK/索引/租户约束检查 |
+| V2D-002 | done | 建立 Runtime 初始 Migration | `deploy/migrations/runtime/0001_initial.sql` | 空库初始化、状态机和 Outbox 约束检查 |
 | V2D-003 | done | 建立 ClickHouse 初始 Migration | 独立 Migration 目录 | 空库创建、重复运行安全 |
 | V2D-004 | done | 配置两个 MySQL 和独占 Runtime Redis | 独立环境变量、Secret、Doctor；Control 不部署 Redis | 交叉 Credential 访问失败；Control 不连接 Runtime Redis |
 | V2D-005 | done | OSS 三域隔离 | Bucket/Prefix、IAM、Artifact Domain | 越域读写负向测试 |

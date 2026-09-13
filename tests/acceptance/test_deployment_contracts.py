@@ -19,8 +19,9 @@ def test_release_exposes_standalone_binaries_and_direct_download_links() -> None
     for asset in ("agentxctl-linux-x86_64", "agentxctl-windows-x86_64.exe"):
         assert f"standalone: {asset}" in workflow
         assert f"/agentxctl-v0.0.3-beta/{asset}" in readme
-    assert "& $standalone validate --output json" in workflow
-    assert "& $standalone render --target runtime" in workflow
+    assert "python tools/scripts/release/package_agentxctl.py" in workflow
+    assert "--version" in workflow and "--target" in workflow
+    assert "path: .local/dist" in workflow
 
 
 def test_backend_builder_copies_every_workspace_member_root() -> None:

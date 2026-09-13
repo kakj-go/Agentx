@@ -1,0 +1,286 @@
+{
+  "protocolVersion": "3.0",
+  "nodeType": "loop_over_items",
+  "version": 1,
+  "displayName": "Loop Over Items",
+  "description": "Process items in controlled batches.",
+  "category": "logic",
+  "keywords": [
+    "loop",
+    "over",
+    "items"
+  ],
+  "localizations": {
+    "en-US": {
+      "displayName": "Loop Over Items",
+      "description": "Process items in controlled batches.",
+      "keywords": [
+        "loop",
+        "over",
+        "items"
+      ],
+      "inputPortLabels": {
+        "main": "Input"
+      },
+      "outputPortLabels": {
+        "error": "Error",
+        "main": "Output"
+      },
+      "parameterLabels": {
+        "errorMode": "Error Mode",
+        "input": "Input",
+        "input[]": "Input",
+        "outputSelector": "Output Selector",
+        "parallelism": "Parallelism"
+      },
+      "parameterEnumOptions": {
+        "errorMode": {
+          "continue": "Continue",
+          "remove": "Remove",
+          "terminate": "Terminate"
+        }
+      }
+    },
+    "zh-CN": {
+      "displayName": "循环处理",
+      "description": "按批次循环处理数据项。",
+      "keywords": [
+        "循环处理"
+      ],
+      "inputPortLabels": {
+        "main": "输入"
+      },
+      "outputPortLabels": {
+        "error": "错误",
+        "main": "输出"
+      },
+      "parameterLabels": {
+        "errorMode": "失败处理",
+        "input": "输入数据",
+        "input[]": "输入数据",
+        "outputSelector": "每轮输出",
+        "parallelism": "并发数"
+      },
+      "parameterEnumOptions": {
+        "errorMode": {
+          "continue": "保留失败位置",
+          "remove": "移除失败项",
+          "terminate": "终止"
+        }
+      }
+    }
+  },
+  "iconKey": "repeat-2",
+  "executionStyle": "action",
+  "capability": "builtin",
+  "readiness": "any",
+  "inputPorts": [
+    {
+      "name": "main",
+      "kind": "main",
+      "required": true,
+      "variadic": false
+    }
+  ],
+  "outputPorts": [
+    {
+      "name": "main",
+      "kind": "main",
+      "required": false,
+      "variadic": false
+    },
+    {
+      "name": "error",
+      "kind": "error",
+      "required": false,
+      "variadic": false
+    }
+  ],
+  "bindingSlots": [],
+  "parameterSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "errorMode": {
+        "default": "terminate",
+        "enum": [
+          "terminate",
+          "continue",
+          "remove"
+        ],
+        "type": "string"
+      },
+      "input": {
+        "items": {},
+        "type": "array",
+        "x-agentx-binding": {
+          "acceptedCardinality": [
+            "single"
+          ],
+          "acceptedKinds": [
+            "literal",
+            "reference",
+            "template",
+            "array",
+            "object"
+          ],
+          "allowedNamespaces": [
+            "inputs",
+            "outputs",
+            "contexts",
+            "execution",
+            "item",
+            "loop"
+          ],
+          "missingPolicies": [
+            "error",
+            "null",
+            "omit"
+          ],
+          "recursive": false
+        }
+      },
+      "outputSelector": {
+        "x-agentx-binding": {
+          "acceptedCardinality": [
+            "single"
+          ],
+          "acceptedKinds": [
+            "reference"
+          ],
+          "allowedNamespaces": [
+            "inputs",
+            "outputs",
+            "contexts",
+            "execution",
+            "item",
+            "loop"
+          ],
+          "missingPolicies": [
+            "error",
+            "null",
+            "omit"
+          ],
+          "recursive": false
+        }
+      },
+      "parallelism": {
+        "default": 1,
+        "maximum": 10,
+        "minimum": 1,
+        "type": "integer"
+      }
+    },
+    "required": [
+      "input",
+      "outputSelector"
+    ],
+    "type": "object"
+  },
+  "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "items": {
+        "items": {},
+        "type": "array"
+      }
+    },
+    "required": [
+      "items"
+    ],
+    "type": "object"
+  },
+  "outputPortSchemas": {
+    "error": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "details": {
+          "type": "object"
+        },
+        "message": {
+          "type": "string"
+        },
+        "nodeExecutionId": {
+          "type": "string"
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "sourceNodeId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "retryable",
+        "details",
+        "sourceNodeId",
+        "nodeExecutionId"
+      ],
+      "type": "object"
+    }
+  },
+  "outputCardinality": {
+    "error": "zero_or_one",
+    "main": "exactly_one"
+  },
+  "selectorCapabilities": {
+    "namespaces": [
+      "inputs",
+      "outputs",
+      "contexts"
+    ],
+    "supportsCurrent": true,
+    "supportsFirstLast": true,
+    "supportsAll": true,
+    "supportsRunSelection": true
+  },
+  "contextReadCapability": true,
+  "contextWriteCapability": false,
+  "artifactOutputSchema": {
+    "items": {
+      "type": "object"
+    },
+    "type": "array"
+  },
+  "uiSchema": {
+    "order": [
+      "input",
+      "outputSelector",
+      "errorMode",
+      "parallelism"
+    ],
+    "fields": {
+      "errorMode": {
+        "control": "select"
+      },
+      "input": {
+        "control": "value"
+      },
+      "outputSelector": {
+        "control": "reference"
+      },
+      "parallelism": {
+        "control": "number"
+      }
+    },
+    "canvas": {
+      "role": "loop"
+    }
+  },
+  "providers": [],
+  "credentials": [],
+  "defaultTimeoutMs": 30000,
+  "retryPolicy": {
+    "retryable": false,
+    "maxAttempts": 0,
+    "initialBackoffMs": 0,
+    "maxBackoffMs": 0
+  },
+  "sandboxRequired": false,
+  "supportsMock": true,
+  "sideEffectLevel": "none"
+}

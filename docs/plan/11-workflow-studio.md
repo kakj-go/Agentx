@@ -149,7 +149,7 @@ Studio 使用固定工作区布局：中央无限画布左上角提供按需 Nod
 | `platform-api` | Draft/Validate/Catalog/Provider/Overlay/Debug Execution OpenAPI 与权限 | 直接执行节点 |
 | `workflow-coordinator` | 验证 Source、固化 Debug Plan、为部分执行建立初始 Machine/Delivery | 读取 React Flow 或 Draft Head |
 | `workflow-worker` / `sandbox-manager` | 从 Execution Snapshot 执行，接受 Draft Debug 下空 Version 关联 | 区分另一套 Debug Runner |
-| `apps/web` | 分层 Studio、Manifest Form、Autosave、Debug/Trace Overlay 和生成 Client | 硬编码 Node Schema、直接调用节点服务 |
+| `src/web` | 分层 Studio、Manifest Form、Autosave、Debug/Trace Overlay 和生成 Client | 硬编码 Node Schema、直接调用节点服务 |
 | Migration/Schema/E2E | 2.0 到 3.0 一次性升级、OpenAPI/gRPC/JSON Schema 和 Kubernetes UI 证据 | 长期双读和历史兼容层 |
 
 ## 5. 实施批次与任务

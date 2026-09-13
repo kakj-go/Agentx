@@ -12,6 +12,8 @@ Agentx 是一个采用 n8n 式画布交互、但使用 Agentx 原生 Workflow/No
 
 | 文档 | 内容 |
 |---|---|
+| [plan/repository-layout.md](plan/repository-layout.md) | 六目录仓库结构、路径映射、产物归并与验收计划 |
+| [plan/repository-layout-evidence.md](plan/repository-layout-evidence.md) | 目录迁移实际执行结果与验证边界 |
 | [01-product-scope.md](01-product-scope.md) | 产品定位、边界、核心概念和业务闭环 |
 | [02-system-architecture.md](02-system-architecture.md) | 系统分层、模块职责、部署单元和存储分工 |
 | [03-workflow-engine.md](03-workflow-engine.md) | n8n 式数据模型、节点协议、表达式、调度和故障恢复 |
@@ -32,6 +34,7 @@ Agentx 是一个采用 n8n 式画布交互、但使用 Agentx 原生 Workflow/No
 | [plan3/README.md](plan3/README.md) | 参考 earendil-works/pi 行为实现的 Agentx 原生内核、内置模型、OpenSandbox 四工具、会话压缩与外挂能力重构计划 |
 | [plan4/README.md](plan4/README.md) | Application 渠道对接：第一阶段 HTTP 回调入站；第二阶段渠道凭证内置化、按平台动态表单、钉钉 Stream 与飞书长连接双模式，出站回复仅方案讨论 |
 | [plan5/README.md](plan5/README.md) | 已完成的Workflow节点体系重构：Dify式配置与调试流程、Definition 8.0、13类节点、Agent附件、Loop容器、Approval/Exit/集成执行闭环及完整Kubernetes门禁；[implementation-plan.md](plan5/implementation-plan.md) 保存M0–M6 + F1–F8完成清单与证据 |
+| [plan6/README.md](plan6/README.md) | 已完成的画布插件：动态 React UI、TypeScript/Node.js 执行、动态契约、运行治理、Trace、开发模板和 40 项验收均已闭合；见 [evidence/p6-09-final.md](plan6/evidence/p6-09-final.md) |
 | [planv2/evidence/egress-gateway.md](planv2/evidence/egress-gateway.md) | SaaS 受控公网出口、真实模型、密钥轮换、稳定性、滚动升级和生产 CNI 未关闭门禁证据 |
 | [plan/m2-task-list.md](plan/m2-task-list.md) | M2 Workflow 控制面与资源中心的详细实施批次和任务清单 |
 | [plan/m2.1-resource-redesign.md](plan/m2.1-resource-redesign.md) | M2.1 MCP、Skill Workspace、Kubernetes Addon 与全局 E2E 重构任务 |

@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "operationId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "protocolVersion": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "result": true
+  },
+  "required": [
+    "protocolVersion",
+    "operationId",
+    "result"
+  ],
+  "title": "PluginDesignOperationResponseV1",
+  "type": "object"
+}

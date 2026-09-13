@@ -1,0 +1,487 @@
+{
+  "protocolVersion": "3.0",
+  "nodeType": "declarative_http",
+  "version": 1,
+  "displayName": "HTTP Request",
+  "description": "Call an HTTP endpoint.",
+  "category": "integration",
+  "keywords": [
+    "declarative",
+    "http"
+  ],
+  "localizations": {
+    "en-US": {
+      "displayName": "HTTP Request",
+      "description": "Call an HTTP endpoint.",
+      "keywords": [
+        "declarative",
+        "http"
+      ],
+      "inputPortLabels": {
+        "main": "Input"
+      },
+      "outputPortLabels": {
+        "error": "Error",
+        "main": "Output"
+      },
+      "parameterLabels": {
+        "apiKeyPlacement": "Api Key Placement",
+        "apiKeyPlacement.in": "In",
+        "apiKeyPlacement.name": "Name",
+        "body": "Body",
+        "headers": "Headers",
+        "headers[]": "Headers",
+        "headers[].name": "Name",
+        "headers[].value": "Value",
+        "method": "Method",
+        "query": "Query",
+        "query[]": "Query",
+        "query[].name": "Name",
+        "query[].value": "Value",
+        "url": "Url"
+      },
+      "parameterEnumOptions": {
+        "apiKeyPlacement.in": {
+          "header": "Header",
+          "query": "Query"
+        },
+        "method": {
+          "DELETE": "D E L E T E",
+          "GET": "G E T",
+          "PATCH": "P A T C H",
+          "POST": "P O S T",
+          "PUT": "P U T"
+        }
+      }
+    },
+    "zh-CN": {
+      "displayName": "HTTP 请求",
+      "description": "调用 HTTP 接口。",
+      "keywords": [
+        "HTTP 请求"
+      ],
+      "inputPortLabels": {
+        "main": "输入"
+      },
+      "outputPortLabels": {
+        "error": "错误",
+        "main": "输出"
+      },
+      "parameterLabels": {
+        "apiKeyPlacement": "API Key 位置",
+        "apiKeyPlacement.in": "注入位置",
+        "apiKeyPlacement.name": "名称",
+        "body": "请求体",
+        "headers": "请求头",
+        "headers[]": "请求头",
+        "headers[].name": "名称",
+        "headers[].value": "值",
+        "method": "请求方法",
+        "query": "查询参数",
+        "query[]": "查询参数",
+        "query[].name": "名称",
+        "query[].value": "值",
+        "url": "地址"
+      },
+      "parameterEnumOptions": {
+        "apiKeyPlacement.in": {
+          "header": "请求头",
+          "query": "查询"
+        },
+        "method": {
+          "DELETE": "DELETE",
+          "GET": "GET",
+          "PATCH": "PATCH",
+          "POST": "POST",
+          "PUT": "PUT"
+        }
+      }
+    }
+  },
+  "iconKey": "box",
+  "executionStyle": "action",
+  "capability": "plugin_nodejs",
+  "readiness": "any",
+  "inputPorts": [
+    {
+      "name": "main",
+      "kind": "main",
+      "required": true,
+      "variadic": false
+    }
+  ],
+  "outputPorts": [
+    {
+      "name": "main",
+      "kind": "main",
+      "required": false,
+      "variadic": false
+    },
+    {
+      "name": "error",
+      "kind": "error",
+      "required": false,
+      "variadic": false
+    }
+  ],
+  "bindingSlots": [
+    {
+      "name": "credential",
+      "resourceType": "credential",
+      "placement": "inspector",
+      "required": false,
+      "multiple": false
+    }
+  ],
+  "parameterSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "apiKeyPlacement": {
+        "additionalProperties": false,
+        "properties": {
+          "in": {
+            "enum": [
+              "header",
+              "query"
+            ],
+            "type": "string"
+          },
+          "name": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "in",
+          "name"
+        ],
+        "type": "object"
+      },
+      "body": {
+        "x-agentx-binding": {
+          "acceptedCardinality": [
+            "single"
+          ],
+          "acceptedKinds": [
+            "literal",
+            "reference",
+            "template",
+            "array",
+            "object"
+          ],
+          "allowedNamespaces": [
+            "inputs",
+            "outputs",
+            "contexts",
+            "execution",
+            "item",
+            "loop"
+          ],
+          "missingPolicies": [
+            "error",
+            "null",
+            "omit"
+          ],
+          "recursive": true
+        }
+      },
+      "headers": {
+        "default": [],
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "name": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "value": {
+              "x-agentx-binding": {
+                "acceptedCardinality": [
+                  "single"
+                ],
+                "acceptedKinds": [
+                  "literal",
+                  "reference",
+                  "template"
+                ],
+                "allowedNamespaces": [
+                  "inputs",
+                  "outputs",
+                  "contexts",
+                  "execution",
+                  "item",
+                  "loop"
+                ],
+                "missingPolicies": [
+                  "error",
+                  "null",
+                  "omit"
+                ],
+                "recursive": false
+              }
+            }
+          },
+          "required": [
+            "name",
+            "value"
+          ],
+          "type": "object"
+        },
+        "type": "array"
+      },
+      "method": {
+        "default": "GET",
+        "enum": [
+          "GET",
+          "POST",
+          "PUT",
+          "PATCH",
+          "DELETE"
+        ],
+        "type": "string"
+      },
+      "query": {
+        "default": [],
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "name": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "value": {
+              "x-agentx-binding": {
+                "acceptedCardinality": [
+                  "single"
+                ],
+                "acceptedKinds": [
+                  "literal",
+                  "reference",
+                  "template"
+                ],
+                "allowedNamespaces": [
+                  "inputs",
+                  "outputs",
+                  "contexts",
+                  "execution",
+                  "item",
+                  "loop"
+                ],
+                "missingPolicies": [
+                  "error",
+                  "null",
+                  "omit"
+                ],
+                "recursive": false
+              }
+            }
+          },
+          "required": [
+            "name",
+            "value"
+          ],
+          "type": "object"
+        },
+        "type": "array"
+      },
+      "url": {
+        "x-agentx-binding": {
+          "acceptedCardinality": [
+            "single"
+          ],
+          "acceptedKinds": [
+            "literal",
+            "reference",
+            "template"
+          ],
+          "allowedNamespaces": [
+            "inputs",
+            "outputs",
+            "contexts",
+            "execution",
+            "item",
+            "loop"
+          ],
+          "missingPolicies": [
+            "error",
+            "null",
+            "omit"
+          ],
+          "recursive": false
+        }
+      }
+    },
+    "required": [
+      "url"
+    ],
+    "type": "object"
+  },
+  "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "body": {
+        "type": "string"
+      },
+      "files": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "artifactId": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "contentType": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "fileName": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "sha256": {
+              "pattern": "^[0-9a-fA-F]{64}$",
+              "type": "string"
+            },
+            "sizeBytes": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "artifactId",
+            "fileName",
+            "contentType",
+            "sizeBytes",
+            "sha256"
+          ],
+          "type": "object"
+        },
+        "type": "array"
+      },
+      "headers": {
+        "type": "object"
+      },
+      "statusCode": {
+        "type": "integer"
+      }
+    },
+    "required": [
+      "statusCode",
+      "headers",
+      "body",
+      "files"
+    ],
+    "type": "object"
+  },
+  "outputPortSchemas": {
+    "error": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "details": {
+          "type": "object"
+        },
+        "message": {
+          "type": "string"
+        },
+        "nodeExecutionId": {
+          "type": "string"
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "sourceNodeId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "retryable",
+        "details",
+        "sourceNodeId",
+        "nodeExecutionId"
+      ],
+      "type": "object"
+    }
+  },
+  "outputCardinality": {
+    "error": "many",
+    "main": "exactly_one"
+  },
+  "selectorCapabilities": {
+    "namespaces": [
+      "inputs",
+      "outputs",
+      "contexts"
+    ],
+    "supportsCurrent": true,
+    "supportsFirstLast": true,
+    "supportsAll": true,
+    "supportsRunSelection": true
+  },
+  "contextReadCapability": true,
+  "contextWriteCapability": true,
+  "artifactOutputSchema": {
+    "items": {
+      "type": "object"
+    },
+    "type": "array"
+  },
+  "uiSchema": {
+    "order": [
+      "method",
+      "url",
+      "query",
+      "headers",
+      "body",
+      "apiKeyPlacement"
+    ],
+    "fields": {
+      "apiKeyPlacement": {
+        "control": "api_key_placement"
+      },
+      "body": {
+        "control": "structured"
+      },
+      "headers": {
+        "control": "kv_builder"
+      },
+      "method": {
+        "control": "select"
+      },
+      "query": {
+        "control": "kv_builder"
+      },
+      "url": {
+        "control": "template"
+      }
+    },
+    "resourceSelectors": [
+      {
+        "bindingRole": "credential",
+        "label": "Credential",
+        "operation": "use",
+        "required": false,
+        "resourceType": "credential"
+      }
+    ],
+    "canvas": {
+      "role": "default"
+    }
+  },
+  "providers": [],
+  "credentials": [],
+  "defaultTimeoutMs": 30000,
+  "retryPolicy": {
+    "retryable": false,
+    "maxAttempts": 0,
+    "initialBackoffMs": 0,
+    "maxBackoffMs": 0
+  },
+  "sandboxRequired": false,
+  "supportsMock": true,
+  "sideEffectLevel": "idempotent"
+}

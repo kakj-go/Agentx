@@ -15,6 +15,8 @@ Agentx 核心 Kubernetes 资源以 Helm 为唯一事实来源。部署主机通�
 
 ingress-nginx 使用固定上游 Chart和独立 Release `agentx-ingress-nginx`，位于 Dependencies Namespace。Observability 虽与 Runtime 共用 Namespace，仍独立拥有 ServiceAccount、Secret、NetworkPolicy、Migration、Doctor 和 Helm历史。
 
+本地正式部署使用 ingress-nginx 的 LoadBalancer Service，在 Docker Desktop 提供 `http://agentx.localhost` 与 `http://run.agentx.localhost` 入口。`test` 环境及带 Run ID 的临时 E2E 部署使用 ClusterIP，并由测试进程 port-forward，避免争用正式环境的 80/443 端口。此差异只决定入口暴露方式，不改变三平面依赖边界。
+
 Kustomize 只管理 LightRAG/Mem0 Addon与临时 E2E Fixture。核心 Helm与 Kustomize资源不得重名、使用同一 Selector或声明相同 Helm所有权。
 
 ## 2. Values 契约
@@ -98,6 +100,7 @@ Readiness表示必需依赖与 Schema可用，Liveness只表示进程存活：
 - Runtime Gateway通过 Runtime MySQL持久化游标，Redis仅唤醒。
 - Workflow Runtime多副本使用 MySQL状态条件、Claim/Lease/Fencing和 Outbox。
 - Worker按 Capability扩展，并依赖 Runtime MySQL、Redis、S3和 Runtime API。
+- `plugin_nodejs` Worker镜像固定Node.js 24.20.0和Runner摘要；启动时校验Node主版本与Runner文件。`pluginMaxProcesses`限制Node总进程数，`pluginIdleSeconds`控制按包摘要复用后的空闲回收。Linux使用进程组，Windows本地使用Job Object回收整棵进程树。
 - Sandbox Manager多副本共享 MySQL Lease并接入独立 OpenSandbox。
 - Observability消费受限 Redis Trace Stream写入 ClickHouse；ClickHouse故障不阻断 Execution提交。
 

@@ -87,7 +87,7 @@ V2a只关闭基础数组循环切片；M5中的体内审批、提前返回取消
 - [x] 触及超2000行的生产文件时按现有职责拆分，如容器编译校验；不借机做无关大重构。
 - [x] 跟踪A7现有5项未关闭门禁。已删除wait表同步当前处置/所有权清单；渠道出口失败后直连作为独立高优先级边界整改。不得恢复旧表、放宽网络策略或增加例外白名单来过关。
 
-主要落点：`crates/agentx-domain/src/workflow.rs`、`crates/agentx-node-protocol/src/lib.rs`、`crates/agentx-runtime/src/registry.rs`、`crates/agentx-runtime-contracts/src/{ir,engine,query}.rs`、`services/platform-control/src/catalog_api.rs`、`migrations/{control,runtime}`、`schemas/runtime-v1`、`openapi`。
+主要落点：`src/crates/agentx-domain/src/workflow.rs`、`src/crates/agentx-node-protocol/src/lib.rs`、`src/crates/agentx-runtime/src/registry.rs`、`src/crates/agentx-runtime-contracts/src/{ir,engine,query}.rs`、`src/services/platform-control/src/catalog_api.rs`、`migrations/{control,runtime}`、`contracts/schemas/runtime-v1`、`openapi`。
 
 门禁：当前Schema版本和默认值唯一；旧输入被明确拒绝；生成物漂移测试通过；可创建节点集合和前后端控件契约一致。
 
@@ -98,7 +98,7 @@ V2a只关闭基础数组循环切片；M5中的体内审批、提前返回取消
 - [x] 对应Fixture改用保留节点；删除只验证旧行为的测试，新增拒绝旧类型的契约检查。
 - [x] 区分“移除画布入口”和“删除资源能力”：MCP/Skill/Knowledge/Memory运行器继续服务于Agent，不能误删。
 
-落点：`crates/agentx-runtime/src/registry.rs`、`services/agentx-v2-runtime/src/worker_runtime_builtin.rs`、`services/agentx-v2-runtime/src/worker_runtime_tests.rs`、`services/platform-control/src/work_packages.rs`及相关Fixture、前端node-appearance/types。
+落点：`src/crates/agentx-runtime/src/registry.rs`、`src/services/agentx-v2-runtime/src/worker_runtime_builtin.rs`、`src/services/agentx-v2-runtime/src/worker_runtime_tests.rs`、`src/services/platform-control/src/work_packages.rs`及相关Fixture、前端node-appearance/types。
 
 门禁：旧类型无法从Catalog创建或通过编译，保留节点及Agent资源能力可用。
 
@@ -109,7 +109,7 @@ V2a只关闭基础数组循环切片；M5中的体内审批、提前返回取消
 - [x] 删除settings.onError、End strategy/collectWindowMs的残余读取、旧错误收集状态和兼容默认。
 - [x] 以真实error出边推导运行错误路由；错误分支、重试和终态机制不因删除旧配置而丢失。
 
-落点：`crates/agentx-runtime/src/{registry,compiler,state}.rs`、`services/agentx-v2-runtime/src/{engine,suspension}.rs`、`services/platform-control/src/runtime_bff.rs`、`migrations/runtime`与前端旧角色映射。
+落点：`src/crates/agentx-runtime/src/{registry,compiler,state}.rs`、`src/services/agentx-v2-runtime/src/{engine,suspension}.rs`、`src/services/platform-control/src/runtime_bff.rs`、`deploy/migrations/runtime`与前端旧角色映射。
 
 门禁：审批挂起/恢复仍可用；旧wait/switch/error_handler与旧错误配置无可执行入口。
 
@@ -120,7 +120,7 @@ V2a只关闭基础数组循环切片；M5中的体内审批、提前返回取消
 - [x] 保留Node Manifest、仍使用的Provider调用及echo-node Provider Fixture；不误删应用Webhook、Schedule或渠道功能。
 - [x] 更新调用方、部署/测试Fixture与协议文档，不保留旧URL转发或适配包装。
 
-落点：`agentx-node-protocol`、`agentx-runtime-contracts`、`agentx-bundle-builder`、Runtime worker/trigger、`services/echo-node`、OpenAPI/Schema。
+落点：`agentx-node-protocol`、`agentx-runtime-contracts`、`agentx-bundle-builder`、Runtime worker/trigger、`tests/fixtures/echo-node`、OpenAPI/Schema。
 
 门禁：可执行路径和生成契约不再暴露旧远程节点协议，Provider/E2E基础能力继续通过验证。历史说明和“拒绝旧输入”的测试可以提到旧名字，不能机械要求所有文档中零关键词。
 
@@ -247,7 +247,7 @@ V2a只关闭基础数组循环切片；M5中的体内审批、提前返回取消
 - [x] 按M0确定的方案只调整editor路由工作区；其他企业页面不改。检查1280px及更宽桌面视口的画布空间、滚动和MiniMap占用。
 - [x] 为full/compact/minimal缩放层级明确摘要与高度策略；保持连线、焦点、键盘和错误态可辨识。
 
-落点：`apps/web/src/shared/ui`、`styles/globals.css`、`features/workflow-designer/nodes`、`panels/inspectors/panel-shell.tsx`、`panels/node-inspector.tsx`、`workflow-canvas.tsx`、`layouts/enterprise-workbench/enterprise-layout.tsx`。
+落点：`src/web/src/shared/ui`、`styles/globals.css`、`features/workflow-designer/nodes`、`panels/inspectors/panel-shell.tsx`、`panels/node-inspector.tsx`、`workflow-canvas.tsx`、`layouts/enterprise-workbench/enterprise-layout.tsx`。
 
 门禁：V1最小流程的真实截图对照通过；公共控件规格、主题、溢出和键盘行为一致；500/1000节点性能尽早检查。
 
@@ -364,7 +364,7 @@ V2a只关闭基础数组循环切片；M5中的体内审批、提前返回取消
 
 2026-09-01实跑架构检查已通过。原5项分别通过Schema处置清单同步、Provider受控出口收口和生产文件按职责拆分关闭，没有放宽守卫或新增例外。
 
-相关实现与规格：`apps/e2e/tests/m6-workflow-studio.spec.ts`、`m6-local-builtins.spec.ts`、`workflow-multi-exit.spec.ts`、`workflow-canvas-performance.spec.ts`，以及 `tests/e2e/conftest.py` 和现有Runtime集成测试。
+相关实现与规格：`tests/browser/tests/m6-workflow-studio.spec.ts`、`m6-local-builtins.spec.ts`、`workflow-multi-exit.spec.ts`、`workflow-canvas-performance.spec.ts`，以及 `tests/e2e/conftest.py` 和现有Runtime集成测试。
 
 | 门禁 | 命令 / 要求 |
 |---|---|

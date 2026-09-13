@@ -1,0 +1,9 @@
+{
+  "name": "@agentx/builtin-http",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": { "check": "tsc --noEmit", "build": "tsc", "test": "node --test tests/runtime.test.mjs" },
+  "dependencies": { "@agentx/plugin-sdk": "workspace:*" },
+  "devDependencies": { "typescript": "~6.0.2" }
+}

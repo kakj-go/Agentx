@@ -129,7 +129,7 @@
 
 Manifest负责节点身份、六组分类、显示名、图标key、字段/枚举文案、端口、槽位和能力；尺寸、颜色令牌与具体布局归前端。未知业务字段不能统一标成“参数”，也不能让前端另猜一份目录。不增加样式配置服务。
 
-Definition与NodeManifestVersion统一由 `agentx-runtime-contracts` 的 `generate-contracts` 生成到 `schemas/runtime-v1/`，继续使用漂移测试。旧根目录Schema和remote_action OpenAPI不恢复。
+Definition与NodeManifestVersion统一由 `agentx-runtime-contracts` 的 `generate-contracts` 生成到 `contracts/schemas/runtime-v1/`，继续使用漂移测试。旧根目录Schema和remote_action OpenAPI不恢复。
 
 ### 5.2 IF与动态端口
 

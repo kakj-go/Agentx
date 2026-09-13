@@ -111,7 +111,7 @@ def installed_agentx(
     failures_before = request.session.testsfailed
     development = _scale_development(deployment_values, pytestconfig.getoption("--scale-down-development"))
     config = deployment_config(deployment_values, run_id=run_id)
-    artifact_dir = Path(__file__).resolve().parents[2] / "artifacts" / "e2e" / run_id
+    artifact_dir = Path(__file__).resolve().parents[2] / ".local" / "artifacts" / "e2e" / run_id
     artifact_dir.mkdir(parents=True, exist_ok=True)
     _timeline(timeline, "install started")
     install_command = (

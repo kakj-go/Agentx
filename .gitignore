@@ -4,6 +4,8 @@
 # Node
 node_modules/
 dist/
+!src/plugins/builtin/*/dist/
+!src/plugins/builtin/*/dist/runtime.js
 .pnpm-store/
 __pycache__/
 *.py[cod]
@@ -31,9 +33,6 @@ Thumbs.db
 platform-api-test.out
 platform-api-test.err
 .local/
-/artifacts/
-apps/web/src/assets/hero.png
-apps/e2e/playwright-report/
-apps/e2e/test-results/
+src/web/src/assets/hero.png
 /.commandcode/
 /.zcode/

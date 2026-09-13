@@ -12,8 +12,8 @@
     "agentx-observability"
   ],
   "runtime_gateway_redis_allowed_modules": [
-    "services/agentx-v2-runtime/src/sse_wakeup.rs",
-    "services/agentx-v2-runtime/src/trace_delivery.rs"
+    "src/services/agentx-v2-runtime/src/sse_wakeup.rs",
+    "src/services/agentx-v2-runtime/src/trace_delivery.rs"
   ],
   "legacy_direct_dependencies": [],
   "legacy_rust_imports": [],

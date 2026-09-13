@@ -6,6 +6,8 @@ Workflow Definition 只接受 `schemaVersion: "8.0"`。本版本是开发期破�
 
 本文冻结当前唯一的Definition 8.0契约。List/Loop数组边界、Exit顺序与可选null对齐、Draft引用保存门禁均由实现和自动化测试约束；环境验收结果见[plan5实施计划](plan5/implementation-plan.md)。
 
+plan6不改变Definition版本，但改变节点契约来源：Node Manifest当前只接受3.0。插件节点仍只持久化`type/typeVersion/parameters/resourceReferences`，Control Catalog由该身份解析不可变包版本；Compiler把完整`PluginNodeBinding`、有效端口和输出Schema冻结到IR。同一Workflow中同一`packageId`出现不同`packageVersion/bundleDigest`时返回`PLUGIN_PACKAGE_VERSION_CONFLICT`。默认版本变化不改写Definition，显式切换仅改变节点版本并由现有Undo/Redo和服务端校验处理。
+
 ## 1a. 多结束节点（exit）
 
 8.0 不再使用画布中央的 `__end__` 边界：终止点表达为多个 `exit` 类型的真实节点，每个 exit 暴露 `main` 与 `error` 两个输入端口，可从节点面板添加、可删除；工作流初始模板自带一个 `protected: true` 的 exit（不可删除），保证任何 Definition 至少有一个终止出口。`__end__` 只作为编译/校验期虚拟锚点，Connections 中不允许出现 `target == __end__`。

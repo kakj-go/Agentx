@@ -45,7 +45,7 @@ V2-06A 的完整 Role→表/Stream→Claim→Lease→Heartbeat→Fencing→索�
 - Service JWT 固定 RS256，Claims 为 `iss/aud/sub/role/scope/iat/exp/jti`。Control Role 各自私钥和 `kid`；Runtime 仅保存当前与上一 `kid` 公钥。Service TTL 300 秒。
 - BFF Delegation Token TTL 60 秒，并绑定 Tenant、Subject、Operation、Application/Execution/Session 范围。
 - 写请求必须有 Idempotency Key 与业务 Version/Epoch；错误 Issuer、Audience、Role、Scope、租户、过期 Token 或已移除 Key 一律拒绝。
-- Gateway 中只有 `services/agentx-v2-runtime/src/sse_wakeup.rs` 允许构造或调用 Runtime Redis；`invocation_events.sequence_number` 始终是 SSE 权威 Cursor，认证、Route 和 Invocation 接受不得依赖 Redis。边界检查器对其他模块的 Redis 引用直接失败。
+- Gateway 中只有 `src/services/agentx-v2-runtime/src/sse_wakeup.rs` 允许构造或调用 Runtime Redis；`invocation_events.sequence_number` 始终是 SSE 权威 Cursor，认证、Route 和 Invocation 接受不得依赖 Redis。边界检查器对其他模块的 Redis 引用直接失败。
 - Webhook Bundle 只保存版本化 Vault KV v2 引用；Runtime Gateway 使用只读 Vault 身份，Vault 不可用时明确失败，不回退 Control API、数据库密文或共享 Secret。
 - V2 不增加 mTLS Client Identity、请求签名、Nonce Store、Service Mesh。TLS 仍是传输要求，但身份来自上述 JWT。
 

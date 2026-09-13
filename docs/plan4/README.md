@@ -255,7 +255,7 @@ Application 详情页的“渠道对接”Tab 展示渠道名称、平台、状�
 
 ## 11. E2E 验收
 
-Kubernetes 系统级 E2E 以 `pytest tests/e2e` 为唯一编排入口，浏览器操作继续使用 `apps/e2e` 的 TypeScript Playwright。测试使用临时 Namespace，完成后清理；证据不得包含 Secret、Token、完整请求体或完整用户输入。
+Kubernetes 系统级 E2E 以 `pytest tests/e2e` 为唯一编排入口，浏览器操作继续使用 `tests/browser` 的 TypeScript Playwright。测试使用临时 Namespace，完成后清理；证据不得包含 Secret、Token、完整请求体或完整用户输入。
 
 最小闭环：
 
@@ -365,7 +365,7 @@ P4 只有同时满足以下条件才算完成：
 ### 16.1 模块结构
 
 ```text
-services/agentx-v2-runtime/src/stream/
+src/services/agentx-v2-runtime/src/stream/
   mod.rs                 # supervisor：租约领取、连接启停、退避重连、状态回写
   dingtalk_stream.rs     # open API + WS + JSON 帧 + ping/ACK
   feishu_ws.rs           # token 刷新 + WS + prost 帧 + pong/ACK

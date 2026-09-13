@@ -1,0 +1,8 @@
+{
+  "name": "@agentx/plugin-sdk",
+  "version": "1.0.0",
+  "type": "module",
+  "exports": "./src/index.ts",
+  "scripts": { "check": "tsc --noEmit", "test": "vitest run" },
+  "devDependencies": { "typescript": "~6.0.2", "vitest": "^4.1.1" }
+}

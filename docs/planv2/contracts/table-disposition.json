@@ -45,21 +45,13 @@
     "control_replacement": null,
     "runtime_replacement": "runtime.agent_session_entries",
     "authoritative_writer": "workflow-worker Agent Core Entry Repository",
-    "allowed_readers": ["runtime query diagnostics", "workflow-worker Agent Core"],
+    "allowed_readers": [
+      "runtime query diagnostics",
+      "workflow-worker Agent Core"
+    ],
     "cross_plane_contract": "AgentSessionEntryV1 append-only contract",
     "retention_and_delete_rule": "Retain while the owning Session or protected Artifact is live; clear only through the authorized Session Clear transaction.",
     "owning_task": "P3M-001/P3M-007"
-  },
-  {
-    "current_table": "agent_session_registers",
-    "decision": "runtime",
-    "control_replacement": null,
-    "runtime_replacement": "runtime.agent_session_registers",
-    "authoritative_writer": "workflow-worker Agent Core Register CAS",
-    "allowed_readers": ["runtime query diagnostics", "workflow-worker Agent Core"],
-    "cross_plane_contract": "AgentSessionRegisterV1 CAS/Fencing contract",
-    "retention_and_delete_rule": "Retain the latest recovery authority for the Session; clear only after open Operations and references are resolved.",
-    "owning_task": "P3M-001/P3M-003"
   },
   {
     "current_table": "agent_session_operations",
@@ -67,21 +59,13 @@
     "control_replacement": null,
     "runtime_replacement": "runtime.agent_session_operations",
     "authoritative_writer": "workflow-worker Agent Core Operation Repository",
-    "allowed_readers": ["runtime query diagnostics", "workflow-worker recovery"],
+    "allowed_readers": [
+      "runtime query diagnostics",
+      "workflow-worker recovery"
+    ],
     "cross_plane_contract": "Durable Operation State and Effect identity contract",
     "retention_and_delete_rule": "Retain terminal Operation evidence for the configured audit window; never rewrite an Effect identity.",
     "owning_task": "P3M-003/P3M-005"
-  },
-  {
-    "current_table": "agent_session_usages",
-    "decision": "runtime",
-    "control_replacement": null,
-    "runtime_replacement": "runtime.agent_session_usages",
-    "authoritative_writer": "workflow-worker Agent Core Usage projection",
-    "allowed_readers": ["runtime query diagnostics", "runtime trace reconciliation"],
-    "cross_plane_contract": "AgentSessionUsageV1 unique Effect usage contract",
-    "retention_and_delete_rule": "Retain with Session and Runtime Call Ledger audit records; deduplicate by Operation, Effect and Usage kind.",
-    "owning_task": "P3M-001/P3M-005"
   },
   {
     "current_table": "agent_session_pending_entries",
@@ -89,10 +73,41 @@
     "control_replacement": null,
     "runtime_replacement": "runtime.agent_session_pending_entries",
     "authoritative_writer": "workflow-worker durable Session queue",
-    "allowed_readers": ["workflow-worker recovery", "runtime query diagnostics"],
+    "allowed_readers": [
+      "workflow-worker recovery",
+      "runtime query diagnostics"
+    ],
     "cross_plane_contract": "Durable steering/follow-up/retry queue contract",
     "retention_and_delete_rule": "Retain pending entries until consumed or explicitly cancelled; enforce the 32-entry bound.",
     "owning_task": "P3M-003/P3M-006"
+  },
+  {
+    "current_table": "agent_session_registers",
+    "decision": "runtime",
+    "control_replacement": null,
+    "runtime_replacement": "runtime.agent_session_registers",
+    "authoritative_writer": "workflow-worker Agent Core Register CAS",
+    "allowed_readers": [
+      "runtime query diagnostics",
+      "workflow-worker Agent Core"
+    ],
+    "cross_plane_contract": "AgentSessionRegisterV1 CAS/Fencing contract",
+    "retention_and_delete_rule": "Retain the latest recovery authority for the Session; clear only after open Operations and references are resolved.",
+    "owning_task": "P3M-001/P3M-003"
+  },
+  {
+    "current_table": "agent_session_usages",
+    "decision": "runtime",
+    "control_replacement": null,
+    "runtime_replacement": "runtime.agent_session_usages",
+    "authoritative_writer": "workflow-worker Agent Core Usage projection",
+    "allowed_readers": [
+      "runtime query diagnostics",
+      "runtime trace reconciliation"
+    ],
+    "cross_plane_contract": "AgentSessionUsageV1 unique Effect usage contract",
+    "retention_and_delete_rule": "Retain with Session and Runtime Call Ledger audit records; deduplicate by Operation, Effect and Usage kind.",
+    "owning_task": "P3M-001/P3M-005"
   },
   {
     "current_table": "agent_subject_memory_audit",
@@ -100,7 +115,10 @@
     "control_replacement": null,
     "runtime_replacement": "runtime.agent_subject_memory_audit",
     "authoritative_writer": "workflow-worker Subject Memory adapter",
-    "allowed_readers": ["runtime query diagnostics", "runtime audit"],
+    "allowed_readers": [
+      "runtime query diagnostics",
+      "runtime audit"
+    ],
     "cross_plane_contract": "Trusted Subject Memory audit contract",
     "retention_and_delete_rule": "Retain according to the Memory audit policy; never expose memory payloads through audit queries.",
     "owning_task": "P3M-006/P3M-007"
@@ -111,7 +129,10 @@
     "control_replacement": null,
     "runtime_replacement": "runtime.agent_subject_memory_clears",
     "authoritative_writer": "runtime Subject Memory Clear transaction",
-    "allowed_readers": ["runtime query diagnostics", "workflow-worker Subject Memory adapter"],
+    "allowed_readers": [
+      "runtime query diagnostics",
+      "workflow-worker Subject Memory adapter"
+    ],
     "cross_plane_contract": "Subject Memory clear tombstone and idempotency contract",
     "retention_and_delete_rule": "Retain clear tombstones through the retention and audit window so cleared scopes cannot be resurrected.",
     "owning_task": "P3M-006/P3M-007"
@@ -387,6 +408,58 @@
     "cross_plane_contract": "none; same-plane access only",
     "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
     "owning_task": "V2D-001"
+  },
+  {
+    "current_table": "canvas_plugin_imports",
+    "decision": "control",
+    "control_replacement": "control.canvas_plugin_imports",
+    "runtime_replacement": null,
+    "authoritative_writer": "platform-control canvas plugin API",
+    "allowed_readers": [
+      "control"
+    ],
+    "cross_plane_contract": "none; import previews never cross the Control boundary",
+    "retention_and_delete_rule": "Expire uninstalled previews after 24 hours; installed immutable artifacts are retained by canvas_plugin_versions.",
+    "owning_task": "P6-01/P6-02"
+  },
+  {
+    "current_table": "canvas_plugin_object_gc",
+    "decision": "control",
+    "control_replacement": "control.canvas_plugin_object_gc",
+    "runtime_replacement": null,
+    "authoritative_writer": "control retention role",
+    "allowed_readers": [
+      "control canvas plugin retention"
+    ],
+    "cross_plane_contract": "none; Control object-store cleanup queue",
+    "retention_and_delete_rule": "Delete the row after the immutable Control object is removed; retry failures with bounded backoff.",
+    "owning_task": "P6-02/P6-07"
+  },
+  {
+    "current_table": "canvas_plugin_versions",
+    "decision": "control",
+    "control_replacement": "control.canvas_plugin_versions",
+    "runtime_replacement": null,
+    "authoritative_writer": "platform-control canvas plugin API",
+    "allowed_readers": [
+      "control"
+    ],
+    "cross_plane_contract": "ExecutionSpecBundleV2 and RuntimeWorkPackageV1 carry the immutable PluginNodeBinding snapshot",
+    "retention_and_delete_rule": "Immutable versions are deleted only after Draft, Version, Deployment and frozen execution reference checks pass.",
+    "owning_task": "P6-01/P6-02"
+  },
+  {
+    "current_table": "canvas_plugins",
+    "decision": "control",
+    "control_replacement": "control.canvas_plugins",
+    "runtime_replacement": null,
+    "authoritative_writer": "platform-control canvas plugin API",
+    "allowed_readers": [
+      "control"
+    ],
+    "cross_plane_contract": "none; Runtime receives immutable version snapshots rather than the mutable package row",
+    "retention_and_delete_rule": "Package deletion is protected by version references and removes only unreferenced immutable objects.",
+    "owning_task": "P6-01/P6-02"
   },
   {
     "current_table": "checkpoint_artifacts",
@@ -1400,20 +1473,6 @@
     "owning_task": "P3C-002/P3C-003"
   },
   {
-    "current_table": "sandbox_workspaces",
-    "decision": "runtime",
-    "control_replacement": null,
-    "runtime_replacement": "runtime.sandbox_workspaces",
-    "authoritative_writer": "sandbox-manager workspace lifecycle",
-    "allowed_readers": [
-      "sandbox-manager workspace reaper",
-      "runtime doctor"
-    ],
-    "cross_plane_contract": "WorkspaceAcquireRequestV1, ToolEffectRequestV1, and WorkspaceReleaseRequestV1",
-    "retention_and_delete_rule": "Invocation workspaces terminate with the Attempt; Application Session workspaces expire by Sandbox Profile TTL.",
-    "owning_task": "P3T-001/P3T-002"
-  },
-  {
     "current_table": "sandbox_profile_versions",
     "decision": "control",
     "control_replacement": "control.sandbox_profile_versions",
@@ -1438,6 +1497,20 @@
     "cross_plane_contract": "none; same-plane access only",
     "retention_and_delete_rule": "No history migration. Retention is owned by the replacement plane; deletion requires its owning task and reference checks.",
     "owning_task": "V2D-001"
+  },
+  {
+    "current_table": "sandbox_workspaces",
+    "decision": "runtime",
+    "control_replacement": null,
+    "runtime_replacement": "runtime.sandbox_workspaces",
+    "authoritative_writer": "sandbox-manager workspace lifecycle",
+    "allowed_readers": [
+      "sandbox-manager workspace reaper",
+      "runtime doctor"
+    ],
+    "cross_plane_contract": "WorkspaceAcquireRequestV1, ToolEffectRequestV1, and WorkspaceReleaseRequestV1",
+    "retention_and_delete_rule": "Invocation workspaces terminate with the Attempt; Application Session workspaces expire by Sandbox Profile TTL.",
+    "owning_task": "P3T-001/P3T-002"
   },
   {
     "current_table": "side_effect_confirmations",

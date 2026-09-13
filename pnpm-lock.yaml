@@ -8,7 +8,7 @@ importers:
 
   .: {}
 
-  apps/e2e:
+  tests/browser:
     devDependencies:
       '@playwright/test':
         specifier: ^1.54.2
@@ -20,7 +20,7 @@ importers:
         specifier: ~6.0.2
         version: 6.0.3
 
-  apps/web:
+  src/web:
     dependencies:
       '@lexical/clipboard':
         specifier: 0.48.0
@@ -36,7 +36,7 @@ importers:
         version: 0.48.0(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(typescript@6.0.3)(yjs@13.6.31)
       '@mdxeditor/editor':
         specifier: 4.2.0
-        version: 4.2.0(@codemirror/language@6.12.4)(@lezer/highlight@1.2.3)(@types/react-dom@18.3.7(@types/react@18.3.28))(@types/react@18.3.28)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(supports-color@10.2.2)(typescript@6.0.3)(yjs@13.6.31)
+        version: 4.2.0(@codemirror/language@6.12.4)(@lezer/highlight@1.2.3)(@types/react-dom@18.3.7(@types/react@18.3.28))(@types/react@18.3.28)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(typescript@6.0.3)(yjs@13.6.31)
       '@monaco-editor/react':
         specifier: ^4.7.0
         version: 4.7.0(monaco-editor@0.56.0)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
@@ -94,6 +94,9 @@ importers:
       lucide-react:
         specifier: ^1.28.0
         version: 1.28.0(react@18.3.1)
+      monaco-editor:
+        specifier: 0.56.0
+        version: 0.56.0
       react:
         specifier: ^18.3.1
         version: 18.3.1
@@ -163,7 +166,66 @@ importers:
         version: 8.2.0(@types/node@24.13.3)(jiti@2.7.0)
       vitest:
         specifier: ^4.1.1
-        version: 4.1.10(@types/node@24.13.3)(jsdom@28.1.0(supports-color@10.2.2))(vite@8.2.0(@types/node@24.13.3)(jiti@2.7.0))
+        version: 4.1.10(@types/node@24.13.3)(jsdom@28.1.0)(vite@8.2.0(@types/node@24.13.3)(jiti@2.7.0))
+
+  src/plugins/packages/plugin-runner: {}
+
+  src/plugins/packages/plugin-sdk:
+    devDependencies:
+      typescript:
+        specifier: ~6.0.2
+        version: 6.0.3
+      vitest:
+        specifier: ^4.1.1
+        version: 4.1.10(@types/node@24.13.3)(jsdom@28.1.0)(vite@8.2.0(@types/node@24.13.3)(jiti@2.7.0))
+
+  src/plugins/packages/plugin-ui:
+    devDependencies:
+      '@types/react':
+        specifier: ^18.3.28
+        version: 18.3.28
+      react:
+        specifier: ^18.3.1
+        version: 18.3.1
+      typescript:
+        specifier: ~6.0.2
+        version: 6.0.3
+
+  src/plugins/builtin/data:
+    dependencies:
+      '@agentx/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
+    devDependencies:
+      typescript:
+        specifier: ~6.0.2
+        version: 6.0.3
+
+  src/plugins/builtin/http:
+    dependencies:
+      '@agentx/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
+    devDependencies:
+      typescript:
+        specifier: ~6.0.2
+        version: 6.0.3
+
+  src/plugins/templates/canvas-plugin:
+    dependencies:
+      '@agentx/plugin-sdk':
+        specifier: file:vendor/plugin-sdk
+        version: file:src/plugins/templates/canvas-plugin/vendor/plugin-sdk
+      '@agentx/plugin-ui':
+        specifier: file:vendor/plugin-ui
+        version: file:src/plugins/templates/canvas-plugin/vendor/plugin-ui
+    devDependencies:
+      '@types/react':
+        specifier: ^18.3.28
+        version: 18.3.28
+      typescript:
+        specifier: ~6.0.2
+        version: 6.0.3
 
 packages:
 
@@ -172,6 +234,12 @@ packages:
 
   '@adobe/css-tools@4.5.0':
     resolution: {integrity: sha512-6OzddxPio9UiWTCemp4N8cYLV2ZN1ncRnV1cVGtve7dhPOtRkleRyx32GQCYSwDYgaHU3USMm84tNsvKzRCa1Q==}
+
+  '@agentx/plugin-sdk@file:src/plugins/templates/canvas-plugin/vendor/plugin-sdk':
+    resolution: {directory: src/plugins/templates/canvas-plugin/vendor/plugin-sdk, type: directory}
+
+  '@agentx/plugin-ui@file:src/plugins/templates/canvas-plugin/vendor/plugin-ui':
+    resolution: {directory: src/plugins/templates/canvas-plugin/vendor/plugin-ui, type: directory}
 
   '@asamuzakjp/css-color@5.1.11':
     resolution: {integrity: sha512-KVw6qIiCTUQhByfTd78h2yD1/00waTmm9uy/R7Ck/ctUyAPj+AEDLkQIdJW0T8+qGgj3j5bpNKK7Q3G+LedJWg==}
@@ -3065,6 +3133,10 @@ snapshots:
 
   '@adobe/css-tools@4.5.0': {}
 
+  '@agentx/plugin-sdk@file:src/plugins/templates/canvas-plugin/vendor/plugin-sdk': {}
+
+  '@agentx/plugin-ui@file:src/plugins/templates/canvas-plugin/vendor/plugin-ui': {}
+
   '@asamuzakjp/css-color@5.1.11':
     dependencies:
       '@asamuzakjp/generational-cache': 1.0.1
@@ -3786,7 +3858,7 @@ snapshots:
 
   '@marijn/find-cluster-break@1.0.3': {}
 
-  '@mdxeditor/editor@4.2.0(@codemirror/language@6.12.4)(@lezer/highlight@1.2.3)(@types/react-dom@18.3.7(@types/react@18.3.28))(@types/react@18.3.28)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(supports-color@10.2.2)(typescript@6.0.3)(yjs@13.6.31)':
+  '@mdxeditor/editor@4.2.0(@codemirror/language@6.12.4)(@lezer/highlight@1.2.3)(@types/react-dom@18.3.7(@types/react@18.3.28))(@types/react@18.3.28)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(typescript@6.0.3)(yjs@13.6.31)':
     dependencies:
       '@codemirror/commands': 6.10.4
       '@codemirror/lang-markdown': 6.5.1
@@ -3821,15 +3893,15 @@ snapshots:
       downshift: 7.6.0(react@18.3.1)
       js-yaml: 4.3.0
       lexical: 0.48.0(typescript@6.0.3)
-      mdast-util-directive: 3.1.0(supports-color@10.2.2)
-      mdast-util-from-markdown: 2.0.3(supports-color@10.2.2)
-      mdast-util-frontmatter: 2.0.1(supports-color@10.2.2)
-      mdast-util-gfm-strikethrough: 2.0.0(supports-color@10.2.2)
-      mdast-util-gfm-table: 2.0.0(supports-color@10.2.2)
-      mdast-util-gfm-task-list-item: 2.0.0(supports-color@10.2.2)
+      mdast-util-directive: 3.1.0
+      mdast-util-from-markdown: 2.0.3
+      mdast-util-frontmatter: 2.0.1
+      mdast-util-gfm-strikethrough: 2.0.0
+      mdast-util-gfm-table: 2.0.0
+      mdast-util-gfm-task-list-item: 2.0.0
       mdast-util-highlight-mark: 1.2.2
-      mdast-util-mdx: 3.0.0(supports-color@10.2.2)
-      mdast-util-mdx-jsx: 3.2.0(supports-color@10.2.2)
+      mdast-util-mdx: 3.0.0
+      mdast-util-mdx-jsx: 3.2.0
       mdast-util-to-markdown: 2.1.0
       micromark-extension-directive: 3.0.2
       micromark-extension-frontmatter: 2.0.0
@@ -5339,13 +5411,13 @@ snapshots:
 
   marked@14.0.0: {}
 
-  mdast-util-directive@3.1.0(supports-color@10.2.2):
+  mdast-util-directive@3.1.0:
     dependencies:
       '@types/mdast': 4.0.4
       '@types/unist': 3.0.3
       ccount: 2.0.1
       devlop: 1.1.0
-      mdast-util-from-markdown: 2.0.3(supports-color@10.2.2)
+      mdast-util-from-markdown: 2.0.3
       mdast-util-to-markdown: 2.1.0
       parse-entities: 4.0.2
       stringify-entities: 4.0.4
@@ -5353,14 +5425,14 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  mdast-util-from-markdown@2.0.3(supports-color@10.2.2):
+  mdast-util-from-markdown@2.0.3:
     dependencies:
       '@types/mdast': 4.0.4
       '@types/unist': 3.0.3
       decode-named-character-reference: 1.3.0
       devlop: 1.1.0
       mdast-util-to-string: 4.0.0
-      micromark: 4.0.0(supports-color@10.2.2)
+      micromark: 4.0.0
       micromark-util-decode-numeric-character-reference: 2.0.0
       micromark-util-decode-string: 2.0.1
       micromark-util-normalize-identifier: 2.0.0
@@ -5370,40 +5442,40 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  mdast-util-frontmatter@2.0.1(supports-color@10.2.2):
+  mdast-util-frontmatter@2.0.1:
     dependencies:
       '@types/mdast': 4.0.4
       devlop: 1.1.0
       escape-string-regexp: 5.0.0
-      mdast-util-from-markdown: 2.0.3(supports-color@10.2.2)
+      mdast-util-from-markdown: 2.0.3
       mdast-util-to-markdown: 2.1.0
       micromark-extension-frontmatter: 2.0.0
     transitivePeerDependencies:
       - supports-color
 
-  mdast-util-gfm-strikethrough@2.0.0(supports-color@10.2.2):
+  mdast-util-gfm-strikethrough@2.0.0:
     dependencies:
       '@types/mdast': 4.0.4
-      mdast-util-from-markdown: 2.0.3(supports-color@10.2.2)
+      mdast-util-from-markdown: 2.0.3
       mdast-util-to-markdown: 2.1.0
     transitivePeerDependencies:
       - supports-color
 
-  mdast-util-gfm-table@2.0.0(supports-color@10.2.2):
+  mdast-util-gfm-table@2.0.0:
     dependencies:
       '@types/mdast': 4.0.4
       devlop: 1.1.0
       markdown-table: 3.0.4
-      mdast-util-from-markdown: 2.0.3(supports-color@10.2.2)
+      mdast-util-from-markdown: 2.0.3
       mdast-util-to-markdown: 2.1.0
     transitivePeerDependencies:
       - supports-color
 
-  mdast-util-gfm-task-list-item@2.0.0(supports-color@10.2.2):
+  mdast-util-gfm-task-list-item@2.0.0:
     dependencies:
       '@types/mdast': 4.0.4
       devlop: 1.1.0
-      mdast-util-from-markdown: 2.0.3(supports-color@10.2.2)
+      mdast-util-from-markdown: 2.0.3
       mdast-util-to-markdown: 2.1.0
     transitivePeerDependencies:
       - supports-color
@@ -5412,18 +5484,18 @@ snapshots:
     dependencies:
       micromark-extension-highlight-mark: 1.2.0
 
-  mdast-util-mdx-expression@2.0.1(supports-color@10.2.2):
+  mdast-util-mdx-expression@2.0.1:
     dependencies:
       '@types/estree-jsx': 1.0.5
       '@types/hast': 3.0.5
       '@types/mdast': 4.0.4
       devlop: 1.1.0
-      mdast-util-from-markdown: 2.0.3(supports-color@10.2.2)
+      mdast-util-from-markdown: 2.0.3
       mdast-util-to-markdown: 2.1.0
     transitivePeerDependencies:
       - supports-color
 
-  mdast-util-mdx-jsx@3.2.0(supports-color@10.2.2):
+  mdast-util-mdx-jsx@3.2.0:
     dependencies:
       '@types/estree-jsx': 1.0.5
       '@types/hast': 3.0.5
@@ -5431,7 +5503,7 @@ snapshots:
       '@types/unist': 3.0.3
       ccount: 2.0.1
       devlop: 1.1.0
-      mdast-util-from-markdown: 2.0.3(supports-color@10.2.2)
+      mdast-util-from-markdown: 2.0.3
       mdast-util-to-markdown: 2.1.0
       parse-entities: 4.0.2
       stringify-entities: 4.0.4
@@ -5440,23 +5512,23 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  mdast-util-mdx@3.0.0(supports-color@10.2.2):
+  mdast-util-mdx@3.0.0:
     dependencies:
-      mdast-util-from-markdown: 2.0.3(supports-color@10.2.2)
-      mdast-util-mdx-expression: 2.0.1(supports-color@10.2.2)
-      mdast-util-mdx-jsx: 3.2.0(supports-color@10.2.2)
-      mdast-util-mdxjs-esm: 2.0.1(supports-color@10.2.2)
+      mdast-util-from-markdown: 2.0.3
+      mdast-util-mdx-expression: 2.0.1
+      mdast-util-mdx-jsx: 3.2.0
+      mdast-util-mdxjs-esm: 2.0.1
       mdast-util-to-markdown: 2.1.0
     transitivePeerDependencies:
       - supports-color
 
-  mdast-util-mdxjs-esm@2.0.1(supports-color@10.2.2):
+  mdast-util-mdxjs-esm@2.0.1:
     dependencies:
       '@types/estree-jsx': 1.0.5
       '@types/hast': 3.0.5
       '@types/mdast': 4.0.4
       devlop: 1.1.0
-      mdast-util-from-markdown: 2.0.3(supports-color@10.2.2)
+      mdast-util-from-markdown: 2.0.3
       mdast-util-to-markdown: 2.1.0
     transitivePeerDependencies:
       - supports-color
@@ -5717,7 +5789,7 @@ snapshots:
 
   micromark-util-types@2.0.0: {}
 
-  micromark@4.0.0(supports-color@10.2.2):
+  micromark@4.0.0:
     dependencies:
       '@types/debug': 4.1.13
       debug: 4.4.3(supports-color@10.2.2)
@@ -6123,7 +6195,7 @@ snapshots:
       fsevents: 2.3.3
       jiti: 2.7.0
 
-  vitest@4.1.10(@types/node@24.13.3)(jsdom@28.1.0(supports-color@10.2.2))(vite@8.2.0(@types/node@24.13.3)(jiti@2.7.0)):
+  vitest@4.1.10(@types/node@24.13.3)(jsdom@28.1.0)(vite@8.2.0(@types/node@24.13.3)(jiti@2.7.0)):
     dependencies:
       '@vitest/expect': 4.1.10
       '@vitest/mocker': 4.1.10(vite@8.2.0(@types/node@24.13.3)(jiti@2.7.0))

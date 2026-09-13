@@ -681,6 +681,93 @@
 | e | n | a.n |
 | d |  | . |
 
+### canvas_plugin_object_gc
+
+| Column | Type | Nullable | Default | Extra |
+|---|---|---:|---|---|
+| id | binary(16) | NO | ∅ |  |
+| tenant_id | binary(16) | NO | ∅ |  |
+| object_key | varchar(512) | NO | ∅ |  |
+| reason | varchar(64) | NO | ∅ |  |
+| attempt_count | int unsigned | NO | 0 |  |
+| available_at | timestamp(6) | NO | CURRENT_TIMESTAMP(6) | DEFAULT_GENERATED |
+| last_error | varchar(1000) | YES | ∅ |  |
+| created_at | timestamp(6) | NO | CURRENT_TIMESTAMP(6) | DEFAULT_GENERATED |
+
+| Index | Unique | Columns |
+|---|---:|---|
+| idx_canvas_plugin_object_gc_claim | no | available_at, created_at |
+| PRIMARY | yes | id |
+| uq_canvas_plugin_object_gc_key | yes | tenant_id, object_key |
+
+### canvas_plugin_imports
+
+| Column | Type | Nullable | Default | Extra |
+|---|---|---:|---|---|
+| id | binary(16) | NO | ∅ |  |
+| tenant_id | binary(16) | NO | ∅ |  |
+| bundle_digest | char(71) | NO | ∅ |  |
+| artifact_key | varchar(512) | NO | ∅ |  |
+| status | enum('ready','installed','failed','cancelled') | NO | ∅ |  |
+| manifest_json | json | NO | ∅ |  |
+| issues_json | json | NO | ∅ |  |
+| installed_version_id | binary(16) | YES | ∅ |  |
+| created_by | binary(16) | NO | ∅ |  |
+| expires_at | timestamp(6) | NO | ∅ |  |
+| created_at | timestamp(6) | NO | CURRENT_TIMESTAMP(6) | DEFAULT_GENERATED |
+| updated_at | timestamp(6) | NO | CURRENT_TIMESTAMP(6) | DEFAULT_GENERATED on update CURRENT_TIMESTAMP(6) |
+
+| Index | Unique | Columns |
+|---|---:|---|
+| idx_canvas_plugin_import_expiry | no | status, expires_at |
+| PRIMARY | yes | id |
+| uq_canvas_plugin_import_digest | yes | tenant_id, bundle_digest |
+
+### canvas_plugin_versions
+
+| Column | Type | Nullable | Default | Extra |
+|---|---|---:|---|---|
+| id | binary(16) | NO | ∅ |  |
+| tenant_id | binary(16) | NO | ∅ |  |
+| plugin_id | binary(16) | NO | ∅ |  |
+| package_version | varchar(64) | NO | ∅ |  |
+| bundle_digest | char(71) | NO | ∅ |  |
+| status | enum('enabled','disabled') | NO | enabled |  |
+| sdk_api_version | int unsigned | NO | ∅ |  |
+| manifest_json | json | NO | ∅ |  |
+| artifact_key | varchar(512) | NO | ∅ |  |
+| created_by | binary(16) | NO | ∅ |  |
+| created_at | timestamp(6) | NO | CURRENT_TIMESTAMP(6) | DEFAULT_GENERATED |
+
+| Index | Unique | Columns |
+|---|---:|---|
+| idx_canvas_plugin_versions_plugin | no | tenant_id, plugin_id, status, created_at |
+| PRIMARY | yes | id |
+| uq_canvas_plugin_digest | yes | tenant_id, bundle_digest |
+| uq_canvas_plugin_version | yes | tenant_id, plugin_id, package_version |
+
+### canvas_plugins
+
+| Column | Type | Nullable | Default | Extra |
+|---|---|---:|---|---|
+| id | binary(16) | NO | ∅ |  |
+| tenant_id | binary(16) | NO | ∅ |  |
+| package_id | varchar(160) | NO | ∅ |  |
+| display_name | varchar(160) | NO | ∅ |  |
+| description | varchar(1000) | NO | ∅ |  |
+| source_type | enum('builtin','imported') | NO | imported |  |
+| default_version_id | binary(16) | YES | ∅ |  |
+| version | bigint unsigned | NO | 1 |  |
+| created_by | binary(16) | NO | ∅ |  |
+| created_at | timestamp(6) | NO | CURRENT_TIMESTAMP(6) | DEFAULT_GENERATED |
+| updated_at | timestamp(6) | NO | CURRENT_TIMESTAMP(6) | DEFAULT_GENERATED on update CURRENT_TIMESTAMP(6) |
+
+| Index | Unique | Columns |
+|---|---:|---|
+| idx_canvas_plugins_tenant_updated | no | tenant_id, updated_at |
+| PRIMARY | yes | id |
+| uq_canvas_plugin_package | yes | tenant_id, package_id |
+
 ### checkpoint_artifacts
 
 | Column | Type | Nullable | Default | Extra |

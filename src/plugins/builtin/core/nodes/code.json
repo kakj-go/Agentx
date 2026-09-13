@@ -1,0 +1,419 @@
+{
+  "protocolVersion": "3.0",
+  "nodeType": "code",
+  "version": 1,
+  "displayName": "Code",
+  "description": "Run code in an isolated sandbox.",
+  "category": "transform",
+  "keywords": [
+    "code"
+  ],
+  "localizations": {
+    "en-US": {
+      "displayName": "Code",
+      "description": "Run code in an isolated sandbox.",
+      "keywords": [
+        "code"
+      ],
+      "inputPortLabels": {
+        "main": "Input"
+      },
+      "outputPortLabels": {
+        "error": "Error",
+        "main": "Output"
+      },
+      "parameterLabels": {
+        "inputs": "Inputs",
+        "networkPolicy": "Network Policy",
+        "networkPolicy.destinations": "Destinations",
+        "networkPolicy.destinations[]": "Destinations",
+        "networkPolicy.destinations[].ports": "Ports",
+        "networkPolicy.destinations[].ports[]": "Ports",
+        "networkPolicy.destinations[].ports[].from": "From",
+        "networkPolicy.destinations[].ports[].to": "To",
+        "networkPolicy.destinations[].target": "Target",
+        "networkPolicy.mode": "Mode",
+        "outputExample": "Output Example",
+        "runner": "Runner",
+        "source": "Source"
+      },
+      "parameterEnumOptions": {
+        "networkPolicy.mode": {
+          "allowlist": "Allowlist",
+          "deny": "Deny"
+        },
+        "runner": {
+          "javascript": "Javascript",
+          "python": "Python",
+          "shell": "Shell"
+        }
+      }
+    },
+    "zh-CN": {
+      "displayName": "代码",
+      "description": "在隔离沙箱中运行代码。",
+      "keywords": [
+        "代码"
+      ],
+      "inputPortLabels": {
+        "main": "输入"
+      },
+      "outputPortLabels": {
+        "error": "错误",
+        "main": "输出"
+      },
+      "parameterLabels": {
+        "inputs": "命名输入",
+        "networkPolicy": "网络策略",
+        "networkPolicy.destinations": "Destinations",
+        "networkPolicy.destinations[]": "Destinations",
+        "networkPolicy.destinations[].ports": "Ports",
+        "networkPolicy.destinations[].ports[]": "Ports",
+        "networkPolicy.destinations[].ports[].from": "来源字段",
+        "networkPolicy.destinations[].ports[].to": "目标字段",
+        "networkPolicy.destinations[].target": "Target",
+        "networkPolicy.mode": "模式",
+        "outputExample": "返回 JSON 示例",
+        "runner": "运行器",
+        "source": "源代码"
+      },
+      "parameterEnumOptions": {
+        "networkPolicy.mode": {
+          "allowlist": "Allowlist",
+          "deny": "Deny"
+        },
+        "runner": {
+          "javascript": "JavaScript",
+          "python": "Python",
+          "shell": "Shell"
+        }
+      }
+    }
+  },
+  "iconKey": "code-2",
+  "executionStyle": "action",
+  "capability": "sandbox",
+  "readiness": "any",
+  "inputPorts": [
+    {
+      "name": "main",
+      "kind": "main",
+      "required": true,
+      "variadic": false
+    }
+  ],
+  "outputPorts": [
+    {
+      "name": "main",
+      "kind": "main",
+      "required": false,
+      "variadic": false
+    },
+    {
+      "name": "error",
+      "kind": "error",
+      "required": false,
+      "variadic": false
+    }
+  ],
+  "bindingSlots": [],
+  "parameterSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "inputs": {
+        "additionalProperties": {},
+        "default": {
+          "fields": {},
+          "kind": "object"
+        },
+        "type": "object",
+        "x-agentx-binding": {
+          "acceptedCardinality": [
+            "single"
+          ],
+          "acceptedKinds": [
+            "literal",
+            "reference",
+            "template",
+            "array",
+            "object"
+          ],
+          "allowedNamespaces": [
+            "inputs",
+            "outputs",
+            "contexts",
+            "execution",
+            "item",
+            "loop"
+          ],
+          "missingPolicies": [
+            "error",
+            "null",
+            "omit"
+          ],
+          "recursive": true
+        }
+      },
+      "networkPolicy": {
+        "additionalProperties": false,
+        "default": {
+          "destinations": [],
+          "mode": "deny"
+        },
+        "properties": {
+          "destinations": {
+            "default": [],
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "ports": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "from": {
+                        "maximum": 65535,
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      "to": {
+                        "maximum": 65535,
+                        "minimum": 1,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "from",
+                      "to"
+                    ],
+                    "type": "object"
+                  },
+                  "maxItems": 8,
+                  "minItems": 1,
+                  "type": "array"
+                },
+                "target": {
+                  "maxLength": 253,
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "target",
+                "ports"
+              ],
+              "type": "object"
+            },
+            "maxItems": 32,
+            "type": "array"
+          },
+          "mode": {
+            "default": "deny",
+            "enum": [
+              "deny",
+              "allowlist"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "mode",
+          "destinations"
+        ],
+        "type": "object"
+      },
+      "outputExample": {
+        "additionalProperties": true,
+        "default": {},
+        "type": "object"
+      },
+      "runner": {
+        "default": "python",
+        "enum": [
+          "python",
+          "javascript",
+          "shell"
+        ],
+        "type": "string"
+      },
+      "source": {
+        "default": "def main(**inputs):\n    return {}",
+        "type": "string"
+      }
+    },
+    "required": [
+      "runner",
+      "inputs",
+      "source",
+      "outputExample",
+      "networkPolicy"
+    ],
+    "type": "object"
+  },
+  "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "exitCode": {
+        "type": "integer"
+      },
+      "files": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "artifactId": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "contentType": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "fileName": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "sha256": {
+              "pattern": "^[0-9a-fA-F]{64}$",
+              "type": "string"
+            },
+            "sizeBytes": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "artifactId",
+            "fileName",
+            "contentType",
+            "sizeBytes",
+            "sha256"
+          ],
+          "type": "object"
+        },
+        "type": "array"
+      },
+      "partial": {
+        "type": "boolean"
+      },
+      "stderr": {
+        "type": "string"
+      },
+      "stdout": {
+        "type": "string"
+      },
+      "structuredOutput": {
+        "type": [
+          "object",
+          "null"
+        ]
+      }
+    },
+    "required": [
+      "stdout",
+      "stderr",
+      "exitCode",
+      "structuredOutput",
+      "files",
+      "partial"
+    ],
+    "type": "object"
+  },
+  "outputPortSchemas": {
+    "error": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "details": {
+          "type": "object"
+        },
+        "message": {
+          "type": "string"
+        },
+        "nodeExecutionId": {
+          "type": "string"
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "sourceNodeId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "retryable",
+        "details",
+        "sourceNodeId",
+        "nodeExecutionId"
+      ],
+      "type": "object"
+    }
+  },
+  "outputCardinality": {
+    "error": "many",
+    "main": "exactly_one"
+  },
+  "selectorCapabilities": {
+    "namespaces": [
+      "inputs",
+      "outputs",
+      "contexts"
+    ],
+    "supportsCurrent": true,
+    "supportsFirstLast": true,
+    "supportsAll": true,
+    "supportsRunSelection": true
+  },
+  "contextReadCapability": true,
+  "contextWriteCapability": true,
+  "artifactOutputSchema": {
+    "items": {
+      "type": "object"
+    },
+    "type": "array"
+  },
+  "uiSchema": {
+    "fields": {
+      "inputs": {
+        "control": "mapper"
+      },
+      "networkPolicy": {
+        "control": "network_policy"
+      },
+      "outputExample": {
+        "control": "json5_example"
+      },
+      "runner": {
+        "control": "select"
+      },
+      "source": {
+        "control": "code",
+        "languageField": "runner"
+      }
+    },
+    "resourceSelectors": [
+      {
+        "operation": "use",
+        "required": true,
+        "resourceType": "sandbox_profile"
+      }
+    ],
+    "canvas": {
+      "role": "code"
+    }
+  },
+  "providers": [],
+  "credentials": [],
+  "defaultTimeoutMs": 300000,
+  "retryPolicy": {
+    "retryable": false,
+    "maxAttempts": 0,
+    "initialBackoffMs": 0,
+    "maxBackoffMs": 0
+  },
+  "sandboxRequired": true,
+  "supportsMock": false,
+  "sideEffectLevel": "irreversible"
+}

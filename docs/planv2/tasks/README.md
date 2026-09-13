@@ -70,7 +70,7 @@ artifacts/v2/<run-id>/
   junit/ playwright/ api/ mysql/
   redis/ clickhouse/ kubernetes/ timeline/
 
-apps/e2e/test-results/v2/<run-id>/   # Playwright 原始结果
+tests/browser/test-results/v2/<run-id>/   # Playwright 原始结果
 ```
 
 证据不得保存 API Key、Vault Token、Credential 明文、Webhook Secret 或完整用户输入。临时 Kubernetes Namespace 必须带唯一 `run-id`；无论测试成功失败，都要恢复被缩容的开发 Deployment 并删除本次 Namespace。

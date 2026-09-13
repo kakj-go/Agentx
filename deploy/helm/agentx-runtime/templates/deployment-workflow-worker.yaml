@@ -11,7 +11,7 @@ spec:
       serviceAccountName: workflow-worker
       automountServiceAccountToken: false
       terminationGracePeriodSeconds: 60
-      securityContext: { runAsNonRoot: true, seccompProfile: { type: RuntimeDefault } }
+      securityContext: { runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532, fsGroup: 65532, seccompProfile: { type: RuntimeDefault } }
       initContainers:
 {{ include "agentx.runtime.schemaGate" (list . "workflowWorker") | nindent 8 }}
       containers:
@@ -24,6 +24,10 @@ spec:
             - name: AGENTX_WORKER_ID
               valueFrom: { fieldRef: { fieldPath: metadata.uid } }
             - { name: AGENTX_WORKER_CAPABILITIES, value: {{ .Values.runtime.services.workflowWorker.capability | quote }} }
+            - { name: AGENTX_PLUGIN_MAX_PROCESSES, value: {{ .Values.runtime.services.workflowWorker.pluginMaxProcesses | quote }} }
+            - { name: AGENTX_PLUGIN_IDLE_SECONDS, value: {{ .Values.runtime.services.workflowWorker.pluginIdleSeconds | quote }} }
+            - { name: AGENTX_PLUGIN_MEMORY_MB, value: {{ .Values.runtime.services.workflowWorker.pluginMemoryMb | quote }} }
+            - { name: AGENTX_PLUGIN_CACHE_DIR, value: /var/run/agentx/plugin-cache }
             - { name: AGENTX_RUNTIME_MYSQL_HOST, value: {{ .Values.global.components.runtimeMysql.host | quote }} }
             - { name: AGENTX_RUNTIME_MYSQL_PORT, value: {{ .Values.global.components.runtimeMysql.port | quote }} }
             - { name: AGENTX_RUNTIME_MYSQL_DATABASE, value: {{ .Values.global.components.runtimeMysql.database | quote }} }
@@ -66,6 +70,13 @@ spec:
           livenessProbe: { httpGet: { path: /health/live, port: http }, periodSeconds: 10, failureThreshold: 3 }
           lifecycle: { preStop: { httpGet: { path: /health/drain, port: admin, scheme: HTTP } } }
           volumeMounts:
+            - { name: plugin-cache, mountPath: /var/run/agentx/plugin-cache }
+{{- if eq .Values.global.environment "production" }}
 {{ include "agentx.runtime.caMount" . | nindent 12 }}
+{{- end }}
       volumes:
+        - name: plugin-cache
+          emptyDir: { sizeLimit: 256Mi }
+{{- if eq .Values.global.environment "production" }}
 {{ include "agentx.runtime.caVolume" . | nindent 8 }}
+{{- end }}

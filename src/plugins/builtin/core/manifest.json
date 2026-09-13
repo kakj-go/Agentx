@@ -1,0 +1,24 @@
+{
+  "protocolVersion": 1,
+  "sdkApiVersion": 1,
+  "packageId": "agentx/core",
+  "packageVersion": "1.0.0",
+  "displayName": "Agentx Core",
+  "description": "Built-in Agentx Core node package.",
+  "runtimeEntry": "native",
+  "nodes": [
+    "nodes/agent.json",
+    "nodes/approval.json",
+    "nodes/code.json",
+    "nodes/if.json",
+    "nodes/loop_over_items.json",
+    "nodes/merge.json",
+    "nodes/model.json",
+    "nodes/sub_workflow.json",
+    "nodes/mcp_tool.json",
+    "nodes/skill.json",
+    "nodes/rag.json",
+    "nodes/memory.json"
+  ],
+  "traceRenderers": []
+}

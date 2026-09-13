@@ -1,4 +1,8 @@
 packages:
-  - "apps/*"
+  - "src/web"
+  - "tests/browser"
+  - "src/plugins/packages/*"
+  - "src/plugins/builtin/*"
+  - "src/plugins/templates/*"
 minimumReleaseAgeExclude:
   - '@mdxeditor/editor@4.2.0'

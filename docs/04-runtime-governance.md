@@ -20,6 +20,7 @@ Workflow Trace 使用真实 Span 生命周期，而不是由查询端从 Runtime
 - Node → Attempt
 - Attempt → Agent Run → Agent Iteration → Runtime Call
 - Attempt → Sandbox
+- Attempt → Plugin Operation；插件内嵌套 Operation 和宿主 Runtime Call 保留真实父子关系
 - Node → Wait；Approval 使用 `waitKind=approval`
 
 每个 Runtime 实体通过 `deterministic_uuid(entityId, "agentx-trace-span-v1:<kind>")` 生成稳定 Span ID。同一 Span 的 `started`、`updated`、`finished` 事件复用该 ID；`occurredAt` 是状态变化发生的业务时间，不由 Outbox、Redis Relay 或 ClickHouse Consumer 改写。重试创建新的 Attempt 实体及 Span，取消、超时、失败、等待恢复和 Outcome Unknown 都必须关闭相关活动 Span。
@@ -40,6 +41,7 @@ Trace Event 使用强类型 `contentKind` 区分内容语义：
 - `sandbox_request/sandbox_response`
 - `wait_request/wait_response`
 - `conversion_record`
+- `plugin_content`
 
 每个 Event 另外记录：
 

@@ -1,0 +1,208 @@
+{
+  "protocolVersion": "3.0",
+  "nodeType": "set",
+  "version": 1,
+  "displayName": "Edit Fields",
+  "description": "Set or transform item fields.",
+  "category": "transform",
+  "keywords": [
+    "set"
+  ],
+  "localizations": {
+    "en-US": {
+      "displayName": "Edit Fields",
+      "description": "Set or transform item fields.",
+      "keywords": [
+        "set"
+      ],
+      "inputPortLabels": {
+        "main": "Input"
+      },
+      "outputPortLabels": {
+        "error": "Error",
+        "main": "Output"
+      },
+      "parameterLabels": {
+        "keepOnlySet": "Keep Only Set",
+        "values": "Values"
+      }
+    },
+    "zh-CN": {
+      "displayName": "编辑字段",
+      "description": "设置或转换数据字段。",
+      "keywords": [
+        "编辑字段"
+      ],
+      "inputPortLabels": {
+        "main": "输入"
+      },
+      "outputPortLabels": {
+        "error": "错误",
+        "main": "输出"
+      },
+      "parameterLabels": {
+        "keepOnlySet": "仅保留已设置字段",
+        "values": "字段值"
+      }
+    }
+  },
+  "iconKey": "box",
+  "executionStyle": "action",
+  "capability": "plugin_nodejs",
+  "readiness": "any",
+  "inputPorts": [
+    {
+      "name": "main",
+      "kind": "main",
+      "required": true,
+      "variadic": false
+    }
+  ],
+  "outputPorts": [
+    {
+      "name": "main",
+      "kind": "main",
+      "required": false,
+      "variadic": false
+    },
+    {
+      "name": "error",
+      "kind": "error",
+      "required": false,
+      "variadic": false
+    }
+  ],
+  "bindingSlots": [],
+  "parameterSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "keepOnlySet": {
+        "default": false,
+        "type": "boolean"
+      },
+      "values": {
+        "default": {
+          "fields": {},
+          "kind": "object"
+        },
+        "type": "object",
+        "x-agentx-binding": {
+          "acceptedCardinality": [
+            "single"
+          ],
+          "acceptedKinds": [
+            "literal",
+            "reference",
+            "template",
+            "array",
+            "object"
+          ],
+          "allowedNamespaces": [
+            "inputs",
+            "outputs",
+            "contexts",
+            "execution",
+            "item",
+            "loop"
+          ],
+          "missingPolicies": [
+            "error",
+            "null",
+            "omit"
+          ],
+          "recursive": true
+        }
+      }
+    },
+    "type": "object"
+  },
+  "outputSchema": {
+    "type": "object"
+  },
+  "outputPortSchemas": {
+    "error": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "details": {
+          "type": "object"
+        },
+        "message": {
+          "type": "string"
+        },
+        "nodeExecutionId": {
+          "type": "string"
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "sourceNodeId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "retryable",
+        "details",
+        "sourceNodeId",
+        "nodeExecutionId"
+      ],
+      "type": "object"
+    }
+  },
+  "outputCardinality": {
+    "error": "many",
+    "main": "many"
+  },
+  "selectorCapabilities": {
+    "namespaces": [
+      "inputs",
+      "outputs",
+      "contexts"
+    ],
+    "supportsCurrent": true,
+    "supportsFirstLast": true,
+    "supportsAll": true,
+    "supportsRunSelection": true
+  },
+  "contextReadCapability": true,
+  "contextWriteCapability": true,
+  "artifactOutputSchema": {
+    "items": {
+      "type": "object"
+    },
+    "type": "array"
+  },
+  "uiSchema": {
+    "order": [
+      "values",
+      "keepOnlySet"
+    ],
+    "fields": {
+      "keepOnlySet": {
+        "control": "boolean"
+      },
+      "values": {
+        "control": "structured"
+      }
+    },
+    "canvas": {
+      "role": "default"
+    }
+  },
+  "providers": [],
+  "credentials": [],
+  "defaultTimeoutMs": 30000,
+  "retryPolicy": {
+    "retryable": false,
+    "maxAttempts": 0,
+    "initialBackoffMs": 0,
+    "maxBackoffMs": 0
+  },
+  "sandboxRequired": false,
+  "supportsMock": true,
+  "sideEffectLevel": "none"
+}

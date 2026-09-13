@@ -1,128 +1,93 @@
-# Node 服务接入
+# 画布节点与插件接入
 
-本文描述Workflow Definition 8.0与plan5实施后的节点接入边界。Rust Registry是内置节点的权威来源；生成Schema、Studio Catalog Fixture与运行契约由漂移测试约束。
+本文描述 plan6 完成后的唯一节点接入模型。Workflow Definition 8.0、Node Manifest 3.0、Canvas Plugin Package Protocol 1、Plugin SDK API 1 和 Runner RPC 1 均按精确版本拒绝未知输入，不保留旧 Remote Action 或旧 Manifest 入口。
 
-## 1. 接入边界
+## 1. 节点分类
 
-Agentx M4 不发布 Rust、JavaScript、Python 或其他语言的公共 Node SDK。外部节点服务只依赖版本化 HTTP 契约，因此可以使用任意语言实现；平台内部的 Rust Runner 不是扩展接口。
-
-接入时使用以下仓库产物：
-
-- `schemas/runtime-v1/NodeManifestVersion.schema.json`：不可变 Node Manifest Version。
-- `schemas/runtime-v1/WorkflowDefinition.schema.json`：Definition `8.0` 契约。
-- `services/echo-node`：具备认证、协议校验和一致性测试的 Provider 参考服务。
-
-Node Protocol 当前版本为 `2.0`（Provider 调用族）。plan5 已整条废弃远程节点执行协议：`remote_action` 节点、`POST /agentx/node/v1/actions/execute`、`POST /agentx/node/v1/lifecycle/{operation}`、`node-action-request/result` Schema 与 `openapi/node-api.json` 均已删除，触发内部 Workflow 由 `sub_workflow` 承载，第三方节点生态位未来归 MCP（`mcp_tool`）。Provider 请求版本必须与 Node Manifest 的 `protocolVersion` 完全匹配；平台不会把未知版本降级或猜测转换。
-
-### 1.1 Manifest UI 画布契约
-
-`uiSchema.canvas.role` 是 Studio 执行节点的唯一视觉角色来源，允许值为 `default`、`trigger`、`branch`、`flow`、`merge`、`loop`、`suspend`、`approval`、`sub_workflow`、`agent` 和 `code`（`error_handler` 角色已随节点删除）。内置节点必须在 Rust Registry 中显式写入该字段；Catalog 反序列化时拒绝未知角色，缺少字段的 Manifest 仅由前端回退为 `default`，不得再按 `nodeType` 推断形状。Workflow Definition 8.0 不发布 Trigger 节点，`trigger` role 只保留为 Node Protocol 枚举值，固定 Start 使用独立 Boundary 组件。
-
-该字段只控制编辑器外观，不改变端口、执行能力或 Runtime 语义，并进入现有 Manifest Hash。Model、MCP Tool、Memory、RAG 和 Skill 等资源附件是 Agent/资源节点上的内嵌槽位（`resourceReferences[].bindingRole`），不再是画布节点，也不进入角色枚举。已创建的 Execution Snapshot 保留固化 Manifest 和 Hash；Catalog Reconcile 后的新执行使用新的 Manifest Hash。
-
-Manifest 可声明 `localizations.zh-CN/en-US`，覆盖 `displayName`、`description`、`keywords`、输入端口、输出端口和 Binding Slot 的展示名。本地化 Map 的 Key 必须引用真实协议端口或 Slot；Catalog 拒绝未知语言和悬空引用。本地化数据进入 Manifest Hash，端口和 Slot 的协议 ID 始终使用英文且不随界面语言变化。
-
-Workflow Definition 8.0 Manifest 还必须声明 `outputSchema`、`outputCardinality`、`selectorCapabilities`、`contextReadCapability`、`contextWriteCapability` 和 `artifactOutputSchema`。可绑定参数在Parameter Schema中使用`x-agentx-binding.acceptedKinds`声明允许的`literal/reference/template/array/object`、命名空间和基数；未声明的字段不会自动打开Reference Picker。公共输出投影已删除，字段重命名、筛选和结果构造由显式Set或Code节点完成。
-
-编译器把 Manifest 输出 Schema 与节点实例配置、Projection 合成为按端口冻结的 Effective Output Contract 并写入 IR。Worker 不在提交结果时重新查询 Registry；内置节点与固定版本Sub-workflow均按发布时同一契约验证。MCP、Skill、Knowledge和Memory只作为Agent资源能力进入冻结附件Registry，不是独立Workflow节点。Model 与 Agent 标准输出固定为 `text`、`reasoningContent`、`structuredOutput`、`citations`、`files`、`usage`、`finishReason` 和 `partial`；Provider message、工具调用、Agent 迭代与原始响应仅进入受权限控制的 Trace/Artifact。
-
-错误处理不再是节点：每个节点都保留 Error 输出端口，**接线即失败分支**——节点存在 `error` 出边时，失败产生 Error Item 走该分支；未接线则按完成模式终止执行。Definition 8.0 已删除 `settings.onError`、`end.error.strategy` 与 `collectWindowMs`。
-
-## 2. Endpoint
-
-Node 服务实现一个版本化调用族：
-
-| Endpoint | 用途 | 调用方 |
+| 类别 | 定义/UI | 执行 |
 |---|---|---|
-| `POST /agentx/node/v1/providers/{provider}/invoke` | 动态选项、搜索和字段映射 | Platform API/Studio Adapter |
+| 导入画布插件 | 不可变 ZIP 中的 Manifest、React ESM/CSS | Worker 内 Node.js Runner |
+| `agentx/data` | 统一注册入口；Set/List 保留专用 Studio 面板 | 公开 TypeScript SDK + Node Runner |
+| `agentx/http` | 统一注册入口；HTTP 保留专用 Studio 面板 | TypeScript SDK 调用 `ctx.http`，Rust 托管出口、凭据、账本和 Artifact |
+| If/Merge/Loop/Approval/Sub-workflow/Model/Agent/Code | `src/plugins/builtin/core` 包 Manifest 与统一前端包注册 | Rust 原生状态机、Provider 或 Sandbox 能力 |
+| Start/Exit | Studio 边界组件 | Rust Boundary 语义，不创建伪 Node/Attempt |
 
-Provider契约继续用于动态选项、搜索、资源映射和凭据测试；对应专用UI随plan5节点切片接通。生产Trigger/Poll/Webhook属于应用触发与Trigger Gateway链路，不恢复已经删除的Node Lifecycle协议。节点服务不得调用内部gRPC、直接写MySQL、创建Attempt或推进Execution。
+MCP、Skill、Knowledge、Memory、Credential 和 Sandbox Profile 是绑定到节点的资源，不作为第二套独立画布节点目录。
 
-## 3. 认证与身份
+## 2. 插件包
 
-生产部署必须通过 TLS，并使用调用方绑定的 Bearer Token 或部署环境提供的等价工作负载身份。参考 `echo-node` 读取 `AGENTX_NODE_PROVIDER_AUTH_TOKEN`。认证失败返回 HTTP `401` 和 `NodeProtocolError`。
+管理员从“资源 → 画布插件”导入 `.agentx-plugin` ZIP。Control 校验安全路径、文件数、压缩后与展开后预算、UTF-8、协议/SDK版本、包 ID、SemVer、自包含 ESM、节点身份、Manifest、Trace renderer Schema 和摘要；预览确认后以事务安装。
 
-Action 请求中的 `tenantId`、`workflowVersionId`、`executionId`、`nodeExecutionId` 和 `attemptId` 是调用上下文，不是节点服务自行授权其他 Agentx API 的凭据。节点服务必须在日志中避免输出完整 Item、Handle、认证 Header 和敏感参数。
+包身份由 `packageId + packageVersion + sha256 ZIP digest` 决定。同版本同摘要重复确认幂等，同版本不同摘要冲突。同一 Workflow 中同一包只允许一个版本；Node IR 冻结 `packageId/packageVersion/bundleDigest/runtimeArtifact/uiSource/uiStyles/traceRenderers`。Control 把 Runtime Artifact 作为不可变对象投递到 Runtime OSS，Worker 校验本地缓存，缓存损坏时只按同一对象摘要重新读取，不回查 Control Catalog 或内联执行源码。
 
-## 4. Action 请求
+更新默认版本只影响之后添加的节点。停用版本后 Catalog 不再允许新使用，Draft 可以保留并修复已有节点，Debug、发布、Rollback/重新激活会拒绝停用版本。已激活 Deployment 和已经创建的 Attempt 继续使用冻结 Bundle。Draft、Workflow Version、Deployment 和执行制品引用保护删除；未引用版本删除时同步清理对象。
 
-Action 请求包含：
+`agentx/*` 包 ID 保留给内置包。内置 Set/List/HTTP 与导入插件共用 `plugin_nodejs` 执行协议、Worker 进程池和结果校验，但在管理页只读展示并随 Agentx 发布。
 
-- 固定的 Protocol/Node Version 和 Execution/Attempt 身份。
-- `runIndex`、`iterationIndex` 和 `mode`。
-- 按输入端口分组的 Items；`branchIndex` 保留多输入顺序。
-- 平台已解析的公共参数和逐 Item 参数。远程服务不执行 CEL 或 JavaScript。
-- 短时 `artifactHandles` 与 `credentialHandles`。Handle 只对本次调用、节点和 Deadline 有效；长期 Secret 不进入 Action Body。
-- 稳定 `idempotencyKey`、RFC3339 `deadline`、可选取消 URL和 Trace Context。
+## 3. UI SDK
 
-Item 的 `lineage` 可以包含零到多个来源。Merge、按位置合并或聚合不得只保留一个来源；返回 Item 应保留或补充其来源关系。Binary 只传 Artifact Handle、文件名、Content Type 和大小，不内联大 Payload。
+Web 以 bundle digest 缓存并动态导入编译后的 `data:` ESM。插件只能使用宿主提供的 React 和公共组件，不得打包第二份 React或包含未解析 import。扩展点包括：
 
-外部副作用无法由平台提供通用 Exactly Once。节点服务应以 `idempotencyKey` 去重可重复请求，并将结果至少保留到 Deadline 和最大重投窗口结束。相同 Key、相同请求必须得到同一业务结果；Key 相同但请求不同应拒绝。
+- `Panel`：配置参数、字段错误、只读状态、Provider Options、Reference Catalog、资源和 `updateParameters`。
+- `Canvas`：节点卡片中的紧凑内容。
+- `Result`：Node Inspector 的只读结果。
+- `traceRenderers`：版本化 `plugin_content` 的只读业务视图。
 
-### 4.1 Broker Handle 与取消
+宿主提供 `Field/Input/Button/Select/SmartInput`，维持变量选择、Schema过滤、资源授权、自动保存和 Undo/Redo。CSS按摘要引用计数并在最后一个挂载点卸载；模块、创建函数和渲染异常由 Error Boundary 隔离。Trace 始终保留标准 JSON 展示。
 
-每个 `InvocationHandle` 同时包含 opaque `handle`、`brokerUrl` 和 `expiresAt`。节点服务使用 `POST brokerUrl` 解析资源，请求体必须回传 `handle`、`tenantId`、`nodeExecutionId` 和 `attemptId`；成功结果按 `kind` 返回 Credential JSON 或带 Content Type、SHA-256 的 Artifact Base64 内容。节点服务不得推导 Broker 地址、持久化 Handle，或把解析出的 Secret、Artifact 内容写入日志和 Trace。
+全部内置节点面板通过 `node-panel-registry.tsx` 解析；旧 `ACTION_PANELS` 固定分支已删除。插件版本切换显示包版本和摘要，保留当前参数并让服务端权威校验暴露需要修复的端口、配置和引用错误，不运行 migration 或自动改写。
 
-Credential/Artifact Handle 只允许消费一次，并同时绑定 Tenant、Execution、Node Execution、Attempt、Lease 和 Deadline。平台只保存 Token Hash；跨作用域、过期、重放、Execution 已取消或 Lease 已释放的请求都会被拒绝。Credential 只在 Broker 内解密，长期 Secret 不进入 Action 请求或数据库 Handle 记录。
+## 4. 设计时调用
 
-`cancellationUrl` 是只读轮询端点，返回 `cancellationRequested`、`leaseValid` 和 `expiresAt`。远程节点在长任务中应定期查询，并在已请求取消或 Lease 无效时尽快停止；这不会授予节点修改 Execution 的权限。Broker 是 Worker 的调用期接口，不属于公共 Platform API，也不替代 Node Action API。
+`POST /api/v1/node-definitions/{nodeType}/versions/{version}/resolve` 和 Provider 端点由 Control 鉴权，再使用短期 Service JWT 调用 Runtime Internal API：
 
-## 5. Action 结果
+`POST /internal/runtime/v1/plugin-design-operations:execute`
 
-HTTP `200` 的 Body 只能是以下一种：
+Runtime 使用独立有界容量启动 Runner，执行 `node.resolveDefinition` 或 `node.invokeProvider`。Control 不启动 Node。输入和输出是纯 JSON；未知方法、协议/API不匹配、超时和非法结果明确失败。Provider 的第二个参数是带 AbortSignal 的设计时宿主 Context，可访问节点已选择资源的冻结快照，并通过 Runtime 的只读 HTTP、Model、Credential descriptor 和临时 Artifact 桥接完成字段发现。静态插件没有导出解析函数时返回 Manifest 的固定端口和输出 Schema。
 
-- `completed`：按 Manifest 输出端口顺序返回 Item 数组和可选 Artifact。
-- `failed`：返回稳定错误码、可读消息、`retryable` 和非敏感详情。
-- `suspended`：返回 Resume Kind、允许的输出端口、Payload Schema、可选到期时间和 Checkpoint Payload。
+设计时调用固定为十秒内的同步交互，使用独立两槽并发预算；deadline 或显式取消会终止所属进程树。它不创建 Workflow Execution 或 Attempt，也不进入业务 Redis Queue。纯契约解析和只读 Provider 没有需要恢复的业务终态；正式 `node.execute` 仍通过 Worker Claim、Lease、Fencing 和恢复运行。
 
-平台拥有 Retry、Timeout、Cancel、Lease 和恢复状态机。
+## 5. Runner 与宿主能力
 
-协议、认证和请求格式错误使用 HTTP `4xx` 加 `NodeProtocolError`。瞬时服务故障使用 `5xx`。
+Worker 镜像固定 Node.js 24.20.0 和仓库 Runner。Tokio 管理按包摘要复用的有界进程池：一个进程同一时刻只承载一次调用，空闲超时回收，池满按 Attempt deadline 等待。Linux 创建独立进程组，Windows 使用 `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` Job Object；超时、取消、Lease丢失、Worker drain和 Future drop都会终止整个进程树。
 
-## 6. Provider
+stdin/stdout 使用换行分帧的 JSON-RPC 2.0。启动必须完成 `runner.initialize`，协议与 SDK API 均为 1。业务方法是 `node.execute`；Runner 反向调用：
 
-Provider 请求只接收当前参数和短时 Credential Handle，返回稳定的 label/value、非敏感 metadata 和可选分页 cursor。Provider 不得修改 Workflow 或运行状态。
+| 方法 | Rust 宿主责任 |
+|---|---|
+| `host.http` | Egress、Credential注入、Runtime Call账本、幂等、结果未知、二进制 Artifact |
+| `host.model` | 冻结 Model资源、Provider格式、计量与输出规范化 |
+| `host.credentials.list` | 只返回非敏感描述，不返回 Secret |
+| `host.artifacts.put` | Runtime域对象、Hash、Execution/Node引用 |
 
-所有公共 Provider Endpoint 必须是 HTTPS，并统一走 `agentx-egress-gateway`；只有集群内受管 Fixture 可以继续使用 HTTP。Model 连接测试、MCP 发现/调试、Memory/RAG 健康检查和真实 Workflow 执行共享同一 Endpoint 拼接、TLS 与 Gateway 路径。HTTP 30x 每一跳都会重新校验并签发目标绑定 CONNECT Token，跨 Host 不转发 Authorization/Cookie。Provider 服务不能要求访问私网、Kubernetes Service、Metadata 或非 Profile 允许端口；企业私网接入应使用后续专属 Connector/VPN/PrivateLink。
+参数在进入 Runner 前已生成公共值和逐 Item值；插件不执行另一套表达式。结果只能是 `completed` 或 `failed`，输出端口、Item、Cardinality、Schema和 Artifact引用仍由 Runtime按冻结 IR校验。外部写调用需要逻辑幂等键；Provider结果未知通过专用 RPC错误传播为 `OutcomeUnknown`，不会盲目重试。
 
-## 7. 本地验证
+子 Workflow 的每个固定版本由 Control 使用该版本自己的解析后 Manifest 编译成不可变 IR 对象。Runtime 校验发布签名、闭包对象引用、对象大小与摘要后直接使用该 IR；它不会用 Runtime 当前内置 Registry 重新编译，因为当前 Registry 不包含发布时插件的动态端口契约。
 
-生成契约产物（Manifest 与 Definition Schema 已迁入 generate-contracts）：
+## 6. Trace
 
-```powershell
-cargo run -p agentx-runtime-contracts --bin generate-contracts -- schemas/runtime-v1 openapi/runtime-internal-v1.json openapi/observability-internal-v1.json
-cargo run -p agentx-runtime --bin generate-studio-catalog -- apps/web/src/features/workflow-designer/testing/studio-catalog.fixture.json
+平台自动生成 Execution/Node/Attempt Span和输入输出。Runner通过 `trace.event` 实时发送 `plugin_operation` started/updated/finished；AsyncLocalStorage保持嵌套/并发 Promise父子关系。宿主 HTTP/Model Runtime Call挂在当前插件 Span下并保留唯一 `runtimeCallId` 和平台计量。
+
+业务内容使用固定 `plugin_content`，由 `packageId/packageVersion/bundleDigest/nodeType/typeVersion/contentType/contentVersion/label/data` 选择冻结 renderer。Runtime按包声明 JSON Schema检查内容，超预算或非法内容只生成诊断警告，不修改业务终态。Trace继续走 MySQL Outbox、Redis、Observability和ClickHouse；历史 renderer按执行摘要读取，停用和当前默认版本不会改变历史展示。
+
+## 7. 开发与验证
+
+管理页可下载自包含模板。根 `AGENTS.md`、字段级文档、vendored 类型和 Runner允许在 Agentx仓库之外运行：
+
+```bash
+pnpm install --frozen-lockfile
+pnpm check
+pnpm test
+pnpm build
+pnpm pack:plugin
 ```
 
-运行参考服务一致性测试：
+模板的 `test` 使用正式 Runner执行编译产物，`pack:plugin`固定 ZIP时间、权限和顺序。最终验收仍必须通过页面真实上传、画布操作、保存重开、Debug/发布、下游引用和 Trace，并由 `pytest tests/e2e` 在临时 Kubernetes Namespace 编排。
+
+契约生成与漂移检查：
 
 ```powershell
-cargo test -p echo-node
+cargo run -p agentx-runtime-contracts --bin generate-contracts -- contracts/schemas/runtime-v1 contracts/openapi/runtime-internal-v1.json contracts/openapi/observability-internal-v1.json
+cargo run -p agentx-runtime --bin generate-studio-catalog -- src/web/src/features/workflow-designer/testing/studio-catalog.fixture.json
+cargo xtask check
 ```
-
-完整 `cargo xtask check` 会校验JSON Schema、Rust、Web、Python验收、Helm/Kustomize渲染、文件边界和契约漂移，并在不一致时失败。`echo-node`与`echo-mcp`的Rust测试覆盖Provider协议、认证和结构化响应；系统级行为继续由`pytest tests/e2e`编排Kubernetes与Playwright验收。
-
-## 8. Manifest 参数与语义输出矩阵
-
-Manifest 是字段名称、动态值能力和输出 Schema 的唯一来源。Adapter 不得读取 Manifest 未声明的别名，也不得把声明参数仅作为透传 metadata。当前内置契约如下：
-
-| 节点类别 | Manifest 参数的执行消费者 | 稳定输出 |
-|---|---|---|
-| Model | Worker将`prompt/userQuestion`组装为有序消息；`responseMode=json_schema`把`structuredSchema`作为Provider原生response_format并校验结果，不解析普通文本兜底 | `AiResponse` |
-| Agent | Agent Loop消费`systemPrompt/userQuestion`、预算及六槽Model/Workspace Sandbox/Tool/Skill/Knowledge/Long-term Memory冻结资源 | `AiResponse` |
-| Declarative HTTP | Egress Adapter 使用 `method/url/query/headers/body`，timeout只读取NodeSettings；Bearer/Basic/API Key/custom_json凭据在调用前注入并从结果、Trace和日志中脱敏 | `statusCode/headers/body/files` |
-| Code | Sandbox Manager 消费 `runner/inputs/source/outputExample/networkPolicy`；Compiler从JSON5对象示例推导冻结Schema；Python调用`main(**inputs)`，JavaScript调用`main(inputs)`，Shell只通过`AGENTX_INPUT_PATH/AGENTX_OUTPUT_PATH`交换JSON；根结果必须为对象 | `stdout/stderr/exitCode/structuredOutput/files/partial`，Picker将对象字段直接展示为业务输出 |
-| Approval | Suspension Adapter 消费`title/description/candidateUserId/buttons/timeoutMs`；buttons随任务快照持久化，业务decisionId独立保存，统一Decide恢复`decision:{id}` | `taskId/decision/reason/decidedBy/input`，另有固定`timed_out` |
-| If | Builtin Adapter 按序求值 `cases[]`（每分支条件组 and/or），首中路由到 `case:{id}`，否则 `else` | 分支端口透传 Item |
-| List | 先求值必填数组`input`，再在元素`item`上下文执行filter→结构化sort→takeN | ExactlyOne Item：`{"items":[...]}` |
-| Loop Over Items | 状态机消费`input/outputSelector/errorMode/parallelism`；仅激活并行上限内的轮次，检查点保存队列、活跃generation、结果和失败 | ExactlyOne Item：`{"items":[...]}` |
-| Set / Merge | Builtin Adapter 消费赋值与合并模式（append / combine_by_position / combine_by_key） | 直接 Item 字段 |
-| Sub-workflow | `workflowVersionId/inputs`选择固定版本；Bundle Builder从该版本Start/End/Context生成不可变Manifest，Runtime在创建子执行前求值并校验inputs | 继承子Workflow End Schema；`all_complete`字段为含可选null槽位的数组 |
-
-数据节点产生的动态Item字段若要重命名、筛选或组合，必须显式增加Set或Code。`InputBinding`解析后按目标JSON Schema执行唯一一套严格转换，并将转换诊断写入Trace；不存在公共输出投影或隐式字段声明入口。
-
-Runtime Call Trace 保存递归脱敏后的解析参数、请求与 Provider 响应预览；Authorization、Cookie、API Key、Token、Secret 和 Credential 字段不得明文进入预览。原始 Provider 响应超过 16 KiB 时写入 `runtime_calls.response_artifact_id` 指向的执行级 Artifact，Trace span 只保留 Artifact 引用；Artifact 下载继续经过执行查询权限校验。普通输出与 Reference Picker 只读取上述稳定 Schema。
-
-`files` 的数组元素固定为 `ArtifactRef`：`artifactId/fileName/contentType/sizeBytes/sha256` 全部必填，`artifactId` 为 UUID，`sizeBytes` 非负，`sha256` 为 64 位十六进制摘要。`citations` 的数组元素固定为 `Citation`：必填 `sourceId/text/metadata`，可选 `title/uri/recordId`。两种对象都拒绝额外字段，不能再用任意 Object 延迟契约错误。
-
-Studio 对 Model/Agent 的 `text` 标记为推荐引用。开发期已删除的 `message/messages/toolCalls/iterations/artifacts/providerRawResponse` 不提供别名；Compiler 遇到这些字段时明确要求重新选择稳定的 `text` 字段。

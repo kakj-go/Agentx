@@ -1,0 +1,632 @@
+{
+  "$defs": {
+    "BindingSlot": {
+      "additionalProperties": false,
+      "properties": {
+        "multiple": {
+          "default": false,
+          "type": "boolean"
+        },
+        "name": {
+          "type": "string"
+        },
+        "placement": {
+          "$ref": "#/$defs/BindingSlotPlacement"
+        },
+        "required": {
+          "default": false,
+          "type": "boolean"
+        },
+        "resourceType": {
+          "$ref": "#/$defs/ResourceType"
+        }
+      },
+      "required": [
+        "name",
+        "resourceType",
+        "placement"
+      ],
+      "type": "object"
+    },
+    "BindingSlotPlacement": {
+      "enum": [
+        "inspector",
+        "canvas"
+      ],
+      "type": "string"
+    },
+    "CanvasAppearance": {
+      "additionalProperties": false,
+      "properties": {
+        "role": {
+          "$ref": "#/$defs/CanvasNodeRole"
+        }
+      },
+      "required": [
+        "role"
+      ],
+      "type": "object"
+    },
+    "CanvasNodeRole": {
+      "enum": [
+        "default",
+        "trigger",
+        "branch",
+        "flow",
+        "merge",
+        "loop",
+        "suspend",
+        "approval",
+        "sub_workflow",
+        "agent",
+        "code",
+        "error_handler"
+      ],
+      "type": "string"
+    },
+    "CredentialRequirement": {
+      "additionalProperties": false,
+      "properties": {
+        "credentialType": {
+          "type": "string"
+        },
+        "required": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "credentialType"
+      ],
+      "type": "object"
+    },
+    "ExecutionStyle": {
+      "enum": [
+        "action",
+        "trigger",
+        "suspend",
+        "sub_workflow"
+      ],
+      "type": "string"
+    },
+    "NodeCapability": {
+      "enum": [
+        "builtin",
+        "plugin_nodejs",
+        "agent",
+        "model",
+        "mcp_tool",
+        "skill",
+        "rag",
+        "memory",
+        "sandbox"
+      ],
+      "type": "string"
+    },
+    "NodeManifestLocalization": {
+      "additionalProperties": false,
+      "properties": {
+        "bindingSlotLabels": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "description": {
+          "type": "string"
+        },
+        "displayName": {
+          "type": "string"
+        },
+        "inputPortLabels": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "keywords": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "outputPortLabels": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "parameterDescriptions": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "parameterEnumOptions": {
+          "additionalProperties": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "type": "object"
+        },
+        "parameterLabels": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "parameterPlaceholders": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
+    "NodePort": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/PortKind"
+        },
+        "name": {
+          "type": "string"
+        },
+        "required": {
+          "default": false,
+          "type": "boolean"
+        },
+        "variadic": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "kind"
+      ],
+      "type": "object"
+    },
+    "NodeProtocolVersion": {
+      "enum": [
+        "3.0"
+      ],
+      "type": "string"
+    },
+    "NodeRetryPolicy": {
+      "additionalProperties": false,
+      "properties": {
+        "initialBackoffMs": {
+          "default": 0,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maxAttempts": {
+          "default": 0,
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maxBackoffMs": {
+          "default": 0,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "retryable": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "NodeUiSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "canvas": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CanvasAppearance"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "fields": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "order": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "resourceSelectors": {
+          "items": true,
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "OutputCardinality": {
+      "enum": [
+        "zero_or_one",
+        "exactly_one",
+        "zero_or_many",
+        "many"
+      ],
+      "type": "string"
+    },
+    "PluginNodeBinding": {
+      "additionalProperties": false,
+      "properties": {
+        "bundleDigest": {
+          "type": "string"
+        },
+        "packageId": {
+          "type": "string"
+        },
+        "packageVersion": {
+          "type": "string"
+        },
+        "runtimeArtifact": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PluginRuntimeArtifact"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "runtimeEntry": {
+          "type": "string"
+        },
+        "runtimeSource": {
+          "type": "string"
+        },
+        "traceRenderers": {
+          "items": {
+            "$ref": "#/$defs/PluginTraceRenderer"
+          },
+          "type": "array"
+        },
+        "uiAssets": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "uiEntry": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "uiSource": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "uiStyles": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "packageId",
+        "packageVersion",
+        "bundleDigest",
+        "runtimeEntry",
+        "runtimeSource"
+      ],
+      "type": "object"
+    },
+    "PluginRuntimeArtifact": {
+      "additionalProperties": false,
+      "properties": {
+        "contentHash": {
+          "type": "string"
+        },
+        "mediaType": {
+          "type": "string"
+        },
+        "objectId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "sizeBytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "objectId",
+        "contentHash",
+        "sizeBytes",
+        "mediaType"
+      ],
+      "type": "object"
+    },
+    "PluginTraceRenderer": {
+      "additionalProperties": false,
+      "properties": {
+        "contentType": {
+          "type": "string"
+        },
+        "contentVersion": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "exportName": {
+          "type": "string"
+        },
+        "schema": true
+      },
+      "required": [
+        "contentType",
+        "contentVersion",
+        "exportName",
+        "schema"
+      ],
+      "type": "object"
+    },
+    "PortKind": {
+      "enum": [
+        "main",
+        "error"
+      ],
+      "type": "string"
+    },
+    "ReadinessPolicy": {
+      "enum": [
+        "any",
+        "all",
+        "required"
+      ],
+      "type": "string"
+    },
+    "ResourceType": {
+      "enum": [
+        "credential",
+        "model",
+        "mcp_server",
+        "mcp_tool",
+        "skill",
+        "rag",
+        "memory",
+        "sandbox_profile"
+      ],
+      "type": "string"
+    },
+    "SelectorCapabilities": {
+      "additionalProperties": false,
+      "properties": {
+        "namespaces": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "supportsAll": {
+          "default": false,
+          "type": "boolean"
+        },
+        "supportsCurrent": {
+          "default": false,
+          "type": "boolean"
+        },
+        "supportsFirstLast": {
+          "default": false,
+          "type": "boolean"
+        },
+        "supportsRunSelection": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "SideEffectLevel": {
+      "enum": [
+        "none",
+        "idempotent",
+        "reversible",
+        "irreversible"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "artifactOutputSchema": {
+      "default": null
+    },
+    "bindingSlots": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/BindingSlot"
+      },
+      "type": "array"
+    },
+    "capability": {
+      "$ref": "#/$defs/NodeCapability"
+    },
+    "category": {
+      "default": "",
+      "type": "string"
+    },
+    "contextReadCapability": {
+      "default": false,
+      "type": "boolean"
+    },
+    "contextWriteCapability": {
+      "default": false,
+      "type": "boolean"
+    },
+    "credentials": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/CredentialRequirement"
+      },
+      "type": "array"
+    },
+    "defaultTimeoutMs": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "description": {
+      "default": "",
+      "type": "string"
+    },
+    "displayName": {
+      "type": "string"
+    },
+    "executionStyle": {
+      "$ref": "#/$defs/ExecutionStyle"
+    },
+    "iconKey": {
+      "default": "",
+      "type": "string"
+    },
+    "inputPorts": {
+      "items": {
+        "$ref": "#/$defs/NodePort"
+      },
+      "type": "array"
+    },
+    "keywords": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "localizations": {
+      "additionalProperties": {
+        "$ref": "#/$defs/NodeManifestLocalization"
+      },
+      "type": "object"
+    },
+    "nodeType": {
+      "type": "string"
+    },
+    "outputCardinality": {
+      "additionalProperties": {
+        "$ref": "#/$defs/OutputCardinality"
+      },
+      "default": {},
+      "type": "object"
+    },
+    "outputPortSchemas": {
+      "additionalProperties": true,
+      "description": "Optional schema overrides for individual output ports. The default\noutput_schema remains the native main-port schema.",
+      "type": "object"
+    },
+    "outputPorts": {
+      "items": {
+        "$ref": "#/$defs/NodePort"
+      },
+      "type": "array"
+    },
+    "outputSchema": {
+      "default": null
+    },
+    "parameterSchema": true,
+    "plugin": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PluginNodeBinding"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "protocolVersion": {
+      "$ref": "#/$defs/NodeProtocolVersion"
+    },
+    "providers": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "readiness": {
+      "$ref": "#/$defs/ReadinessPolicy"
+    },
+    "retryPolicy": {
+      "$ref": "#/$defs/NodeRetryPolicy",
+      "default": {
+        "initialBackoffMs": 0,
+        "maxAttempts": 0,
+        "maxBackoffMs": 0,
+        "retryable": false
+      }
+    },
+    "sandboxRequired": {
+      "default": false,
+      "type": "boolean"
+    },
+    "selectorCapabilities": {
+      "$ref": "#/$defs/SelectorCapabilities",
+      "default": {
+        "namespaces": [],
+        "supportsAll": false,
+        "supportsCurrent": false,
+        "supportsFirstLast": false,
+        "supportsRunSelection": false
+      }
+    },
+    "sideEffectLevel": {
+      "$ref": "#/$defs/SideEffectLevel"
+    },
+    "supportsMock": {
+      "default": false,
+      "type": "boolean"
+    },
+    "uiSchema": {
+      "$ref": "#/$defs/NodeUiSchema",
+      "default": {}
+    },
+    "version": {
+      "format": "uint32",
+      "minimum": 1,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "protocolVersion",
+    "nodeType",
+    "version",
+    "displayName",
+    "executionStyle",
+    "capability",
+    "readiness",
+    "inputPorts",
+    "outputPorts",
+    "parameterSchema",
+    "sideEffectLevel"
+  ],
+  "title": "NodeManifestVersion",
+  "type": "object"
+}

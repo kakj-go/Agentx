@@ -6,37 +6,35 @@ Agentx 使用单仓库管理 Rust 服务、公共 Crate、Rust `agentxctl`/`xtas
 
 ```text
 Agentx/
-├── apps/
+├── src/
 │   ├── web/
-│   └── e2e/
-├── services/
-│   ├── platform-control/
-│   ├── agentx-v2-runtime/          # runtime-gateway/workflow-runtime/worker/sandbox binaries
-│   ├── observability/
-│   ├── echo-mcp/                   # E2E Provider Fixture
-│   └── echo-node/                  # E2E Node Fixture
-├── crates/
-│   ├── agentx-domain/
-│   ├── agentx-application/
-│   ├── agentx-runtime/
-│   ├── agentx-node-protocol/
-│   ├── agentx-api-types/
-│   ├── agentx-runtime-contracts/
-│   ├── agentx-bundle-builder/
-│   ├── agentx-control-infrastructure/
-│   ├── agentx-runtime-infrastructure/
-│   ├── agentx-mysql-lease/
-│   ├── agentx-service-kit/
-│   ├── agentx-boundary-check/
-│   ├── agentx-v2-ops/
-│   ├── agentx-key-material/
-│   └── agentxctl/
-├── migrations/{control,runtime,observability}/
-├── deploy/{docker,helm,kustomize,opensandbox,values}/
-├── tests/e2e/
-├── xtask/
+│   ├── services/{platform-control,agentx-v2-runtime,agentx-egress-gateway,observability}/
+│   ├── crates/                       # 领域、协议、应用、基础设施与部署操作实现
+│   └── plugins/
+│       ├── packages/{plugin-sdk,plugin-ui,plugin-runner}/
+│       ├── builtin/{core,data,http}/
+│       └── templates/canvas-plugin/
+├── contracts/{openapi,schemas,vendor}/
+├── deploy/
+│   ├── docker/
+│   ├── helm/
+│   ├── kustomize/
+│   ├── opensandbox/
+│   ├── ingress-nginx/
+│   ├── values/
+│   ├── release/
+│   └── migrations/{control,runtime,observability}/
+├── tools/{agentxctl,agentx-boundary-check,xtask,scripts}/
+├── tests/
+│   ├── acceptance/
+│   ├── e2e/                          # pytest 系统级编排入口
+│   ├── browser/                      # Playwright 业务测试与图片基准
+│   └── fixtures/{backup-adapter,echo-mcp,echo-node}/
 └── docs/
 ```
+
+Rust、pnpm、uv 工作区清单及锁文件保留根目录。仓库自动化证据位于 `.local/artifacts`，发布包位于 `.local/dist`，镜像导入归档位于 `.local/tmp/images`；工具默认的 `target`、`node_modules`、`.venv` 保留原位置。详细目录映射见 [仓库目录归并计划](plan/repository-layout.md)。
+
 
 V1 `platform-api`、`trigger-gateway`、`workflow-coordinator`、`trace-writer`、旧 Worker/Sandbox 服务、`agentx-runtime-rpc`、共享 Infrastructure 和 `migrations/mysql` 已物理删除。
 
@@ -70,9 +68,9 @@ V1 `platform-api`、`trigger-gateway`、`workflow-coordinator`、`trace-writer`�
 ### 纯领域与协议
 
 - `agentx-domain`：纯领域对象和值类型，不依赖 Axum、SQLx、Redis 或 ClickHouse。
-- `agentx-runtime`：Workflow Item、图、表达式、内置节点Registry、有效契约、编译IR和状态机算法；不依赖具体存储。Registry是Studio内置节点及其版本/hash的权威来源，Catalog中的数据库Manifest只能是匹配该来源的不可变快照。
+- `agentx-runtime`：Workflow Item、图、表达式、包 Manifest Registry、有效契约、编译IR和状态机算法；不依赖具体存储。`src/plugins/builtin/{core,data,http}` 的 `manifest.json` 与节点 JSON 是内置业务 Manifest 的权威来源，Registry 只负责装载、校验和绑定 Rust 原生能力，不在 Rust 中重复构造参数/UI Schema。
 - `agentx-node-protocol`：版本化 Node Manifest、Action/Lifecycle、Item/Lineage、Artifact、Credential Handle 和错误 DTO。
-- `agentx-runtime-contracts`：跨面 Bundle、Work Package、Command/Event、Internal API、Definition/Manifest、IR、Worker Protocol 和 JWT DTO；使用严格版本与未知字段拒绝，并由同一生成管线写入 `schemas/runtime-v1` 与OpenAPI调用类型。
+- `agentx-runtime-contracts`：跨面 Bundle、Work Package、Command/Event、Internal API、Definition/Manifest、IR、Worker Protocol 和 JWT DTO；使用严格版本与未知字段拒绝，并由同一生成管线写入 `contracts/schemas/runtime-v1` 与OpenAPI调用类型。
 - `agentx-api-types`：公共 HTTP DTO，不包含数据库 Row。
 
 ### 应用与基础设施

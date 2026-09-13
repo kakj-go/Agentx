@@ -1,0 +1,218 @@
+{
+  "protocolVersion": "3.0",
+  "nodeType": "sub_workflow",
+  "version": 1,
+  "displayName": "Sub-workflow",
+  "description": "Run an immutable workflow version.",
+  "category": "integration",
+  "keywords": [
+    "sub",
+    "workflow"
+  ],
+  "localizations": {
+    "en-US": {
+      "displayName": "Sub-workflow",
+      "description": "Run an immutable workflow version.",
+      "keywords": [
+        "sub",
+        "workflow"
+      ],
+      "inputPortLabels": {
+        "main": "Input"
+      },
+      "outputPortLabels": {
+        "error": "Error",
+        "main": "Output"
+      },
+      "parameterLabels": {
+        "inputs": "Inputs",
+        "workflowVersionId": "Workflow Version Id"
+      }
+    },
+    "zh-CN": {
+      "displayName": "子流程",
+      "description": "执行一个不可变的工作流版本。",
+      "keywords": [
+        "子流程"
+      ],
+      "inputPortLabels": {
+        "main": "输入"
+      },
+      "outputPortLabels": {
+        "error": "错误",
+        "main": "输出"
+      },
+      "parameterLabels": {
+        "inputs": "命名输入",
+        "workflowVersionId": "工作流版本"
+      }
+    }
+  },
+  "iconKey": "box",
+  "executionStyle": "sub_workflow",
+  "capability": "builtin",
+  "readiness": "any",
+  "inputPorts": [
+    {
+      "name": "main",
+      "kind": "main",
+      "required": true,
+      "variadic": false
+    }
+  ],
+  "outputPorts": [
+    {
+      "name": "main",
+      "kind": "main",
+      "required": false,
+      "variadic": false
+    },
+    {
+      "name": "error",
+      "kind": "error",
+      "required": false,
+      "variadic": false
+    }
+  ],
+  "bindingSlots": [],
+  "parameterSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "inputs": {
+        "additionalProperties": {},
+        "default": {
+          "fields": {},
+          "kind": "object"
+        },
+        "type": "object",
+        "x-agentx-binding": {
+          "acceptedCardinality": [
+            "single"
+          ],
+          "acceptedKinds": [
+            "literal",
+            "reference",
+            "template",
+            "array",
+            "object"
+          ],
+          "allowedNamespaces": [
+            "inputs",
+            "outputs",
+            "contexts",
+            "execution",
+            "item",
+            "loop"
+          ],
+          "missingPolicies": [
+            "error",
+            "null",
+            "omit"
+          ],
+          "recursive": true
+        }
+      },
+      "workflowVersionId": {
+        "format": "uuid",
+        "type": "string"
+      }
+    },
+    "required": [
+      "workflowVersionId",
+      "inputs"
+    ],
+    "type": "object"
+  },
+  "outputSchema": {
+    "type": "object"
+  },
+  "outputPortSchemas": {
+    "error": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "details": {
+          "type": "object"
+        },
+        "message": {
+          "type": "string"
+        },
+        "nodeExecutionId": {
+          "type": "string"
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "sourceNodeId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "retryable",
+        "details",
+        "sourceNodeId",
+        "nodeExecutionId"
+      ],
+      "type": "object"
+    }
+  },
+  "outputCardinality": {
+    "error": "many",
+    "main": "many"
+  },
+  "selectorCapabilities": {
+    "namespaces": [
+      "inputs",
+      "outputs",
+      "contexts"
+    ],
+    "supportsCurrent": true,
+    "supportsFirstLast": true,
+    "supportsAll": true,
+    "supportsRunSelection": true
+  },
+  "contextReadCapability": true,
+  "contextWriteCapability": true,
+  "artifactOutputSchema": {
+    "items": {
+      "type": "object"
+    },
+    "type": "array"
+  },
+  "uiSchema": {
+    "order": [
+      "workflowVersionId",
+      "inputs"
+    ],
+    "fields": {
+      "inputs": {
+        "control": "mapper"
+      },
+      "workflowVersionId": {
+        "control": "provider_options",
+        "provider": "workflow_versions"
+      }
+    },
+    "canvas": {
+      "role": "sub_workflow"
+    }
+  },
+  "providers": [
+    "workflow_versions"
+  ],
+  "credentials": [],
+  "defaultTimeoutMs": 300000,
+  "retryPolicy": {
+    "retryable": false,
+    "maxAttempts": 0,
+    "initialBackoffMs": 0,
+    "maxBackoffMs": 0
+  },
+  "sandboxRequired": false,
+  "supportsMock": true,
+  "sideEffectLevel": "none"
+}

@@ -21,6 +21,7 @@ package = false
 addopts = "-ra --strict-markers"
 pythonpath = ["."]
 testpaths = ["tests/acceptance", "tests/e2e"]
+cache_dir = ".local/cache/pytest"
 markers = [
   "infrastructure: Kubernetes infrastructure and data-domain scenarios",
   "publishing: bundle publishing and activation scenarios",
@@ -36,7 +37,8 @@ markers = [
 [tool.ruff]
 target-version = "py312"
 line-length = 120
-extend-exclude = ["vendor"]
+extend-exclude = [".local", "contracts/vendor"]
+cache-dir = ".local/cache/ruff"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "S", "RUF"]

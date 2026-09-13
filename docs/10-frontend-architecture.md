@@ -20,6 +20,8 @@
 
 Tailwind 是唯一的视觉样式体系，不再引入 Ant Design 或另一套完整组件库。Radix UI 只提供无障碍行为和交互原语，最终视觉由 Agentx Token 和 Tailwind Class 决定。
 
+plan6 增加受审核画布插件UI。`plugin-ui-loader.ts`按不可变摘要动态导入编译后的React ESM并引用计数加载CSS；宿主只暴露同一个React运行时和公共`Field/Input/Button/Select/SmartInput`。配置Panel、Canvas内容、Result和Trace renderer都由Error Boundary隔离，卸载最后一个挂载点时清理样式。`node-panel-registry.tsx`是内置与插件面板的统一入口，Palette仍只展示启用版本；打开引用停用版本的Draft时按精确`nodeType/typeVersion`补取冻结Manifest，不把它重新加入Palette。
+
 ## 2. 企业工作台
 
 正式布局使用企业工作台方案：
@@ -80,7 +82,7 @@ shared/components 保存 PageContainer、PageHeader、FilterBar、DataTable、Me
 
 Feature 页面优先组合共享组件，不重复定义页面标题、表格密度、状态颜色和空状态。
 
-`apps/web/src/docs` 集中保存面向最终用户的内嵌接入文档、双语内容、动态代码示例和文档展示组件；Feature 页面只传入当前实体、公开 Endpoint 与已发布 Schema，不在业务页面复制长篇说明。Application 的 API Key 与 Webhook 文档以当前激活 Deployment 为数据源，在尚未创建 API Key 或 Webhook 时也必须能直接查看输入/输出 Schema；未创建 Webhook 时只用占位符表示尚未生成的专属 URL 和 Secret。接口参考按 Endpoint 展示请求字段、响应字段和 Curl、Java、Go、Node.js、Python 示例。外部 API 的方法、路径、Header 和 Schema 仍以版本化 OpenAPI 为契约真相，内嵌文档负责快速开始、安全说明和错误排查，不替代 OpenAPI。
+`src/web/src/docs` 集中保存面向最终用户的内嵌接入文档、双语内容、动态代码示例和文档展示组件；Feature 页面只传入当前实体、公开 Endpoint 与已发布 Schema，不在业务页面复制长篇说明。Application 的 API Key 与 Webhook 文档以当前激活 Deployment 为数据源，在尚未创建 API Key 或 Webhook 时也必须能直接查看输入/输出 Schema；未创建 Webhook 时只用占位符表示尚未生成的专属 URL 和 Secret。接口参考按 Endpoint 展示请求字段、响应字段和 Curl、Java、Go、Node.js、Python 示例。外部 API 的方法、路径、Header 和 Schema 仍以版本化 OpenAPI 为契约真相，内嵌文档负责快速开始、安全说明和错误排查，不替代 OpenAPI。
 
 ## 5. Feature 边界
 

@@ -1,6 +1,6 @@
 # P3A-006 冻结契约说明
 
-状态：`accepted`。机器可读 Schema 位于 `schemas/agent-core-v1`，Rust 权威类型位于 `crates/agentx-agent-core/src/contracts.rs`。
+状态：`accepted`。机器可读 Schema 位于 `contracts/schemas/agent-core-v1`，Rust 权威类型位于 `src/crates/agentx-agent-core/src/contracts.rs`。
 
 ## 1. Definition 6.0 与 Manifest 2.0
 
@@ -91,7 +91,7 @@ stdout 只承载有界 MCP JSON-RPC Frame；stderr 不进入协议流。同一 A
 ## 6. 契约生成与拒绝规则
 
 ```powershell
-cargo run -p agentx-agent-core --bin generate-agent-core-contracts -- schemas/agent-core-v1 openapi/agent-core-contracts-v1.json
+cargo run -p agentx-agent-core --bin generate-agent-core-contracts -- contracts/schemas/agent-core-v1 contracts/openapi/agent-core-contracts-v1.json
 cargo test -p agentx-agent-core --test schema_drift
 ```
 

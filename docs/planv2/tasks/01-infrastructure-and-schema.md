@@ -23,8 +23,8 @@ D0 目录/配置和独立 Migration Runner
 
 | ID | 状态 | 依赖 | 实施步骤 | 交付物 | 可验证验收 |
 |---|---|---|---|---|---|
-| V2D-001 | done | V2A-006、008 | 根据 Control 处置清单建立 `migrations/control/0001_initial.sql`；加入租户、唯一键、FK、Outbox/Inbox/Claim 和保留索引 | Control 初始 Migration 与空库测试 | 空库可初始化；只有 Control 账号可访问；约束和高频查询索引测试通过 |
-| V2D-002 | done | V2A-006～008 | 建立 `migrations/runtime/0001_initial.sql`；覆盖 Bundle/Admission、Gateway、Execution、Lease、Outbox、Query 和 Event Export | Runtime 初始 Migration 与状态约束测试 | 空库可初始化；状态转换、幂等键、Fencing、Head CAS 和 Outbox 原子性测试通过 |
+| V2D-001 | done | V2A-006、008 | 根据 Control 处置清单建立 `deploy/migrations/control/0001_initial.sql`；加入租户、唯一键、FK、Outbox/Inbox/Claim 和保留索引 | Control 初始 Migration 与空库测试 | 空库可初始化；只有 Control 账号可访问；约束和高频查询索引测试通过 |
+| V2D-002 | done | V2A-006～008 | 建立 `deploy/migrations/runtime/0001_initial.sql`；覆盖 Bundle/Admission、Gateway、Execution、Lease、Outbox、Query 和 Event Export | Runtime 初始 Migration 与状态约束测试 | 空库可初始化；状态转换、幂等键、Fencing、Head CAS 和 Outbox 原子性测试通过 |
 | V2D-003 | done | V2A-001 | 重建独立 ClickHouse 初始 Migration；保留稳定 `event_id/execution_id` 和租户分区策略 | ClickHouse Migration 目录和 Runner | 新库创建、重复运行、去重和最小 Trace 查询通过 |
 | V2D-004 | done | V2D-001～003 | 配置两个独立 MySQL Endpoint/Secret/Pool/Migration History；Runtime Redis 使用独立 Endpoint 和凭据；计算各 Role 连接预算 | Profile、Settings、Secret 模板和 Doctor | 同实例双 Schema 不被接受；交叉账号访问失败；Control 没有 Redis 配置 |
 | V2D-005 | done | V2A-009 | 建立 Control/Runtime/Observability Bucket 或隔离 Prefix、账号和 IAM Policy；对象引用包含 Domain/Tenant/Hash/Size | OSS Policy、Fixture 和越域测试 | Control 不能覆盖 Runtime Object，Worker 不能读写 Control Workspace，Observability 权限最小化 |

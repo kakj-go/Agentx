@@ -5,6 +5,11 @@ target
 node_modules
 **/node_modules
 **/dist
+!src/plugins/builtin/*/dist
+!src/plugins/builtin/*/dist/**
 *.log
 .local
-
+.venv
+**/__pycache__
+**/.pytest_cache
+**/.ruff_cache

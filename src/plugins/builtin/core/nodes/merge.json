@@ -1,0 +1,270 @@
+{
+  "protocolVersion": "3.0",
+  "nodeType": "merge",
+  "version": 1,
+  "displayName": "Merge",
+  "description": "Combine multiple workflow branches.",
+  "category": "logic",
+  "keywords": [
+    "merge"
+  ],
+  "localizations": {
+    "en-US": {
+      "displayName": "Merge",
+      "description": "Combine multiple workflow branches.",
+      "keywords": [
+        "merge"
+      ],
+      "inputPortLabels": {
+        "left": "Port",
+        "main": "Input",
+        "right": "Port"
+      },
+      "outputPortLabels": {
+        "error": "Error",
+        "main": "Output"
+      },
+      "parameterLabels": {
+        "conflictStrategy": "Conflict Strategy",
+        "joinType": "Join Type",
+        "leftField": "Left Field",
+        "mode": "Mode",
+        "rightField": "Right Field"
+      },
+      "parameterEnumOptions": {
+        "conflictStrategy": {
+          "prefer_left": "Prefer left",
+          "prefer_right": "Prefer right",
+          "suffix": "Suffix"
+        },
+        "joinType": {
+          "full": "Full",
+          "inner": "Inner",
+          "left": "Left",
+          "right": "Right"
+        },
+        "mode": {
+          "append": "Append",
+          "combine_by_key": "Combine by key",
+          "combine_by_position": "Combine by position"
+        }
+      }
+    },
+    "zh-CN": {
+      "displayName": "合并",
+      "description": "合并多个工作流分支的数据。",
+      "keywords": [
+        "合并"
+      ],
+      "inputPortLabels": {
+        "left": "端口",
+        "main": "输入",
+        "right": "端口"
+      },
+      "outputPortLabels": {
+        "error": "错误",
+        "main": "输出"
+      },
+      "parameterLabels": {
+        "conflictStrategy": "冲突策略",
+        "joinType": "连接类型",
+        "leftField": "左侧键",
+        "mode": "模式",
+        "rightField": "右侧键"
+      },
+      "parameterEnumOptions": {
+        "conflictStrategy": {
+          "prefer_left": "优先左侧",
+          "prefer_right": "优先右侧",
+          "suffix": "添加后缀"
+        },
+        "joinType": {
+          "full": "全连接",
+          "inner": "内连接",
+          "left": "左连接",
+          "right": "右连接"
+        },
+        "mode": {
+          "append": "追加",
+          "combine_by_key": "按键合并",
+          "combine_by_position": "按位置合并"
+        }
+      }
+    }
+  },
+  "iconKey": "git-merge",
+  "executionStyle": "action",
+  "capability": "builtin",
+  "readiness": "required",
+  "inputPorts": [
+    {
+      "name": "main",
+      "kind": "main",
+      "required": false,
+      "variadic": true
+    },
+    {
+      "name": "left",
+      "kind": "main",
+      "required": false,
+      "variadic": false
+    },
+    {
+      "name": "right",
+      "kind": "main",
+      "required": false,
+      "variadic": false
+    }
+  ],
+  "outputPorts": [
+    {
+      "name": "main",
+      "kind": "main",
+      "required": false,
+      "variadic": false
+    },
+    {
+      "name": "error",
+      "kind": "error",
+      "required": false,
+      "variadic": false
+    }
+  ],
+  "bindingSlots": [],
+  "parameterSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "conflictStrategy": {
+        "default": "prefer_right",
+        "enum": [
+          "prefer_left",
+          "prefer_right",
+          "suffix"
+        ],
+        "type": "string"
+      },
+      "joinType": {
+        "default": "inner",
+        "enum": [
+          "inner",
+          "left",
+          "right",
+          "full"
+        ],
+        "type": "string"
+      },
+      "leftField": {
+        "default": "id",
+        "type": "string"
+      },
+      "mode": {
+        "default": "append",
+        "enum": [
+          "append",
+          "combine_by_position",
+          "combine_by_key"
+        ],
+        "type": "string"
+      },
+      "rightField": {
+        "default": "id",
+        "type": "string"
+      }
+    },
+    "type": "object"
+  },
+  "outputSchema": {
+    "type": "object"
+  },
+  "outputPortSchemas": {
+    "error": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "details": {
+          "type": "object"
+        },
+        "message": {
+          "type": "string"
+        },
+        "nodeExecutionId": {
+          "type": "string"
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "sourceNodeId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "retryable",
+        "details",
+        "sourceNodeId",
+        "nodeExecutionId"
+      ],
+      "type": "object"
+    }
+  },
+  "outputCardinality": {
+    "error": "many",
+    "main": "many"
+  },
+  "selectorCapabilities": {
+    "namespaces": [
+      "inputs",
+      "outputs",
+      "contexts"
+    ],
+    "supportsCurrent": true,
+    "supportsFirstLast": true,
+    "supportsAll": true,
+    "supportsRunSelection": true
+  },
+  "contextReadCapability": true,
+  "contextWriteCapability": false,
+  "artifactOutputSchema": {
+    "items": {
+      "type": "object"
+    },
+    "type": "array"
+  },
+  "uiSchema": {
+    "fields": {
+      "conflictStrategy": {
+        "control": "select"
+      },
+      "joinType": {
+        "control": "select"
+      },
+      "leftField": {
+        "control": "text"
+      },
+      "mode": {
+        "control": "select"
+      },
+      "rightField": {
+        "control": "text"
+      }
+    },
+    "canvas": {
+      "role": "merge"
+    }
+  },
+  "providers": [],
+  "credentials": [],
+  "defaultTimeoutMs": 30000,
+  "retryPolicy": {
+    "retryable": false,
+    "maxAttempts": 0,
+    "initialBackoffMs": 0,
+    "maxBackoffMs": 0
+  },
+  "sandboxRequired": false,
+  "supportsMock": true,
+  "sideEffectLevel": "none"
+}

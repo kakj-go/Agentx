@@ -1,0 +1,16 @@
+{
+  "name": "agentx-canvas-plugin-template",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.9.0",
+  "scripts": {
+    "dev": "tsc --watch --preserveWatchOutput",
+    "check": "tsc --noEmit && node scripts/check.mjs",
+    "test": "pnpm build && node --test tests/runtime.test.mjs",
+    "build": "tsc",
+    "pack:plugin": "python scripts/pack_plugin.py"
+  },
+  "dependencies": { "@agentx/plugin-sdk": "file:vendor/plugin-sdk", "@agentx/plugin-ui": "file:vendor/plugin-ui" },
+  "devDependencies": { "@types/react": "^18.3.28", "typescript": "~6.0.2" }
+}

@@ -1,0 +1,392 @@
+{
+  "protocolVersion": "3.0",
+  "nodeType": "if",
+  "version": 1,
+  "displayName": "Condition",
+  "description": "Route items to the first matching IF/ELIF branch, else to ELSE.",
+  "category": "logic",
+  "keywords": [
+    "if"
+  ],
+  "localizations": {
+    "en-US": {
+      "displayName": "Condition",
+      "description": "Route items to the first matching IF/ELIF branch, else to ELSE.",
+      "keywords": [
+        "if"
+      ],
+      "inputPortLabels": {
+        "main": "Input"
+      },
+      "outputPortLabels": {
+        "case": "Case",
+        "else": "Else",
+        "error": "Error"
+      },
+      "parameterLabels": {
+        "cases": "Cases",
+        "cases[]": "Cases",
+        "cases[].conditions": "Conditions",
+        "cases[].conditions[]": "Conditions",
+        "cases[].conditions[].condition": "Condition",
+        "cases[].conditions[].condition.left": "Left",
+        "cases[].conditions[].condition.operator": "Operator",
+        "cases[].conditions[].condition.right": "Right",
+        "cases[].conditions[].label": "Label",
+        "cases[].id": "Id",
+        "cases[].logicalOp": "Logical Op",
+        "cases[].name": "Name"
+      },
+      "parameterEnumOptions": {
+        "cases[].conditions[].condition.operator": {
+          "contains": "Contains",
+          "ends_with": "Ends with",
+          "eq": "Eq",
+          "gt": "Gt",
+          "gte": "Gte",
+          "in": "In",
+          "is_empty": "Is empty",
+          "is_not_empty": "Is not empty",
+          "lt": "Lt",
+          "lte": "Lte",
+          "matches": "Matches",
+          "ne": "Ne",
+          "not_contains": "Not contains",
+          "starts_with": "Starts with"
+        },
+        "cases[].logicalOp": {
+          "and": "And",
+          "or": "Or"
+        }
+      }
+    },
+    "zh-CN": {
+      "displayName": "条件分支",
+      "description": "按序命中 IF/ELIF 分支，未命中走 ELSE 分支。",
+      "keywords": [
+        "条件分支"
+      ],
+      "inputPortLabels": {
+        "main": "输入"
+      },
+      "outputPortLabels": {
+        "case": "条件分支",
+        "else": "否则分支",
+        "error": "错误"
+      },
+      "parameterLabels": {
+        "cases": "分支",
+        "cases[]": "分支",
+        "cases[].conditions": "条件组",
+        "cases[].conditions[]": "条件组",
+        "cases[].conditions[].condition": "条件",
+        "cases[].conditions[].condition.left": "Left",
+        "cases[].conditions[].condition.operator": "Operator",
+        "cases[].conditions[].condition.right": "Right",
+        "cases[].conditions[].label": "显示名称",
+        "cases[].id": "稳定标识",
+        "cases[].logicalOp": "条件关系",
+        "cases[].name": "名称"
+      },
+      "parameterEnumOptions": {
+        "cases[].conditions[].condition.operator": {
+          "contains": "Contains",
+          "ends_with": "Ends with",
+          "eq": "Eq",
+          "gt": "Gt",
+          "gte": "Gte",
+          "in": "In",
+          "is_empty": "Is empty",
+          "is_not_empty": "Is not empty",
+          "lt": "Lt",
+          "lte": "Lte",
+          "matches": "Matches",
+          "ne": "Ne",
+          "not_contains": "Not contains",
+          "starts_with": "Starts with"
+        },
+        "cases[].logicalOp": {
+          "and": "且",
+          "or": "或"
+        }
+      }
+    }
+  },
+  "iconKey": "split",
+  "executionStyle": "action",
+  "capability": "builtin",
+  "readiness": "any",
+  "inputPorts": [
+    {
+      "name": "main",
+      "kind": "main",
+      "required": true,
+      "variadic": false
+    }
+  ],
+  "outputPorts": [
+    {
+      "name": "case",
+      "kind": "main",
+      "required": false,
+      "variadic": true
+    },
+    {
+      "name": "else",
+      "kind": "main",
+      "required": false,
+      "variadic": false
+    },
+    {
+      "name": "error",
+      "kind": "error",
+      "required": false,
+      "variadic": false
+    }
+  ],
+  "bindingSlots": [],
+  "parameterSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "cases": {
+        "default": [
+          {
+            "conditions": [
+              {
+                "condition": {
+                  "left": {
+                    "kind": "literal",
+                    "value": ""
+                  },
+                  "operator": "eq",
+                  "right": {
+                    "kind": "literal",
+                    "value": ""
+                  }
+                }
+              }
+            ],
+            "id": "case_1",
+            "logicalOp": "and",
+            "name": ""
+          }
+        ],
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "conditions": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "condition": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "left": {
+                        "x-agentx-binding": {
+                          "acceptedCardinality": [
+                            "single"
+                          ],
+                          "acceptedKinds": [
+                            "literal",
+                            "reference",
+                            "template",
+                            "array",
+                            "object"
+                          ],
+                          "allowedNamespaces": [
+                            "inputs",
+                            "outputs",
+                            "contexts",
+                            "execution",
+                            "item",
+                            "loop"
+                          ],
+                          "missingPolicies": [
+                            "error",
+                            "null",
+                            "omit"
+                          ],
+                          "recursive": false
+                        }
+                      },
+                      "operator": {
+                        "enum": [
+                          "eq",
+                          "ne",
+                          "gt",
+                          "gte",
+                          "lt",
+                          "lte",
+                          "in",
+                          "contains",
+                          "not_contains",
+                          "ends_with",
+                          "starts_with",
+                          "matches",
+                          "is_empty",
+                          "is_not_empty"
+                        ],
+                        "type": "string"
+                      },
+                      "right": {
+                        "x-agentx-binding": {
+                          "acceptedCardinality": [
+                            "single"
+                          ],
+                          "acceptedKinds": [
+                            "literal",
+                            "reference",
+                            "template",
+                            "array",
+                            "object"
+                          ],
+                          "allowedNamespaces": [
+                            "inputs",
+                            "outputs",
+                            "contexts",
+                            "execution",
+                            "item",
+                            "loop"
+                          ],
+                          "missingPolicies": [
+                            "error",
+                            "null",
+                            "omit"
+                          ],
+                          "recursive": false
+                        }
+                      }
+                    },
+                    "required": [
+                      "left",
+                      "operator"
+                    ],
+                    "type": "object"
+                  },
+                  "label": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "condition"
+                ],
+                "type": "object"
+              },
+              "minItems": 1,
+              "type": "array"
+            },
+            "id": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "logicalOp": {
+              "default": "and",
+              "enum": [
+                "and",
+                "or"
+              ],
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "conditions"
+          ],
+          "type": "object"
+        },
+        "minItems": 1,
+        "type": "array"
+      }
+    },
+    "required": [
+      "cases"
+    ],
+    "type": "object"
+  },
+  "outputSchema": {
+    "type": "object"
+  },
+  "outputPortSchemas": {
+    "error": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "details": {
+          "type": "object"
+        },
+        "message": {
+          "type": "string"
+        },
+        "nodeExecutionId": {
+          "type": "string"
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "sourceNodeId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "retryable",
+        "details",
+        "sourceNodeId",
+        "nodeExecutionId"
+      ],
+      "type": "object"
+    }
+  },
+  "outputCardinality": {
+    "case": "zero_or_many",
+    "else": "zero_or_many",
+    "error": "zero_or_many"
+  },
+  "selectorCapabilities": {
+    "namespaces": [
+      "inputs",
+      "outputs",
+      "contexts"
+    ],
+    "supportsCurrent": true,
+    "supportsFirstLast": true,
+    "supportsAll": true,
+    "supportsRunSelection": true
+  },
+  "contextReadCapability": true,
+  "contextWriteCapability": false,
+  "artifactOutputSchema": {
+    "items": {
+      "type": "object"
+    },
+    "type": "array"
+  },
+  "uiSchema": {
+    "fields": {
+      "cases": {
+        "control": "condition_builder"
+      }
+    },
+    "canvas": {
+      "role": "branch"
+    }
+  },
+  "providers": [],
+  "credentials": [],
+  "defaultTimeoutMs": 30000,
+  "retryPolicy": {
+    "retryable": false,
+    "maxAttempts": 0,
+    "initialBackoffMs": 0,
+    "maxBackoffMs": 0
+  },
+  "sandboxRequired": false,
+  "supportsMock": true,
+  "sideEffectLevel": "none"
+}

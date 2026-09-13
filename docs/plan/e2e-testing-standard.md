@@ -25,7 +25,7 @@ pytest 是 Kubernetes环境和系统级 E2E的唯一编排入口；TypeScript Pl
 
 - Control、Runtime、Dependencies三个临时 Namespace；
 - 唯一 IngressClass与 ingress-nginx Release资源名；
-- 独立 `artifacts/e2e/<run-id>/` 证据目录；
+- 独立 `.local/artifacts/e2e/<run-id>/` 证据目录；
 - 两个有界生命周期的 Web/Runtime port-forward。
 
 Fixture通过 `agentxctl install/upgrade/doctor/uninstall`管理四个 Helm Release。Addon/Echo Provider仅在请求对应 Fixture时通过 `deploy/kustomize/e2e-fixtures`安装，不进入核心 Release。
@@ -60,6 +60,8 @@ pnpm --filter @agentx/e2e test
 ```
 
 ## 6. 证据与脱敏
+
+Playwright 配置位于 `tests/browser/playwright.config.ts`，按配置文件位置定位仓库，将报告写入 `.local/artifacts/playwright/<stage>/<run-id>/<suite>/`。历史证据迁移不改写日志内容，旧位置对应关系见 [目录计划](repository-layout.md)。
 
 每个 Run保存：
 

@@ -104,6 +104,16 @@ agentxctl uninstall --target all --purge-data --yes
 
 ## 开发与 E2E
 
+本地完整重建和升级：
+
+```bash
+uv run --frozen --group test python tools/scripts/dev/local_upgrade.py
+```
+
+该入口构建 11 个正式镜像（包含 Migration、Bootstrap、Doctor），导入本地 Kubernetes，执行 Helm 升级并重启使用 `dev` 标签的应用 Deployment。部署失败或 rollout 未就绪时返回失败。默认不构建 Echo E2E 镜像。
+
+正式本地部署通过 LoadBalancer 暴露 `http://agentx.localhost`；Runtime API 使用 `http://run.agentx.localhost`，其根路径无业务路由时返回 404 属于正常行为。临时 E2E 保持 ClusterIP 和独立 port-forward。
+
 开发期统一命令：
 
 ```bash
