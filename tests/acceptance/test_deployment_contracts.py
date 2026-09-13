@@ -16,9 +16,10 @@ TARGETS = ("dependencies", "control", "runtime", "observability")
 def test_release_exposes_standalone_binaries_and_direct_download_links() -> None:
     workflow = Path(".github/workflows/agentxctl-release.yml").read_text(encoding="utf-8")
     readme = Path("README.md").read_text(encoding="utf-8")
+    version = tomllib.loads(Path("Cargo.toml").read_text(encoding="utf-8"))["workspace"]["package"]["version"]
     for asset in ("agentxctl-linux-x86_64", "agentxctl-windows-x86_64.exe"):
         assert f"standalone: {asset}" in workflow
-        assert f"/agentxctl-v0.0.3-beta/{asset}" in readme
+        assert f"/agentxctl-v{version}/{asset}" in readme
     assert "python tools/scripts/release/package_agentxctl.py" in workflow
     assert "--version" in workflow and "--target" in workflow
     assert "path: .local/dist" in workflow

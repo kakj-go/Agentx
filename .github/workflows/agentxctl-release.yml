@@ -9,6 +9,10 @@ permissions:
   id-token: write
   attestations: write
 
+concurrency:
+  group: agentxctl-release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build:
     strategy:
@@ -25,6 +29,13 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.8.13"
+      - run: uv run --frozen --group test python -m tools.scripts.release.verify_release --version "${{ github.ref_name }}"
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.97.1
@@ -37,10 +48,7 @@ jobs:
           version: v1.33.4
       - if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y musl-tools
-      - run: cargo build --release -p agentxctl --target ${{ matrix.target }}
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
+      - run: cargo build --release --locked -p agentxctl --target ${{ matrix.target }}
       - run: python tools/scripts/release/package_agentxctl.py --version "${{ github.ref_name }}" --target "${{ matrix.target }}"
       - uses: actions/attest-build-provenance@v2
         with:
@@ -61,12 +69,25 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.8.13"
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.18.4
       - uses: actions/download-artifact@v4
         with:
           pattern: agentxctl-*
           merge-multiple: true
           path: .local/dist
-      - uses: softprops/action-gh-release@v2
-        with:
-          prerelease: ${{ contains(github.ref_name, '-') }}
-          files: .local/dist/*
+      - run: chmod +x .local/dist/agentxctl-linux-x86_64
+      - name: Verify all public Docker images before publishing the CLI
+        run: uv run --frozen --group test python -m tools.scripts.release.verify_release --version "${{ github.ref_name }}" --binary .local/dist/agentxctl-linux-x86_64 --output .local/dist/release-images.json
+      - name: Upload complete artifacts and publish the draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: uv run --frozen --group test python -m tools.scripts.release.publish_release --tag "${{ github.ref_name }}" --notes "docs/releases/${{ github.ref_name }}.md"

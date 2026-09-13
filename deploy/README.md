@@ -12,6 +12,8 @@ Agentx 使用四个独立 Helm Release 管理核心资源，使用 Rust 原生 `
 
 Release 同时提供可直接下载的 Windows/Linux 单文件二进制和完整归档包。归档包含 `agentxctl`、三个 Values 示例和许可证；四个 Agentx Chart、JSON Schema、Docker Hub Beta Values、ingress-nginx Chart 与 Values 已嵌入二进制，安装时不会下载部署资源。
 
+当前版本为 [agentxctl-v0.0.4-beta](https://github.com/kakj-go/Agentx/releases/tag/agentxctl-v0.0.4-beta)，默认部署 `v0.0.4-beta` 镜像。下载和校验命令见 [README 快速部署](../README.md#快速部署-docker-hub-beta)。升级时下载新版 ctl 后运行 `upgrade`；旧二进制不会自动改用新版镜像，自定义 Values 的镜像标签也需同步更新。
+
 ```bash
 agentxctl validate
 agentxctl install
@@ -103,6 +105,27 @@ agentxctl uninstall --target all --purge-data --yes
 普通卸载保留Namespace、PVC和外部资源。数据清理只允许local/test、`--target all`并要求`--yes`；production永远拒绝。Runtime仍存在时拒绝单独卸载Dependencies。
 
 ## 开发与 E2E
+
+### 同步发布 ctl 和 Docker 镜像
+
+1. 更新 `Cargo.toml` 的 workspace 版本、`deploy/values/dockerhub-beta.yaml` 镜像标签、四个 Chart 的版本、README 下载链接和 `docs/releases/agentxctl-v<版本>.md`。ctl 继承 workspace 版本。
+2. 执行发布版本检查、ctl 测试和安装包验证，然后提交发布内容。
+3. 使用既有镜像工具构建并推送所有正式镜像，镜像校验通过后才推送 ctl Tag：
+
+```bash
+uv run --frozen --group test python -m tools.scripts.release.verify_release --version agentxctl-v0.0.4-beta
+cargo xtask images --values deploy/values/dockerhub-beta.yaml --push --skip-kubernetes-import --service agentx-migrate --service agentx-bootstrap --service agentx-doctor --service platform-control --service web-console --service runtime-gateway --service workflow-runtime --service workflow-worker --service sandbox-manager --service agentx-egress-gateway --service observability
+cargo build --release --locked -p agentxctl
+uv run --frozen --group test python -m tools.scripts.release.verify_release --version agentxctl-v0.0.4-beta --binary target/release/agentxctl --output .local/artifacts/release-images.json
+git tag agentxctl-v0.0.4-beta
+git push origin agentxctl-v0.0.4-beta
+```
+
+Windows 的本地二进制路径为 `target/release/agentxctl.exe`。镜像发布需要维护者的 Docker Hub 权限。Tag 工作流从同一提交构建两个平台的 ctl，验证内嵌镜像版本及全部公开镜像，再将完整资产上传到草稿并公开 Release。已公开版本不会被覆盖；修订使用新版本。`release-images.json` 随 Release 一起发布，提供镜像摘要核对依据。
+
+4. 工作流成功后，从公开 Release 下载二进制并核对 SHA-256，在仓库外验证 `--version`、`validate` 和 `render`，再使用 `pytest tests/e2e` 完成临时 Namespace 安装验收。最后推送主分支，使 README 的新版本下载链接在更新时已经可用。
+
+### 本地开发
 
 本地完整重建和升级：
 

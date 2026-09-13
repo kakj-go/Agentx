@@ -2,7 +2,7 @@
 
 <div align="center">
 
-![版本](https://img.shields.io/badge/版本-v0.0.3--beta-6d5dfc)
+![版本](https://img.shields.io/badge/版本-v0.0.4--beta-6d5dfc)
 ![许可证](https://img.shields.io/badge/许可证-Apache--2.0-blue)
 ![Rust](https://img.shields.io/badge/Rust-1.85%2B-orange)
 ![agentxctl](https://img.shields.io/badge/CLI-agentxctl-orange)
@@ -22,7 +22,7 @@
 Agentx 是一个面向企业场景的开源 Agent 工作流平台，提供可视化 Workflow 编排、模型与 MCP 资源管理、在线调试、应用发布、执行追踪、审批恢复和运行治理。
 
 > **⚠️ 开发阶段提示**  
-> 当前版本为 `v0.0.3-beta`，仍处于快速开发阶段，不保证历史数据和旧协议兼容。未经容量、安全、备份恢复和隔离评审，不建议直接用于生产环境。
+> 当前版本为 `v0.0.4-beta`，仍处于快速开发阶段，不保证历史数据和旧协议兼容。未经容量、安全、备份恢复和隔离评审，不建议直接用于生产环境。
 
 ## 核心能力
 
@@ -78,32 +78,47 @@ Agentx 采用三平面分离架构，每个逻辑域独立部署，通过 Helm �
 
 ### 安装步骤
 
+当前发布：[agentxctl-v0.0.4-beta](https://github.com/kakj-go/Agentx/releases/tag/agentxctl-v0.0.4-beta)。下载的 `agentxctl` 已包含本版本安装所需的 Chart、Schema 和镜像配置，无需克隆仓库或另行下载安装脚本。
+
 #### Windows x64
 
-[直接下载 `agentxctl-windows-x86_64.exe`](https://github.com/kakj-go/Agentx/releases/download/agentxctl-v0.0.3-beta/agentxctl-windows-x86_64.exe) ([SHA-256](https://github.com/kakj-go/Agentx/releases/download/agentxctl-v0.0.3-beta/agentxctl-windows-x86_64.exe.sha256))
+[直接下载 `agentxctl-windows-x86_64.exe`](https://github.com/kakj-go/Agentx/releases/download/agentxctl-v0.0.4-beta/agentxctl-windows-x86_64.exe) ([SHA-256](https://github.com/kakj-go/Agentx/releases/download/agentxctl-v0.0.4-beta/agentxctl-windows-x86_64.exe.sha256))
 
-下载完成后，在 PowerShell 进入下载目录并直接安装：
+也可以在 PowerShell 中下载、校验并安装：
 
 ```powershell
+$ErrorActionPreference = 'Stop'
 Set-Location $HOME\Downloads
+$release = 'https://github.com/kakj-go/Agentx/releases/download/agentxctl-v0.0.4-beta'
+$asset = 'agentxctl-windows-x86_64.exe'
+Invoke-WebRequest "$release/$asset" -OutFile $asset
+Invoke-WebRequest "$release/$asset.sha256" -OutFile "$asset.sha256"
+$expected = (Get-Content "$asset.sha256").Split()[0]
+if ((Get-FileHash $asset -Algorithm SHA256).Hash -ne $expected) { throw 'SHA-256 校验失败' }
 .\agentxctl-windows-x86_64.exe install
 ```
 
 #### Linux x64
 
-[直接下载 `agentxctl-linux-x86_64`](https://github.com/kakj-go/Agentx/releases/download/agentxctl-v0.0.3-beta/agentxctl-linux-x86_64) ([SHA-256](https://github.com/kakj-go/Agentx/releases/download/agentxctl-v0.0.3-beta/agentxctl-linux-x86_64.sha256))
+[直接下载 `agentxctl-linux-x86_64`](https://github.com/kakj-go/Agentx/releases/download/agentxctl-v0.0.4-beta/agentxctl-linux-x86_64) ([SHA-256](https://github.com/kakj-go/Agentx/releases/download/agentxctl-v0.0.4-beta/agentxctl-linux-x86_64.sha256))
 
-浏览器下载不会保留 Linux 可执行权限，因此首次运行前需要执行一次 `chmod`：
+在终端中下载、校验并安装（需要 `curl` 和 `sha256sum`）：
 
 ```bash
 cd ~/Downloads
-chmod +x agentxctl-linux-x86_64
+release='https://github.com/kakj-go/Agentx/releases/download/agentxctl-v0.0.4-beta'
+curl -fL --retry 3 "$release/agentxctl-linux-x86_64" -o agentxctl-linux-x86_64 &&
+curl -fL --retry 3 "$release/agentxctl-linux-x86_64.sha256" -o agentxctl-linux-x86_64.sha256 &&
+sha256sum --check agentxctl-linux-x86_64.sha256 &&
+chmod +x agentxctl-linux-x86_64 &&
 ./agentxctl-linux-x86_64 install
 ```
 
 ### 安装说明
 
 不传 `--values` 时，单文件二进制使用与当前 CLI 版本绑定的内嵌 Docker Hub Beta 配置。
+
+`agentxctl 0.0.4-beta` 默认安装全部 `kakj/agentx-*:v0.0.4-beta` 镜像。后续升级请从本页或 [Releases](https://github.com/kakj-go/Agentx/releases) 下载新版 ctl，完成校验后执行 `upgrade`；旧 ctl 的内嵌镜像版本不会自动变化。自定义 `--values` 的用户需要同步更新其中的镜像版本。
 
 安装命令会完成：
 1. Values 校验
@@ -165,21 +180,21 @@ kubectl -n agentx-control port-forward service/web-console 18080:8080
 
 ## 已发布镜像
 
-当前 Beta 镜像均为 Linux AMD64，标签为 `v0.0.3-beta`。
+当前 Beta 镜像均为 Linux AMD64，标签为 `v0.0.4-beta`。
 
 | 镜像 | 用途 |
 |---|---|
-| `kakj/agentx-web-console:v0.0.3-beta` | Web 管理控制台 |
-| `kakj/agentx-platform-control:v0.0.3-beta` | Control API、发布和投影 |
-| `kakj/agentx-runtime-gateway:v0.0.3-beta` | 应用调用和 Runtime 查询入口 |
-| `kakj/agentx-workflow-runtime:v0.0.3-beta` | 调度、恢复和后台角色 |
-| `kakj/agentx-workflow-worker:v0.0.3-beta` | 节点与 Agent 执行 |
-| `kakj/agentx-sandbox-manager:v0.0.3-beta` | OpenSandbox 生命周期适配 |
-| `kakj/agentx-egress-gateway:v0.0.3-beta` | 受控公网出口 |
-| `kakj/agentx-observability:v0.0.3-beta` | Trace 摄取和查询 |
-| `kakj/agentx-migrate:v0.0.3-beta` | MySQL/ClickHouse Migration |
-| `kakj/agentx-bootstrap:v0.0.3-beta` | 幂等初始化检查 |
-| `kakj/agentx-doctor:v0.0.3-beta` | 部署后依赖与权限检查 |
+| `kakj/agentx-web-console:v0.0.4-beta` | Web 管理控制台 |
+| `kakj/agentx-platform-control:v0.0.4-beta` | Control API、发布和投影 |
+| `kakj/agentx-runtime-gateway:v0.0.4-beta` | 应用调用和 Runtime 查询入口 |
+| `kakj/agentx-workflow-runtime:v0.0.4-beta` | 调度、恢复和后台角色 |
+| `kakj/agentx-workflow-worker:v0.0.4-beta` | 节点与 Agent 执行 |
+| `kakj/agentx-sandbox-manager:v0.0.4-beta` | OpenSandbox 生命周期适配 |
+| `kakj/agentx-egress-gateway:v0.0.4-beta` | 受控公网出口 |
+| `kakj/agentx-observability:v0.0.4-beta` | Trace 摄取和查询 |
+| `kakj/agentx-migrate:v0.0.4-beta` | MySQL/ClickHouse Migration |
+| `kakj/agentx-bootstrap:v0.0.4-beta` | 幂等初始化检查 |
+| `kakj/agentx-doctor:v0.0.4-beta` | 部署后依赖与权限检查 |
 
 ## 本地开发与测试
 

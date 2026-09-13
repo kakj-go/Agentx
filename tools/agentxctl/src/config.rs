@@ -489,7 +489,10 @@ mod tests {
         let config = DeploymentConfig::load_embedded_beta(None).unwrap();
         assert_eq!(config.path, PathBuf::from("embedded:dockerhub-beta.yaml"));
         assert_eq!(config.environment(), "local");
-        assert_eq!(config.string("/global/images/tag"), Some("v0.0.3-beta"));
+        assert_eq!(
+            config.string("/global/images/tag"),
+            Some(concat!("v", env!("CARGO_PKG_VERSION")))
+        );
     }
 
     #[test]

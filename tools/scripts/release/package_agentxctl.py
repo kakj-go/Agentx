@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import re
 import shutil
 import subprocess
 import tarfile
@@ -83,6 +84,13 @@ def run(binary: Path, args: tuple[str, ...], cwd: Path) -> str:
     return result.stdout.strip()
 
 
+def release_images(rendered: str, version: str) -> list[str]:
+    images = sorted(set(re.findall(r'''^\s+image:\s*["']?(kakj/agentx-[^\s"']+)''', rendered, re.MULTILINE)))
+    if len(images) != 11 or any(not image.endswith(f":v{version}") for image in images):
+        raise ValueError("embedded deployment must contain all 11 Docker Hub images at the CLI release version")
+    return images
+
+
 def smoke_package(archive: Path, standalone: Path, version: str, target: str) -> None:
     executable = TARGETS[target][0]
     with tempfile.TemporaryDirectory(prefix="agentxctl-release-smoke-") as directory:
@@ -93,7 +101,7 @@ def smoke_package(archive: Path, standalone: Path, version: str, target: str) ->
             if run(candidate, ("--version",), cwd) != f"agentxctl {version}":
                 raise ValueError("release version does not match the binary")
             run(candidate, ("validate", "--output", "json"), cwd)
-            run(candidate, ("render", "--target", "runtime"), cwd)
+            release_images(run(candidate, ("render", "--target", "all"), cwd), version)
         values = str(package / "values/local.yaml")
         run(binary, ("validate", "--values", values, "--output", "json"), cwd)
         run(binary, ("render", "--values", values, "--target", "runtime"), cwd)
