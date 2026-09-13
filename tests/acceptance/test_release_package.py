@@ -81,6 +81,20 @@ def test_public_image_requires_linux_amd64(monkeypatch: pytest.MonkeyPatch) -> N
         inspect_image("kakj/agentx-test:v1.2.3")
 
 
+def test_public_image_reports_registry_failure_after_bounded_retries(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = []
+
+    def unavailable(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        return subprocess.CompletedProcess(args, 1, "", "TLS handshake timeout")
+
+    monkeypatch.setattr("tools.scripts.release.verify_release.subprocess.run", unavailable)
+    monkeypatch.setattr("tools.scripts.release.verify_release.time.sleep", lambda _: None)
+    with pytest.raises(RuntimeError, match="TLS handshake timeout"):
+        inspect_image("kakj/agentx-test:v1.2.3")
+    assert len(calls) == 3
+
+
 @pytest.mark.parametrize("state", ["missing", "draft", "published", "lookup_failure", "upload_failure"])
 def test_release_stays_private_until_every_asset_is_uploaded(
     tmp_path: Path,

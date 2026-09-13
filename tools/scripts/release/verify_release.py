@@ -6,6 +6,7 @@ import argparse
 import json
 import subprocess
 import tempfile
+import time
 import tomllib
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -36,15 +37,21 @@ def verify_versions(version: str, root: Path = ROOT) -> None:
 
 
 def inspect_image(image: str) -> dict[str, object]:
-    completed = subprocess.run(
-        ("docker", "manifest", "inspect", "--verbose", image),
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        check=True,
-        timeout=180,
-    )
+    for attempt in range(3):
+        completed = subprocess.run(
+            ("docker", "manifest", "inspect", "--verbose", image),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+            timeout=180,
+        )
+        if completed.returncode == 0:
+            break
+        if attempt == 2:
+            raise RuntimeError(f"cannot inspect public image {image}: {completed.stderr.strip()}")
+        time.sleep(attempt + 1)
     payload = json.loads(completed.stdout)
     entries = payload if isinstance(payload, list) else [payload]
     manifests = [entry["Descriptor"] for entry in entries]
