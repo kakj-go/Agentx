@@ -610,6 +610,7 @@ mod tests {
         let resource_version_id = Uuid::from_u128(11);
         let grant_id = Uuid::from_u128(12);
         let configuration = RuntimeResourceConfigurationV1::Rag {
+            provider: "lightrag".into(),
             endpoint: "https://knowledge.example/query".into(),
             namespace: "docs".into(),
             index_version: "v1".into(),

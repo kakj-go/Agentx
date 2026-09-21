@@ -151,3 +151,16 @@ def render(values: Path | str, target: str, run_id: str | None = None) -> str:
     if run_id:
         command.extend(("--run-id", run_id))
     return run(command, timeout=300).stdout
+
+
+def run_playwright(root: Path, suite: str, tests: Sequence[str], environment: dict[str, str]) -> None:
+    pnpm = ("corepack.cmd", "pnpm") if os.name == "nt" else ("corepack", "pnpm")
+    snapshot_args = ("--update-snapshots=all",) if environment.get("AGENTX_E2E_UPDATE_SNAPSHOTS") == "1" else ()
+    command = [*pnpm, "--filter", "@agentx/e2e", "exec", "playwright", "test", *tests, *snapshot_args]
+    subprocess.run(
+        command,
+        check=True,
+        shell=False,
+        env={**environment, "AGENTX_E2E_SUITE": suite},
+        cwd=str(root),
+    )

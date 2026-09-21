@@ -3,7 +3,7 @@ const translations = {
   "details": "Details",
   "saved": "Sandbox profile saved",
   "department": "Department",
-  "description": "Manage OpenSandbox runners, tagged images, security boundaries, and immutable versions.",
+  "description": "Manage OpenSandbox runners, digest-pinned images, security boundaries, and immutable versions.",
   "invalidJson": "Invalid JSON",
   "created": "Sandbox profile created",
   "timeoutSeconds": "Maximum runtime (seconds)",
@@ -12,8 +12,8 @@ const translations = {
   "versionCreated": "Version created",
   "runner": "Runner",
   "image": "Image",
-  "imageTag": "Image tag",
-  "invalidImageTag": "The image must include a valid tag, for example registry.example/runner:stable",
+  "imageTag": "Image digest",
+  "invalidImageTag": "The image must end with @sha256:<64 hex characters>, for example registry.example/runner@sha256:abc…",
   "cpuMillis": "CPU (milliCPU, 1000 = 1 core)",
   "memoryGb": "Memory (GB)",
   "pidsLimit": "Processes (count)",
@@ -26,7 +26,7 @@ const translations = {
   "configurationHash": "Configuration hash",
   "versionHistory": "Immutable version history",
   "title": "Sandbox Profiles",
-  "search": "Search profiles, runners, or image tags",
+  "search": "Search profiles, runners, or images",
   "deleted": "Deleted"
 } as const
 

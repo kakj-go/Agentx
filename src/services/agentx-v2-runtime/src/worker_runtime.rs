@@ -50,9 +50,10 @@ mod provider;
 #[cfg(test)]
 use output::system_prompt;
 use output::{
-    apply_model_price, memory_execution_output, openai_chat_request, openai_execution_output,
-    provider_usage_detail, rag_execution_output, runtime_call_is_replayable,
-    runtime_call_side_effect, sandbox_execution_output, tool_execution_output,
+    apply_model_price, finalize_rag_response, memory_execution_output, openai_chat_request,
+    openai_execution_output, provider_usage_detail, rag_execution_output, rag_query_request,
+    runtime_call_is_replayable, runtime_call_side_effect, sandbox_execution_output,
+    tool_execution_output,
 };
 
 pub struct WorkerExecution {
@@ -608,6 +609,7 @@ impl RuntimeWorker {
                     .await;
             }
             RuntimeResourceConfigurationV1::Rag {
+                provider,
                 endpoint,
                 namespace,
                 index_version,
@@ -618,29 +620,19 @@ impl RuntimeWorker {
                     .get("operation")
                     .and_then(Value::as_str)
                     .unwrap_or("query");
-                let mut payload = claim.node_parameters.get("input").cloned().unwrap_or(input);
-                if !payload.is_object() {
-                    payload = json!({"query":payload,"mode":"naive"});
-                }
-                if let Some(object) = payload.as_object_mut() {
-                    object
-                        .entry("workspace".to_owned())
-                        .or_insert_with(|| json!(namespace));
-                    object
-                        .entry("indexVersion".to_owned())
-                        .or_insert_with(|| json!(index_version));
-                }
-                let path = if operation == "insert" {
-                    "documents/text"
-                } else {
-                    "query"
-                };
+                let payload = claim.node_parameters.get("input").cloned().unwrap_or(input);
+                let (path, body, secret_header) =
+                    match rag_query_request(&provider, operation, namespace, index_version, &payload)
+                    {
+                        Ok(built) => built,
+                        Err(failed) => return failed,
+                    };
                 (
                     "rag",
                     format!("{}/{}", endpoint.trim_end_matches('/'), path),
-                    payload,
+                    body,
                     credential.as_ref(),
-                    "x-api-key",
+                    secret_header,
                 )
             }
             RuntimeResourceConfigurationV1::Memory {
@@ -740,7 +732,13 @@ impl RuntimeWorker {
             .await;
         match binding.resource_kind {
             RuntimeResourceKindV1::Mcp => tool_execution_output(execution),
-            RuntimeResourceKindV1::Rag => rag_execution_output(execution),
+            RuntimeResourceKindV1::Rag => {
+                let provider = match &binding.configuration {
+                    RuntimeResourceConfigurationV1::Rag { provider, .. } => provider.clone(),
+                    _ => "lightrag".into(),
+                };
+                rag_execution_output(finalize_rag_response(&provider, execution))
+            }
             RuntimeResourceKindV1::Memory => memory_execution_output(execution),
             _ => execution,
         }

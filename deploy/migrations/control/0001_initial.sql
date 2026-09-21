@@ -930,6 +930,7 @@ CREATE TABLE rag_connections (
     id BINARY(16) NOT NULL,
     tenant_id BINARY(16) NOT NULL,
     name VARCHAR(160) NOT NULL,
+    provider ENUM('lightrag', 'ragflow') NOT NULL DEFAULT 'lightrag',
     endpoint VARCHAR(2048) NOT NULL,
     health_path VARCHAR(512) NOT NULL DEFAULT '/health',
     credential_id BINARY(16) NULL,

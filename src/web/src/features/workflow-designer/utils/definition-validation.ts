@@ -76,7 +76,8 @@ export function definitionIssues(document: StudioDocument): StudioIssue[] {
       if (modelReferences.length !== 1) issues.push(nodeIssue("AGENT_MODEL_REQUIRED", "resourceReferences.model", "Agent requires exactly one internal Model reference."));
       if (sandboxReferences.length > 1 || memoryReferences.length > 1) issues.push(nodeIssue("AGENT_RESOURCE_SLOT_INVALID", "resourceReferences", "Agent accepts at most one Workspace Sandbox and one Long-term Memory attachment."));
       for (const reference of node.resourceReferences) {
-        if (!reference.bindingRole || !reference.resourceVersionId) issues.push(nodeIssue("AGENT_RESOURCE_SLOT_INVALID", "resourceReferences", "Every Agent resource must use a frozen bindingRole and exact resource version."));
+        const versionPinned = reference.resourceType !== "rag" && reference.resourceType !== "memory";
+        if (!reference.bindingRole || (versionPinned && !reference.resourceVersionId)) issues.push(nodeIssue("AGENT_RESOURCE_SLOT_INVALID", "resourceReferences", "Every Agent resource must use a frozen bindingRole; versioned resources must pin an exact version."));
       }
     }
   }

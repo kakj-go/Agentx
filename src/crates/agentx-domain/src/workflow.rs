@@ -971,14 +971,13 @@ fn validate_agent_node(index: usize, node: &WorkflowNode, issues: &mut Vec<Defin
             }
             (Some("knowledge"), ResourceType::Rag) => {
                 reference.operation == ResourceOperation::Read
-                    && reference.resource_version_id.is_some()
             }
             (Some("long_term_memory"), ResourceType::Memory) => {
                 long_term_memory_count += 1;
                 matches!(
                     reference.operation,
                     ResourceOperation::Read | ResourceOperation::Write | ResourceOperation::Manage
-                ) && reference.resource_version_id.is_some()
+                )
             }
             _ => false,
         };

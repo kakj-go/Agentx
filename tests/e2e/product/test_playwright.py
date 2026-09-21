@@ -11,7 +11,7 @@ from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
 import pytest
 
-from tests.e2e.support import run
+from tests.e2e.support import run, run_playwright
 
 
 def _build_canvas_plugin_v2(root: str) -> None:
@@ -55,22 +55,12 @@ def _build_canvas_plugin_v2(root: str) -> None:
 
 
 def _run_playwright(
-    pnpm: Sequence[str],
     suite: str,
     tests: Sequence[str],
     environment: dict[str, str],
     root: str,
 ) -> None:
-    snapshot_args = ("--update-snapshots=all",) if environment.get("AGENTX_E2E_UPDATE_SNAPSHOTS") == "1" else ()
-    command = [*pnpm, "--filter", "@agentx/e2e", "exec", "playwright", "test", *tests]
-    command.extend(snapshot_args)
-    subprocess.run(
-        command,
-        check=True,
-        shell=False,
-        env={**environment, "AGENTX_E2E_SUITE": suite},
-        cwd=root,
-    )
+    run_playwright(Path(root), suite, tests, environment)
 
 
 def _assert_execution_context_snapshot(installed_agentx: dict[str, str], evidence_path: Path) -> None:
@@ -118,7 +108,7 @@ def _assert_execution_context_snapshot(installed_agentx: dict[str, str], evidenc
 
 
 def _verify_plugin_trace_degradation(
-    pnpm: Sequence[str], environment: dict[str, str], root: str, namespace: str, evidence_path: Path
+    environment: dict[str, str], root: str, namespace: str, evidence_path: Path
 ) -> None:
     execution_id = json.loads(evidence_path.read_text(encoding="utf-8"))["executionId"]
     trace_environment = {**environment, "AGENTX_E2E_DEGRADED_EXECUTION_ID": execution_id}
@@ -126,7 +116,6 @@ def _verify_plugin_trace_degradation(
     try:
         run(("kubectl", "-n", namespace, "rollout", "status", "statefulset/clickhouse", "--timeout=180s"), timeout=200)
         _run_playwright(
-            pnpm,
             "plugin-trace-degraded",
             ("tests/trace-degraded.spec.ts",),
             {**trace_environment, "AGENTX_E2E_TRACE_PHASE": "degraded"},
@@ -136,7 +125,6 @@ def _verify_plugin_trace_degradation(
         run(("kubectl", "-n", namespace, "scale", "statefulset/clickhouse", "--replicas=1"), timeout=60)
         run(("kubectl", "-n", namespace, "rollout", "status", "statefulset/clickhouse", "--timeout=300s"), timeout=330)
     _run_playwright(
-        pnpm,
         "plugin-trace-recovered",
         ("tests/trace-degraded.spec.ts",),
         {**trace_environment, "AGENTX_E2E_TRACE_PHASE": "recovered"},
@@ -221,10 +209,9 @@ def test_product_playwright_suite(
                 continue
             selected_tests = (*tests, "--grep", playwright_grep) if playwright_grep else tests
             try:
-                _run_playwright(pnpm, suite, selected_tests, environment, root)
+                _run_playwright(suite, selected_tests, environment, root)
                 if suite == "canvas-plugins" and not playwright_grep:
                     _verify_plugin_trace_degradation(
-                        pnpm,
                         environment,
                         root,
                         installed_agentx["runtime_namespace"],
@@ -238,7 +225,6 @@ def test_product_playwright_suite(
         if not only_suites or "session-diagnostics" in only_suites:
             try:
                 _run_playwright(
-                    pnpm,
                     "session-diagnostics",
                     ("tests/agent-sessions-diagnostics.spec.ts",),
                     environment,

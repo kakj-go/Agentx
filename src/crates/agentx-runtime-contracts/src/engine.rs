@@ -195,6 +195,10 @@ pub struct RuntimeMcpSandboxReferenceV1 {
     pub resource_version_id: Uuid,
 }
 
+fn default_rag_provider() -> String {
+    "lightrag".into()
+}
+
 #[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
 #[serde(
     tag = "kind",
@@ -225,6 +229,8 @@ pub enum RuntimeResourceConfigurationV1 {
         credential: Option<crate::VaultSecretReferenceV1>,
     },
     Rag {
+        #[serde(default = "default_rag_provider")]
+        provider: String,
         endpoint: String,
         namespace: String,
         index_version: String,

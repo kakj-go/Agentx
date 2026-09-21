@@ -554,13 +554,28 @@ pub fn validate_sandbox_manager_execute_url(endpoint: &str) -> Result<Url> {
     Ok(url)
 }
 
+/// Plain-HTTP provider endpoints are restricted to in-cluster fixture
+/// services. The allowlist is the first DNS label of the service and defaults
+/// to the managed E2E fixtures; deployments can extend it (for example with a
+/// self-hosted `ragflow` service) through AGENTX_EGRESS_HTTP_PROVIDER_SERVICES.
+fn http_provider_services() -> Vec<String> {
+    let configured = env::var("AGENTX_EGRESS_HTTP_PROVIDER_SERVICES")
+        .unwrap_or_else(|_| "echo-mcp,echo-node,lightrag,mem0".into());
+    configured
+        .split(',')
+        .map(str::trim)
+        .filter(|candidate| !candidate.is_empty())
+        .map(str::to_ascii_lowercase)
+        .collect()
+}
+
 fn is_managed_cluster_fixture(url: &Url) -> bool {
     let Some(host) = url.host_str() else {
         return false;
     };
     let host = host.trim_end_matches('.').to_ascii_lowercase();
     let service = host.split('.').next().unwrap_or_default();
-    let fixture_service = matches!(service, "echo-mcp" | "echo-node" | "lightrag" | "mem0");
+    let fixture_service = http_provider_services().iter().any(|item| item == service);
     let fixture_dns =
         !host.contains('.') || host.ends_with(".svc") || host.ends_with(".svc.cluster.local");
     url.scheme() == "http" && fixture_service && fixture_dns
@@ -572,6 +587,8 @@ fn provider_builder() -> Result<reqwest::ClientBuilder> {
 
 #[cfg(test)]
 mod tests {
+    use std::env;
+
     use reqwest::{Method, StatusCode, header};
 
     use super::{
@@ -596,6 +613,21 @@ mod tests {
             validate_provider_url("http://arbitrary-service.test.svc.cluster.local:8090/mcp")
                 .is_err()
         );
+        assert!(validate_provider_url("http://ragflow.agentx-deps.svc:9380/api/v1").is_err());
+    }
+
+    #[test]
+    fn http_provider_services_allowlist_is_configurable() {
+        // SAFETY: single-threaded test process; the override is restored below.
+        unsafe {
+            env::set_var("AGENTX_EGRESS_HTTP_PROVIDER_SERVICES", "echo-mcp,ragflow");
+        }
+        assert!(validate_provider_url("http://ragflow.agentx-deps.svc:9380/api/v1").is_ok());
+        assert!(validate_provider_url("http://lightrag.agentx-deps.svc:9621/query").is_err());
+        unsafe {
+            env::remove_var("AGENTX_EGRESS_HTTP_PROVIDER_SERVICES");
+        }
+        assert!(validate_provider_url("http://ragflow.agentx-deps.svc:9380/api/v1").is_err());
     }
 
     #[test]

@@ -181,6 +181,7 @@ fn from_parts(
         "rag" => (
             RuntimeResourceKindV1::Rag,
             RuntimeResourceConfigurationV1::Rag {
+                provider: json_string(&snapshot, "provider").unwrap_or_else(|| "lightrag".into()),
                 endpoint: required_json_string(&snapshot, "endpoint")?,
                 namespace: required_json_string(&snapshot, "externalResourceId")?,
                 index_version: resource_version.clone(),

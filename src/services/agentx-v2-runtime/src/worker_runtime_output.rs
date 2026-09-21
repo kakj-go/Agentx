@@ -484,6 +484,137 @@ fn string_ids(value: Option<&Value>) -> Value {
     )
 }
 
+pub(crate) const RAG_PROVIDER_LIGHT_RAG: &str = "lightrag";
+pub(crate) const RAG_PROVIDER_RAGFLOW: &str = "ragflow";
+
+fn rag_query_text(payload: &Value) -> String {
+    payload
+        .get("query")
+        .or_else(|| payload.get("question"))
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .unwrap_or_else(|| json_text(payload))
+}
+
+fn rag_top_k(payload: &Value) -> u64 {
+    payload
+        .get("topK")
+        .or_else(|| payload.get("top_k"))
+        .and_then(Value::as_u64)
+        .unwrap_or(5)
+}
+
+/// Build the provider-specific query request from the caller payload.
+/// Returns the URL path, the JSON body and the header carrying the secret.
+pub(super) fn rag_query_request(
+    provider: &str,
+    operation: &str,
+    namespace: &str,
+    index_version: &str,
+    input: &Value,
+) -> Result<(String, Value, &'static str), WorkerExecution> {
+    if provider == RAG_PROVIDER_RAGFLOW {
+        if operation != "query" {
+            return Err(WorkerExecution::failed(
+                "RAG_OPERATION_UNSUPPORTED",
+                "RAGFlow knowledge connections support query only",
+                false,
+            ));
+        }
+        let dataset_ids: Vec<String> = namespace
+            .split(',')
+            .map(str::trim)
+            .filter(|candidate| !candidate.is_empty())
+            .map(str::to_owned)
+            .collect();
+        if dataset_ids.is_empty() {
+            return Err(WorkerExecution::failed(
+                "RAG_DATASET_REQUIRED",
+                "RAGFlow knowledge resource must reference at least one dataset id",
+                false,
+            ));
+        }
+        return Ok((
+            "api/v1/retrieval".into(),
+            json!({
+                "question": rag_query_text(input),
+                "dataset_ids": dataset_ids,
+                "top_k": rag_top_k(input),
+            }),
+            "authorization",
+        ));
+    }
+    let mut body = if input.is_object() {
+        input.clone()
+    } else {
+        json!({"query": input, "mode": "naive"})
+    };
+    if let Some(object) = body.as_object_mut() {
+        if let Some(top_k) = object.remove("topK") {
+            object.insert("top_k".into(), top_k);
+        }
+        object
+            .entry("workspace".to_owned())
+            .or_insert_with(|| json!(namespace));
+        object
+            .entry("indexVersion".to_owned())
+            .or_insert_with(|| json!(index_version));
+    }
+    let path = if operation == "insert" {
+        "documents/text"
+    } else {
+        "query"
+    };
+    Ok((path.into(), body, "x-api-key"))
+}
+
+/// Normalize the provider envelope into the canonical rag payload consumed by
+/// rag_execution_output / knowledge_result_from_execution. LightRAG responses
+/// pass through unchanged; RAGFlow `{code, data}` envelopes are mapped and
+/// non-zero codes surface the provider message as a failure.
+pub(super) fn finalize_rag_response(provider: &str, execution: WorkerExecution) -> WorkerExecution {
+    if provider != RAG_PROVIDER_RAGFLOW || execution.status != WorkerResultStatusV1::Succeeded {
+        return execution;
+    }
+    let Some(value) = successful_value(&execution) else {
+        return invalid_empty();
+    };
+    match value.get("code").and_then(Value::as_i64) {
+        None | Some(0) => {}
+        Some(_) => {
+            let message = value
+                .get("message")
+                .and_then(Value::as_str)
+                .unwrap_or("RAGFlow rejected the query");
+            return WorkerExecution::failed("PROVIDER_REJECTED", message, false);
+        }
+    }
+    let documents = value
+        .pointer("/data/chunks")
+        .cloned()
+        .unwrap_or_else(|| json!([]));
+    let record_ids = value
+        .pointer("/data/chunks")
+        .and_then(Value::as_array)
+        .map(|chunks| {
+            Value::Array(
+                chunks
+                    .iter()
+                    .filter_map(|chunk| chunk.get("id").and_then(Value::as_str))
+                    .map(str::to_owned)
+                    .map(Value::String)
+                    .collect(),
+            )
+        })
+        .unwrap_or_else(|| json!([]));
+    WorkerExecution::succeeded(json!({
+        "text": json_text(&documents),
+        "documents": documents,
+        "citations": [],
+        "recordIds": record_ids,
+    }))
+}
+
 #[cfg(test)]
 mod pricing_tests {
     use agentx_runtime_contracts::RuntimeModelPriceV1;
@@ -523,5 +654,119 @@ mod pricing_tests {
         )
         .unwrap();
         assert_eq!(usage.2, 1);
+    }
+}
+
+#[cfg(test)]
+mod rag_protocol_tests {
+    use agentx_runtime_contracts::WorkerResultStatusV1;
+    use serde_json::{Value, json};
+
+    use super::{finalize_rag_response, rag_query_request};
+
+    #[test]
+    fn lightrag_requests_keep_the_workspace_contract() {
+        let (path, body, header) = match rag_query_request(
+            "lightrag",
+            "query",
+            "kb-1",
+            "v3",
+            &json!({"query": "hello", "topK": 4}),
+        ) {
+            Ok(built) => built,
+            Err(_) => panic!("lightrag request must build"),
+        };
+        assert_eq!(path, "query");
+        assert_eq!(header, "x-api-key");
+        assert_eq!(
+            body,
+            json!({"query": "hello", "top_k": 4, "workspace": "kb-1", "indexVersion": "v3"})
+        );
+    }
+
+    #[test]
+    fn ragflow_requests_map_to_the_retrieval_contract() {
+        let (path, body, header) = match rag_query_request(
+            "ragflow",
+            "query",
+            "ds-1, ds-2",
+            "v3",
+            &json!({"query": "hello", "topK": 6}),
+        ) {
+            Ok(built) => built,
+            Err(_) => panic!("ragflow request must build"),
+        };
+        assert_eq!(path, "api/v1/retrieval");
+        assert_eq!(header, "authorization");
+        assert_eq!(
+            body,
+            json!({"question": "hello", "dataset_ids": ["ds-1", "ds-2"], "top_k": 6})
+        );
+    }
+
+    #[test]
+    fn ragflow_rejects_non_query_operations_and_empty_datasets() {
+        let err = match rag_query_request("ragflow", "insert", "ds-1", "v3", &json!({})) {
+            Err(failed) => failed,
+            Ok(_) => panic!("insert must be unsupported"),
+        };
+        assert_eq!(err.error_code.as_deref(), Some("RAG_OPERATION_UNSUPPORTED"));
+        let err = match rag_query_request("ragflow", "query", " , ", "v3", &json!({})) {
+            Err(failed) => failed,
+            Ok(_) => panic!("dataset must be required"),
+        };
+        assert_eq!(err.error_code.as_deref(), Some("RAG_DATASET_REQUIRED"));
+    }
+
+    #[test]
+    fn ragflow_envelopes_map_to_canonical_documents() {
+        let execution = super::super::WorkerExecution::succeeded(json!({
+            "code": 0,
+            "data": {"chunks": [
+                {"id": "c1", "content": "alpha", "similarity": 0.9},
+                {"id": "c2", "content": "beta", "similarity": 0.8},
+            ], "total": 2},
+            "message": ""
+        }));
+        let normalized = finalize_rag_response("ragflow", execution);
+        assert_eq!(normalized.status, WorkerResultStatusV1::Succeeded);
+        let payload = normalized.outputs.get("main").and_then(|items| items.first())
+            .map(|item| item.json.clone())
+            .expect("payload");
+        assert_eq!(
+            payload.get("documents"),
+            Some(&json!([
+                {"id": "c1", "content": "alpha", "similarity": 0.9},
+                {"id": "c2", "content": "beta", "similarity": 0.8},
+            ]))
+        );
+        assert_eq!(payload.get("recordIds"), Some(&json!(["c1", "c2"])));
+    }
+
+    #[test]
+    fn ragflow_error_envelopes_surface_the_provider_message() {
+        let execution = super::super::WorkerExecution::succeeded(json!({
+            "code": 109,
+            "data": false,
+            "message": "Authentication error: API key is invalid!"
+        }));
+        let normalized = finalize_rag_response("ragflow", execution);
+        assert_eq!(normalized.status, WorkerResultStatusV1::Failed);
+        assert_eq!(normalized.error_code.as_deref(), Some("PROVIDER_REJECTED"));
+        assert_eq!(
+            normalized.error_message.as_deref(),
+            Some("Authentication error: API key is invalid!")
+        );
+    }
+
+    #[test]
+    fn lightrag_responses_pass_through_unchanged() {
+        let payload: Value = json!({"data": {"documents": ["a"]}});
+        let execution = super::super::WorkerExecution::succeeded(payload.clone());
+        let normalized = finalize_rag_response("lightrag", execution);
+        let kept = normalized.outputs.get("main").and_then(|items| items.first())
+            .map(|item| item.json.clone())
+            .expect("payload");
+        assert_eq!(kept, payload);
     }
 }

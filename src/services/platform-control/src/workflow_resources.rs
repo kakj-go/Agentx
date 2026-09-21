@@ -337,10 +337,8 @@ pub(crate) async fn resource_snapshot(
         ResourceType::McpServer => mcp_server_snapshot(state, tenant_id, reference).await,
         ResourceType::McpTool => mcp_tool_snapshot(state, tenant_id, reference).await,
         ResourceType::Skill => skill_snapshot(state, tenant_id, reference).await,
-        ResourceType::Rag => external_snapshot(state, tenant_id, reference.resource_id, true).await,
-        ResourceType::Memory => {
-            external_snapshot(state, tenant_id, reference.resource_id, false).await
-        }
+        ResourceType::Rag => external_snapshot(state, tenant_id, reference, true).await,
+        ResourceType::Memory => external_snapshot(state, tenant_id, reference, false).await,
         ResourceType::SandboxProfile => sandbox_snapshot(state, tenant_id, reference).await,
     }
 }
@@ -605,19 +603,27 @@ async fn skill_snapshot(
 async fn external_snapshot(
     state: &ControlApiState,
     tenant_id: Uuid,
-    resource_id: Uuid,
+    reference: &mut ResourceReference,
     rag: bool,
 ) -> ApiResult<Value> {
+    let resource_id = reference.resource_id;
+    // Rag and Memory are unpinned "follow current" resources in drafts; pin a
+    // deterministic synthetic version so runtime bindings keep matching the
+    // compiled attachment descriptors (same derivation in compiler_agent).
+    if reference.resource_version_id.is_none() {
+        reference.resource_version_id =
+            Some(agentx_runtime_contracts::deterministic_uuid(resource_id, b"external-current"));
+    }
     let row = if rag {
-        sqlx::query("SELECT r.external_resource_id external_name,r.version resource_version,c.id connection_id,c.endpoint,c.version connection_version,c.credential_id,c.configuration_json FROM rag_resources r JOIN rag_connections c ON c.id=r.connection_id WHERE r.tenant_id=? AND r.id=? AND r.status='active' AND c.status='active'")
+        sqlx::query("SELECT r.external_resource_id external_name,r.version resource_version,c.id connection_id,c.provider,c.endpoint,c.version connection_version,c.credential_id,c.configuration_json FROM rag_resources r JOIN rag_connections c ON c.id=r.connection_id WHERE r.tenant_id=? AND r.id=? AND r.status='active' AND c.status='active'")
             .bind(tenant_id).bind(resource_id).fetch_optional(&state.pool).await?
     } else {
-        sqlx::query("SELECT n.external_namespace external_name,n.access_mode,n.version resource_version,c.id connection_id,c.endpoint,c.version connection_version,c.credential_id,c.configuration_json FROM memory_namespaces n JOIN memory_connections c ON c.id=n.connection_id WHERE n.tenant_id=? AND n.id=? AND n.status='active' AND c.status='active'")
+        sqlx::query("SELECT n.external_namespace external_name,n.access_mode,n.version resource_version,c.id connection_id,NULL provider,c.endpoint,c.version connection_version,c.credential_id,c.configuration_json FROM memory_namespaces n JOIN memory_connections c ON c.id=n.connection_id WHERE n.tenant_id=? AND n.id=? AND n.status='active' AND c.status='active'")
             .bind(tenant_id).bind(resource_id).fetch_optional(&state.pool).await?
     }.ok_or_else(|| ApiError::unprocessable("RESOURCE_UNAVAILABLE", "External resource or connection is unavailable"))?;
     let credential_id: Option<Uuid> = row.try_get("credential_id")?;
     let mut value = json!({"resourceVersion":row.try_get::<u64,_>("resource_version")?,
-        "connectionId":row.try_get::<Uuid,_>("connection_id")?,"endpoint":row.try_get::<String,_>("endpoint")?,
+        "connectionId":row.try_get::<Uuid,_>("connection_id")?,"provider":row.try_get::<Option<String>,_>("provider")?.unwrap_or_else(||"lightrag".into()),"endpoint":row.try_get::<String,_>("endpoint")?,
         "connectionVersion":row.try_get::<u64,_>("connection_version")?,"credentialId":credential_id,
         "configuration":row.try_get::<Value,_>("configuration_json")?,
         "vaultSecretRef":optional_credential_snapshot(state,tenant_id,credential_id).await?});

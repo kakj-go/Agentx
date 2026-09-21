@@ -828,6 +828,12 @@
             "format": "uuid",
             "type": "string"
           },
+          "provider": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "status": {
             "type": "string"
           },
@@ -955,6 +961,13 @@
           },
           "ownerDepartmentId": {
             "format": "uuid",
+            "type": "string"
+          },
+          "provider": {
+            "enum": [
+              "lightrag",
+              "ragflow"
+            ],
             "type": "string"
           }
         },

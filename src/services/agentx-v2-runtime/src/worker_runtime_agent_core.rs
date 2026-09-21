@@ -1594,6 +1594,7 @@ impl<'a> AgentToolRouter<'a> {
                 tool_result_from_execution(execution)
             }
             RuntimeResourceConfigurationV1::Rag {
+                provider,
                 endpoint,
                 namespace,
                 index_version,
@@ -1602,17 +1603,22 @@ impl<'a> AgentToolRouter<'a> {
                 if let Some(secret) = credential {
                     self.authorize_secret_dependency(secret)?;
                 }
-                let mut request = call.arguments.clone();
-                if let Some(object) = request.as_object_mut() {
-                    object.insert("workspace".into(), json!(namespace));
-                    object.insert("indexVersion".into(), json!(index_version));
-                    if let Some(top_k) = object.remove("topK") {
-                        object.insert("top_k".into(), top_k);
-                    }
-                }
+                let (path, request, secret_header) =
+                    match super::output::rag_query_request(
+                        &provider,
+                        "query",
+                        namespace,
+                        index_version,
+                        &call.arguments,
+                    ) {
+                        Ok(built) => built,
+                        Err(failed) => {
+                            return tool_result_from_execution(failed);
+                        }
+                    };
                 let index = self.call_index;
                 self.call_index = self.call_index.saturating_add(1);
-                let endpoint = format!("{}/query", endpoint.trim_end_matches('/'));
+                let endpoint = format!("{}/{}", endpoint.trim_end_matches('/'), path);
                 let execution = tokio::task::block_in_place(|| {
                     tokio::runtime::Handle::current().block_on(self.worker.call_http(
                         self.claim,
@@ -1621,10 +1627,11 @@ impl<'a> AgentToolRouter<'a> {
                         request,
                         index,
                         credential.as_ref(),
-                        "x-api-key",
+                        secret_header,
                         Some(&binding),
                     ))
                 });
+                let execution = super::output::finalize_rag_response(&provider, execution);
                 knowledge_result_from_execution(execution, binding.resource_id)
             }
             RuntimeResourceConfigurationV1::Memory {

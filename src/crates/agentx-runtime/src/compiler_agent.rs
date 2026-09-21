@@ -64,7 +64,13 @@ pub(super) fn validate_binding_slots(
             });
             continue;
         };
-        if reference.resource_version_id.is_none() {
+        // Rag and Memory have no version entities; they follow the current
+        // external resource state, so only versioned types pin an exact id.
+        let version_optional = matches!(
+            reference.resource_type,
+            ResourceType::Rag | ResourceType::Memory
+        );
+        if reference.resource_version_id.is_none() && !version_optional {
             issues.push(CompileIssue {
                 code: "RESOURCE_VERSION_REQUIRED".into(),
                 path: format!(
@@ -127,17 +133,33 @@ pub(super) fn compile_agent_node(
                 Some("model" | "workspace_sandbox")
             )
         })
-        .map(|reference| CompiledAgentAttachmentV2 {
-            binding_role: reference
-                .binding_role
-                .clone()
-                .expect("Attachment role validated"),
-            resource_type: reference.resource_type,
-            resource_id: reference.resource_id,
-            resource_version_id: reference
-                .resource_version_id
-                .expect("Agent attachment version validated"),
-            operation: reference.operation,
+        .map(|reference| {
+            // Rag and Memory follow the current external resource state; the
+            // compile and publish paths derive the same synthetic version id
+            // so attachment descriptors still match runtime bindings.
+            let resource_version_id = match reference.resource_type {
+                ResourceType::Rag | ResourceType::Memory => reference
+                    .resource_version_id
+                    .unwrap_or_else(|| {
+                        agentx_runtime_contracts::deterministic_uuid(
+                            reference.resource_id,
+                            b"external-current",
+                        )
+                    }),
+                _ => reference
+                    .resource_version_id
+                    .expect("Agent attachment version validated"),
+            };
+            CompiledAgentAttachmentV2 {
+                binding_role: reference
+                    .binding_role
+                    .clone()
+                    .expect("Attachment role validated"),
+                resource_type: reference.resource_type,
+                resource_id: reference.resource_id,
+                resource_version_id,
+                operation: reference.operation,
+            }
         })
         .collect::<Vec<_>>();
     attachments.sort_by(|left, right| {

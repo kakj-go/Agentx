@@ -29,7 +29,8 @@ export function configurationIssues(document: StudioDocument, manifests: Map<str
       const references = node.data.resourceReferences.filter((reference) => reference.bindingRole === slot.name)
       if (slot.required && references.length === 0) issues.push({ code: 'RESOURCE_REQUIRED', nodeId: node.id, fieldPath: `resourceReferences.${slot.name}`, message: `Select the required ${slot.name} resource.`, values: { slot: slot.name } })
       if (!slot.multiple && references.length > 1) issues.push({ code: 'RESOURCE_MULTIPLE_NOT_ALLOWED', nodeId: node.id, fieldPath: `resourceReferences.${slot.name}`, message: `${slot.name} accepts one resource.`, values: { slot: slot.name } })
-      if (slot.resourceType !== 'credential' && references.some((reference) => !reference.resourceVersionId)) issues.push({ code: 'RESOURCE_VERSION_REQUIRED', nodeId: node.id, fieldPath: `resourceReferences.${slot.name}`, message: `${slot.name} must use an exact resource version.`, values: { slot: slot.name } })
+      const versionPinned = slot.resourceType !== 'credential' && slot.resourceType !== 'rag' && slot.resourceType !== 'memory'
+      if (versionPinned && references.some((reference) => !reference.resourceVersionId)) issues.push({ code: 'RESOURCE_VERSION_REQUIRED', nodeId: node.id, fieldPath: `resourceReferences.${slot.name}`, message: `${slot.name} must use an exact resource version.`, values: { slot: slot.name } })
     }
   }
   return issues

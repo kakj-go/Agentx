@@ -129,13 +129,20 @@ Workflow Draft 可以选择 Skill Definition 和目标版本；发布时必须�
 
 ## 6. RAG
 
-首期提供 LightRAG Adapter，但平台层使用统一接口：
+知识库接入按连接上的 `provider` 字段区分协议适配器，平台层使用统一接口：
 
 - query
 - retrieve
 - insert
 - delete
 - healthCheck
+
+已实现的 Provider：
+
+- `lightrag`（默认）：`POST {endpoint}/query`，`x-api-key` 认证，外部资源 ID 为 workspace，支持 query 与 insert。
+- `ragflow`：`POST {endpoint}/api/v1/retrieval`，`Authorization: Bearer <API Key>` 认证，外部资源 ID 为 dataset id（多个以逗号分隔），支持 query；RAGFlow 的 `{code, data}` 响应包映射为统一 documents 结构，`code != 0` 时按 `PROVIDER_REJECTED` 失败并透出 Provider 消息。健康检查路径需指向 RAGFlow 实际返回 200 的路径（如 `/v1/system/healthz`）。
+
+生产环境 Provider 端点必须使用 HTTPS（egress 策略仅对集群内白名单 Service 放行明文 HTTP）；白名单通过 `global.network.egressGateway.httpProviderServices` 配置，默认只包含 E2E fixture（echo-mcp、echo-node、lightrag、mem0），自建明文 HTTP Provider（如集群内 RAGFlow）需要显式加入。
 
 授权范围：
 

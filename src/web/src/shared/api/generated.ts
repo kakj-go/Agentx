@@ -183,6 +183,7 @@ export interface components {
             id: string;
             name: string;
             ownerDepartmentId: string;
+            provider?: string | null;
             status: string;
             version: number;
         };

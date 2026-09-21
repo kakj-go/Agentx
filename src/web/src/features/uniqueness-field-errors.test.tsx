@@ -173,7 +173,7 @@ describe('resource page uniqueness field errors', () => {
     const form = await screen.findByRole('dialog')
     fireEvent.change(within(form).getByLabelText('名称'), { target: { value: 'Default' } })
     choose(form, '所属部门', '公司')
-    fireEvent.change(within(form).getByLabelText('镜像 Tag'), { target: { value: 'python:3.13' } })
+    fireEvent.change(within(form).getByLabelText('镜像 Digest'), { target: { value: 'opensandbox/code-interpreter@sha256:133a3c1720dd52291a019740c2987e7164ea6de79e23d8198798e58950ae2e6e' } })
     fireEvent.click(within(form).getByRole('button', { name: '保存' }))
     expect(await within(form).findByText('该沙箱配置名称已存在。')).toBeInTheDocument()
   })

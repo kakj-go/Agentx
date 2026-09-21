@@ -70,6 +70,7 @@ struct ListQuery {
 struct ConnectionResponse {
     id: Uuid,
     name: String,
+    provider: Option<String>,
     endpoint: String,
     health_path: String,
     credential_id: Option<Uuid>,
@@ -82,6 +83,7 @@ struct ConnectionResponse {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct CreateConnectionRequest {
     name: String,
+    provider: Option<String>,
     endpoint: String,
     health_path: Option<String>,
     credential_id: Option<Uuid>,
@@ -374,26 +376,47 @@ async fn create_connection(
         ));
     }
     let id = Uuid::now_v7();
-    let sql = match table {
+    match table {
         "rag_connections" => {
-            "INSERT INTO rag_connections(id,tenant_id,name,endpoint,health_path,credential_id,owner_department_id,configuration_json) VALUES(?,?,?,?,?,?,?,?)"
+            let provider = input.provider.as_deref().unwrap_or("lightrag");
+            if !matches!(provider, "lightrag" | "ragflow") {
+                return Err(ApiError::bad_request(
+                    "INVALID_PROVIDER",
+                    "Knowledge provider must be lightrag or ragflow",
+                ));
+            }
+            sqlx::query(
+                "INSERT INTO rag_connections(id,tenant_id,name,provider,endpoint,health_path,credential_id,owner_department_id,configuration_json) VALUES(?,?,?,?,?,?,?,?,?)",
+            )
+            .bind(id)
+            .bind(actor.tenant_id)
+            .bind(required_name(&input.name)?)
+            .bind(provider)
+            .bind(input.endpoint)
+            .bind(health)
+            .bind(input.credential_id)
+            .bind(input.owner_department_id)
+            .bind(input.configuration)
+            .execute(&state.pool)
+            .await?;
         }
         "memory_connections" => {
-            "INSERT INTO memory_connections(id,tenant_id,name,endpoint,health_path,credential_id,owner_department_id,configuration_json) VALUES(?,?,?,?,?,?,?,?)"
+            sqlx::query(
+                "INSERT INTO memory_connections(id,tenant_id,name,endpoint,health_path,credential_id,owner_department_id,configuration_json) VALUES(?,?,?,?,?,?,?,?)",
+            )
+            .bind(id)
+            .bind(actor.tenant_id)
+            .bind(required_name(&input.name)?)
+            .bind(input.endpoint)
+            .bind(health)
+            .bind(input.credential_id)
+            .bind(input.owner_department_id)
+            .bind(input.configuration)
+            .execute(&state.pool)
+            .await?;
         }
         _ => return Err(ApiError::internal("unsupported connection table")),
-    };
-    sqlx::query(sql)
-        .bind(id)
-        .bind(actor.tenant_id)
-        .bind(required_name(&input.name)?)
-        .bind(input.endpoint)
-        .bind(health)
-        .bind(input.credential_id)
-        .bind(input.owner_department_id)
-        .bind(input.configuration)
-        .execute(&state.pool)
-        .await?;
+    }
     Ok((
         StatusCode::CREATED,
         Json(load_connection(state, actor.tenant_id, table, id).await?),
@@ -407,16 +430,16 @@ async fn list_connections(
     let administrator = actor.roles.iter().any(|role| role == "company_admin");
     let sql = match (table, administrator) {
         ("rag_connections", true) => {
-            "SELECT id,name,endpoint,health_path,credential_id,owner_department_id,configuration_json,status,version FROM rag_connections WHERE tenant_id=? ORDER BY name,id"
+            "SELECT id,name,provider,endpoint,health_path,credential_id,owner_department_id,configuration_json,status,version FROM rag_connections WHERE tenant_id=? ORDER BY name,id"
         }
         ("memory_connections", true) => {
-            "SELECT id,name,endpoint,health_path,credential_id,owner_department_id,configuration_json,status,version FROM memory_connections WHERE tenant_id=? ORDER BY name,id"
+            "SELECT id,name,NULL provider,endpoint,health_path,credential_id,owner_department_id,configuration_json,status,version FROM memory_connections WHERE tenant_id=? ORDER BY name,id"
         }
         ("rag_connections", false) => {
-            "SELECT c.id,c.name,c.endpoint,c.health_path,c.credential_id,c.owner_department_id,c.configuration_json,c.status,c.version FROM rag_connections c JOIN department_closure dc ON dc.tenant_id=c.tenant_id AND dc.ancestor_id=? AND dc.descendant_id=c.owner_department_id WHERE c.tenant_id=? ORDER BY c.name,c.id"
+            "SELECT c.id,c.name,c.provider,c.endpoint,c.health_path,c.credential_id,c.owner_department_id,c.configuration_json,c.status,c.version FROM rag_connections c JOIN department_closure dc ON dc.tenant_id=c.tenant_id AND dc.ancestor_id=? AND dc.descendant_id=c.owner_department_id WHERE c.tenant_id=? ORDER BY c.name,c.id"
         }
         ("memory_connections", false) => {
-            "SELECT c.id,c.name,c.endpoint,c.health_path,c.credential_id,c.owner_department_id,c.configuration_json,c.status,c.version FROM memory_connections c JOIN department_closure dc ON dc.tenant_id=c.tenant_id AND dc.ancestor_id=? AND dc.descendant_id=c.owner_department_id WHERE c.tenant_id=? ORDER BY c.name,c.id"
+            "SELECT c.id,c.name,NULL provider,c.endpoint,c.health_path,c.credential_id,c.owner_department_id,c.configuration_json,c.status,c.version FROM memory_connections c JOIN department_closure dc ON dc.tenant_id=c.tenant_id AND dc.ancestor_id=? AND dc.descendant_id=c.owner_department_id WHERE c.tenant_id=? ORDER BY c.name,c.id"
         }
         _ => return Err(ApiError::internal("unsupported connection table")),
     };
@@ -445,10 +468,10 @@ async fn load_connection(
 ) -> ApiResult<ConnectionResponse> {
     let sql = match table {
         "rag_connections" => {
-            "SELECT id,name,endpoint,health_path,credential_id,owner_department_id,configuration_json,status,version FROM rag_connections WHERE tenant_id=? AND id=?"
+            "SELECT id,name,provider,endpoint,health_path,credential_id,owner_department_id,configuration_json,status,version FROM rag_connections WHERE tenant_id=? AND id=?"
         }
         "memory_connections" => {
-            "SELECT id,name,endpoint,health_path,credential_id,owner_department_id,configuration_json,status,version FROM memory_connections WHERE tenant_id=? AND id=?"
+            "SELECT id,name,NULL provider,endpoint,health_path,credential_id,owner_department_id,configuration_json,status,version FROM memory_connections WHERE tenant_id=? AND id=?"
         }
         _ => return Err(ApiError::internal("unsupported connection table")),
     };
@@ -715,6 +738,7 @@ fn connection_from_row(row: MySqlRow) -> Result<ConnectionResponse, sqlx::Error>
     Ok(ConnectionResponse {
         id: row.try_get("id")?,
         name: row.try_get("name")?,
+        provider: row.try_get("provider")?,
         endpoint: row.try_get("endpoint")?,
         health_path: row.try_get("health_path")?,
         credential_id: row.try_get("credential_id")?,

@@ -39,6 +39,7 @@ spec:
             - { name: AGENTX_RUNTIME_USER_JWT_AUDIENCE, value: agentx-runtime-gateway }
             - { name: AGENTX_RUNTIME_VAULT_ENDPOINT, value: {{ .Values.global.components.secretProvider.endpoint | quote }} }
             - { name: AGENTX_EGRESS_PROXY_URL, value: {{ printf "http://agentx-egress-gateway.%s.svc:3128" .Values.global.namespaces.dependencies | quote }} }
+            - { name: AGENTX_EGRESS_HTTP_PROVIDER_SERVICES, value: {{ join "," .Values.global.network.egressGateway.httpProviderServices | quote }} }
             - name: AGENTX_EGRESS_JWT_KEY_ID
               valueFrom: { secretKeyRef: { name: {{ include "agentx.secret" (list . "runtimeGateway" "runtime") }}, key: AGENTX_RUNTIME_GATEWAY_EGRESS_JWT_KEY_ID } }
             - name: AGENTX_EGRESS_JWT_PRIVATE_KEY_PEM
