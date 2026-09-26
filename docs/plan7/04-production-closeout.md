@@ -1,0 +1,126 @@
+# P7-D：P0 收口与生产认证
+
+## 1. 目标与边界
+
+两件事：
+
+1. **关闭 `docs/todolist.md` 唯一条目**："测试对接 rag，mem，sandbox 这三块内容"——provider 对接测试虽已提交（e2f0d60），但 RAGFlow 用例全部环境变量 skip、OpenSandbox 需人工预启动、长期记忆只有拒绝路径，未收口；
+2. **关闭生产认证门禁**：planv2 V2-06B/07B/08B 与 `docs/plan/12-integration-hardening-release.md` INT-009/011/012/014 全部剩余项，使 `docs/planv2/99-traceability.md` 与 `docs/plan/99-feature-traceability.md` 两个矩阵无非 done 行。
+
+本线大部分任务是"验收器已实现、缺真实 Run 证据"，少量是缺实现（背压、容量编排、SBOM/签名）。
+
+不做：gVisor/Kata（07B 明确延期，本线保持 RuntimeClass restricted + 固定 CIDR Egress 现状并在矩阵注明移交）；多区域多活；HPA（扩缩容交给用户平台，Agentx 只暴露 metrics，V2S-005 决策不变）。
+
+## 2. 现状事实
+
+### 2.1 provider 对接测试
+
+- `tests/e2e/product/test_provider_integration.py`（93 行）：fail-fast 要求主机 `127.0.0.1:18080` OpenSandbox 健康，拉取 `opensandbox/code-interpreter:v1.1.0` digest，驱动 Playwright `provider-integration.spec.ts`（686 行，4 用例）；
+- 主用例（LightRAG+Mem0+OpenSandbox 一体化工作流）默认执行；**RAGFlow 3 个用例依赖环境变量（`AGENTX_E2E_RAGFLOW_*`），未配置即 skip，且无集群内 RAGFlow fixture**（conftest `e2e_providers` 只部署 echo-mcp/echo-node/lightrag/mem0）；
+- 长期记忆只验证拒用例（`AGENT_LONG_TERM_MEMORY_SUBJECT_REQUIRED`），无成功 recall 用例；
+- `docs/todolist.md` 因此保留该条目未删。
+
+### 2.2 planv2 剩余项
+
+- **V2-06B / V2S-006**（planned）：容量与背压——MySQL/Redis/OSS/CH/Provider 全局预算、按 Tenant/Capability/Provider 公平限流、Gateway Admission + Retry-After + 熔断、容量脚本与基线报告、"冻结阈值且 2 小时残留合格"；
+- **V2-07B**（V2K-001~006 in_progress）：真实外部 TLS E2E、强 RuntimeClass 集群矩阵、Role 级 Secret/ServiceAccount 拆分 + 供应链门禁、多 Migration Job 竞争、真实 PITR/RPO/RTO 演练、持续 Invocation 升级验证——验收器/编排已冻结，缺真实执行证据；
+- **V2-08B**（V2C-005/006 planned）：正式多副本容量矩阵（含 E2E-V2-012 滚动版本兼容混跑）与最终发布审查（Runbook/Schema Catalog/证据可复现）；
+- `04-e2e-acceptance.md` §3 冻结阈值清单（7 组指标）要求在首次容量 Run 前冻结；§6 08B 完成条件含全部 E2E failures=0/skipped=0。
+
+### 2.3 M7/INT 剩余项
+
+- INT-009 双阶段滚动升级：验收器已实现（0016 expand/0017 contract/Capability 分流/tag-based Sandbox Profile/Docker Desktop 双阶段），缺 M6→M7、Previous→Candidate 真实滚动与回滚证据；
+- INT-011 安全：Vault/撤销/TLS Registry/SBOM/签名/攻击矩阵代码历史上实现过，**当前工作树已无 SBOM/cosign 实现**（历史脚本删除），需按现有 `agentxctl`/release 脚本入口重建；`verify_release.py` 只有 digest + 3 次有界重试；
+- INT-012 容量："100 Execution、500 Node、200 SSE、1000 Case、200 节点和 2 小时结果尚未执行"；**容量编排无存活代码入口**（历史 performance.json 生产者已删）；
+- INT-014 发布门禁："升级、回滚、容量和签名证据尚未满足最终发布汇总器"。
+
+### 2.4 已有基础设施
+
+- e2e 编排：`agentxctl install/uninstall --purge-data`、临时 Namespace、`--scale-down-development` 停开发服务、产物脱敏写 `.local/artifacts/e2e/<run_id>/`；
+- 现存故障注入：runtime 重启恢复（test_runtime.py:306-326）、ClickHouse 缩容降级（test_playwright.py:111-135）、副本扩缩+升级回滚（test_release_history.py）；
+- 背压现状：仅每 caller 进程内令牌桶（`rate_limit.rs`，默认 50rps/burst100，非分布式）与 quota reserve/release（`quota.rs` MySQL 租约投影）；无租户/Provider/队列级预算与熔断；
+- Helm：八服务 replicas:1 / maxReplicas:4，无 resources 块。
+
+## 3. 实施阶段
+
+### P7-D1 Provider 对接测试收口（todolist 唯一条目）
+
+- [ ] RAGFlow 集群内 fixture：`deploy/kustomize/e2e-fixtures/runtime-providers` 增加 RAGFlow（含依赖），conftest 自动注入端口白名单 8080/8081/8090、Pod 标签 `agentx.io/runtime-provider: allowed`、Namespace 标签、`httpProviderServices` 加 ragflow——三个 skip 用例转默认执行；
+- [ ] RAGFlow fixture 健康等待与 dataset 预置（用例所需 dataset_id 自动创建）；
+- [ ] OpenSandbox 拉起编排：`deploy/opensandbox` 提供一键脚本/Profile（或 pytest fixture 尝试自动拉起，失败再 fail-fast 并输出指引），消除"人工预启动"环节；
+- [ ] 长期记忆成功 recall 用例：Application Session 内两轮对话，断言 Mem0 写入与召回（受 subject 作用域约束）；
+- [ ] 固化主链路为可重复入口（`-m product` 一键），证据归档；勾选并清空 `docs/todolist.md`。
+
+门禁：真实集群 Run failures=0、RAGFlow 用例 skipped=0。
+
+### P7-D2 容量阈值冻结（V2S-006 前置）
+
+- [ ] 产出 `docs/planv2/evidence/capacity-thresholds.md`：按 `04-e2e-acceptance.md` §3 七组指标（Invocation 错误率/p95/p99/Admission Reject、SSE 建连重连/Drain、Attempt/Outbox/Inbox/Trace 最大年龄、MySQL 连接/锁等待/慢查询/IOPS、Redis 内存/Pending/Lag/重建、Provider/Sandbox 隔离池并发与熔断恢复、2 小时残留）绑定测试环境规格写死数值；
+- [ ] 阈值评审冻结后任何容量 Run 不得更改（门禁语义）。
+
+### P7-D3 背压与公平限流实现（V2S-006 缺失实现部分）
+
+- [ ] 分布式准入：Gateway Admission 检查（租户并发 Invocation、队列深度水位）→ 429 + `Retry-After`（复用 quota 投影 MySQL 语义，替代纯进程内令牌桶或与之分层）；
+- [ ] 按维度公平限流：Tenant × Capability × Provider 的在途上限（worker 派发侧）与 Provider 熔断（连续失败开窗熔断、半开探测）；
+- [ ] 队列水位：Redis Stream 情况暴露 + 水位超限拒绝（过载可解释拒绝、无雪崩）；
+- [ ] metrics 暴露（现有 `/metrics` 扩展）供容量脚本采集。
+
+门禁：单测 + 故障注入 E2E（打满租户配额 → 429 + Retry-After；Provider 故障 → 熔断与恢复）。
+
+### P7-D4 容量编排重建与执行（V2S-006 + INT-012 + V2C-005）
+
+- [ ] 重建容量编排：`tests/e2e` 新增 capacity 域（pytest marker `capacity`），负载生成器（异步 Invocation 打点）、指标采集（metrics 抓取 + MySQL/Redis/CH 水位查询）、阈值断言与报告 JSON（写 `.local/artifacts/e2e/<run_id>/capacity/`）；
+- [ ] 执行矩阵：100 Execution / 500 Node / 200 SSE / 1000 Case / 200 节点 Workflow / 5000 Attempt 分级 Run + **2 小时稳定性 Run + 残留断言**（Lease/Reservation/Outbox/Inbox/Hold 业务残留=0）；
+- [ ] 副本矩阵：Gateway/Coordinator/Worker/SSE/Trace 独立扩容 Run（V2C-005 冻结生产基线）；
+- [ ] E2E-V2-012 滚动版本兼容：当前/上一版本混跑、超窗在执行前拒绝。
+
+门禁：全部指标 ≤ 冻结阈值，报告归档。
+
+### P7-D5 双阶段滚动升级真实验证（INT-009 + V2K-006）
+
+- [ ] `tests/e2e/upgrade` 扩展：M6→M7 与 Previous→Candidate 双阶段（expand→滚动→contract）、持续 Invocation 探针（升级期间持续打流量断言无损）、未知 IR 不被旧 Worker 领取断言、应用回滚可用；
+- [ ] 真实本地集群 Run 证据（`-m upgrade`），归档 timeline/资源事件。
+
+### P7-D6 备份恢复真实演练（V2K-005）
+
+- [ ] 在五字段 Adapter 契约测试之上补真实 PITR 演练：业务数据写入 → backup → 继续写入 → restore 到恢复点 → 数据校验；RPO/RTO 计时入报告；
+- [ ] Redis 丢失重建（从 Runtime MySQL Outbox/状态重建）演练计时；
+- [ ] 证据含 `providerReceipt` 五字段。
+
+### P7-D7 供应链与安全产物（INT-011 + V2K-003）
+
+- [ ] 重建供应链链路（Python，入 `tools/scripts/release/`）：7 镜像 SBOM 生成（syft）、cosign 签名与 Attestation、发布校验脚本验签（`verify_release.py` 扩展：验签名/attestation，不只 digest）；
+- [ ] Role 级 Secret/ServiceAccount 拆分验证（各 Role 最小凭据，NetworkPolicy/凭据矩阵断言）；
+- [ ] 双租户攻击矩阵 Run：跨租户 ID 猜测、Grant 绕过、日志泄密、凭证重放、Sandbox 销毁后 Handle 失效等 8 项负向验收器真实执行；
+- [ ] 本地 TLS Registry 签名链验证。
+
+### P7-D8 最终发布审查（V2C-006 + INT-014）
+
+- [ ] 前置：D2–D7 证据齐备；
+- [ ] 发布汇总器 Run：全新集群安装 → MVP 十二步 → 升级 → 回滚 → 容量 → 恢复 → 安全全链路，JUnit/HTML/Trace 证据汇总；
+- [ ] Runbook 与 Schema Catalog 更新（运维手册：扩容、恢复、轮换、故障处置）；
+- [ ] 更新两个追踪矩阵全部剩余行为 done（gVisor/Kata 等明确移交项除外，单独标注移交计划）；
+- [ ] 发布 Release Manifest，版本从 beta 转正决策交由评审。
+
+## 4. 执行口径
+
+1. 所有 Run 使用临时 Namespace + `--scale-down-development`，结束删除 Namespace 并恢复开发服务；
+2. 证据统一 `.local/artifacts/e2e/<run_id>/`（timeline、脱敏日志、resources/events、报告 JSON），验收以 `failures=0、skipped=0` 为准；
+3. 阈值一经冻结不得调参后重跑替代门禁（planv2 §7 全局完成定义）；
+4. 容量/升级/恢复 Run 建议夜间或低峰执行（2 小时稳定性 Run 需要独占窗口），可结合 OffPeak 执行编排迭代。
+
+## 5. 完成定义
+
+- `docs/todolist.md` 为空；
+- `docs/planv2/99-traceability.md` 与 `docs/plan/99-feature-traceability.md` 无 planned/in_progress/blocked（或显式移交项）；
+- V2S-006/V2C-005/V2C-006/V2K-001~006/INT-009/011/012/014 全部有可复现证据文件；
+- 容量与稳定性指标全部 ≤ 冻结阈值，2 小时残留=0；
+- 备份恢复 RPO/RTO、滚动升级无损、供应链签名链可验证；
+- README 中"不建议生产"自述可以移除（或明确剩余边界）。
+
+## 6. 风险与边界
+
+- 容量 Run 对本地集群规格敏感：阈值必须绑定环境规格冻结，换环境需重新冻结；
+- RAGFlow fixture 镜像较大，首次拉取时间纳入 fixture 超时预算（参考 lightrag 600s 先例）；
+- gVisor/Kata 强隔离不在本线，矩阵中以"移交后续计划"标注，不伪装完成；
+- 历史容量脚本/故障注入脚本已删除，D4/D5 是重建不是恢复——按现行 `pytest tests/e2e` 编排规范写 Python，不引入新脚本形态。
